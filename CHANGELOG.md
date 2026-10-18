@@ -16,6 +16,18 @@ its changelog too.
 
 ## Unreleased
 
+- Check selective import names inside dependencies, including names
+  the entry file never uses. An invalid name reports AX3023 at the
+  dependency's import site. Tested by
+  `tests/diagnostics/441-nested-import-name-list.ax` and
+  `tests/lsp/workspace-overlays.py`.
+
+- Add `jsonFind` for raw JSON object members. It returns `None` for a
+  missing member or a non-object and `Some` for a present value,
+  including `null`. Existing raw accessors keep their answers. The
+  language server uses it for request ID presence. Tested by
+  `tests/stdlib/340-json.ax` and `tests/lsp/id-presence.jsonl`.
+
 - Codegen ownership and flow facts now converge as a worklist:
   after one full pass, rounds re-walk only the callers of functions
   whose summaries moved, over a caller index whose counts ride on
