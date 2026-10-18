@@ -623,6 +623,37 @@ named = 0           # ranges asserted to spell the name the message quotes
 sym_named = 0       # symbols whose selectionRange was read back out of source
 discriminating = [] # anchors where UTF-16 != bytes and UTF-16 != characters
 
+# Pin the raw ID variants as framed traffic. The golden was captured
+# from the compiler before `jsonFind` changed these presence decisions.
+id_presence = [
+    {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}},
+    {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+    {"jsonrpc": "2.0", "id": "string-7", "method": "axiom/unknown", "params": {}},
+    {"jsonrpc": "2.0", "id": None, "method": "axiom/unknown", "params": {}},
+    {"jsonrpc": "2.0", "method": "axiom/unknown", "params": {}},
+    {"jsonrpc": "2.0", "id": 9, "method": "shutdown", "params": None},
+    {"jsonrpc": "2.0", "method": "exit", "params": None},
+]
+id_run = run_protocol([stage1, "lsp"],
+                      input=b"".join(frame(message) for message in id_presence),
+                      cwd=fixdir)
+id_frames, id_tail = unframe(id_run.stdout)
+id_bodies = open(os.path.join(fixdir, "id-presence.jsonl"), "rb").read().splitlines()
+id_golden = b"".join(
+    b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    for body in id_bodies)
+if (id_run.returncode != 0 or id_run.stderr or id_tail
+        or id_run.stdout != id_golden
+        or [message.get("id", "absent") for message in id_frames]
+           != [0, "string-7", None, 9]
+        or [message.get("error", {}).get("code") for message in id_frames]
+           != [None, -32601, -32601, None]):
+    print("FAIL id-presence: request IDs, notification silence or framed bytes changed")
+    failed += 1
+else:
+    print("ok   id-presence (zero, string, null and missing IDs)")
+    passed += 1
+
 for fx in fixtures:
     path = os.path.join(fixdir, fx)
     text = open(path, encoding="utf-8").read()

@@ -15,6 +15,7 @@
 ; the test that makes it stay fixed.
 (import Str)
 (import IO)
+(import Err)
 (import Cereal)
 
 (:: checks Int)
@@ -127,8 +128,36 @@
       (set bad (+ bad (eqInt "object lookup" (jsonGetInt (jsonParse "{\"a\":1,\"b\":2}") "b") 2)))
       (set bad (+ bad (eqInt "object miss" (jsonGet (jsonParse "{\"a\":1}") "zz") 0)))
       (set bad (+ bad
+                 (eqInt "find miss"
+                   (if (isNone (jsonFind (jsonParse "{\"a\":1}") "zz"))
+                     1
+                     0)
+                   1)))
+      (set bad (+ bad
+                 (eqInt "find non-object"
+                   (if (isNone (jsonFind (jsonParse "[1]") "a"))
+                     1
+                     0)
+                   1)))
+      (set bad (+ bad
+                 (eqInt "find null"
+                   (match (jsonFind (jsonParse "{\"a\":null}") "a")
+                     ((Some value)
+                       (if (&& (!= value 0) (jsonIsNull value))
+                         1
+                         0)
+                     )
+                     ((None) 0))
+                   1)))
+      (set bad (+ bad
+                 (eqInt "find first duplicate"
+                   (match (jsonFind (jsonParse "{\"a\":1,\"a\":2}") "a")
+                     ((Some value) (jsonInt value))
+                     ((None) 0))
+                   1)))
+      (set bad (+ bad
                  (eqInt "nested" (jsonInt (jsonArrGet (jsonArrGet (jsonParse "[[9]]") 0) 0)) 9)))
-      (set n (+ n 8))
+      (set n (+ n 12))
       ; --- refusals ---------------------------------------------------
       ; Every one of these must answer 0, the absence marker.
       (set bad (+ bad (eqInt "bad trailing comma" (jsonParse "[1,]") 0)))
