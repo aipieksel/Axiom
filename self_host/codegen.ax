@@ -15913,10 +15913,12 @@
 ; particular address order, so `dst <= src` is exactly what not to
 ; assume there.
 ;
-; When the block does not fit in what remains of the marked chunk the
-; destination comes from a FRESH mapping, never the free list: the free
-; list at that moment holds the chunks this call just reclaimed, one of
-; which may be the source's.
+; When the block does not fit in what remains of the marked chunk,
+; reuse a free chunk only when its destination allocation, including
+; every header, is disjoint from the source bytes. The reset may have
+; just filed the source's own chunk, so taking the head unconditionally
+; could overwrite those bytes before the copy. Mapping only when no
+; safe chunk fits keeps repeated large snapshots bounded.
 ; ------------------------------------------------------------------
 (pub :: emitArenaKeepHelper (-> Int Int))
 ;@axiom:effect(io)
@@ -15998,26 +16000,75 @@
     (emitLine cg
       (concat "  %want = and i64 %rounded0, "
         (concat (fmtInt (- 0 (targetArenaGrainBytes (memGetWord cg 26)))) "")))
+    (emitLine cg "  %srcend = add i64 %src, %bytes")
+    (emitLine cg "  %srcvalid = icmp uge i64 %srcend, %src")
+    (emitLine cg "  %fhead = load i64, ptr @__axiom_free")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "scan:")
+    (emitLine cg "  %cand = phi i64 [ %fhead, %fresh ], [ %cnext, %scan_next ]")
+    (emitLine cg "  %prev = phi i64 [ 0, %fresh ], [ %cand, %scan_next ]")
+    (emitLine cg "  %exhausted = icmp eq i64 %cand, 0")
+    (emitLine cg "  br i1 %exhausted, label %map, label %scan_test")
+    (emitLine cg "scan_test:")
+    (emitLine cg "  %candp = inttoptr i64 %cand to ptr")
+    (emitLine cg "  %candsz = load i64, ptr %candp")
+    (emitLine cg "  %candlink = add i64 %cand, 8")
+    (emitLine cg "  %candlinkp = inttoptr i64 %candlink to ptr")
+    (emitLine cg "  %cnext = load i64, ptr %candlinkp")
+    (emitLine cg "  %roomy = icmp uge i64 %candsz, %want")
+    (emitLine cg "  %writeend = add i64 %cand, %need")
+    (emitLine cg "  %before = icmp ule i64 %writeend, %src")
+    (emitLine cg "  %after = icmp ule i64 %srcend, %cand")
+    (emitLine cg "  %disjoint = or i1 %before, %after")
+    (emitLine cg "  %safe = and i1 %srcvalid, %disjoint")
+    (emitLine cg "  %eligible = and i1 %roomy, %safe")
+    (emitLine cg "  br i1 %eligible, label %unlink, label %scan_next")
+    (emitLine cg "scan_next:")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "unlink:")
+    (emitLine cg "  %at_head = icmp eq i64 %prev, 0")
+    (emitLine cg "  br i1 %at_head, label %unlink_head, label %unlink_mid")
+    (emitLine cg "unlink_head:")
+    (emitLine cg "  store i64 %cnext, ptr @__axiom_free")
+    (emitLine cg "  br label %adopt")
+    (emitLine cg "unlink_mid:")
+    (emitLine cg "  %prevlink = add i64 %prev, 8")
+    (emitLine cg "  %prevlinkp = inttoptr i64 %prevlink to ptr")
+    (emitLine cg "  store i64 %cnext, ptr %prevlinkp")
+    (emitLine cg "  br label %adopt")
+    (emitLine cg "map:")
     (emitArenaCapCheck cg "%want")
     (emitRuntimeMap cg "%want")
     (emitLine cg "  %failed_low = icmp ult i64 %addr, 4096")
     (emitLine cg "  %failed_neg = icmp ugt i64 %addr, -4096")
     (emitLine cg "  %failed = or i1 %failed_low, %failed_neg")
-    (emitLine cg "  br i1 %failed, label %oom, label %adopt")
+    (emitLine cg "  br i1 %failed, label %oom, label %mapped")
+    (emitLine cg "mapped:")
+    (emitLine cg "  br label %adopt")
     (emitLine cg "adopt:")
-    (emitLine cg "  %basep = inttoptr i64 %addr to ptr")
-    (emitLine cg "  store i64 %want, ptr %basep")
-    (emitLine cg "  %baselink = add i64 %addr, 8")
+    (emitLine cg
+      "  %base = phi i64 [ %addr, %mapped ], [ %cand, %unlink_head ], [ %cand, %unlink_mid ]")
+    (emitLine cg
+      "  %bsize = phi i64 [ %want, %mapped ], [ %candsz, %unlink_head ], [ %candsz, %unlink_mid ]")
+    (emitLine cg
+      "  %reused = phi i1 [ false, %mapped ], [ true, %unlink_head ], [ true, %unlink_mid ]")
+    (emitLine cg "  %basep = inttoptr i64 %base to ptr")
+    (emitLine cg "  store i64 %bsize, ptr %basep")
+    (emitLine cg "  %baselink = add i64 %base, 8")
     (emitLine cg "  %baselinkp = inttoptr i64 %baselink to ptr")
     (emitLine cg "  %chead = load i64, ptr @__axiom_chunk")
     (emitLine cg "  store i64 %chead, ptr %baselinkp")
-    (emitLine cg "  store i64 %addr, ptr @__axiom_chunk")
-    (emitLine cg "  %fdata = add i64 %addr, 16")
+    (emitLine cg "  store i64 %base, ptr @__axiom_chunk")
+    (emitLine cg "  %fdata = add i64 %base, 16")
     (emitLine cg "  %fbump = add i64 %fdata, %sz")
     (emitLine cg "  store i64 %fbump, ptr @__axiom_bump")
-    (emitLine cg "  %fend = add i64 %addr, %want")
+    (emitLine cg "  %fend = add i64 %base, %bsize")
     (emitLine cg "  store i64 %fend, ptr @__axiom_bump_end")
-    (emitLine cg "  store i64 %fbump, ptr @__axiom_high")
+    ; A recycled chunk is dirty beyond the kept block too. Fresh
+    ; mappings still contain zeroes there; later allocations may skip
+    ; scrubbing only on that path.
+    (emitLine cg "  %fhigh = select i1 %reused, i64 %fend, i64 %fbump")
+    (emitLine cg "  store i64 %fhigh, ptr @__axiom_high")
     (emitLine cg "  br label %copy")
     ; The destination stays unscrubbed: the copy writes every byte the
     ; caller asked to keep, and the bytes past `%bytes` up to the

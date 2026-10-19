@@ -6532,6 +6532,77 @@ else:
           f"on {sys.platform}, final revision checked{driver_note})")
     passed += 1
 
+# A retained document can exceed the original marked chunk even when
+# every reply is tiny. This covers the keep helper's other landing path
+# without a long provider sweep or enough requests to pressure the host.
+def large_snapshot_session(uri, source, n):
+    document = {"textDocument": {"uri": uri}}
+    requests = list(range(1000, 1000 + n - 1)) + [3]
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "axiom", "version": 1,
+                             "text": source}}},
+    ]
+    messages.extend({"jsonrpc": "2.0", "id": identity,
+                     "method": "textDocument/documentSymbol", "params": document}
+                    for identity in requests)
+    return (b"".join(frame(message) for message in messages),
+            frame({"jsonrpc": "2.0", "method": "exit", "params": None}), requests)
+
+
+def large_snapshot_probe(compiler, cwd):
+    source = ("(:: keepSentinel Int)\n(fn (keepSentinel) 7)\n;"
+              + "x" * (1024 * 1024 + 4096) + "\n")
+    uri = "file://" + os.path.join(os.path.abspath(cwd), "large-snapshot-memory.ax")
+    peaks = {}
+    for n in (32, 64):
+        payload, last, requests = large_snapshot_session(uri, source, n)
+        out, status, peak, _, _ = run_measured([compiler, "lsp"], payload, last, cwd)
+        messages, tail = unframe(out)
+        answered = {message["id"]: message for message in messages if "id" in message}
+        publications = [message["params"] for message in messages
+                        if message.get("method") == "textDocument/publishDiagnostics"]
+        if status != 0:
+            return f"{n}-request session exited {status}", peaks
+        if tail:
+            return f"{n}-request session left {len(tail)} unframed bytes", peaks
+        if set(answered) != {1, 2, *requests}:
+            return (f"{n}-request session answered the wrong request IDs: "
+                    f"{sorted(answered)}"), peaks
+        if any("error" in response for response in answered.values()):
+            return f"{n}-request session answered an error", peaks
+        if (len(publications) != 1 or publications[0].get("uri") != uri
+                or publications[0].get("version") != 1 or publications[0]["diagnostics"]):
+            return f"{n}-request session did not check its retained document", peaks
+        for identity in requests:
+            result = answered[identity].get("result")
+            if (not isinstance(result, list)
+                    or [symbol.get("name") for symbol in result] != ["keepSentinel"]):
+                return f"{n}-request session lost its outline at request {identity}", peaks
+        if peak is None:
+            return f"{n}-request session has no own-server peak measurement", peaks
+        peaks[n] = peak
+        # Stop here on a broken runtime instead of growing another session.
+        if peak > 512 * 1024:
+            return f"{n}-request session used {peak} KiB, over 524288 KiB", peaks
+    growth = peaks[64] - peaks[32]
+    if growth > 16 * 1024:
+        return (f"{peaks[32]} KiB at 32 requests, {peaks[64]} KiB at 64: "
+                f"grew {growth} KiB, over 16384 KiB"), peaks
+    return None, peaks
+
+
+large_why, large_peaks = large_snapshot_probe(stage1, fixdir)
+if large_why:
+    print(f"FAIL large-snapshot-session-is-flat: {large_why}")
+    failed += 1
+else:
+    print(f"ok   large-snapshot-session-is-flat ({large_peaks[32]} KiB at 32 requests, "
+          f"{large_peaks[64]} KiB at 64, under 16384 KiB slope and 524288 KiB absolute; "
+          "every request retained the checked outline)")
+    passed += 1
+
 # =====================================================================
 # THE OUTLINE'S EXTENT, AND WHAT IT FALLS BACK TO.
 #
