@@ -99,9 +99,11 @@ def run_session(compiler, payload, cwd=None, timeout=600, wait_diagnostics=True)
         messages.append(json.loads(body[:length]))
         remaining = body[length:]
     client = Client(compiler, cwd=cwd)
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
+    index, message = -1, {}
     try:
-        for message in messages:
+        for index, message in enumerate(messages):
             client.send(message["method"], message.get("params"), message.get("id"))
             opening = wait_diagnostics and message["method"] in (
                 "textDocument/didOpen", "textDocument/didChange")
@@ -122,6 +124,27 @@ def run_session(compiler, payload, cwd=None, timeout=600, wait_diagnostics=True)
         status = client.process.wait(timeout=max(0.001, deadline - time.monotonic()))
         return subprocess.CompletedProcess([compiler, "lsp"], status,
                                            b"".join(client.frames), client.process.stderr.read())
+    except Exception as error:
+        status = client.process.poll()
+        if status is None and isinstance(error, (EOFError, BrokenPipeError)):
+            try:
+                status = client.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        if client.process.poll() is None:
+            client.process.kill()
+            client.process.wait()
+        # Descendants may still hold stderr open after a failed parent.
+        os.set_blocking(client.process.stderr.fileno(), False)
+        stderr = client.process.stderr.read() or b''
+        params = message.get('params') or {}
+        point = params.get('position', params.get('range', '-')) if isinstance(params, dict) else '-'
+        raise RuntimeError(
+            f"LSP message {index + 1}/{len(messages)} {message.get('method')} "
+            f"id={message.get('id')!r} at {point}; "
+            f"{time.monotonic() - started:.2f}s, {len(client.frames)} received frames, "
+            f"server status before cleanup={status}, stderr={stderr[-2000:]!r}"
+        ) from error
     finally:
         if client.process.poll() is None:
             client.process.kill()
