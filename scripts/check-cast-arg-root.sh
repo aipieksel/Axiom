@@ -180,13 +180,18 @@ echo "--- 1. user-level cast count does not grow ---"
 # the precise-numeric REPL transcript, fourteen in its compiled and
 # REPL cross-checks, and one oracle refusal control in local-models.py.
 # The compiler and library add no reference erasure for these tests.
+# Baseline 980 was already present before RC-001/RC-002: four casts in
+# the frontend cache fixture at 1cab0543, two in the worker transfer
+# fixture at 8dacda3e, and two in Vec's inlinable push at 93ac2e5a.
+# The fixtures erase packet handles; Vec's casts move a generic word
+# through its raw storage. The count is a ceiling, not a target.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 972 ]; then
-  ok "user-level (cast count $cast_count <= 972)"
+elif [ "$cast_count" -le 980 ]; then
+  ok "user-level (cast count $cast_count <= 980)"
 else
-  bad "user-level (cast count $cast_count > 972): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 980): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -221,11 +226,22 @@ fi
 # `grep -c`, not `rg -c`: the Linux image carries no ripgrep and a
 # missing counter reads as 0 == 0 - the fixed defect - on exactly
 # the leg that never saw the tool. (Measured 2026-09-19.)
-if [[ ! -f "$work/cast3.ll" || ! -f "$work/cast4.ll" ]]; then
+extract_user_main() {  # <whole-module.ll> <user-main.ll>
+  awk '
+    /^define .*@__axiom_user_main\(/ { in_fn = 1; seen = 1 }
+    in_fn { print }
+    in_fn && /^}/ { in_fn = 0 }
+    END { if (!seen) exit 1 }
+  ' "$1" > "$2"
+}
+
+if [[ ! -f "$work/cast3.ll" || ! -f "$work/cast4.ll" ]] \
+   || ! extract_user_main "$work/cast3.ll" "$work/cast3.main.ll" \
+   || ! extract_user_main "$work/cast4.ll" "$work/cast4.main.ll"; then
   bad "emit-llvm produced no IR for the probes; counting releases would compare nothing"
 else
-  rel3="$(grep -c 'call void @axiom_release' "$work/cast3.ll" || true)"
-  rel4="$(grep -c 'call void @axiom_release' "$work/cast4.ll" || true)"
+  rel3="$(grep -c 'call void @axiom_release(' "$work/cast3.main.ll" || true)"
+  rel4="$(grep -c 'call void @axiom_release(' "$work/cast4.main.ll" || true)"
   rel3="${rel3:-0}"
   rel4="${rel4:-0}"
   if [[ "$rel3" -gt 0 && "$rel4" -eq "$rel3" ]]; then
@@ -244,7 +260,9 @@ cat > "$work/scalar.ax" <<'EOF'
 EOF
 if "$axc" --diagnostic-format=ai emit-llvm "$work/scalar.ax" -o "$work/scalar.ll" \
      > /dev/null 2> "$work/scalar.err"; then
-  if grep -q 'call void @axiom_release' "$work/scalar.ll"; then
+  if ! extract_user_main "$work/scalar.ll" "$work/scalar.main.ll"; then
+    bad "the scalar control has no emitted user main to inspect"
+  elif grep -q 'call void @axiom_release(' "$work/scalar.main.ll"; then
     bad "the scalar control acquired a reference release"
   else
     ok "the scalar control still has no reference release"
@@ -296,7 +314,12 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # resolveDeclsPhase removed two sites; fpLambda, fpPat and fpPatVecAt
 # removed one each. The total therefore rises by nine without adding
 # an implicit conversion or widening the kinds the counter recognises.
-erasure_pin=845
+# The pre-RC tree already carried 873 erasures with this counter: later
+# compiler work added 28 beyond 845. RC-001 adds one explicit nullable
+# module-name check in resolveDeclsPhase. The Darwin size repair adds
+# one String-to-word link argument for -dead_strip. Both are internal
+# word boundaries; neither broadens a user-level conversion.
+erasure_pin=875
 erasure_sum() {  # <axsym> -> the #erasures= total over self_host/ rows
   awk '$1 == "F" && index($3, "self_host/") == 1 {
          for (i = 4; i <= NF; i++)
@@ -341,7 +364,7 @@ cat > "$work/erase.ax" <<'EOF'
   (Red)
   (Green))
 
-(type Word = Int)
+(type Word Int)
 
 (:: str (-> String Int))
 (fn (str s)

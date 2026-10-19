@@ -9,10 +9,9 @@
 #
 # WHY FIXTURES, NOT THE COMPILER ITSELF, FOR THE REGION HALF. §1.1's
 # ablation ran on the compiler's own IR because the traffic it deleted
-# was everywhere. S4's region traffic is not: `self_host` holds no
-# region form, so the compiler's own IR is byte-identical with the
-# region elisions on or off - pinned by the slice gates' baselines -
-# and a verdict run there would assert a zero and prove nothing. The
+# was everywhere. S4's region traffic is sparse in `self_host`: the
+# Task region has the same IR with the elisions on or off. A verdict
+# run over the compiler alone would therefore prove little. The
 # verdict runs where the traffic is: the six S4 fixtures, each under
 # the compiler under test against ONE fully-ablated compiler with
 # every S4 spend off at once.
@@ -225,7 +224,10 @@ if [[ -f "$work/axc-ablated" ]]; then
       # vocabulary is the ablation moving something else. A forwarded
       # call result also needs a retain before an argument is released.
       # Normalise that guard only when the adjacent call, result and
-      # restored literal release establish the dependency.
+      # restored literal release establish the dependency. The two
+      # frontGetRecord arms also forward their result through a scratch
+      # slot when that release prevents a musttail call. Match those
+      # exact stores and keep every unrelated store in the comparison.
       # The residual looseness - a breakage spelled entirely
       # in flip words - is stated, and is covered from the other
       # side by the static-equality above (every restored release
@@ -253,6 +255,39 @@ def literal_result_guards(lines):
             guards.add(i)
     return guards
 
+def literal_forward_stores(lines):
+    literals, scratches, stores = set(), set(), set()
+    in_value = False
+    for i, line in enumerate(lines):
+        if line.startswith('define '):
+            in_value = line.startswith('define i64 @frontpack$frontGetValue(')
+            literals.clear()
+            scratches.clear()
+        if not in_value:
+            continue
+        literal = re.match(r'\s*(%[.\w]+) = ptrtoint .*@strhdr_\d+\b', line)
+        scratch = re.match(r'\s*(%[.\w]+) = ptrtoint ptr %__scr\.h to i64\s*', line)
+        if literal:
+            literals.add(literal.group(1))
+        if scratch:
+            scratches.add(scratch.group(1))
+        release = re.fullmatch(r'\s*call void @axiom_release\(i64 (%[.\w]+)\)\s*', line)
+        if not release or i == 0 or i + 4 >= len(lines) or release.group(1) not in literals:
+            continue
+        call = re.fullmatch(r'\s*(%[.\w]+) = call i64 @frontpack\$frontGetRecord\((.*)\)\s*', lines[i - 1])
+        pointer = re.fullmatch(r'\s*(%[.\w]+) = inttoptr i64 (%[.\w]+) to ptr\s*', lines[i + 1])
+        offset = re.fullmatch(r'\s*(%[.\w]+) = getelementptr i64, ptr (%[.\w]+), i64 0\s*', lines[i + 2])
+        store = re.fullmatch(r'\s*store i64 (%[.\w]+), ptr (%[.\w]+)\s*', lines[i + 3])
+        branch = re.fullmatch(r'\s*br label %[.\w]+\s*', lines[i + 4])
+        if (call and pointer and offset and store and branch
+                and re.search(r'\bi64 ' + re.escape(release.group(1)) + r'(?=[,)])', call.group(2) + ')')
+                and pointer.group(2) in scratches
+                and offset.group(2) == pointer.group(1)
+                and store.group(1) == call.group(1)
+                and store.group(2) == offset.group(1)):
+            stores.update((i + 1, i + 2, i + 3))
+    return stores
+
 # A copied result needs this guard; unrelated retains must survive.
 probe = ['define i64 @probe(i64 %heap) {',
          '  %lit = ptrtoint ptr @strhdr_1 to i64',
@@ -268,12 +303,34 @@ for index, replacement in [(2, '  %result = call i64 @forward(i64 %heap)'),
     mutant[index] = replacement
     assert not literal_result_guards(mutant), (index, replacement)
 
+forward = ['define i64 @frontpack$frontGetValue(i64 %heap) {',
+           '  %__scr.h = alloca i64',
+           '  %slot = ptrtoint ptr %__scr.h to i64',
+           '  %lit = ptrtoint ptr @strhdr_1 to i64',
+           '  %result = call i64 @frontpack$frontGetRecord(i64 %heap, i64 %lit)',
+           '  call void @axiom_release(i64 %lit)',
+           '  %ptr = inttoptr i64 %slot to ptr',
+           '  %field = getelementptr i64, ptr %ptr, i64 0',
+           '  store i64 %result, ptr %field',
+           '  br label %.L1', '}']
+assert literal_forward_stores(forward) == {6, 7, 8}
+for index, replacement in [(0, 'define i64 @other(i64 %heap) {'),
+                           (4, '  %result = call i64 @frontpack$frontGetRecord(i64 %heap)'),
+                           (5, '  call void @axiom_release(i64 %heap)'),
+                           (6, '  %ptr = inttoptr i64 %heap to ptr'),
+                           (7, '  %field = getelementptr i64, ptr %ptr, i64 1'),
+                           (8, '  store i64 %heap, ptr %field')]:
+    mutant = forward.copy()
+    mutant[index] = replacement
+    assert not literal_forward_stores(mutant), (index, replacement)
+
 def norm(p):
     out = []
     lines = open(p, encoding="utf-8", errors="replace").readlines()
     guards = literal_result_guards(lines)
+    forwarding = literal_forward_stores(lines)
     for i, L in enumerate(lines):
-        if i in guards or "call void @axiom_release" in L:
+        if i in guards or i in forwarding or "call void @axiom_release" in L:
             continue
         L = re.sub(r"%t\d+", "%tN", L)
         L = re.sub(r"%\.\w*\d+", "%RN", L)

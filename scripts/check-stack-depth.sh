@@ -41,7 +41,11 @@ gate_init
 # The ceiling is loose. It still catches a need that grows with program
 # size, and leaves room for other platforms' frame layouts and other
 # toolchains' spilling. A tight ceiling would fail on host differences.
-ceiling_kib=1024
+# The pre-RC and RC compilers both need 1064 KiB on this Darwin toolchain;
+# CI measured the same 1064 KiB on Darwin and Linux. Both still die by a
+# signal at half that stack. 1152 KiB leaves 88 KiB of measured headroom
+# while preserving the bisection and signal checks below.
+ceiling_kib=1152
 subject="self_host/main.ax"
 
 # Measure a compiler built from the current sources. `$AXIOM` is only the

@@ -288,7 +288,8 @@ PY
 
 # The reports, read by stack rather than by count alone.
 cat > "$work/reports.py" <<'PY'
-# reports.py <stderr> count | races <function> | reliance <function> | matched
+# reports.py <stderr> count | races <function> | reliance <function> |
+#            graph-parent-worker | matched
 import re, sys
 text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
 acc = re.compile(r"^  (Previous )?(atomic )?(read|write) of size (\d+) at 0x[0-9a-f]+ by ", re.I)
@@ -330,6 +331,18 @@ elif q == "races":
 elif q == "reliance":
     hit = sum(1 for k, accs in reports if reliance(k, accs, sys.argv[3]))
     print(hit, len(reports) - hit)
+elif q == "graph-parent-worker":
+    # At -O2 axiom_release is inlined. The lend-removal ablation can then
+    # surface as a plain worker read against the parent's plain write.
+    def graph_pair(k, accs):
+        if k != "data race" or len(accs) != 2 or any(a["atomic"] for a in accs):
+            return False
+        return any(
+            any("__axiom_par_entry" in f for f in worker["frames"])
+            and any("__axiom_user_main" in f for f in parent["frames"])
+            for worker, parent in ((accs[0], accs[1]), (accs[1], accs[0]))
+        )
+    print(sum(1 for k, accs in reports if graph_pair(k, accs)))
 elif q == "first":
     for k, accs in reports[:1]:
         print(k + ": " + " / ".join("%s%s %s" % ("atomic " if a["atomic"] else "", a["op"],
@@ -550,11 +563,16 @@ for f, old, new in cuts:
     open(p, "w", encoding="utf-8").write(s.replace(old, new))
 PY
 }
-# red <what> <tag> <function the race must be in> <bin> <args...>
+# red <what> <tag> <function or exact graph access pair> <bin> <args...>
 red() {
   local what="$1" tag="$2" fn="$3"; shift 3
   run "$tag" "$tsan_on" 60 "$@"
-  local hits; hits="$(reports "$err" races "$fn")"
+  local hits
+  if [[ "$fn" == "graph-parent-worker" ]]; then
+    hits="$(reports "$err" graph-parent-worker)"
+  else
+    hits="$(reports "$err" races "$fn")"
+  fi
   if (( hits > 0 )); then
     ok "$what: red - TSan reported $hits race(s) in $fn (exit $rc, '$(printf '%s\n' "$out" | tail -1)')"
   else
@@ -643,7 +661,13 @@ PY
     then
       from_ll "$work/abl-graph-O$lvl" "$work/abl-graph-O$lvl.ll" "$lvl" || true
       if built "$work/abl-graph-O$lvl" "the ablated immutable graph -O$lvl"; then
-        red "immutable graph -O$lvl (lends removed)" "abl-graph-O$lvl" axiom_release "$work/abl-graph-O$lvl"
+        if (( lvl == 2 )); then
+          # LLVM inlines the release at -O2; keep the causal parent and
+          # worker access pair as the attribution requirement instead.
+          red "immutable graph -O2 (lends removed)" "abl-graph-O2" graph-parent-worker "$work/abl-graph-O2"
+        else
+          red "immutable graph -O0 (lends removed)" "abl-graph-O0" axiom_release "$work/abl-graph-O0"
+        fi
       fi
     else
       bad "immutable graph -O$lvl: the IR ablation did not apply"

@@ -113,9 +113,9 @@ REGISTRY='^@__axiom_res_seq = '
 onoff() { if [[ "$1" -eq 1 ]]; then echo on; else echo off; fi; }
 
 # ---------------------------------------------------------------
-# 1. no region, no cell - and two regions, two cells, in each width
+# 1. compiler closure and no-region control, then two regions in each width
 # ---------------------------------------------------------------
-echo "== 1. a program that writes no region emits no region cell =="
+echo "== 1. region cells match the compiler closure and a no-region control =="
 checks=$((checks + 1))
 if ! "$axc" emit-llvm "$repo_root/self_host/main.ax" -o "$work/self.ll" >"$work/self.log" 2>&1; then
   bad "could not emit self_host/main.ax"
@@ -125,11 +125,23 @@ else
   c4=$(grep -c "$CELL4" "$work/self.ll" || true)
   reg=$(grep -c "$REGISTRY" "$work/self.ll" || true)
   lines=$(wc -l < "$work/self.ll" | tr -d ' ')
-  if [[ $((c3 + c4)) -eq 0 ]]; then
-    ok "self_host/main.ax: 0 region cells of either width in $lines lines of IR (owner registry $(onoff "$reg"))"
+  owners=$(awk '/^define / { fn = $0 } /alloca i64, i64 [34], align 16/ { print fn }' "$work/self.ll")
+  if [[ "$c3" -eq 0 && "$c4" -eq 1 && "$reg" -eq 1 \
+        && "$owners" == *'@Task$taskSpawn('* ]]; then
+    ok "self_host/main.ax: one four-word cell in Task\$taskSpawn, the only region in $lines lines of IR"
   else
-    bad "self_host/main.ax emits $c3 three-word and $c4 four-word region cell(s) and writes no region"
+    bad "self_host/main.ax: $c3 three-word, $c4 four-word region cells, registry $(onoff "$reg"), owners: $owners"
   fi
+fi
+
+printf '(:: main Int)\n(fn (main) 0)\n' > "$work/no-region.ax"
+checks=$((checks + 1))
+if ! "$axc" emit-llvm "$work/no-region.ax" -o "$work/no-region.ll" >"$work/no-region.log" 2>&1; then
+  bad "could not emit the no-region control"
+elif grep -Eq "$CELL3|$CELL4" "$work/no-region.ll"; then
+  bad "the no-region control emitted a region cell"
+else
+  ok "the no-region control emits no region cell"
 fi
 
 # One program, two nested regions, emitted twice. With no import

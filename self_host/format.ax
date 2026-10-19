@@ -4958,6 +4958,16 @@
       false)
     false))
 
+; A qualified type starts with its module name, which the formatter
+; represents as a group rather than one identifier atom.
+(pub :: fpTypeStartsLower (-> String Int Bool))
+(pub fn (fpTypeStartsLower src n)
+  (if (== (fnKind n) FN_ATOM)
+    (fpIsLowerIdent src n)
+    (if (> (fnLen n) 0)
+      (fpTypeStartsLower src (fnKid n 0))
+      false)))
+
 (pub :: fpIsTyvarList (-> String Int Bool))
 (pub fn (fpIsTyvarList src n)
   (if (!= (fnKind n) FN_PAREN)
@@ -5403,9 +5413,11 @@
       {
         (let tvEnd (fpTyvarsEnd src n (+ b 2)))
         (let target
-          (if (fpIsAtomText src (fnKid n tvEnd) "=")
-            (+ tvEnd 1)
-            tvEnd))
+          (if (>= tvEnd (fnLen n))
+            tvEnd
+            (if (fpIsAtomText src (fnKid n tvEnd) "=")
+              (+ tvEnd 1)
+              tvEnd)))
         (if (!= (+ target 1) (fnLen n))
           (fpBad p)
           {
@@ -5413,7 +5425,21 @@
             (fpVis p n)
             (fpP p "type ")
             (fpP p (fnText src (fnKid n (+ b 1))))
-            (fpTyvars p n (+ b 2) tvEnd 0 2)
+            ; A lowercase target follows a parenthesised parameter list.
+            ; Bare parameters would make the parser consume that target too.
+            (let lowerTarget (fpTypeStartsLower src (fnKid n target)))
+            (if (&& lowerTarget
+                  (if (== tvEnd (+ b 2))
+                    true
+                    (if (== tvEnd (+ b 3))
+                      (&& (== (fnKind (fnKid n (+ b 2))) FN_PAREN) (== (fnLen (fnKid n (+ b 2))) 0))
+                      false)))
+              (fpP p " ()")
+              (fpTyvars p n (+ b 2) tvEnd
+                (if lowerTarget
+                  1
+                  0)
+                2))
             (fpTypeAfter p (fnKid n target) 1)
             (fpP p ")")
           })

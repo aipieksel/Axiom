@@ -221,6 +221,10 @@ ICALL = re.compile(r'\b(?:musttail|tail|notail)?\s*(?:call|invoke)\b[^\n]*?\s(%[
 # symbol table goes unread and the address-taken set is silently empty.
 PTRTOINT_INSTR = re.compile(r'(?<!\()\bptrtoint ptr @("[^"]+"|[\w.$]+) to i64')
 PTRTOINT_CONST = re.compile(r'\bptrtoint\s*\(\s*ptr @("[^"]+"|[\w.$]+) to i64\s*\)')
+# A function pointer passed to inline assembly can be called by that
+# assembly. The stack-switch runtime passes __axiom_stack_call this way.
+INLINE_ASM_CALL = re.compile(r'\b(?:call|invoke)\b[^\n]*\basm\b')
+ASM_PTR_ARG = re.compile(r'\bptr @("[^"]+"|[\w.$]+)')
 # A block address taken for the backtrace line table:
 # `store i64 ptrtoint (ptr blockaddress(@fn, %LLn) to i64), ...`.
 # It is consumed without joining the taken set: the address is
@@ -354,6 +358,13 @@ def classify_line(m, line, lineno, cur, curglobal):
         owner = curglobal if cur is None else None
         if ABLATE == "noindirect" or owner not in SYMTAB_GLOBALS:
             m.taken.add(name)
+
+    if cur is not None and INLINE_ASM_CALL.search(line):
+        for raw in ASM_PTR_ARG.findall(line):
+            name = raw.strip('"')
+            if name in m.fnnames:
+                consumed.append(name)
+                m.taken.add(name)
 
     for raw in BLOCKADDR.findall(line):
         consumed.append(raw.strip('"'))
