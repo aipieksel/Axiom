@@ -159,9 +159,11 @@ echo "== 3. the library's own sort, which is what found this =="
 # --------------------------------------------------------------------
 # `vecSortBy` and `vecSiftDownBy` are the real-library case, checked
 # against the tree's stdlib. Their generic element `a` can hold a
-# callable, so they keep the mark and still say `Mut` through `cmp`.
+# callable, so they keep the mark and still name `cmp` as transparent.
+# `vecSortBy` allocates its guarded comparator closure; `vecSiftDownBy`
+# does not construct one.
 # Then the same bodies are checked with concrete `Int` signatures:
-# only that type change removes the mark, retaining `Mut` and `cmp`.
+# only that type change removes the mark, retaining each effect row and `cmp`.
 mkdir -p "$work/lib"
 cat > "$work/lib/lib.ax" <<'AX'
 (import Vec)
@@ -185,6 +187,8 @@ AX
   | grep '^F ' > "$work/librows" || true
 
 for d in vecSortBy vecSiftDownBy; do
+  expected_effects=Mut
+  if [[ "$d" == vecSortBy ]]; then expected_effects=Alloc,Mut; fi
   row="$(grep -E "^F $d " "$work/librows" || true)"
   checks=$((checks + 1))
   if [[ -z "$row" ]]; then
@@ -194,12 +198,12 @@ for d in vecSortBy vecSiftDownBy; do
     echo "FAIL: generic $d lost its lower bound; a comparator argument of type a can hold a function"
     echo "     $row"
     failed=$((failed + 1))
-  elif [[ "$row" != *"#effects=Mut"* || "$row" != *"#effect-params=cmp"* ]]; then
-    echo "FAIL: $d lost more than the marker - its row no longer says Mut through a transparent \`cmp\`"
+  elif [[ "$row" != *"#effects=$expected_effects "* || "$row" != *"#effect-params=cmp"* ]]; then
+    echo "FAIL: $d lost more than the marker - its row no longer says $expected_effects through a transparent \`cmp\`"
     echo "     $row"
     failed=$((failed + 1))
   else
-    echo "ok   generic $d: Mut, transparent in cmp, and a lower bound"
+    echo "ok   generic $d: $expected_effects, transparent in cmp, and a lower bound"
   fi
 done
 
@@ -240,6 +244,8 @@ PY
   | grep '^F ' > "$work/librows-int" || true
 
 for d in vecSortBy vecSiftDownBy; do
+  expected_effects=Mut
+  if [[ "$d" == vecSortBy ]]; then expected_effects=Alloc,Mut; fi
   row="$(grep -E "^F $d " "$work/librows-int" || true)"
   checks=$((checks + 1))
   if [[ -z "$row" ]]; then
@@ -250,12 +256,12 @@ for d in vecSortBy vecSiftDownBy; do
     echo "FAIL: integer-specialised $d still reads as a lower bound"
     echo "     $row"
     failed=$((failed + 1))
-  elif [[ "$row" != *"#effects=Mut"* || "$row" != *"#effect-params=cmp"* ]]; then
-    echo "FAIL: integer-specialised $d lost Mut or its transparent cmp parameter"
+  elif [[ "$row" != *"#effects=$expected_effects "* || "$row" != *"#effect-params=cmp"* ]]; then
+    echo "FAIL: integer-specialised $d lost $expected_effects or its transparent cmp parameter"
     echo "     $row"
     failed=$((failed + 1))
   else
-    echo "ok   integer-specialised $d: Mut, transparent in cmp, and complete"
+    echo "ok   integer-specialised $d: $expected_effects, transparent in cmp, and complete"
   fi
 done
 
