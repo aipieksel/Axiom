@@ -9,6 +9,8 @@ import sys
 import tempfile
 import threading
 
+MISSING_ID = object()
+
 
 class Client:
     def __init__(self, compiler, cwd=None):
@@ -40,9 +42,9 @@ class Client:
         except BaseException as error:
             self.inbox.put(error)
 
-    def send(self, method, params, identity=None):
+    def send(self, method, params, identity=MISSING_ID):
         message = {'jsonrpc': '2.0', 'method': method, 'params': params}
-        if identity is not None:
+        if identity is not MISSING_ID:
             message['id'] = identity
         body = json.dumps(message, ensure_ascii=False).encode()
         self.process.stdin.write(b'Content-Length: %d\r\n\r\n' % len(body) + body)
@@ -104,7 +106,8 @@ def run_session(compiler, payload, cwd=None, timeout=600, wait_diagnostics=True)
     index, message = -1, {}
     try:
         for index, message in enumerate(messages):
-            client.send(message["method"], message.get("params"), message.get("id"))
+            client.send(message["method"], message.get("params"),
+                        message.get("id", MISSING_ID))
             opening = wait_diagnostics and message["method"] in (
                 "textDocument/didOpen", "textDocument/didChange")
             document = message.get("params", {}).get("textDocument", {}) if opening else {}
@@ -227,6 +230,16 @@ def run(compiler):
         client.barrier()
         assert 'AX3004' in [d['code'] for d in client.latest(facade_uri)['diagnostics']]
         client.opening(helper_uri, text, version=-4)
+        assert not client.latest(facade_uri)['diagnostics'], client.latest(facade_uri)
+        # A bad selective import belongs to the file that wrote it, even
+        # when a second open document reaches it through a dependency.
+        bad_facade = '(import Helper (missing))\n(pub :: answer String)\n(pub fn (answer) "ok")\n'
+        client.change(facade_uri, bad_facade, 2)
+        found = client.latest(facade_uri)['diagnostics']
+        assert len(found) == 1 and found[0]['code'] == 'AX3023', found
+        assert found[0]['range']['start'] == {'line': 0, 'character': 8}, found
+        assert not client.latest(uri)['diagnostics'], client.latest(uri)
+        client.change(facade_uri, facade_source, 3)
         assert not client.latest(facade_uri)['diagnostics'], client.latest(facade_uri)
         client.close()
         print('ok   unsaved dependencies, transitive invalidation, malformed recovery and close/reopen')

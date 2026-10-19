@@ -1688,7 +1688,7 @@ Intern - a string interner, in Axiom.
 
 ## `Cereal`
 
-`stdlib/Cereal.ax` — 49 public names
+`stdlib/Cereal.ax` — 50 public names
 
 Cereal — typed serialisation for JSON, TOML and YAML.
 Codecs share CerealValue and return Result with explicit resource limits.
@@ -1714,6 +1714,7 @@ Raw consumers require live Cereal handles; new code uses typed values.
 | `jsonObjLen` | value | `(-> Int Int)` |  |  | How many members a JSON object holds, and 0 for any other value. |
 | `jsonObjPut` | value | `(-> Int String Int Int)` | `Alloc,Mut` |  | Add the member `key` with value `x` to a JSON object. A repeated key is appended, not replaced, and `jsonGet` answers the first. |
 | `jsonGet` | value | `(-> Int String Int)` |  |  | The value under `key` in a JSON object, or 0 when there is none. `jsonIsNull` answers true for both, so compare against 0 to tell an absent member from one set to `null`. |
+| `jsonFind` | value | `(-> Int String (Option Int))` | `Alloc` |  | The value under `key` in a JSON object. `None` means the key is absent or the value is not an object; `Some jsonNull` means explicit `null`. A repeated key returns its first member. |
 | `jsonGetInt` | value | `(-> Int String Int)` |  |  | The integer under `key` in a JSON object, or 0 when the key is absent or not a number. |
 | `jsonGetStr` | value | `(-> Int String String)` |  |  | The string under `key` in a JSON object, or empty when the key is absent or not a string. |
 | `jsonWrite` | value | `(-> Int String)` | `Alloc,Mut` |  | The value as JSON text, on one line with no spaces, strings escaped as JSON requires. |

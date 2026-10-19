@@ -16,6 +16,17 @@ its changelog too.
 
 ## Unreleased
 
+- Check selective import names inside dependencies, including names
+  the entry file never uses. An invalid name reports AX3023 at the
+  dependency's import site. Tested by
+  `tests/diagnostics/441-nested-import-name-list.ax` and
+  `tests/lsp/workspace-overlays.py`.
+
+- Add `jsonFind` for raw JSON object members. It returns `None` for a
+  missing member or a non-object and `Some` for a present value,
+  including `null`. Existing raw accessors keep their answers. Tested
+  by `tests/stdlib/340-json.ax`.
+
 - Guarded task stacks reinstall signal state after `fork`, reusing
   their mapped alternate stack. A task overflow reports status 86
   and a backtrace in both concurrency lowerings. Tested by

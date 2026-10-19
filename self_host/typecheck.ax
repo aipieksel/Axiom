@@ -2931,29 +2931,41 @@
 ; nothing at all if it never was, which is the case for a typo in a
 ; list of otherwise-good names.
 ;
-; Only the ENTRY file's imports. A nested module's import list is its
-; author's business and its declarations are not in `entryDecls` to
-; walk; the entry file's is where a reader's typo lives.
+; Entry imports live in `entryDecls`. Each imported unit retains its
+; own import sites because resolution consumes them before `allDecls`.
 ; ------------------------------------------------------------------
-(pub :: checkImportNames (-> (Vec ASTNode) (Vec ASTNode) Ints Int Int))
-(pub fn (checkImportNames entryDecls allDecls out i)
-  (if (>= i (vecLen entryDecls))
+(pub :: checkImportNames (-> Decls Decls Ints Int Int Int))
+(pub fn (checkImportNames sites allDecls out unit i)
+  (if (>= i (vecLen sites))
     0
     {
-      (let d (vecGet entryDecls i))
+      (let d (vecGet sites i))
       {
         (if (== (nodeTag d) TAG_D_IMPORT)
           {
             (let names (nodeBNames d))
             (if (! (== (as names Int) 0))
-              (checkImportNameList (nodeAName d) names (nodeSpan d) allDecls out 0))
+              (checkImportNameList (nodeAName d) names (nodeSpan d) allDecls out unit 0))
           })
-        (checkImportNames entryDecls allDecls out (+ i 1))
+        (checkImportNames sites allDecls out unit (+ i 1))
       }
     }))
 
-(pub :: checkImportNameList (-> String Names Int (Vec ASTNode) Ints Int Int))
-(pub fn (checkImportNameList modName names sp allDecls out i)
+(pub :: checkImportedImportNames (-> Units Decls Ints Int Int))
+; Units is a packed ABI registry of live CUnit2 owners. Retain their typed
+; import vectors while the checker reads the consumed import forms.
+;@axiom:effect(unsafe)
+(pub fn (checkImportedImportNames units allDecls out i)
+  (if (>= i (vecLen units))
+    0
+    {
+      (let unit (as (vecGet units i) CUnit2))
+      (checkImportNames unit.imports allDecls out i 0)
+      (checkImportedImportNames units allDecls out (+ i 1))
+    }))
+
+(pub :: checkImportNameList (-> String Names Int Decls Ints Int Int Int))
+(pub fn (checkImportNameList modName names sp allDecls out unit i)
   (if (>= i (vecLen names))
     0
     {
@@ -2961,25 +2973,27 @@
         (let n (vecGetStr names i))
         (if (== (declaredInModule allDecls modName n 0) 1)
           (if (! (== (exportedFromModule allDecls modName n 0) 1))
-            (importDiag out sp
+            (importDiag out unit sp
               (concat (concat (concat (concat "module `" modName) "` declares `") n)
                 "` but does not export it")
               "write `pub` on its declaration"))
-          (importDiag out sp
+          (importDiag out unit sp
             (concat (concat (concat (concat "module `" modName) "` declares no `") n) "`")
             "check the spelling, or import the module without a name list"))
       }
-      (checkImportNameList modName names sp allDecls out (+ i 1))
+      (checkImportNameList modName names sp allDecls out unit (+ i 1))
     }))
 
-(pub :: importDiag (-> Ints Int String String Int))
-(pub fn (importDiag out sp msg help)
+(pub :: importDiag (-> Ints Int Int String String Int))
+(pub fn (importDiag out unit sp msg help)
   {
     (vecPush out
-      (diagSetLabel
-        (mkDiagNote SEV_ERROR "AX3023" "private-name" sp msg 0 0 help
-          "an import's name list is checked against what the module exports")
-        "not exported"))
+      (diagSetUnit
+        (diagSetLabel
+          (mkDiagNote SEV_ERROR "AX3023" "private-name" sp msg 0 0 help
+            "an import's name list is checked against what the module exports")
+          "not exported")
+        unit))
     0
   })
 
@@ -31274,7 +31288,8 @@
       {
         (checkDuplicates (dupIdxBuild entryDecls) entryDecls out 0)
         (checkReservedNames entryDecls out 0)
-        (checkImportNames entryDecls allDecls out 0)
+        (checkImportNames entryDecls allDecls out 0 0)
+        (checkImportedImportNames units allDecls out 1)
         ; An import leaves the list before `allDecls` is built, so its
         ; tags are asked here, over the entry file's own.
         (checkStrayImportAxtags tc entryDecls 0)

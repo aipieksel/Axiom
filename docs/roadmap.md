@@ -195,7 +195,7 @@ including pattern matching, remain work to do.
 | Resource reports consume checked `Spawn` and `Block` effects, preserve handled effect subtraction and refuse unknown kernel calls in nonblocking entries | Done |
 | Stack reports cover every selected source entry and the assembled IRQ save and dispatch extent; additional machine roots cannot bypass main | Done |
 | Selective foreign-item imports and transitive foreign references preserve visibility and module resolution | Done | `tests/profile/verify-foreign-resolution.py` |
-| Selective import lists are validated inside every imported module, including unused names | Not started |
+| Selective import lists are validated inside every imported module, including unused names | Done | `tests/diagnostics/441-nested-import-name-list.ax` |
 | The test runner runs tests in parallel | Done |
 | UTF-16 ranged document edits apply in order and atomically, with monotonic versions and versioned diagnostics | Done |
 | The language server cancels obsolete work and serves requests from revisioned background analysis on hosts with process and poller support | Done |

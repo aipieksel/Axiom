@@ -156,6 +156,9 @@ have() { # have <got> <want> <what>
 # trees with the same compiler changes no existing row or IO requirement.
 # Targeted cache eviction adds one pure selector and one Mut remover.
 # Comparing both trees with the same compiler changes no existing row.
+# Nested import validation adds one Alloc,Mut,Unsafe checker over typed
+# unit import sites. jsonFind and its helper each add one Alloc row in
+# both views. A same-compiler comparison changes no existing row or IO.
 echo "== compiler view: symbols --calls self_host/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
@@ -165,11 +168,11 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3183 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 446 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 185 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 100 "exactly Alloc"
+have "$(bucket "$work/main.axsym" 'Alloc')" 102 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 20 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 12 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 246 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 247 "Alloc,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Unsafe')" 169 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 64 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 30 "Mut,Unsafe"
@@ -229,7 +232,7 @@ lrows="$(grep -c '^F ' "$work/lib.axsym" || true)"
 have "$(bucket "$work/lib.axsym" 'Alloc,Mut')" 712 "exactly Alloc,Mut"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut')" 311 "Alloc,IO,Mut"
 have "$(bucket "$work/lib.axsym" 'Mut')" 177 "exactly Mut"
-have "$(bucket "$work/lib.axsym" 'Alloc')" 167 "exactly Alloc"
+have "$(bucket "$work/lib.axsym" 'Alloc')" 169 "exactly Alloc"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO')" 22 "Alloc,IO"
 have "$(bucket "$work/lib.axsym" 'IO')" 14 "exactly IO"
 have "$(bucket "$work/lib.axsym" 'Alloc,Assert,IO,Mut')" 7 "Alloc,Assert,IO,Mut"
