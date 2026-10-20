@@ -328,7 +328,7 @@ Axqlite.AxqlMacro - AXQL statements written as Axiom forms.
 
 ## `Axqlite.AxqlParse`
 
-`stdlib/Axqlite/AxqlParse.ax` — 6 public names
+`stdlib/Axqlite/AxqlParse.ax` — 11 public names
 
 Axqlite.AxqlParse - AXQL text to statements.
 
@@ -347,6 +347,11 @@ Axqlite.AxqlParse - AXQL text to statements.
 | `axqlParse` | value | `(-> String (Result Parsed Error))` | `Alloc,Mut` |  | Parse exactly one statement, with an optional `;` after it and nothing else but whitespace and comments. |
 | `axqlParseScript` | value | `(-> String (Result (Vec Parsed) Error))` | `Alloc,Mut` |  | Parse a script: statements separated by `;`. Empty statements are skipped, so a script may end with `;`. |
 | `axqlNameNeedsQuotes` | value | `(-> String Bool)` |  |  | Whether `name` needs double quotes to be read as a name: it isn't `[A-Za-z_][A-Za-z0-9_]*`, or it spells a reserved word. |
+| `axqlKeywords` | value | `String` |  |  | The reserved words, upper case, in one string, in the order the lexer's table keeps them. `axqlIsKeyword` is the check for one. |
+| `axqlContextWords` | value | `String` |  |  | The words that are keywords only where the grammar expects them, so a column may carry one as its name. |
+| `axqlFunctions` | value | `String` |  |  | The functions a statement may call, by name. |
+| `axqlIsKeyword` | value | `(-> String Bool)` |  |  | Whether `w`, in any case, is a reserved word. |
+| `axqlTokens` | value | `(-> String (Vec Int))` | `Alloc,Mut` |  | The tokens of `src` as flat triples of start, end and class, where the class is 1 for a reserved word, 2 an identifier or quoted name, 3 a number, 4 a string or blob, 5 a parameter and 6 punctuation. The scan stops where the lexer refuses, so a text with a fault still yields its tokens up to it. For an editor that colours a statement. |
 
 ## `Axqlite.AxqlSchema`
 

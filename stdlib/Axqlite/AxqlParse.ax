@@ -804,11 +804,12 @@
     (concat "byte " (fmtInt c))))
 
 ; The tokens of `src`, ending with one `tkEof` at its length.
-(:: lex (-> String (Result (Vec Tok) Error)))
-(fn (lex src)
+; The scan itself, shared by `lex` and `axqlTokens`: tokens into
+; `lx.toks` from `lx.at` to the end of `src` or the first refusal.
+(:: lexAll (-> Lx Int Int))
+(fn (lexAll lx n)
   {
-    (let n (strLen src))
-    (let lx (Lx :src src :toks vecNew :at 0 :failed false :errAt 0 :errMsg ""))
+    (let src lx.src)
     {
       (while (&& (! lx.failed) (< lx.at n))
         {
@@ -833,6 +834,17 @@
               (lexParam lx)
             (lexPunct lx))
         })
+      0
+    }
+  })
+
+(:: lex (-> String (Result (Vec Tok) Error)))
+(fn (lex src)
+  {
+    (let n (strLen src))
+    (let lx (Lx :src src :toks vecNew :at 0 :failed false :errAt 0 :errMsg ""))
+    {
+      (lexAll lx n)
       (if lx.failed
         (synErrAt src lx.errAt lx.errMsg)
         {
@@ -2363,3 +2375,63 @@
       (|| (! plain) (!= (keywordKind name 0 n) tkIdent))
     }
   })
+
+;; The reserved words, upper case, in one string, in the order the
+;; lexer's table keeps them. `axqlIsKeyword` is the check for one.
+(pub :: axqlKeywords String)
+(pub fn (axqlKeywords)
+  "AND AS BEGIN BY COMMIT CREATE DELETE DROP EXISTS FALSE FROM IF INDEX INSERT INTO IS LIMIT NOT NULL OFFSET ON OR ORDER PRIMARY ROLLBACK SELECT SET TABLE TRUE UNIQUE UPDATE VALUES WHERE")
+
+;; The words that are keywords only where the grammar expects them, so
+;; a column may carry one as its name.
+(pub :: axqlContextWords String)
+(pub fn (axqlContextWords)
+  "INTEGER REAL TEXT BLOB LINK KEY DEFAULT CHECK ASC DESC TRANSACTION LIKE IN BETWEEN GROUP HAVING UPSERT ALTER ADD COLUMN RENAME TO")
+
+;; The functions a statement may call, by name.
+(pub :: axqlFunctions String)
+(pub fn (axqlFunctions)
+  "length lower upper trim substr replace instr abs round coalesce nullif min max typeOf asInt asReal asText count sum avg")
+
+;; Whether `w`, in any case, is a reserved word.
+(pub :: axqlIsKeyword (-> String Bool))
+(pub fn (axqlIsKeyword w)
+  (!= (keywordKind w 0 (strLen w)) tkIdent))
+
+;; The tokens of `src` as flat triples of start, end and class, where
+;; the class is 1 for a reserved word, 2 an identifier or quoted name,
+;; 3 a number, 4 a string or blob, 5 a parameter and 6 punctuation. The
+;; scan stops where the lexer refuses, so a text with a fault still
+;; yields its tokens up to it. For an editor that colours a statement.
+(pub :: axqlTokens (-> String (Vec Int)))
+(pub fn (axqlTokens src)
+  {
+    (let lx (Lx :src src :toks vecNew :at 0 :failed false :errAt 0 :errMsg ""))
+    (let out vecNew)
+    {
+      (lexAll lx (strLen src))
+      (for t in lx.toks
+        (if (!= t.kind tkEof)
+          {
+            (vecPush out t.start)
+            (vecPush out t.end)
+            (vecPush out (tokenClass t.kind))
+          }))
+      out
+    }
+  })
+
+; The class `axqlTokens` answers for a token kind.
+(:: tokenClass (-> Int Int))
+(fn (tokenClass kind)
+  (if (>= kind kwAnd)
+      1
+    (== kind tkIdent)
+      2
+    (|| (== kind tkInt) (|| (== kind tkIntMin) (== kind tkReal)))
+      3
+    (|| (== kind tkStr) (== kind tkBlob))
+      4
+    (|| (== kind tkParamNext) (|| (== kind tkParamNum) (== kind tkParamName)))
+      5
+    6))

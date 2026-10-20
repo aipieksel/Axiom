@@ -1237,17 +1237,16 @@ under `tests/` and `docs/` into a copy in its place, and requires
 
 ### Lint hints
 
-On top of the checker's diagnostics, the server adds three lint Hints
-to every document that parses, and a fourth about the tag that quiets
+On top of the checker's diagnostics, the server adds four lint Hints
+to every document that parses, and a fifth about the tag that quiets
 them. `axiom check` never emits them. They
 have severity `Hint`, they're on for every document, and they never
 fail a build. A Hint is your editor thinking out loud, so it lives in
 the server. The checker's warnings are what the project promises about
 every build.
 
-The lints read the raw tree and expand nothing. They see what you
-wrote, not what it expands to, so a lint can never disagree with the
-checker about what your code means.
+The lints read the raw tree and expand nothing. They describe source
+patterns; the checker owns type and effect diagnostics.
 
 - `lint-dead-branch`: `(if true A B)` or `(if false A B)`. One arm can
   never run. This is usually a condition left literal while debugging,
@@ -1263,6 +1262,21 @@ checker about what your code means.
   alive, so a binding that is written but never read still draws the
   Hint. `_` is the explicit discard and stays silent, as do pattern
   binders, parameters and anything inside a macro body.
+- `lint-axql`: a query literal that the AXQL parser refuses. The
+  server recognises the query argument of `axqSql`, `axqExec`,
+  `axqExecBatch` and `axqPrepare`, including qualified calls. It reads
+  those names as written; it does not resolve their bindings or check
+  the database's schema. The hint quotes the parser's refusal and
+  points at its word, or the whole literal when escapes change offsets.
+
+Inside these query literals, completion offers AXQL keywords, functions
+and table and column names declared in the document. Hover explains
+those words, and semantic tokens colour the query using AXQL's lexer.
+Escaped literals keep their ordinary string colouring. These editor
+answers describe the text; successful execution still depends on the
+database and parameters.
+
+Tested by `tests/lsp/axql.py` and `tests/axqlite/407-editor-tokens.ax`.
 
 Three rules keep the lints precise:
 
@@ -1285,10 +1299,10 @@ signature or the `fn`:
 ```
 
 `;@axiom:nolint(RULE)` quiets one rule, `nolint(hints)` quiets all
-three, and `nolint(AX3037)` or `nolint(warnings)` quiets the checker's
+four, and `nolint(AX3037)` or `nolint(warnings)` quiets the checker's
 warnings on that declaration as well; `nolint(all)` quiets both kinds.
 A tag above an `import` covers the whole file. An error is never
-quieted. A name the tag lists that nothing answers to draws a fourth
+quieted. A name the tag lists that nothing answers to draws a fifth
 hint, `lint-unknown-nolint`, at the tag itself. The tag syntax is in
 [the reference](reference.md#nolint-quiet-the-editors-hints).
 

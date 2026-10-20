@@ -73,6 +73,8 @@
 (import doccomment)
 (import nolint)
 (import raw)
+(import Axqlite.AxqlParse)
+(import Axqlite.AxqlAst)
 
 ; Each index owns its bucket vectors; an empty slot is a typed null.
 (type LspBuckets (Vec (Vec Int)))
@@ -1066,6 +1068,10 @@
 (pub fn (lintUnknownNolint)
   "lint-unknown-nolint")
 
+(pub :: lintAxql String)
+(pub fn (lintAxql)
+  "lint-axql")
+
 ; The walk's context, one block:
 ;
 ;   word 0  the document's text (unused by the walk itself, kept so
@@ -1395,6 +1401,7 @@
         (lspLintUse lx (nodeAName e))
         (if (== tag TAG_E_APP)
           {
+            (lspLintAxql lx e)
             (lspLintWalk lx (nodeAChild e))
             (lspLintWalk lx (nodeBChild e))
           }
@@ -1572,7 +1579,7 @@
                       (mkSpan (+ off (+ 8 at)) (+ off (+ 8 (+ at (strLen (vecGetStr codes i))))))
                       lintUnknownNolint
                       (concat (concat "no lint or warning named `" (vecGetStr codes i))
-                        "`; `nolint` takes lint-dead-branch, lint-bool-if, lint-unused-let, hints, warnings, all, or a warning code such as AX3037"))
+                        "`; `nolint` takes lint-dead-branch, lint-bool-if, lint-unused-let, lint-axql, hints, warnings, all, or a warning code such as AX3037"))
                   }
                 })
               (set i (+ i 1))
@@ -1637,6 +1644,698 @@
           (set j (+ j 1))
         })
       out
+    }
+  })
+
+; ==================================================================
+; AXQL in a query literal.
+;
+; A string literal in the query position of one of the library's
+; text-taking entry points - the second argument of `axqExec`,
+; `axqExecBatch` and `axqPrepare`, the first of `axqSql` - is an AXQL
+; statement the program hands to the library when it runs. The server
+; reads it as one. A statement the parser refuses draws the
+; `lint-axql` hint, at the word the parser stopped on; completion inside
+; the literal offers AXQL's words and the tables and columns the
+; document itself creates; hover answers for a keyword, a function or
+; one of those names; and highlighting colours the statement's tokens
+; (`lspHlScan`). Everything is answered by the library's own parser,
+; `Axqlite.AxqlParse`, so the server keeps no second grammar for the
+; language. The literal is found from the tokens, not the tree, so
+; completion and hover work while the form around it is still being
+; typed; the lint reads the tree, so it never fires on a document that
+; does not parse.
+; ==================================================================
+; The index of the statement argument of a text-taking entry point, or
+; -1 for any other head.
+(pub :: lspAxqlArgIndex (-> String Int))
+(pub fn (lspAxqlArgIndex head)
+  (if (|| (strEq head "axqExec") (|| (strEq head "axqExecBatch") (strEq head "axqPrepare")))
+    1
+    (if (strEq head "axqSql")
+      0
+      (- 0 1))))
+
+; Whether token kind `k` opens a form, and whether it closes one.
+(pub :: lspAxqlOpens (-> Int Bool))
+(pub fn (lspAxqlOpens k)
+  (|| (== k (kindInt TK_LPAREN)) (|| (== k (kindInt TK_LBRACE)) (== k (kindInt TK_LBRACKET)))))
+
+(pub :: lspAxqlCloses (-> Int Bool))
+(pub fn (lspAxqlCloses k)
+  (|| (== k (kindInt TK_RPAREN)) (|| (== k (kindInt TK_RBRACE)) (== k (kindInt TK_RBRACKET)))))
+
+; The query literal `off` sits in, from the document's tokens: a block
+; of four words - the literal's start and end in the bytes, quotes
+; included, its head's name, and 1 when the head takes a script - or 0
+; when `off` is not inside a string literal in a query position.
+(pub :: lspAxqlLitAt (-> String Int Int))
+(pub fn (lspAxqlLitAt src off)
+  {
+    (let toks (lex src))
+    (let n (vecLen toks))
+    (let mut hit (- 0 1))
+    (let mut i 0)
+    {
+      (while (&& (< i n) (< hit 0))
+        {
+          (let t (vecGet toks i))
+          (if (== (kindInt (tokenKind t)) (kindInt TK_STRING))
+            (if (&& (> off (spanStart (tokenSpan t))) (< off (spanEnd (tokenSpan t))))
+              (set hit i)))
+          (set i (+ i 1))
+        })
+      (if (< hit 0)
+        0
+        (lspAxqlLitOf toks hit))
+    }
+  })
+
+; The same block for the string token at index `hit` of `toks`, or 0:
+; the form it is an argument of is found by walking back to the first
+; unmatched opener, its head is read past a `Module::` qualifier, and
+; the literal's position among the arguments is counted forward, a
+; nested form counting as one argument.
+(pub :: lspAxqlLitOf (-> Ints Int Int))
+(pub fn (lspAxqlLitOf toks hit)
+  {
+    (let mut depth 0)
+    (let mut j (- hit 1))
+    (let mut open (- 0 1))
+    {
+      (while (&& (>= j 0) (< open 0))
+        {
+          (let k (kindInt (tokenKind (vecGet toks j))))
+          (if (lspAxqlCloses k)
+            (set depth (+ depth 1))
+            (if (lspAxqlOpens k)
+              (if (== depth 0)
+                (set open j)
+                (set depth (- depth 1)))))
+          (set j (- j 1))
+        })
+      (if (< open 0)
+        0
+        (if (!= (kindInt (tokenKind (vecGet toks open))) (kindInt TK_LPAREN))
+          0
+          (lspAxqlLitHead toks hit (+ open 1))))
+    }
+  })
+
+; The block, given the index `h` of the form's head token.
+(pub :: lspAxqlLitHead (-> Ints Int Int Int))
+(pub fn (lspAxqlLitHead toks hit h)
+  (if (>= h hit)
+    0
+    (if (!= (kindInt (tokenKind (vecGet toks h))) (kindInt TK_IDENT))
+      0
+      {
+        (let last (lspAxqlHeadLast toks h hit))
+        (let head (tokenLexeme (vecGet toks last)))
+        (let want (lspAxqlArgIndex head))
+        (if (< want 0)
+          0
+          {
+            (let mut args 0)
+            (let mut d 0)
+            (let mut k (+ last 1))
+            {
+              (while (< k hit)
+                {
+                  (let kk (kindInt (tokenKind (vecGet toks k))))
+                  (if (lspAxqlOpens kk)
+                    {
+                      (if (== d 0)
+                        (set args (+ args 1)))
+                      (set d (+ d 1))
+                    }
+                    (if (lspAxqlCloses kk)
+                      (set d (- d 1))
+                      (if (== d 0)
+                        (set args (+ args 1)))))
+                  (set k (+ k 1))
+                })
+              (if (!= args want)
+                0
+                {
+                  (let b (memAlloc 32))
+                  (let sp (tokenSpan (vecGet toks hit)))
+                  {
+                    (memSetWord b 0 (spanStart sp))
+                    (memSetWord b 1 (spanEnd sp))
+                    (memSetWord b 2 head)
+                    (memSetWord b 3
+                      (if (strEq head "axqExecBatch")
+                        1
+                        0))
+                    b
+                  }
+                })
+            }
+          })
+      })))
+
+; The last identifier of a qualified head, including a dotted
+; module path such as `Store.Queries::axqSql`.
+(:: lspAxqlHeadLast (-> Ints Int Int Int))
+(fn (lspAxqlHeadLast toks first stop)
+  {
+    (let mut last first)
+    (let mut scan (+ first 1))
+    (let mut qualified false)
+    (let mut go true)
+    (while (&& go (< (+ scan 1) stop))
+      {
+        (let kind (kindInt (tokenKind (vecGet toks scan))))
+        (if (&& (|| (== kind (kindInt TK_DOT)) (== kind (kindInt TK_DOUBLE_COLON)))
+              (== (kindInt (tokenKind (vecGet toks (+ scan 1)))) (kindInt TK_IDENT)))
+          {
+            (if (== kind (kindInt TK_DOUBLE_COLON))
+              (set qualified true))
+            (set last (+ scan 1))
+            (set scan (+ scan 2))
+          }
+          (set go false))
+      })
+    (if qualified
+      last
+      first)
+  })
+
+; The value of the string literal whose bytes, quotes included, are
+; `src[start .. end)`: the language's escapes undone, or "" when the
+; literal carries an escape this reading does not know, so nothing is
+; said about a text the server cannot be sure of.
+(pub :: lspAxqlLitValue (-> String Int Int String))
+(pub fn (lspAxqlLitValue src start end)
+  {
+    (let mut out "")
+    (let mut i (+ start 1))
+    (let stop (- end 1))
+    (let mut ok true)
+    {
+      (while (&& ok (< i stop))
+        {
+          (let c (strByte src i))
+          (if (!= c 92)
+            {
+              (set out (concat out (strFromByte c)))
+              (set i (+ i 1))
+            }
+            {
+              (let d (strByte src (+ i 1)))
+              (if (isEscapeChar d)
+                (set out (concat out (strFromByte (unescByte d))))
+                (set ok false))
+              (set i (+ i 2))
+            })
+        })
+      (if ok
+        out
+        "")
+    }
+  })
+
+; Whether `src[start .. end)` - a literal with its quotes - spells a
+; byte that `lspAxqlLitValue` would undo, so a position inside the
+; value is not a position inside the bytes.
+(pub :: lspAxqlLitEscaped (-> String Int Int Bool))
+(pub fn (lspAxqlLitEscaped src start end)
+  {
+    (let mut i (+ start 1))
+    (let mut found false)
+    {
+      (while (&& (! found) (< i (- end 1)))
+        {
+          (if (== (strByte src i) 92)
+            (set found true))
+          (set i (+ i 1))
+        })
+      found
+    }
+  })
+
+; The parser's refusal of `text`, or "" when it reads: the message
+; without the `while axqlParse` context the library adds.
+(pub :: lspAxqlRefusal (-> String Bool String))
+(pub fn (lspAxqlRefusal text script)
+  {
+    (let msg
+      (if script
+        (match (axqlParseScript text)
+          ((Ok _) "")
+          ((Err e) (errorText e)))
+        (match (axqlParse text)
+          ((Ok _) "")
+          ((Err e) (errorText e)))))
+    (match (strFind msg " while " 0)
+      ((Some at) (strSlice msg 0 at))
+      ((None) msg))
+  })
+
+; The byte offset in `text` of "line L, column C" as the parser spells
+; a position at the head of its message, or -1 when the message does
+; not open with one.
+(pub :: lspAxqlErrOffset (-> String String Int))
+(pub fn (lspAxqlErrOffset text msg)
+  (if (! (strStartsWith msg "line "))
+    (- 0 1)
+    {
+      (let line (lspAxqlDigitsAt msg 5))
+      (match (strFind msg "column " 0)
+        ((None) (- 0 1))
+        ((Some c)
+          {
+            (let col (lspAxqlDigitsAt msg (+ c 7)))
+            (if (|| (< line 1) (< col 1))
+              (- 0 1)
+              {
+                ; to the start of line `line`, then `col - 1` bytes on
+                (let mut i 0)
+                (let mut l 1)
+                (let n (strLen text))
+                {
+                  (while (&& (< l line) (< i n))
+                    {
+                      (if (== (strByte text i) 10)
+                        (set l (+ l 1)))
+                      (set i (+ i 1))
+                    })
+                  (if (> (+ i (- col 1)) n)
+                    n
+                    (+ i (- col 1)))
+                }
+              })
+          }
+        ))
+    }))
+
+; The decimal number at `at` in `s`, or -1 when no digit is there.
+(pub :: lspAxqlDigitsAt (-> String Int Int))
+(pub fn (lspAxqlDigitsAt s at)
+  {
+    (let mut i at)
+    (let mut v 0)
+    (let mut any false)
+    {
+      (while (&& (< i (strLen s)) (&& (>= (strByte s i) 48) (<= (strByte s i) 57)))
+        {
+          (set v (+ (* v 10) (- (strByte s i) 48)))
+          (set any true)
+          (set i (+ i 1))
+        })
+      (if any
+        v
+        (- 0 1))
+    }
+  })
+
+; The end of the AXQL word starting at `at` in `s`: letters, digits
+; and `_`, or `at` itself when no word starts there.
+(pub :: lspAxqlWordEnd (-> String Int Int))
+(pub fn (lspAxqlWordEnd s at)
+  {
+    (let mut i at)
+    {
+      (while (&& (< i (strLen s)) (lspAxqlWordByte (strByte s i)))
+        (set i (+ i 1)))
+      i
+    }
+  })
+
+(pub :: lspAxqlWordByte (-> Int Bool))
+(pub fn (lspAxqlWordByte c)
+  (|| (&& (>= c 97) (<= c 122))
+    (|| (&& (>= c 65) (<= c 90)) (|| (&& (>= c 48) (<= c 57)) (== c 95)))))
+
+; The lint for the application `e` when its last argument is a string
+; literal in a query position: the parser's refusal, at the word it
+; stopped on when the literal's bytes let the position through, and
+; over the whole text otherwise.
+(pub :: lspLintAxql (-> Int ASTNode Int))
+(pub fn (lspLintAxql lx e)
+  {
+    (let b (nodeBChild e))
+    (if (!= (nodeTag b) TAG_E_STR)
+      0
+      {
+        (let mut h (nodeAChild e))
+        (let mut idx 0)
+        {
+          (while (== (nodeTag h) TAG_E_APP)
+            {
+              (set idx (+ idx 1))
+              (set h (nodeAChild h))
+            })
+          (if (!= (nodeTag h) TAG_E_VAR)
+            0
+            {
+              (let head (bareOf (nodeAName h)))
+              (if (!= (lspAxqlArgIndex head) idx)
+                0
+                (if (== (nodeSpan b) 0)
+                  0
+                  (lspLintAxqlText lx b (strEq head "axqExecBatch"))))
+            })
+        }
+      })
+  })
+
+(pub :: lspLintAxqlText (-> Int ASTNode Bool Int))
+(pub fn (lspLintAxqlText lx node script)
+  {
+    ; The raw parse stores a string's quoted spelling. Read its value
+    ; from the document, as schema discovery and hover do.
+    (let src (memGetWordStr lx 0))
+    (let sp (nodeSpan node))
+    (let text (lspAxqlLitValue src (spanStart sp) (spanEnd sp)))
+    (let msg (lspAxqlRefusal text script))
+    (if (== (strLen msg) 0)
+      0
+      {
+        (let start (spanStart sp))
+        (let end (spanEnd sp))
+        (let at (lspAxqlErrOffset text msg))
+        (let inner (- (- end start) 2))
+        ; the word at the parser's position, when the bytes are the
+        ; value and a word is there; else the whole text
+        (let narrow
+          (if (|| (< at 0) (lspAxqlLitEscaped src start end))
+            false
+            (if (> at inner)
+              false
+              (< at (lspAxqlWordEnd text at)))))
+        (let ws
+          (if narrow
+            (+ (+ start 1) at)
+            (+ start 1)))
+        (let we
+          (if narrow
+            (+ (+ start 1) (lspAxqlWordEnd text at))
+            (- end 1)))
+        (let quoted (strSlice src ws (- we ws)))
+        (if (> (- we ws) 0)
+          (lspLintRecord lx (mkSpan ws we) lintAxql
+            (concat (concat "`" quoted) (concat "` is not a statement AXQL reads: " msg)))
+          0)
+      })
+  })
+
+; ------------------------------------------------------------------
+; The document's own schema: the tables and columns its CREATE TABLE
+; statements and `axqlCreateTable`/`axqlTable` forms declare, read
+; from the tokens. Two parallel vectors in a block: word 0 the table
+; names, word 1 the columns as `table.column`.
+; ------------------------------------------------------------------
+(pub :: lspAxqlSchema (-> String Int))
+(pub fn (lspAxqlSchema src)
+  {
+    (let toks (lex src))
+    (let n (vecLen toks))
+    (let tables vecNew)
+    (let columns vecNew)
+    (let mut i 0)
+    {
+      (while (< i n)
+        {
+          (let t (vecGet toks i))
+          (let k (kindInt (tokenKind t)))
+          (if (== k (kindInt TK_STRING))
+            {
+              (let q (lspAxqlLitOf toks i))
+              (if (!= q 0)
+                (lspAxqlSchemaFromText tables columns
+                  (lspAxqlLitValue src (memGetWord q 0) (memGetWord q 1)) (== (memGetWord q 3) 1)))
+            }
+            (if (&& (== k (kindInt TK_IDENT)) (> i 0))
+              (if (== (kindInt (tokenKind (vecGet toks (- i 1)))) (kindInt TK_LPAREN))
+                (lspAxqlSchemaFromForm tables columns toks i))))
+          (set i (+ i 1))
+        })
+      {
+        (let b (memAlloc 16))
+        (memSetWord b 0 tables)
+        (memSetWord b 1 columns)
+        b
+      }
+    }
+  })
+
+; CREATE TABLE statements in a text, parsed by the library.
+(pub :: lspAxqlSchemaFromText (-> Strings Strings String Bool Int))
+(pub fn (lspAxqlSchemaFromText tables columns text script)
+  (if (== (strLen text) 0)
+    0
+    (if script
+      (match (axqlParseScript text)
+        ((Ok ps)
+          {
+            (for p in ps
+              (lspAxqlSchemaFromStmt tables columns p.stmt))
+            0
+          }
+        )
+        ((Err _) 0))
+      (match (axqlParse text)
+        ((Ok p) (lspAxqlSchemaFromStmt tables columns p.stmt))
+        ((Err _) 0)))))
+
+(pub :: lspAxqlSchemaFromStmt (-> Strings Strings Stmt Int))
+(pub fn (lspAxqlSchemaFromStmt tables columns stmt)
+  (match stmt
+    ((SCreateTable _ name cols)
+      {
+        (lspAxqlSchemaTable tables name)
+        (for c in cols
+          (vecPush columns (concat name (concat "." c.name))))
+        0
+      }
+    )
+    (_ 0)))
+
+(pub :: lspAxqlSchemaTable (-> Strings String Int))
+(pub fn (lspAxqlSchemaTable tables name)
+  {
+    (let mut seen false)
+    (for t in tables
+      (if (strEq t name)
+        (set seen true)))
+    (if seen
+      0
+      {
+        (vecPush tables name)
+        0
+      })
+  })
+
+; `(axqlCreateTable [IF NOT EXISTS] table (column ...) ...)` and
+; `(axqlTable Type table (field Type) ...)`, from the head token at
+; `h`: the table is the first identifier past the leading words, and
+; each parenthesised item names a column first.
+(pub :: lspAxqlSchemaFromForm (-> Strings Strings Ints Int Int))
+(pub fn (lspAxqlSchemaFromForm tables columns toks h)
+  {
+    (let head (tokenLexeme (vecGet toks h)))
+    (let create (strEq head "axqlCreateTable"))
+    (if (! (|| create (strEq head "axqlTable")))
+      0
+      {
+        (let n (vecLen toks))
+        (let mut k (+ h 1))
+        ; past IF NOT EXISTS, or past the Axiom type name
+        {
+          (if create
+            (while (&& (< k n) (lspAxqlLeadingWord (vecGet toks k)))
+              (set k (+ k 1)))
+            (set k (+ k 1)))
+          (if (|| (>= k n) (!= (kindInt (tokenKind (vecGet toks k))) (kindInt TK_IDENT)))
+            0
+            {
+              (let table (tokenLexeme (vecGet toks k)))
+              (lspAxqlSchemaTable tables table)
+              (set k (+ k 1))
+              (while (&& (< k n) (== (kindInt (tokenKind (vecGet toks k))) (kindInt TK_LPAREN)))
+                {
+                  (if (&& (< (+ k 1) n)
+                        (== (kindInt (tokenKind (vecGet toks (+ k 1)))) (kindInt TK_IDENT)))
+                    (vecPush columns
+                      (concat table (concat "." (tokenLexeme (vecGet toks (+ k 1)))))))
+                  ; to the item's own `)`
+                  (let mut d 0)
+                  (let mut go true)
+                  (while (&& go (< k n))
+                    {
+                      (let kk (kindInt (tokenKind (vecGet toks k))))
+                      (if (== kk (kindInt TK_LPAREN))
+                        (set d (+ d 1))
+                        (if (== kk (kindInt TK_RPAREN))
+                          (set d (- d 1))))
+                      (set k (+ k 1))
+                      (if (== d 0)
+                        (set go false))
+                    })
+                })
+              0
+            })
+        }
+      })
+  })
+
+; IF, NOT and EXISTS in any case, which `axqlCreateTable` takes before
+; the table.
+(pub :: lspAxqlLeadingWord (-> Int Bool))
+(pub fn (lspAxqlLeadingWord t)
+  (if (!= (kindInt (tokenKind t)) (kindInt TK_IDENT))
+    false
+    {
+      (let w (strLower (tokenLexeme t)))
+      (|| (strEq w "if") (|| (strEq w "not") (strEq w "exists")))
+    }))
+
+; ------------------------------------------------------------------
+; Completion inside a query literal: the reserved and contextual
+; words, the functions, and the document's tables and columns. Words
+; are offered in the case the prefix is typed in, so `sel` and `SEL`
+; both complete.
+; ------------------------------------------------------------------
+(pub :: lspComplAxql (-> Int Strings String String Int))
+(pub fn (lspComplAxql out seen src prefix)
+  {
+    (let lower (lspAxqlPrefixIsLower prefix))
+    (let schema (lspAxqlSchema src))
+    {
+      (lspComplAxqlWords out seen axqlKeywords 14 "AXQL keyword" prefix lower)
+      (lspComplAxqlWords out seen axqlContextWords 14 "AXQL keyword" prefix lower)
+      (for f in (strSplit axqlFunctions 32)
+        (lspComplOffer out seen f 3 "AXQL function" prefix))
+      (for t in (memGetWordVec schema 0)
+        (lspComplOffer out seen t 7 "table" prefix))
+      (for c in (memGetWordVec schema 1)
+        (match (strFind c "." 0)
+          ((Some dot)
+            (lspComplOffer out seen (strSlice c (+ dot 1) (- (strLen c) (+ dot 1))) 5
+              (concat "column of " (strSlice c 0 dot)) prefix)
+          )
+          ((None) 0)))
+      0
+    }
+  })
+
+(pub :: lspComplAxqlWords (-> Int Strings String Int String String Bool Int))
+(pub fn (lspComplAxqlWords out seen words kind detail prefix lower)
+  {
+    (for w in (strSplit words 32)
+      (lspComplOffer out seen
+        (if lower
+          (strLower w)
+          w)
+        kind detail prefix))
+    0
+  })
+
+; `w` with its ASCII letters raised.
+(pub :: lspAxqlUpper (-> String String))
+(pub fn (lspAxqlUpper w)
+  {
+    (let mut out "")
+    (for i in 0..(strLen w)
+      {
+        (let c (strByte w i))
+        (set out (concat out
+                   (strFromByte
+                     (if (&& (>= c 97) (<= c 122))
+                       (- c 32)
+                       c))))
+      })
+    out
+  })
+
+; Whether the first byte of `prefix` is a lower-case letter.
+(pub :: lspAxqlPrefixIsLower (-> String Bool))
+(pub fn (lspAxqlPrefixIsLower prefix)
+  (if (== (strLen prefix) 0)
+    false
+    (&& (>= (strByte prefix 0) 97) (<= (strByte prefix 0) 122))))
+
+; ------------------------------------------------------------------
+; Hover inside a query literal: a keyword or a function from the
+; lexicon, a table or a column from the document's own schema.
+; ------------------------------------------------------------------
+(pub :: lspAxqlHover (-> String Ints Int Int))
+(pub fn (lspAxqlHover src ix off)
+  {
+    (let mut ws off)
+    {
+      (while (&& (> ws 0) (lspAxqlWordByte (strByte src (- ws 1))))
+        (set ws (- ws 1)))
+      {
+        (let we (lspAxqlWordEnd src ws))
+        (if (>= ws we)
+          jsonNull
+          {
+            (let w (strSlice src ws (- we ws)))
+            (let range (lspRangeIx src ix (mkSpan ws we)))
+            (let md (lspAxqlHoverMarkdown src w))
+            (if (== (strLen md) 0)
+              jsonNull
+              (lspMarkdownHover md range))
+          })
+      }
+    }
+  })
+
+(pub :: lspAxqlHoverMarkdown (-> String String String))
+(pub fn (lspAxqlHoverMarkdown src w)
+  {
+    (let upper (lspAxqlUpper w))
+    (let kw (lexAxqlDoc upper))
+    (if (> (strLen kw) 0)
+      (concat (concat "**`" upper) (concat "`** AXQL keyword\n\n" kw))
+      {
+        (let fnDoc (lexAxqlFunctionDoc (strLower w)))
+        (if (> (strLen fnDoc) 0)
+          (concat (concat "**`" (strLower w)) (concat "()`** AXQL function\n\n" fnDoc))
+          (lspAxqlHoverSchema src w))
+      })
+  })
+
+(pub :: lspAxqlHoverSchema (-> String String String))
+(pub fn (lspAxqlHoverSchema src w)
+  {
+    (let schema (lspAxqlSchema src))
+    (let tables (memGetWordVec schema 0))
+    (let columns (memGetWordVec schema 1))
+    (let lw (strLower w))
+    (let mut out "")
+    {
+      (for t in tables
+        (if (strEq (strLower t) lw)
+          {
+            (let mut cols "")
+            (for c in columns
+              (if (strStartsWith (strLower c) (concat lw "."))
+                {
+                  (if (> (strLen cols) 0)
+                    (set cols (concat cols ", ")))
+                  (set cols (concat cols
+                              (strSlice c (+ (strLen t) 1) (- (strLen c) (+ (strLen t) 1)))))
+                }))
+            (set out (concat (concat "**`" t)
+                       (concat "`** a table this document creates\n\nColumns: " cols)))
+          }))
+      (if (> (strLen out) 0)
+        out
+        {
+          (for c in columns
+            (match (strFind c "." 0)
+              ((Some dot)
+                (if (strEq (strLower (strSlice c (+ dot 1) (- (strLen c) (+ dot 1)))) lw)
+                  (set out (concat (concat "**`" (strSlice c (+ dot 1) (- (strLen c) (+ dot 1))))
+                             (concat "`** a column of `" (concat (strSlice c 0 dot) "`")))))
+              )
+              ((None) 0)))
+          out
+        })
     }
   })
 
@@ -3436,79 +4135,82 @@
           (let off (lspOffsetOf src ix (jsonGet params "position")))
           {
             (let tag (lspTagHover src ix off))
-            (if (jsonIsNull tag)
-              {
-                (let wsp (lspWordSpan src off))
-                (if (== wsp 0)
-                  ; Not on a word: `::`, `->` and `..` still mean
-                  ; something, and answer from the lexicon.
-                  {
-                    (let psp (lspPunctSpan src off))
-                    (if (== psp 0)
-                      jsonNull
-                      (lspLexHover (strSlice src (spanStart psp) (- (spanEnd psp) (spanStart psp)))
-                        (lspRangeIx src ix psp)))
-                  }
-                  ; A local binding first, for the reason `definition`
-                  ; asks it first: a local shadows a declaration of the
-                  ; same name. 0 means the word is not one.
-                  {
-                    (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
-                    (let range (lspRangeIx src ix wsp))
+            (if (!= (lspAxqlLitAt src off) 0)
+              (lspAxqlHover src ix off)
+              (if (jsonIsNull tag)
+                {
+                  (let wsp (lspWordSpan src off))
+                  (if (== wsp 0)
+                    ; Not on a word: `::`, `->` and `..` still mean
+                    ; something, and answer from the lexicon.
                     {
-                      (let fld (lspHoverField src decls wsp range))
-                      (if (!= fld 0)
-                        fld
-                        {
-                          (let local (lspNavLocalHover src decls ix wsp))
-                          (if (!= local 0)
-                            local
-                            {
-                              (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-                              (if (! (nodeSame d nilNode))
-                                (lspHoverAt src decls d range "")
-                                ; A CONSTRUCTOR is read at the `data` that
-                                ; declares it - the whole form, so its siblings
-                                ; and its field types are in the tooltip - with
-                                ; one line naming which of them is under the
-                                ; cursor. The `range` stays the WORD, which is
-                                ; what the rest of this function's header says.
-                                {
-                                  (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
-                                  (if (nodeSame (lspCtorNodeOf dat w) nilNode)
-                                    ; A GENERATED NAME next, for `definition`'s
-                                    ; reason: after every lookup misses, from
-                                    ; the cache string, expanding nothing. Then
-                                    ; the module an import names, then the
-                                    ; language itself.
-                                    {
-                                      (let hov
-                                        (lspHoverImported workspace (lspUriToPath uri) src decls w
-                                          range))
-                                      (if (jsonIsNull hov)
-                                        {
-                                          (let g (lspGenHover gen src w range))
-                                          (if (jsonIsNull g)
-                                            {
-                                              (let m
-                                                (lspModuleHover workspace (lspUriToPath uri) src
-                                                  decls w range))
-                                              (if (jsonIsNull m)
-                                                (lspLexHover w range)
-                                                m)
-                                            }
-                                            g)
-                                        }
-                                        hov)
-                                    }
-                                    (lspHoverAtNote src decls dat range "" (lspCtorNote dat w)))
-                                })
-                            })
-                        })
+                      (let psp (lspPunctSpan src off))
+                      (if (== psp 0)
+                        jsonNull
+                        (lspLexHover
+                          (strSlice src (spanStart psp) (- (spanEnd psp) (spanStart psp)))
+                          (lspRangeIx src ix psp)))
                     }
-                  })
-              }
-              tag)
+                    ; A local binding first, for the reason `definition`
+                    ; asks it first: a local shadows a declaration of the
+                    ; same name. 0 means the word is not one.
+                    {
+                      (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
+                      (let range (lspRangeIx src ix wsp))
+                      {
+                        (let fld (lspHoverField src decls wsp range))
+                        (if (!= fld 0)
+                          fld
+                          {
+                            (let local (lspNavLocalHover src decls ix wsp))
+                            (if (!= local 0)
+                              local
+                              {
+                                (let d (lspFindDecl decls w (- (vecLen decls) 1)))
+                                (if (! (nodeSame d nilNode))
+                                  (lspHoverAt src decls d range "")
+                                  ; A CONSTRUCTOR is read at the `data` that
+                                  ; declares it - the whole form, so its siblings
+                                  ; and its field types are in the tooltip - with
+                                  ; one line naming which of them is under the
+                                  ; cursor. The `range` stays the WORD, which is
+                                  ; what the rest of this function's header says.
+                                  {
+                                    (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
+                                    (if (nodeSame (lspCtorNodeOf dat w) nilNode)
+                                      ; A GENERATED NAME next, for `definition`'s
+                                      ; reason: after every lookup misses, from
+                                      ; the cache string, expanding nothing. Then
+                                      ; the module an import names, then the
+                                      ; language itself.
+                                      {
+                                        (let hov
+                                          (lspHoverImported workspace (lspUriToPath uri) src decls
+                                            w range))
+                                        (if (jsonIsNull hov)
+                                          {
+                                            (let g (lspGenHover gen src w range))
+                                            (if (jsonIsNull g)
+                                              {
+                                                (let m
+                                                  (lspModuleHover workspace (lspUriToPath uri) src
+                                                    decls w range))
+                                                (if (jsonIsNull m)
+                                                  (lspLexHover w range)
+                                                  m)
+                                              }
+                                              g)
+                                          }
+                                          hov)
+                                      }
+                                      (lspHoverAtNote src decls dat range "" (lspCtorNote dat w)))
+                                  })
+                              })
+                          })
+                      }
+                    })
+                }
+                tag))
           }
         }
       })
@@ -4342,29 +5044,37 @@
     {
       (let prefix (lspPrefixAt src (lspOffsetOf src ix (jsonGet params "position"))))
       (let modPath (lspImportPathAt src (lspOffsetOf src ix (jsonGet params "position"))))
-      (if (! (strEq modPath lspNotImportPath))
-        ; After `(import `: module names, one path segment at a time.
+      (let query (lspAxqlLitAt src (lspOffsetOf src ix (jsonGet params "position"))))
+      (if (!= query 0)
+        ; Inside a query literal: AXQL's words, and the document's
+        ; tables and columns; nothing from the language around it.
         {
-          (lspComplModules out seen (lspUriToPath uri) modPath)
+          (lspComplAxql out seen src prefix)
           (lspComplList out)
         }
-        {
-          (let pr (lspParse src))
+        (if (! (strEq modPath lspNotImportPath))
+          ; After `(import `: module names, one path segment at a time.
           {
-            (lspComplKeywords out seen prefix)
-            (if (! (== (memGetWord pr 0) 0))
-              {
-                (let decls (readAstNodes pr 1))
-                {
-                  (lspComplContract out seen src decls
-                    (lspOffsetOf src ix (jsonGet params "position")) prefix)
-                  (lspComplLocal out seen src decls prefix)
-                  (lspComplImported workspace out seen (lspUriToPath uri) src decls prefix)
-                }
-              })
+            (lspComplModules out seen (lspUriToPath uri) modPath)
             (lspComplList out)
           }
-        })
+          {
+            (let pr (lspParse src))
+            {
+              (lspComplKeywords out seen prefix)
+              (if (! (== (memGetWord pr 0) 0))
+                {
+                  (let decls (readAstNodes pr 1))
+                  {
+                    (lspComplContract out seen src decls
+                      (lspOffsetOf src ix (jsonGet params "position")) prefix)
+                    (lspComplLocal out seen src decls prefix)
+                    (lspComplImported workspace out seen (lspUriToPath uri) src decls prefix)
+                  }
+                })
+              (lspComplList out)
+            }
+          }))
     }
   })
 
@@ -16594,6 +17304,15 @@
 ; SEM_H_KW, and a name is SEM_H_OTHER - a call, or a type application.
 (pub :: lspHlHeadCode (-> Int String Int))
 (pub fn (lspHlHeadCode st word)
+  (if (>= (lspAxqlArgIndex word) 0)
+    (+ 25 (lspAxqlArgIndex word))
+    (lspHlLanguageHeadCode st word)))
+
+; Head codes 25 and 26 mark the first and second argument as a query.
+; The ordinary form stack counts arguments, so colouring needs no
+; additional source scan for each string in a document.
+(:: lspHlLanguageHeadCode (-> Int String Int))
+(fn (lspHlLanguageHeadCode st word)
   (if (strEq word "import")
     SEM_H_IMPORT
     (if (strEq word "fn")
@@ -17401,7 +18120,7 @@
             {
               (let e (skipStringBody src (+ i 1) n))
               {
-                (lspHlEmitLines st i e SEM_STRING 0)
+                (lspHlString st i e)
                 (lspHlNext st)
                 (set i e)
               }
@@ -17460,6 +18179,53 @@
       0
     }
   })
+
+; Query tokens index the string's value. Without escapes that is the
+; source between its quotes; escaped or unfinished strings keep the
+; ordinary string colour rather than borrowing incorrect offsets.
+(:: lspHlString (-> Int Int Int Int))
+(fn (lspHlString st start end)
+  {
+    (let src (memGetWordStr st 0))
+    (let head (lspHlTopAt st 0))
+    (if (&& (&& (>= head 25) (<= head 26))
+          (&& (== (lspHlTopAt st 1) (- head 24))
+            (&& (> (- end start) 1)
+              (&& (== (strByte src (- end 1)) 34) (! (lspAxqlLitEscaped src start end))))))
+      {
+        (let tokens (axqlTokens (strSlice src (+ start 1) (- (- end start) 2))))
+        (let mut previous start)
+        (for i in 0..(/ (vecLen tokens) 3)
+          {
+            (let from (+ (+ start 1) (vecGet tokens (* i 3))))
+            (let to (+ (+ start 1) (vecGet tokens (+ (* i 3) 1))))
+            (let kind (vecGet tokens (+ (* i 3) 2)))
+            (lspHlEmitLines st previous from SEM_STRING 0)
+            (lspHlEmitLines st from to (lspHlAxqlClass kind (strSlice src from (- to from))) 0)
+            (set previous to)
+          })
+        (lspHlEmitLines st previous end SEM_STRING 0)
+      }
+      (lspHlEmitLines st start end SEM_STRING 0))
+  })
+
+(:: lspHlAxqlClass (-> Int String Int))
+(fn (lspHlAxqlClass kind word)
+  (if (== kind 1)
+      SEM_KEYWORD
+    (== kind 2)
+      (if (> (strLen (lexAxqlDoc (lspAxqlUpper word))) 0)
+          SEM_KEYWORD
+        (> (strLen (lexAxqlFunctionDoc (strLower word))) 0)
+          SEM_FUNCTION
+        SEM_VARIABLE)
+    (== kind 3)
+      SEM_NUMBER
+    (== kind 4)
+      SEM_STRING
+    (== kind 5)
+      SEM_VARIABLE
+    SEM_OPERATOR))
 
 ; A `;` line: `;@axiom:` opens an AXTAG, which `scanAxtags` reads as
 ; a claim about the declaration below it - a decorator, not a

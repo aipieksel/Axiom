@@ -546,7 +546,7 @@
           (if (strEq k "isr")
             "Marks an interrupt entry point: a no-argument function checked for allocation, recursion and waiting. On `baremetal-aarch64`, `isr(irq)` binds the interrupt handler and `isr(fault)` the fault policy."
             (if (strEq k "nolint")
-              "Quiets hints and warnings, like Rust's `#[allow]`: a hint by name (`lint-dead-branch`, `lint-bool-if`, `lint-unused-let`), a warning by its code (`AX3037`), or a group (`hints`, `warnings`, `all`). On a declaration it covers that declaration; above an `import` it covers the whole file. It never quiets an error, and a name nothing answers to draws `lint-unknown-nolint` at the tag."
+              "Quiets hints and warnings, like Rust's `#[allow]`: a hint by name (`lint-dead-branch`, `lint-bool-if`, `lint-unused-let`, `lint-axql`), a warning by its code (`AX3037`), or a group (`hints`, `warnings`, `all`). On a declaration it covers that declaration; above an `import` it covers the whole file. It never quiets an error, and a name nothing answers to draws `lint-unknown-nolint` at the tag."
               (if (strEq k "ct")
                 "Claims the function runs in constant time with respect to the named parameters, for code that handles secrets. A body that branches or indexes on one is refused (`AX3092`); a claim naming no parameter is `AX3093`."
                 (if (strEq k "deprecated")
@@ -598,15 +598,17 @@
                   "The hint that an `if` answers `true` and `false`, which the test already is."
                   (if (strEq v "lint-unused-let")
                     "The hint that a `let` binding is never read."
-                    (if (strEq v "hints")
-                      "Every editor hint."
-                      (if (strEq v "warnings")
-                        "Every checker warning, such as `AX3037`. Errors stay."
-                        (if (strEq v "all")
-                          "Every editor hint and every checker warning. Errors stay."
-                          (if (nolintIsCode v)
-                            "This warning code, where the checker draws it on this declaration. An error code quiets nothing."
-                            "")))))))
+                    (if (strEq v "lint-axql")
+                      "The hint that a query literal does not parse as AXQL."
+                      (if (strEq v "hints")
+                        "Every editor hint."
+                        (if (strEq v "warnings")
+                          "Every checker warning, such as `AX3037`. Errors stay."
+                          (if (strEq v "all")
+                            "Every editor hint and every checker warning. Errors stay."
+                            (if (nolintIsCode v)
+                              "This warning code, where the checker draws it on this declaration. An error code quiets nothing."
+                              ""))))))))
               "")))))))
 
 (:: lexRestrictionDoc (-> String String))
@@ -838,3 +840,197 @@
       (lexTagMarkdown (strSlice w 1 (- (strLen w) 1)) "")
       (lexEntryMarkdown w))
   })
+
+; ------------------------------------------------------------------
+; AXQL, for a hover inside a query literal (`lspAxqlHover`). The
+; reserved and contextual words in upper case, and the functions in
+; their own case, each with one sentence; "" for a word that is not
+; one. docs/axql.md is the page these sentences summarise.
+; ------------------------------------------------------------------
+;; One sentence on an AXQL keyword, written in upper case, or "".
+(pub :: lexAxqlDoc (-> String String))
+(pub fn (lexAxqlDoc w)
+  (if (strEq w "AND")
+    "Joins two conditions; both must hold."
+    (if (strEq w "AS")
+      "Names a result column or a table in a query: `name AS n`."
+      (if (strEq w "BEGIN")
+        "Opens a transaction; `COMMIT` keeps its changes and `ROLLBACK` discards them."
+        (if (strEq w "BY")
+          "Follows `ORDER` and `GROUP`: `ORDER BY age DESC`, `GROUP BY team`."
+          (if (strEq w "COMMIT")
+            "Ends a transaction and keeps its changes."
+            (if (strEq w "CREATE")
+              "Makes a table or an index: `CREATE TABLE users (...)`, `CREATE INDEX i ON users (name)`."
+              (if (strEq w "DELETE")
+                "Removes rows: `DELETE FROM users WHERE age < ?`."
+                (if (strEq w "DROP")
+                  "Removes a table or an index: `DROP TABLE users`, `DROP INDEX i`."
+                  (if (strEq w "EXISTS")
+                    "With `IF`, makes `CREATE` quiet when the table or index is already there, and `DROP` quiet when it is already gone."
+                    (if (strEq w "FALSE")
+                      "The false value."
+                      (if (strEq w "FROM")
+                        "Names the table a `SELECT` reads or a `DELETE` removes from."
+                        (if (strEq w "IF")
+                          "`IF NOT EXISTS` on `CREATE`, `IF EXISTS` on `DROP`."
+                          (if (strEq w "INDEX")
+                            "An index over one or more columns, for `CREATE INDEX` and `DROP INDEX`."
+                            (if (strEq w "INSERT")
+                              "Adds a row: `INSERT INTO users (name, age) VALUES (?, ?)`."
+                              (if (strEq w "INTO")
+                                "Follows `INSERT`: the table the row goes into."
+                                (if (strEq w "IS")
+                                  "Tests for the absent value: `x IS NULL`, `x IS NOT NULL`."
+                                  (if (strEq w "LIMIT")
+                                    "Caps the rows a query answers; `OFFSET` after it skips some first."
+                                    (if (strEq w "NOT")
+                                      "Negates a condition or a test: `NOT (a AND b)`, `IS NOT NULL`, `NOT IN`, `NOT LIKE`."
+                                      (if (strEq w "NULL")
+                                        "The absent value. Nothing compares equal to it; test it with `IS NULL`."
+                                        (if (strEq w "OFFSET")
+                                          "Skips rows before the ones a query answers; written after `LIMIT`."
+                                          (if (strEq w "ON")
+                                            "Names the table an index is built on: `CREATE INDEX i ON users (name)`."
+                                            (if (strEq w "OR")
+                                              "Joins two conditions; either may hold."
+                                              (if (strEq w "ORDER")
+                                                "With `BY`, sorts a query's rows: `ORDER BY age DESC, name`."
+                                                (if (strEq w "PRIMARY")
+                                                  "With `KEY`, marks the column that identifies each row."
+                                                  (if (strEq w "ROLLBACK")
+                                                    "Ends a transaction and discards its changes."
+                                                    (if (strEq w "SELECT")
+                                                      "Reads rows: `SELECT id, name FROM users WHERE age > ? ORDER BY age LIMIT 10`."
+                                                      (if (strEq w "SET")
+                                                        "Follows `UPDATE`: the columns to change and their new values."
+                                                        (if (strEq w "TABLE")
+                                                          "A table, for `CREATE TABLE`, `ALTER TABLE` and `DROP TABLE`."
+                                                          (if (strEq w "TRUE")
+                                                            "The true value."
+                                                            (if (strEq w "UNIQUE")
+                                                              "An index that refuses two rows with the same values in its columns: `CREATE UNIQUE INDEX`."
+                                                              (if (strEq w "UPDATE")
+                                                                "Changes rows: `UPDATE users SET age = ? WHERE id = ?`."
+                                                                (if (strEq w "VALUES")
+                                                                  "Follows `INSERT INTO table (columns)`: the new row's values, one per column."
+                                                                  (if (strEq w "WHERE")
+                                                                    "Keeps the rows a condition holds for."
+                                                                    (if (strEq w "INTEGER")
+                                                                      "A column type: a 64-bit signed integer."
+                                                                      (if (strEq w "REAL")
+                                                                        "A column type: an IEEE 754 binary64 number, never NaN; an INTEGER stored in one becomes the nearest REAL."
+                                                                        (if (strEq w "TEXT")
+                                                                          "A column type: bytes, conventionally UTF-8."
+                                                                          (if (strEq w "BLOB")
+                                                                            "A column type: bytes."
+                                                                            (if (strEq w "LINK")
+                                                                              "A column type: the rowid of a row in another table, held as an INTEGER."
+                                                                              (if (strEq w "KEY")
+                                                                                "With `PRIMARY`: the column that identifies each row."
+                                                                                (if (strEq w
+                                                                                      "DEFAULT")
+                                                                                  "The constant a column takes when an `INSERT` or `UPSERT` leaves it out."
+                                                                                  (if (strEq w
+                                                                                        "CHECK")
+                                                                                    "A condition every row must satisfy, written after the column: `age INTEGER CHECK (age >= 0)`."
+                                                                                    (if (strEq w
+                                                                                          "ASC")
+                                                                                      "Sorts an `ORDER BY` term ascending, which is the default."
+                                                                                      (if (strEq w
+                                                                                            "DESC")
+                                                                                        "Sorts an `ORDER BY` term descending."
+                                                                                        (if (strEq
+                                                                                              w
+                                                                                              "TRANSACTION")
+                                                                                          "May follow `BEGIN`: `BEGIN TRANSACTION`."
+                                                                                          (if (strEq
+                                                                                                w
+                                                                                                "LIKE")
+                                                                                            "Matches text against a pattern, `%` standing for any run of characters and `_` for one."
+                                                                                            (if (strEq
+                                                                                                  w
+                                                                                                  "IN")
+                                                                                              "Tests membership in a list: `x IN (1, 2, 3)`."
+                                                                                              (if (strEq
+                                                                                                    w
+                                                                                                    "BETWEEN")
+                                                                                                "Tests a range, both ends included: `x BETWEEN 1 AND 10`."
+                                                                                                (if (strEq
+                                                                                                      w
+                                                                                                      "GROUP")
+                                                                                                  "With `BY`, folds the rows that share the listed values into one, for `count`, `sum`, `avg`, `min` and `max`."
+                                                                                                  (if (strEq
+                                                                                                        w
+                                                                                                        "HAVING")
+                                                                                                    "Keeps the groups a condition holds for, after `GROUP BY`."
+                                                                                                    (if (strEq
+                                                                                                          w
+                                                                                                          "UPSERT")
+                                                                                                      "Inserts a row, or updates the row it would clash with."
+                                                                                                      (if (strEq
+                                                                                                            w
+                                                                                                            "ALTER")
+                                                                                                        "Changes a table: `ALTER TABLE users ADD COLUMN email TEXT`."
+                                                                                                        (if (strEq
+                                                                                                              w
+                                                                                                              "ADD")
+                                                                                                          "With `ALTER TABLE`: adds a column."
+                                                                                                          (if (strEq
+                                                                                                                w
+                                                                                                                "COLUMN")
+                                                                                                            "Follows `ADD` and `RENAME` in `ALTER TABLE`."
+                                                                                                            (if (strEq
+                                                                                                                  w
+                                                                                                                  "RENAME")
+                                                                                                              "With `ALTER TABLE`: renames the table, or `RENAME COLUMN old TO new`."
+                                                                                                              (if (strEq
+                                                                                                                    w
+                                                                                                                    "TO")
+                                                                                                                "The new name in `RENAME ... TO`."
+                                                                                                                ""))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+
+;; One sentence on an AXQL function, by its name, or "".
+(pub :: lexAxqlFunctionDoc (-> String String))
+(pub fn (lexAxqlFunctionDoc f)
+  (if (strEq f "length")
+    "The bytes in TEXT or BLOB `s`, as an INTEGER."
+    (if (strEq f "lower")
+      "TEXT `s` with its ASCII letters lowered."
+      (if (strEq f "upper")
+        "TEXT `s` with its ASCII letters raised."
+        (if (strEq f "trim")
+          "TEXT `s` without the spaces, tabs and newlines at either end."
+          (if (strEq f "substr")
+            "The bytes of TEXT or BLOB `s` from `start`, counting from 1, to the end or for `len` bytes."
+            (if (strEq f "replace")
+              "TEXT `s` with every `from` replaced by `to`."
+              (if (strEq f "instr")
+                "Where `part` first starts in `s`, counting from 1, or 0 when it does not."
+                (if (strEq f "abs")
+                  "The magnitude of a number."
+                  (if (strEq f "round")
+                    "The INTEGER nearest a number, halves away from zero."
+                    (if (strEq f "coalesce")
+                      "Its first argument that is not NULL, or NULL."
+                      (if (strEq f "nullif")
+                        "NULL when `a` equals `b`, else `a`."
+                        (if (strEq f "min")
+                          "The least of two or more values; with one argument, the least over a group."
+                          (if (strEq f "max")
+                            "The greatest of two or more values; with one argument, the greatest over a group."
+                            (if (strEq f "typeof")
+                              "`'integer'`, `'real'`, `'text'`, `'blob'` or `'null'`."
+                              (if (strEq f "asint")
+                                "An INTEGER from a number, truncating, or from TEXT that spells one."
+                                (if (strEq f "asreal")
+                                  "A REAL from a number or from TEXT that spells one."
+                                  (if (strEq f "astext")
+                                    "A number written in decimal, or a BLOB's bytes as TEXT."
+                                    (if (strEq f "count")
+                                      "Over a group, the rows, or the values of a column that are not NULL: `count(*)`, `count(name)`."
+                                      (if (strEq f "sum")
+                                        "Over a group, the sum of a column's values."
+                                        (if (strEq f "avg")
+                                          "Over a group, the mean of a column's values, as a REAL."
+                                          "")))))))))))))))))))))

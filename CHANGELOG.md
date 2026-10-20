@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- Query literals gain parser-backed AXQL hints, keyword and schema
+  hover, completion and semantic tokens. Escaped strings retain
+  their source ranges and ordinary string colouring. The editor
+  recognises calls by their written names and reads schema declarations
+  from the document. Tested by `tests/lsp/axql.py` and
+  `tests/axqlite/407-editor-tokens.ax`.
+
 - The assurance page's rule tables are checked claims.
   `scripts/check-assurance-controls.sh` reads every table in
   `docs/assurance.md` headed `Area`, `Refused as`, `A refusal` and

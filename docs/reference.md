@@ -1111,7 +1111,7 @@ it keeps the editor's hints and the compiler's warnings out of your
 way, one declaration or one file at a time. It never quiets an error.
 
 Name what to quiet: a hint (`lint-dead-branch`, `lint-bool-if`,
-`lint-unused-let`), a warning by its code (`AX3037`), or a group
+`lint-unused-let`, `lint-axql`), a warning by its code (`AX3037`), or a group
 (`hints`, `warnings`, `all`). The tag goes above either half of a
 declaration:
 
