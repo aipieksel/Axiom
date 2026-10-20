@@ -1,0 +1,41 @@
+; expect 80
+(import core)
+(import lexer)
+(import parser)
+(import checked)
+(import codegen)
+(import expand)
+(import Vec)
+(import Str)
+
+; The caller's same-named function must not replace the predicate
+; resolved in the checked module's precondition.
+(:: checkedDeclarationsUnchanged (-> CheckedProgram Bool))
+(fn (checkedDeclarationsUnchanged program)
+  true)
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source "(:: main Int) (fn (main) 42)")
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units vecNew)
+    (vecPush units
+      (as (CUnit2 :file "checked.ax" :src source :name "" :imports vecNew :library false) Int))
+    (let bares vecNew)
+    (let fulls vecNew)
+    (let mods vecNew)
+    (let merged (resolveImports declarations bares fulls mods 0 "" units))
+    (expandProgram declarations merged vecNew vecNew units bares fulls mods)
+    (let result (checkExpandedProgram declarations merged units))
+    (let program (checkedProgramOf result))
+    (vecPush merged (vecGet merged 1))
+    ; The stale handoff must stop at its precondition. If that check
+    ; is removed, the private snapshot still emits and this answers 0.
+    (let ir (emitCheckedProgram program bares fulls 0 false))
+    (if (> (strLen ir) 0)
+      0
+      1)
+  })

@@ -71,7 +71,7 @@ stops.
 | A region's values do not outlive it | `MM-RGN-1` to `MM-RGN-6`: store, return, capture and argument escapes are refused (`AX3059`, `AX3060`) | storing a region value into an outer struct | Typed promotion out of a region is `MM-RGN-7`, planned |
 | A `parallel` or spawned binding reaches nothing its parent still owns, except what it borrows under a count freeze | `AX3064` on captures; the lend block of `MM-PAR-6` | a `Vec` captured by a spawned thunk | A trusted accessor inside the library could still hand a word back |
 | A trap is a defined exit status, never undefined behaviour | The trap table of the memory model, statuses 70 to 86, and the recovery record (`MM-ALLOC-23`) | division by zero exits 72 | A trusted body or an `extern` can still corrupt memory |
-| What the checker accepted is what the emitter compiles | The sealed `CheckedProgram` handoff from the final check to emission, the emitter's one way in | an emitter reached without a final check | A library caller constructs the sealed value itself (`tests/selfhost/290-emit.ax`) |
+| The emitter visits the declaration list accepted by the final check | The sealed `CheckedProgram` handoff checks the list's members and order before its single emission | changing a checked declaration list stops emission with status 80 (`tests/selfhost/1034-checked-declarations-stale.ax`) | AST payloads remain mutable; the caller keeps them private after checking |
 
 Four properties are kept apart. Memory safety is the first seven rows:
 no read, write or release outside what the types allow. Resource

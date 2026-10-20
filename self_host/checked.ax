@@ -1,6 +1,7 @@
 ; The synchronous compilation handoff. Only a successful final check
 ; constructs this sealed value; emission consumes it once. The driver
-; keeps the input syntax private and makes no edits after this check.
+; keeps AST payloads private and makes no edits after this check. The
+; declaration list is snapshotted and compared before emission.
 ; This retains existing checker facts, including their incompleteness;
 ; it does not turn the word-based backend into a typed semantic IR.
 (import core)
@@ -12,6 +13,7 @@
 
 (pub struct CheckedProgram sealed
   (declarations : Nodes)
+  (inputDeclarations : Nodes)
   (functions : (Vec FnEnt))
   (mut available : Bool))
 
@@ -32,10 +34,43 @@
         {
           (wordLowerApply tc)
           (Some
-            (CheckedProgram :declarations declarations :functions (tcFnsVec tc) :available true))
+            (CheckedProgram
+              :declarations (checkedCopyDeclarations declarations)
+              :inputDeclarations declarations
+              :functions (tcFnsVec tc)
+              :available true))
         }))
     (CheckedResult :diagnostics diagnostics :program program)
   })
+
+; Keep the accepted roots alive independently of the caller's vector.
+; This copies handles, not AST payloads or their checked stamps.
+(:: checkedCopyDeclarations (-> Nodes Nodes))
+(fn (checkedCopyDeclarations declarations)
+  {
+    (let accepted (vecWithCapacity (vecLen declarations)))
+    (for declaration in declarations
+      (vecPush accepted declaration))
+    accepted
+  })
+
+;; Whether the merged declaration list still has its checked members
+;; in their checked order. Nested AST edits are outside this predicate.
+(pub :: checkedDeclarationsUnchanged (-> CheckedProgram Bool))
+(pub fn (checkedDeclarationsUnchanged program)
+  (if (!= (vecLen program.declarations) (vecLen program.inputDeclarations))
+    false
+    {
+      (let mut unchanged true)
+      (let mut i 0)
+      (while (&& unchanged (< i (vecLen program.declarations)))
+        {
+          (set unchanged (nodeSame (vecGet program.declarations i)
+                           (vecGet program.inputDeclarations i)))
+          (set i (+ i 1))
+        })
+      unchanged
+    }))
 
 (pub :: checkedProgramOf (-> CheckedResult CheckedProgram))
 ;@axiom:pre((isSome result.program))
@@ -50,6 +85,7 @@
 (pub :: emitCheckedProgram (-> CheckedProgram Names Names Int Bool String))
 ;@axiom:effect(io)
 ;@axiom:pre(program.available)
+;@axiom:pre((checkedDeclarationsUnchanged program))
 (pub fn (emitCheckedProgram program bares fulls target obscure)
   {
     (set program.available false)

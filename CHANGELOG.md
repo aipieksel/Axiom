@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- The checked-program handoff snapshots the merged declaration list.
+  Appending, removing, replacing or reordering its members after the
+  final check stops emission with status 80. Rechecking creates a new
+  handoff. Nested AST payloads still stay private to the caller.
+  Tested by `tests/selfhost/1033-checked-declarations.ax` and
+  `tests/selfhost/1034-checked-declarations-stale.ax`.
+
 - Query literals gain parser-backed AXQL hints, keyword and schema
   hover, completion and semantic tokens. Escaped strings retain
   their source ranges and ordinary string colouring. The editor

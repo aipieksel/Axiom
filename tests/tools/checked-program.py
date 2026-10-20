@@ -89,6 +89,44 @@ def main():
         assert binding.read_bytes() == binding_before, 'refused binding replaced output'
         checks += 1
 
+        # Compiler clients may retain the mutable merged declaration vector.
+        # Edits must invalidate its handoff, while an unchanged list and a
+        # freshly checked edit remain usable. These exercise the real API.
+        probe_env = dict(env, AXIOM_PATH=str(root / 'self_host'))
+
+        def build_probe(name, output, environment):
+            result = subprocess.run(
+                [compiler, '--diagnostic-format=ai', 'build',
+                 str(root / 'tests/selfhost' / name), '-o', str(output)],
+                cwd=work, env=environment, capture_output=True, text=True, timeout=180)
+            assert result.returncode == 0, result.stderr
+
+        for name, status in (('1033-checked-declarations.ax', 42),
+                             ('1034-checked-declarations-stale.ax', 80)):
+            executable = work / name.removesuffix('.ax')
+            build_probe(name, executable, probe_env)
+            result = subprocess.run([str(executable)], cwd=work,
+                                    capture_output=True, timeout=30)
+            assert result.returncode == status, (name, result.returncode, result.stderr)
+            checks += 1
+
+        # Remove only the membership precondition, preserving the private
+        # snapshot. The same stale probe must then reach emission and exit 0,
+        # proving that its status-80 assertion depends on this enforcement.
+        control = work / 'control'
+        control.mkdir()
+        source = (root / 'self_host/checked.ax').read_text()
+        seam = ';@axiom:pre((checkedDeclarationsUnchanged program))\n'
+        assert source.count(seam) == 1, 'missing declaration-list enforcement seam'
+        (control / 'checked.ax').write_text(source.replace(seam, ''))
+        control_env = dict(env, AXIOM_PATH=os.pathsep.join((str(control), str(root / 'self_host'))))
+        executable = work / 'unchecked-control'
+        build_probe('1034-checked-declarations-stale.ax', executable, control_env)
+        result = subprocess.run([str(executable)], cwd=work,
+                                capture_output=True, timeout=30)
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        checks += 1
+
         # The emitter has one way in. `emitResolvedMode` is called from
         # `checked.ax` and nowhere else, and the entries that once went
         # around the final check - `emitModule`, `emitResolved` - are
