@@ -202,13 +202,21 @@ echo "--- 1. user-level cast count does not grow ---"
 # `300-pipeline.ax` does, to drive the compiler's own passes, whose
 # words `self_host/` is excluded for. It creates no reference or
 # ownership.
+# Baseline 1048 adds six reviewed conversions. The two checked-program
+# selfhost fixtures pass CUnit2 handles through the compiler pipeline's
+# word vector, as the 1042 baseline's emit fixture does. The nested
+# recovery fixture reads a live string's count header twice to prove the
+# inner recovery preserved its owner. IO's two marker conversions pass
+# live marker handles to the library-only Windows liveness layer; they
+# decay references to words without forging a reference or changing its
+# share. These are compiler-boundary or MM-VAL-23 ownership probes.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1042 ]; then
-  ok "user-level (cast count $cast_count <= 1042)"
+elif [ "$cast_count" -le 1048 ]; then
+  ok "user-level (cast count $cast_count <= 1048)"
 else
-  bad "user-level (cast count $cast_count > 1042): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1048): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
