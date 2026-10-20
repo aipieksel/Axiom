@@ -1,4 +1,4 @@
-; Typed result and label setters retain the replacement before retiring
+; Typed result, argument and label setters retain replacements before retiring
 ; the old slot share. Borrowed getters keep independent aliases alive.
 (import codegen)
 (import parser)
@@ -158,6 +158,144 @@
     (say 29 (strEq (memGetWordStr cg 2) "cast-boundary"))
   })
 
+(:: argsChecks ())
+;@axiom:effect(io)
+(fn (argsChecks)
+  {
+    (let cg newCG)
+    (probeSetResult cg "%result")
+    (probeSetBlock cg "block")
+    (say 33 (strEq (memGetWordStr cg 9) ""))
+    (let first (strDup "arg-old"))
+    (let second (strDup "arg-new"))
+    (let before (rc (as first Int)))
+    (probeSetArgsTyped cg first)
+    (say 34 (== (rc (as first Int)) (+ before 1)))
+    (say 35 (strEq (memGetWordStr cg 9) "arg-old"))
+    (let beforeGetter (rc (as first Int)))
+    (say 36 (== (probeGetterCount cg 9) (+ beforeGetter 1)))
+    (say 37 (== (rc (as first Int)) beforeGetter))
+    (let old (memGetWordStr cg 9))
+    (let beforeReplacement (rc (as first Int)))
+    (probeSetArgsTyped cg second)
+    (say 38 (== (rc (as first Int)) (- beforeReplacement 1)))
+    (say 39 (strEq old "arg-old"))
+    (say 40 (&& (strEq (memGetWordStr cg 2) "%result") (strEq (memGetWordStr cg 11) "block")))
+    (say 41 (probeSameArgsGetter cg "arg-new"))
+    (let beforeSame (rc (as second Int)))
+    (probeSetArgsTyped cg second)
+    (say 42 (== (rc (as second Int)) beforeSame))
+    (let cast (strDup "arg-cast"))
+    (let beforeCast (rc (as cast Int)))
+    (probeSetRawArgsTyped cg (as cast Int))
+    (say 43 (== (rc (as cast Int)) (+ beforeCast 1)))
+    (say 44 (strEq (memGetWordStr cg 9) "arg-cast"))
+  })
+
+(:: argsPreallocatedChecks ())
+;@axiom:effect(io)
+(fn (argsPreallocatedChecks)
+  {
+    (let cg newCG)
+    (let a (strDup "arg-a"))
+    (let b (strDup "arg-b"))
+    (probeSetArgsTyped cg a)
+    (let aCount (rc (as a Int)))
+    (let bCount (rc (as b Int)))
+    (let before (live))
+    (for i in 0..1000
+      {
+        (probeSetArgsTyped cg b)
+        (probeSetArgsTyped cg a)
+      })
+    (let growth (- (live) before))
+    (say 45 (== (rc (as a Int)) aCount))
+    (say 46 (== (rc (as b Int)) bCount))
+    (say 47 (<= growth 4096))
+    (say 48 (strEq (memGetWordStr cg 9) "arg-a"))
+  })
+
+(:: argsEmissionChecks ())
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (argsEmissionChecks)
+  {
+    (let listCG newCG)
+    (emitArgsList vecNew listCG 0)
+    (say 49 (&& (strEq (memGetWordStr listCG 2) "") (strEq (memGetWordStr listCG 9) "")))
+    (emitArgsList (vecPush vecNew (mkEInt 7)) listCG 0)
+    (say 50 (&& (strEq (memGetWordStr listCG 2) "7") (strEq (memGetWordStr listCG 9) "7")))
+    (let many (vecPush (vecPush (vecPush vecNew (mkEInt 1)) (mkEInt 2)) (mkEInt 3)))
+    (emitArgsList many listCG 0)
+    (say 51
+      (&& (strEq (memGetWordStr listCG 2) "1, 2, 3")
+        (strEq (memGetWordStr listCG 9) "1, i64 2, i64 3")))
+    (let oldList (memGetWordStr listCG 9))
+    (let nested (mkEApp (mkEApp (mkEVar "+") (mkEInt 1)) (mkEInt 2)))
+    (let nestedArgs (vecPush (vecPush vecNew nested) (mkEInt 9)))
+    (emitArgsList nestedArgs listCG 0)
+    (say 52 (strEq oldList "1, i64 2, i64 3"))
+    (say 53
+      (&& (strEq (memGetWordStr listCG 2) "%.t0, 9")
+        (strEq (memGetWordStr listCG 9) "%.t0, i64 9")))
+    (say 54 (strEq (lineAt listCG 0) "  %.t0 = add i64 1, 2"))
+    (say 55 (== (memGetWord listCG 1) 1))
+    (let regsCG newCG)
+    (let emptyRegs vecNew)
+    (emitArgsRegs vecNew regsCG emptyRegs 0 "test" 0)
+    (say 56
+      (&& (== (vecLen emptyRegs) 0)
+        (&& (strEq (memGetWordStr regsCG 2) "") (strEq (memGetWordStr regsCG 9) ""))))
+    (let singleRegs vecNew)
+    (emitArgsRegs (vecPush vecNew (mkEInt 7)) regsCG singleRegs 0 "test" 0)
+    (say 57
+      (&& (== (vecLen singleRegs) 1)
+        (&& (strEq (memGetWordStr regsCG 9) "7") (strEq (as (vecGet singleRegs 0) String) "7"))))
+    (let manyRegs vecNew)
+    (emitArgsRegs many regsCG manyRegs 0 "test" 0)
+    (say 58
+      (&& (== (vecLen manyRegs) 3)
+        (&& (strEq (memGetWordStr regsCG 2) "1, 2, 3")
+          (&& (strEq (memGetWordStr regsCG 9) "1, i64 2, i64 3")
+            (&& (strEq (as (vecGet manyRegs 0) String) "1")
+              (&& (strEq (as (vecGet manyRegs 1) String) "2")
+                (strEq (as (vecGet manyRegs 2) String) "3")))))))
+    (let oldRegs (memGetWordStr regsCG 9))
+    (let nestedRegs vecNew)
+    (emitArgsRegs nestedArgs regsCG nestedRegs 0 "test" 0)
+    (say 59
+      (&& (== (vecLen nestedRegs) 2)
+        (&& (strEq (memGetWordStr regsCG 2) "%.t0, 9")
+          (&& (strEq (memGetWordStr regsCG 9) "%.t0, i64 9")
+            (&& (strEq (as (vecGet nestedRegs 0) String) "%.t0")
+              (strEq (as (vecGet nestedRegs 1) String) "9"))))))
+    (say 60 (strEq (lineAt regsCG 0) "  %.t0 = add i64 1, 2"))
+    (say 61 (strEq oldRegs "1, i64 2, i64 3"))
+  })
+
+(:: freshArgsOverwrite (-> Int Int Int))
+(fn (freshArgsOverwrite cg i)
+  {
+    (let value (concat "%args-" (fmtInt i)))
+    (probeSetArgsTyped cg value)
+    0
+  })
+
+(:: argsOrdinaryDiagnostic Int)
+;@axiom:effect(io)
+(fn (argsOrdinaryDiagnostic)
+  {
+    (let cg newCG)
+    (for i in 0..16
+      (freshArgsOverwrite cg i))
+    (let before (live))
+    (for i in 0..1000
+      (freshArgsOverwrite cg i))
+    (let growth (- (live) before))
+    (writeStr stderr (concat "args-ordinary-soak-growth " (concat (fmtInt growth) "\n")))
+    growth
+  })
+
 (:: main Int)
 ;@axiom:effect(io)
 (fn (main)
@@ -172,5 +310,11 @@
     (say 30 (probeSoleResultSame))
     (say 31 (probeSoleBlockSame))
     (say 32 (<= ordinaryGrowth 4096))
+    argsChecks
+    argsPreallocatedChecks
+    argsEmissionChecks
+    (let argsGrowth (argsOrdinaryDiagnostic))
+    (say 62 (<= argsGrowth 4096))
+    (say 63 probeSoleArgsSame)
     0
   })
