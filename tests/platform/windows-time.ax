@@ -1,0 +1,78 @@
+; The Windows platform source runs with deterministic API mocks on the
+; host. The fixture never sleeps or reads the host's clock.
+(import Err)
+(import Str)
+(import WindowsPlatform)
+
+(extern "windows_time_test"
+  (say :: (-> Bool String Int) (symbol "say"))
+  (resetSleep :: Int (symbol "resetSleep"))
+  (checkSleep :: (-> Int Int Int) (symbol "checkSleep"))
+  (setFileTime :: (-> Int Int) (symbol "setFileTime")))
+
+(:: sleepCase (-> String Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (sleepCase label nanos millis calls)
+  {
+    (let _ resetSleep)
+    (let r (WindowsPlatform::platformSleepNanos nanos))
+    (say (&& (isOk r) (== (checkSleep millis calls) 1)) label)
+  })
+
+(:: clockCase (-> String Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (clockCase label ticks expected)
+  {
+    (let _ (setFileTime ticks))
+    (say
+      (match WindowsPlatform::platformRealtimeNanos
+        ((Ok nanos) (== nanos expected))
+        ((Err _) false))
+      label)
+  })
+
+(:: overflowCase (-> String Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (overflowCase label ticks)
+  {
+    (let _ (setFileTime ticks))
+    (say
+      (match WindowsPlatform::platformRealtimeNanos
+        ((Ok _) false)
+        ((Err e) (&& (== (errCode e) errOverflow) (strEq e.context "platformRealtimeNanos"))))
+      label)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let mut bad 0)
+    (set bad (+ bad (sleepCase "zero does not sleep" 0 0 0)))
+    (set bad (+ bad (sleepCase "negative does not sleep" -1 0 0)))
+    (set bad (+ bad (sleepCase "one nanosecond rounds up" 1 1 1)))
+    (set bad (+ bad (sleepCase "fraction rounds up" 999999 1 1)))
+    (set bad (+ bad (sleepCase "whole millisecond stays whole" 1000000 1 1)))
+    (set bad (+ bad (sleepCase "past a millisecond rounds up" 1000001 2 1)))
+    (set bad (+ bad (sleepCase "largest finite DWORD" 4294967294000000 4294967294 1)))
+    (set bad (+ bad (sleepCase "rounding never makes INFINITE" 4294967294000001 4294967295 2)))
+    (set bad (+ bad (sleepCase "INFINITE is split" 4294967295000000 4294967295 2)))
+    (set bad (+ bad (sleepCase "DWORD does not wrap" 4294967296000000 4294967296 2)))
+    (set bad (+ bad (sleepCase "Int maximum does not wrap" 9223372036854775807 9223372036855 2148)))
+    (set bad (+ bad (clockCase "Unix epoch" 116444736000000000 0)))
+    (set bad (+ bad (clockCase "after Unix epoch" 116444736000000001 100)))
+    (set bad (+ bad (clockCase "before Unix epoch" 116444735999999999 -100)))
+    (set bad (+ bad
+               (clockCase "largest representable tick" 208678456368547758 9223372036854775800)))
+    (set bad (+ bad
+               (clockCase "smallest representable tick" 24211015631452242 -9223372036854775800)))
+    (set bad (+ bad (overflowCase "tick above range" 208678456368547759)))
+    (set bad (+ bad (overflowCase "tick below range" 24211015631452241)))
+    (set bad (+ bad (overflowCase "FILETIME epoch is outside Int nanoseconds" 0)))
+    (set bad (+ bad (overflowCase "unsigned FILETIME high bit" -1)))
+    (set bad (+ bad (overflowCase "FILETIME subtraction cannot wrap" -9223372036854775808)))
+    bad
+  })

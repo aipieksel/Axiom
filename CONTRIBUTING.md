@@ -545,9 +545,9 @@ jobs that need a compiler get it through the same composite action,
    This job also emits the Windows hello world, the compiler and the
    tree audit for the Windows targets (`scripts/check-windows-hello.sh
    --emit`), which two Windows legs then run: on `windows-2025`, the
-   x86_64 hello, the compiler and the tree audit, and the
-   standard-library battery against `tests/stdlib/windows-skip.txt`;
-   on `windows-11-arm`, the aarch64 hello. Both targets stay
+   x86_64 hello, the compiler and the tree audit; on `windows-11-arm`,
+   the same checks for aarch64. Both run the standard-library battery
+   against `tests/stdlib/windows-skip.txt`. Both targets stay
    source-only until that list is empty.
 5. **Self-hosting fixpoint.** `check-bootstrap.sh` checks that
    `stage2 == stage3`, byte for byte, with the ladder rooted at the

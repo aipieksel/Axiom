@@ -219,6 +219,26 @@ if (( nest_checked != 4 )); then
   status=1
 fi
 
+# An inner reset to a shared mark must not file the compiler's outer
+# thunk into a slab. This also checks that its normal return releases
+# captured references, even though its own storage belongs to a frame.
+for lvl in 0 1 2 3; do
+  bin="$work/nested-recovery-O$lvl"
+  if ! "$axc" --diagnostic-format=ai build tests/stdlib/982-nested-recovery.ax --output "$bin" --opt "$lvl" >"$bin.build" 2>&1; then
+    echo "FAIL nested thunk -O$lvl: build"
+    head -5 "$bin.build"
+    status=1
+  elif ! "$bin" >"$bin.out" 2>"$bin.err" \
+     || ! cmp -s "$bin.out" tests/stdlib/982-nested-recovery.out; then
+    echo "FAIL nested thunk -O$lvl: allocation or captured-share corruption"
+    head -5 "$bin.out"
+    head -5 "$bin.err"
+    status=1
+  else
+    echo "ok   nested thunk -O$lvl preserves fresh allocations and captured shares"
+  fi
+done
+
 # ------------------------------------------------------------------
 # 3. A hundred thousand aborts do not grow memory.
 #
@@ -701,6 +721,67 @@ if (( win_checked == 8 )); then
 else
   echo "FAIL only $win_checked of 8 Windows builds reached the jump check"
   status=1
+fi
+
+# ------------------------------------------------------------------
+# 5c. Windows stack probes live in the freestanding runtime.
+#
+# A frame larger than 4 KiB makes llc insert a call to __chkstk. The
+# call follows a special ABI rather than the source-level calling
+# convention, and it must visit every intervening guard page before
+# the caller subtracts its frame. Assemble a real large Axiom function
+# for both targets, then execute the matching architecture's emitted
+# helper against an intervening protected page on this host.
+# This exercises instructions and ABI preservation, not Windows stack
+# growth; check-windows-hello.sh --run executes the large call there.
+# ------------------------------------------------------------------
+echo "== Windows large frames carry their own stack probe =="
+command -v llvm-nm >/dev/null || { echo "FAIL llvm-nm is needed to inspect the Windows stack probe"; exit 1; }
+probe_test="$repo_root/tests/recover/windows-stack-probe.py"
+python3 "$probe_test" source "$work/large-frame.ax"
+for target in windows-x86_64 windows-aarch64; do
+  ir="$work/large-$target.ll"
+  if ! "$axc" --diagnostic-format=ai --target="$target" emit-llvm "$work/large-frame.ax" -o "$ir" >"$work/large.emit" 2>&1; then
+    echo "FAIL [$target] could not emit the large-frame case"
+    head -5 "$work/large.emit"
+    status=1
+    continue
+  fi
+  asm="$work/large-$target.s"
+  obj="$work/large-$target.obj"
+  if ! llc -O0 -relocation-model=pic "$ir" -o "$asm" \
+     || ! llc -O0 -relocation-model=pic -filetype=obj "$ir" -o "$obj"; then
+    echo "FAIL [$target] could not assemble the large-frame case"
+    status=1
+    continue
+  fi
+  if ! grep -E '(callq?|bl)[[:space:]]+__chkstk' "$asm" >/dev/null; then
+    echo "FAIL [$target] the large-frame case did not need a stack probe"
+    status=1
+  elif llvm-nm --undefined-only "$obj" | grep -E '[[:space:]]__chkstk$' >/dev/null; then
+    echo "FAIL [$target] the frame needs __chkstk but the runtime did not define it"
+    status=1
+  else
+    echo "ok   [$target] a large Axiom frame calls the runtime's defined __chkstk"
+  fi
+  # Optimisation must keep this weak helper even though llc introduces
+  # its callers after the IR passes have finished.
+  if ! opt -O3 "$ir" -S -o "$work/large-$target.opt.ll" \
+     || ! grep -E '^define .*@__chkstk\(' "$work/large-$target.opt.ll" >/dev/null; then
+    echo "FAIL [$target] optimisation discarded the stack-probe helper"
+    status=1
+  fi
+done
+case "$(uname -m)" in
+  arm64|aarch64) probe_target=windows-aarch64 ;;
+  x86_64|amd64) probe_target=windows-x86_64 ;;
+  *) echo "FAIL cannot execute a Windows stack-probe instruction set on $(uname -m)"; status=1; probe_target="" ;;
+esac
+if [[ -n "$probe_target" ]]; then
+  if ! python3 "$probe_test" native "$work/large-$probe_target.ll" "$work/native-probe"; then
+    echo "FAIL the emitted $probe_target stack probe failed the host instruction/ABI checks"
+    status=1
+  fi
 fi
 
 # ------------------------------------------------------------------

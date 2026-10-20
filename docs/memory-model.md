@@ -2441,6 +2441,12 @@ reclaims (`MM-ALLOC-12`), so a loop that writes
 `(__axiom_recover __axiom_arena_mark thunk)` pays 48 bytes an arm. Take
 the mark once, before the loop.
 
+An immediate lambda passed as the thunk also lives in the arming
+frame. Its reference map releases captured shares on normal return,
+and its storage is never added to an arena free list. An inner recovery
+may therefore reset to the same mark without reclaiming the outer
+thunk. Tested by `tests/stdlib/982-nested-recovery.ax`.
+
 The jump abandons N frames of pending `axiom_release` calls. They are
 harmless because of `MM-ALLOC-14` and `MM-LIFE-2e`: the reset reclaims
 everything above the mark regardless of any count, and scrubs all 4,143

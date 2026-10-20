@@ -989,4 +989,19 @@ if [[ "$probe_failures" -gt 0 ]]; then
   status=1
 fi
 
+# The Windows clock and sleep use different units and widths from the
+# public nanosecond API. Run that platform source on this host against
+# API mocks; Windows CI separately executes the real kernel calls.
+if ! python3 "$repo_root/tests/platform/windows-time.py" --axiom "$axc"; then
+  status=1
+fi
+
+if ! python3 "$repo_root/tests/platform/windows-paths.py" --axiom "$axc"; then
+  status=1
+fi
+
+if ! python3 "$repo_root/tests/platform/windows-pollers.py" --axiom "$axc"; then
+  status=1
+fi
+
 exit "$status"

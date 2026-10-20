@@ -1,0 +1,46 @@
+; An inner reset may reach the mark shared by its outer recovery call.
+; The compiler's immediate thunk must outlive that reset: filing a heap
+; thunk afterwards would put the same storage in a slab and at the bump
+; pointer. Two subsequent allocations must remain separate.
+(import IO)
+(import Str)
+
+(:: boom (-> Int Int))
+(fn (boom n)
+  (/ 1 n))
+
+; `text` lives before the mark. The outer thunk takes a captured share,
+; and gives it back when the nested recovery returns normally.
+(:: nested (-> String Int Int))
+(fn (nested text mark)
+  (__axiom_recover mark
+    (lambda (x)
+      (+ (strLen text) (__axiom_recover mark (lambda (y) (boom 0))))
+    )))
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (main)
+  {
+    (let text (strDup "abc"))
+    (let countBefore (__load64 (as text Int) (- 0 2)))
+    (let mark __axiom_arena_mark)
+    (let status (nested text mark))
+    (let countAfter (__load64 (as text Int) (- 0 2)))
+    (let a (__alloc 24))
+    (let b (__alloc 24))
+    (__store64 a 0 123)
+    (__store64 b 0 456)
+    (let good
+      (&& (== status 75)
+        (&& (== countBefore countAfter)
+          (&& (!= a b) (&& (== (__load64 a 0) 123) (== (__load64 b 0) 456))))))
+    (println
+      (if good
+        "ok   nested recovery preserves allocations and captured shares"
+        "FAIL nested recovery corrupted allocations or captured shares"))
+    (if good
+      0
+      1)
+  })

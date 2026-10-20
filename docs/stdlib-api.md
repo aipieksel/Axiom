@@ -1857,7 +1857,7 @@ Net - TCP connections and IP addresses.
 | `pollerAddStream` | value | `(-> Poller TcpStream Int (Result Int Error))` | `Alloc,IO,Mut` |  | Watch the stream under `token` in `p`: a wake answering `token` means a read will not block. Bytes `tcpBuffered` counts are already here and wake nothing, so read until `WouldBlock` before waiting again. |
 | `pollerRemoveListener` | value | `(-> Poller TcpListener (Result Int Error))` | `Alloc,IO,Mut` |  | Stop watching the listener. See `IO.pollerRemove`. |
 | `pollerRemoveStream` | value | `(-> Poller TcpStream (Result Int Error))` | `Alloc,IO,Mut` |  | Stop watching the stream. See `IO.pollerRemove`. |
-| `tcpListen` | value | `(-> String (Result TcpListener Error))` | `Alloc,IO,Mut` |  | A listener on the address `text` names, such as `0.0.0.0:8080` or `[::1]:0`. Port 0 asks the kernel for a free port, and `tcpListenerLocalAddr` says which. `SO_REUSEADDR` is set, so a restarted server can bind the port its predecessor left in TIME_WAIT. |
+| `tcpListen` | value | `(-> String (Result TcpListener Error))` | `Alloc,IO,Mut` |  | A listener on the address `text` names, such as `0.0.0.0:8080` or `[::1]:0`. Port 0 asks the kernel for a free port, and `tcpListenerLocalAddr` says which. POSIX sets `SO_REUSEADDR` so a restarted server can bind the port its predecessor left in TIME_WAIT. Windows sets `SO_EXCLUSIVEADDRUSE`, preventing another listener from taking the address while this one is live. |
 | `tcpListenAddr` | value | `(-> SocketAddr (Result TcpListener Error))` | `Alloc,IO,Mut` |  | A listener on `addr`, as `tcpListen` makes one. |
 | `tcpAccept` | value | `(-> TcpListener (Result TcpStream Error))` | `Alloc,IO,Mut` |  | Wait for the next connection and answer it as a blocking stream. `tcpPeerAddr` says who connected. |
 | `tcpListenerLocalAddr` | value | `(-> TcpListener (Result SocketAddr Error))` | `Alloc,IO,Mut` |  | The address the listener is bound to, with the kernel's choice of port when it was asked for port 0. |
@@ -1905,13 +1905,13 @@ Path - taking a filesystem path apart and putting one together.
 | `pathDir` | value | `(-> String String)` | `Alloc,Mut` |  | Everything up to and including the last `/`, or "" when `p` names something in the working directory. |
 | `pathBase` | value | `(-> String String)` | `Alloc,Mut` |  | Everything after the last `/` - the file name on its own, or `p` entire when there is no separator. |
 | `pathWithSlash` | value | `(-> String String)` | `Alloc,Mut` |  | A directory name that ends in `/`, so concatenation forms a path. |
-| `pathJoin` | value | `(-> String String String)` | `Alloc,Mut` |  | `dir` and `name` as one path, with exactly one `/` between them. |
+| `pathJoin` | value | `(-> String String String)` | `Alloc,Mut` |  | Join `dir` and `name`, adding a separator when needed. An empty directory or a fully qualified name answers `name`. On Windows a rooted name keeps the directory's drive or share, and a drive-relative name extends the directory only when their drives match. |
 | `pathExtIndex` | value | `(-> String (Option Int))` |  |  | The index of the extension's `.` within `p`, or `None`. |
 | `pathExt` | value | `(-> String String)` | `Alloc,Mut` |  | The extension INCLUDING its dot (`".ax"`), or "" when there is none. |
 | `pathStem` | value | `(-> String String)` | `Alloc,Mut` |  | The base name with its extension removed: `"src/main.ax"` is `"main"`. What a driver names an output after. |
 | `pathReplaceExt` | value | `(-> String String String)` | `Alloc,Mut` |  | `p` with its extension replaced by `ext`, which carries its own dot. `(pathReplaceExt "build/main.ax" ".ll")` is `"build/main.ll"`, and a path with no extension simply gains one. |
-| `pathIsAbsolute` | value | `(-> String Bool)` |  |  | True when `p` starts at the root. A relative path is resolved against the working directory, which is why `Sys.sysGetCwd` exists. |
-| `pathClean` | value | `(-> String String)` | `Alloc,Mut` |  | `p`, lexically simplified to the shortest path naming the same location: doubled `/`s collapse, a `.` segment is dropped, and a real segment is cancelled by the `..` that immediately follows it. It never touches the filesystem, so a symlink is treated as an ordinary name. The rules are Go's `path.Clean` and Python's `posixpath.normpath`. |
+| `pathIsAbsolute` | value | `(-> String Bool)` |  |  | True when `p` starts at a root. Windows also recognises a drive root such as `C:\work`, a UNC share, and a leading `\` on the current drive. `C:work` remains relative to that drive's working directory. |
+| `pathClean` | value | `(-> String String)` | `Alloc,Mut` |  | `p`, lexically simplified to the shortest path naming the same location: doubled `/`s collapse, a `.` segment is dropped, and a real segment is cancelled by the `..` that immediately follows it. It never touches the filesystem, so a symlink is treated as an ordinary name. The rules are Go's `path.Clean` and Python's `posixpath.normpath`. Windows also recognises backslashes as separators and preserves drive-relative prefixes and share roots. |
 
 ## `Pre`
 

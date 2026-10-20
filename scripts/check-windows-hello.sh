@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # The Windows targets, windows-x86_64 and windows-aarch64: emitted on any
-# host, then linked on a Windows runner and executed there on x86-64.
-# Three things run:
+# host, then linked on Windows runners and executed on each runner's
+# own architecture. Four things run:
 #
 #   1. A hello world for each target. Its output must match the golden
 #      byte for byte, and its imports must stay within
 #      `scripts/platform-allow.windows.txt`.
-#   2. The compiler itself, emitted for windows-x86_64 and linked with
+#   2. The compiler itself, emitted for each target and linked with
 #      an 8 MB stack. It emits `self_host/main.ax` again byte for byte,
 #      builds and runs the hello case through its own driver, and
 #      reports `tests/testrunner/mixed-tests.ax` to its golden.
 #   3. `examples/tree-audit/tree-audit.ax`, built and run by that
 #      compiler over a fixture tree. Its report must equal the one the
 #      emitting host printed, which a Python oracle checked there.
+#   4. A large-frame fixture that requires the runtime's stack probe,
+#      followed by the standard-library battery.
 #
 # README's Targets section calls a target supported when "a CI job
 # executes what the compiler emits there". For Windows, this gate is
@@ -20,7 +22,7 @@
 # half needs its own toolchain:
 #
 #   --emit DIR     on a host with the tree's compiler: emit the hello
-#                  case and the leaky probe for each Windows target into
+#                  case, leaky probe and large-frame fixture for each Windows target into
 #                  DIR/<target>/, beside the golden they must match, and
 #                  the compiler and the tree audit's report into
 #                  DIR/selfhost/. The `cross` CI job runs this half.
@@ -35,8 +37,8 @@
 #                  runner's own target (TARGET, or the one `uname -m`
 #                  names) and require exit 0 and the golden's bytes. The
 #                  other target is linked and reports "NOT EXECUTED".
-#                  Then link the compiler, and on windows-x86_64 run
-#                  parts 2 and 3 with it.
+#                  Then link the compiler, and run parts 2, 3 and the
+#                  library battery for the runner's own target.
 #
 #   --link DIR     everything --run does except execution, for a host
 #                  that cannot run a PE. Its verdict lines say "not
@@ -158,22 +160,25 @@ case "$mode" in
   }
 )
 AX
+    python3 "$repo_root/tests/recover/windows-stack-probe.py" source "$work/large-frame.ax"
     for t in "${win_targets[@]}"; do
       d="$dir/$t"
       mkdir -p "$d"
       "$axc" --target="$t" emit-llvm tests/stdlib/010-hello.ax -o "$d/hello.ll"
       cp tests/stdlib/010-hello.out "$d/hello.out"
       "$axc" --target="$t" emit-llvm "$work/leaky.ax" -o "$d/leaky.ll"
+      "$axc" --diagnostic-format=ai --target="$t" emit-llvm "$work/large-frame.ax" -o "$d/large-frame.ll"
+      cp "$work/large-frame.out" "$d/large-frame.out"
       # The allowlist travels with the modules, so the run half checks
       # against this commit's list rather than the runner's checkout.
       cp "$win_allow" "$d/platform-allow.windows.txt"
-      for f in hello.ll hello.out leaky.ll platform-allow.windows.txt; do
+      for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out platform-allow.windows.txt; do
         [[ -s "$d/$f" ]] || { echo "FAIL --emit [$t]: $d/$f is missing or empty"; exit 1; }
       done
       # Each module must open with its own target's triple. A target that
       # fell through to another's triple would be assembled for the wrong
       # machine.
-      for f in hello.ll leaky.ll; do
+      for f in hello.ll leaky.ll large-frame.ll; do
         if [[ "$(head -1 "$d/$f")" != "target triple = \"$(triple_of "$t")\"" ]]; then
           echo "FAIL --emit [$t]: $d/$f opens with '$(head -1 "$d/$f")', not the $(triple_of "$t") triple"
           exit 1
@@ -211,7 +216,7 @@ AX
       command -v "$tool" > /dev/null 2>&1 || { echo "FAIL: $tool is not on PATH; the Windows link needs LLVM's llc, lld-link, llvm-dlltool and llvm-readobj"; exit 1; }
     done
     for t in "${win_targets[@]}"; do
-      for f in hello.ll hello.out leaky.ll platform-allow.windows.txt; do
+      for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out platform-allow.windows.txt; do
         [[ -s "$dir/$t/$f" ]] || { echo "FAIL: $dir/$t/$f is missing or empty; run --emit first"; exit 1; }
       done
     done
@@ -256,9 +261,9 @@ AX
 
       # Assemble and link one module. Silent on success; a failed link
       # prints its undefined symbols.
-      link_one() {  # <name> <extra .lib...>
-        local name="$1"; shift
-        llc -filetype=obj -O1 -relocation-model=pic "$src/$name.ll" -o "$w/$name.obj" 2>"$w/$name.llc.err" \
+      link_one() {  # <name> <llc level> <extra .lib...>
+        local name="$1" level="$2"; shift 2
+        llc -filetype=obj "-O$level" -relocation-model=pic "$src/$name.ll" -o "$w/$name.obj" 2>"$w/$name.llc.err" \
           || { echo "FAIL $name [$t]: llc refused the module"; sed 's/^/    /' "$w/$name.llc.err" | head -5; return 1; }
         # Use dash-form flags such as `-out:`. Under Git Bash, MSYS turns
         # an argument starting with `/` into a Windows path, so `/out:x.exe`
@@ -282,7 +287,7 @@ AX
 
       # 1. hello links, imports only what is permitted, and (--run, on
       #    the runner's own target) runs.
-      if link_one hello; then
+      if link_one hello 1; then
         imports_of "$w/hello.exe" > "$w/hello.imports"
         n_imports="$(grep -c . "$w/hello.imports" || true)"
         unexpected="$(unpermitted_imports "$w/hello.imports" "$allow")"
@@ -334,7 +339,7 @@ AX
       fi
 
       # 2. The leaky probe links (user32.lib is on its line) and is refused.
-      if link_one leaky "$w/user32.lib"; then
+      if link_one leaky 1 "$w/user32.lib"; then
         imports_of "$w/leaky.exe" > "$w/leaky.imports"
         leaked="$(unpermitted_imports "$w/leaky.imports" "$allow" | tr '\n' ' ')"
         if [[ "$leaked" == "MessageBoxA " ]]; then
@@ -345,6 +350,27 @@ AX
         fi
       else
         echo "FAIL negative probe [$t]: the leaky probe did not link, so the allowlist was never shown refusing a real executable"
+        status=1
+      fi
+
+      # -O0 keeps this call frame larger than a page, requiring the
+      # runtime's __chkstk helper. Link both machines, execute the
+      # runner's own machine, and keep cross-linking explicit.
+      if link_one large-frame 0; then
+        if [[ "$mode" == "--run" && "$t" == "$run_target" ]]; then
+          rc=0
+          "$w/large-frame.exe" > "$w/large-frame.stdout" 2> "$w/large-frame.stderr" || rc=$?
+          if [[ "$rc" -eq 0 ]] && cmp -s "$w/large-frame.stdout" "$src/large-frame.out"; then
+            echo "ok   large-frame.exe [$t] EXECUTED: exit 0 and the expected result with a stack probe"
+          else
+            echo "FAIL large-frame.exe [$t]: exit $rc or output differs from the expected result"
+            head -5 "$w/large-frame.stderr" | sed 's/^/    /'
+            status=1
+          fi
+        else
+          echo "ok   large-frame.exe [$t] links with __chkstk; NOT EXECUTED on this host"
+        fi
+      else
         status=1
       fi
     done
@@ -513,6 +539,11 @@ AX
       ran=0; skipped=0; passing_skips=""
       for case_file in "$repo_root"/tests/stdlib/[0-9]*.ax; do
         name="$(basename "$case_file" .ax)"
+        # File cases must not share their working directory. Keep the
+        # executable there too: 305-path-search baits an empty PATH
+        # entry with the program's own name in the working directory.
+        case_dir="$w/battery/$name"
+        mkdir -p "$case_dir"
         listed=0
         grep -qE "^$name( |\$)|^$name@$run_target( |\$)" "$skip_list" && listed=1
         want_exit=0
@@ -520,11 +551,11 @@ AX
         stdin_src=/dev/null
         [[ -f "$repo_root/tests/stdlib/$name.in" ]] && stdin_src="$repo_root/tests/stdlib/$name.in"
         set +e
-        ( cd "$repo_root" && timeout 300 "$ax" build "tests/stdlib/$name.ax" -o "$w/bat-$name.exe" ) > "$w/bat-$name.build.log" 2>&1
+        ( cd "$repo_root" && timeout 300 "$ax" --diagnostic-format=ai build "tests/stdlib/$name.ax" -o "$case_dir/$name.exe" ) > "$w/bat-$name.build.log" 2>&1
         brc=$?
         rrc=-1
         if [[ "$brc" -eq 0 ]]; then
-          ( cd "$repo_root" && timeout 300 "$w/bat-$name.exe" < "$stdin_src" > "$w/bat-$name.stdout" 2> "$w/bat-$name.stderr" )
+          ( cd "$case_dir" && timeout 300 "./$name.exe" < "$stdin_src" > "$w/bat-$name.stdout" 2> "$w/bat-$name.stderr" )
           rrc=$?
         fi
         set -e
@@ -556,7 +587,7 @@ AX
           { cat "$w/bat-$name.build.log" "$w/bat-$name.stderr" 2>/dev/null || true; } | head -4 | sed 's/^/    /'
           status=1
         fi
-        rm -f "$w/bat-$name.exe" "$w/bat-$name.obj"
+        rm -f "$case_dir/$name.exe" "$case_dir/$name.obj"
       done
       if (( ran < 150 )); then
         echo "FAIL the battery ran only $ran case(s) to their goldens; the floor is 150"

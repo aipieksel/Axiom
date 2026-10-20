@@ -2385,9 +2385,29 @@
     (let ft winCell)
     {
       (winGetSystemTimePreciseAsFileTime ft)
-      (Ok (* (- (__load64 ft 0) 116444736000000000) 100))
+      (withContext
+        (andThen (subChecked (__load64 ft 0) 116444736000000000)
+          (lambda (ticks) (mulChecked ticks 100)))
+        "platformRealtimeNanos")
     }
   })
+
+; Sleep takes a DWORD of milliseconds. INFINITE (0xffffffff) is not
+; a finite duration, so split longer sleeps into finite chunks before
+; the call narrows the word. Tail recursion keeps the stack bounded.
+(:: winSleepMillis (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (winSleepMillis ms)
+  (if (> ms 4294967294)
+    {
+      (winSleep 4294967294)
+      (winSleepMillis (- ms 4294967294))
+    }
+    {
+      (winSleep ms)
+      0
+    }))
 
 ;; Sleep for at least `nanos` nanoseconds, rounded up to the
 ;; millisecond `Sleep` takes. Answers `Ok 0`.
@@ -2395,11 +2415,14 @@
 ;; raw wait is not available; `Err` 78 where the syscall serves.
 (pub :: platformSleepNanos (-> Int (Result Int Error)))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (platformSleepNanos nanos)
   {
     (if (> nanos 0)
-      (winSleep (/ (+ nanos 999999) 1000000))
+      (winSleepMillis
+        (+ (/ nanos 1000000)
+          (if (== (% nanos 1000000) 0)
+            0
+            1)))
       0)
     (Ok 0)
   })

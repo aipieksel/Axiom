@@ -822,8 +822,10 @@
 ; ------------------------------------------------------------------
 ;; A listener on the address `text` names, such as `0.0.0.0:8080` or
 ;; `[::1]:0`. Port 0 asks the kernel for a free port, and
-;; `tcpListenerLocalAddr` says which. `SO_REUSEADDR` is set, so a
+;; `tcpListenerLocalAddr` says which. POSIX sets `SO_REUSEADDR` so a
 ;; restarted server can bind the port its predecessor left in TIME_WAIT.
+;; Windows sets `SO_EXCLUSIVEADDRUSE`, preventing another listener from
+;; taking the address while this one is live.
 (pub :: tcpListen (-> String (Result TcpListener Error)))
 ;@axiom:effect(io)
 (pub fn (tcpListen text)
@@ -854,7 +856,13 @@
 (:: netListenOn (-> File SocketAddr (Result Int Error)))
 ;@axiom:effect(io)
 (fn (netListenOn f addr)
-  (match (socketSetInt f solSocket soReuseAddr 1)
+  ; Winsock's SO_REUSEADDR permits another listener to take this port.
+  ; SO_EXCLUSIVEADDRUSE is -5 and must be set before bind.
+  (match (socketSetInt f solSocket
+           (if (== usesSyscallAbi 0)
+             (- 0 5)
+             soReuseAddr)
+           1)
     ((Err e) (Err e))
     ((Ok _)
       (match (socketBind f addr.bytes)

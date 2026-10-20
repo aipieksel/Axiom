@@ -31,6 +31,33 @@ its changelog too.
   drops. A new fixture shows that an effect claim the walk cannot check
   never stands in for its callee.
 
+- Nested recovery can reset to a shared mark without reclaiming its
+  outer thunk's hidden closure. Immediate recovery lambdas live in the
+  arming frame and return their captured shares on normal completion.
+  Tested by `tests/stdlib/982-nested-recovery.ax`.
+
+- Windows paths recognise drive roots, UNC shares and rooted names;
+  joins and lexical cleaning preserve those roots. Table pollers reject
+  use after close, and Windows listeners reserve their address with
+  `SO_EXCLUSIVEADDRUSE`. Tested by `tests/platform/windows-paths.py` and
+  `tests/platform/windows-pollers.py`.
+
+- Windows sleeps keep their duration when rounding to milliseconds or
+  crossing the API's 32-bit limit. Wall-clock reads answer `errOverflow`
+  when their nanoseconds cannot fit in `Int`. Tested by
+  `tests/platform/windows-time.py` with host-side API mocks.
+
+- Large Windows stack frames link without a C runtime. The runtime
+  supplies `__chkstk` for both architectures and probes every page
+  before the frame is used. `scripts/check-recover.sh` checks its
+  instructions against a protected page on the host; the Windows
+  runner also links and runs a large-frame fixture.
+
+- The process fixtures use Windows shell arguments and path separators
+  on Windows. The Windows library battery gives each case its own
+  working directory, with its executable beside it, so the empty-PATH
+  probe can detect a search of the working directory.
+
 - `IO.nullDevice` is the path of the null device, `/dev/null` or `NUL`
   on Windows, for a program that needs a file it can always open and
   that keeps nothing.

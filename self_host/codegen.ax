@@ -10639,6 +10639,7 @@
       (if (== t 7)
         v
         {
+          (vecPush v "__chkstk")
           (vecPush v "VirtualAlloc")
           (vecPush v "VirtualFree")
           (if (== t 6)
@@ -10699,9 +10700,9 @@
         (emitLine cg "@__ImageBase = external global i8"))
       (emitLine cg "define internal i64 @__axiom_veh(i64 %info) #0 {")
       (emitLine cg "entry:")
-      ; the capture buffer is a static alloca in the entry block: one
-      ; in the fault block would be dynamic, and llc probes a dynamic
-      ; frame through the CRT's `__chkstk`, which no program here has
+      ; Keep the capture buffer in the fixed entry frame: a dynamic
+      ; alloca would need another probe while this handler is already
+      ; reporting an exhausted stack.
       (if (== t 6)
         (emitLine cg "  %buf = alloca [64 x i64], align 16"))
       (emitLine cg "  %ip = inttoptr i64 %info to ptr")
@@ -10825,6 +10826,7 @@
     ; a real import. Measured 2026-08-29 on `010-hello`: `U _fltused`
     ; in the object without this line, `D _fltused` with it.
     (emitLine cg "@_fltused = global i32 1")
+    (emitWinStackProbe cg)
     (emitWinFaultRuntime cg)
     ; Static TLS without a C runtime, for the `thread_local(localexec)`
     ; runtime globals of a module that spawns (MM-PAR-6): lld-link fills
@@ -10852,6 +10854,39 @@
     (emitRuntimeWrite cg "%nsp" "37")
     (emitLine cg "  call void @__axiom_backtrace()")
     (emitRuntimeExit cg "74")
+    (emitLine cg "  unreachable")
+    (emitLine cg "}")
+    (emitLine cg "")
+    cg
+  })
+
+; Probe every page before LLVM subtracts a large Windows frame. The
+; backend calls `__chkstk` from a prologue without an ordinary argument
+; list: x86-64 passes bytes in rax, arm64 passes sixteen-byte units in
+; x15. Both helpers keep sp and the size register unchanged. Only
+; r10/r11 or x16/x17 and flags may change, so the probe has no frame
+; or register spills of its own. Its weak definition also lets a host
+; provide the same ABI helper. The last read reaches the exact end
+; of the requested range; the reads before it cannot skip a guard.
+;
+; Keeping the probe in the emitted runtime lets a large frame link
+; without a C runtime, and lets Windows grow its guarded stack before
+; any store to that frame. `scripts/check-recover.sh` executes the
+; host-architecture helper against an intervening protected page and
+; assembles a large call frame for both Windows architectures.
+(pub :: emitWinStackProbe (-> Int Int))
+(pub fn (emitWinStackProbe cg)
+  {
+    ; Its calls appear during llc, after IR pruning and optimisation.
+    ; The retention list exposes that dependency to both passes.
+    (emitLine cg
+      "@llvm.compiler.used = appending global [1 x ptr] [ptr @__chkstk], section \"llvm.metadata\"")
+    (emitLine cg "define weak_odr void @__chkstk() naked {")
+    (emitLine cg "entry:")
+    (emitLine cg
+      (if (== (memGetWord cg 26) 6)
+        "  call void asm sideeffect \"movq %rax, %r10\\0Aleaq 8(%rsp), %r11\\0Atestq %r10, %r10\\0Ajz 3f\\0Acmpq $$4096, %r10\\0Ajbe 2f\\0A1:\\0Asubq $$4096, %r11\\0Atestb $$0, (%r11)\\0Asubq $$4096, %r10\\0Acmpq $$4096, %r10\\0Aja 1b\\0A2:\\0Asubq %r10, %r11\\0Atestb $$0, (%r11)\\0A3:\\0Aretq\", \"~{r10},~{r11},~{memory},~{cc}\"()"
+        "  call void asm sideeffect \"lsl x16, x15, #4\\0Amov x17, sp\\0Acbz x16, 3f\\0Acmp x16, #4096\\0Ab.ls 2f\\0A1:\\0Asub x17, x17, #4096\\0Aldr xzr, [x17]\\0Asub x16, x16, #4096\\0Acmp x16, #4096\\0Ab.hi 1b\\0A2:\\0Asub x17, x17, x16\\0Aldr xzr, [x17]\\0A3:\\0Aret\", \"~{x16},~{x17},~{memory},~{cc}\"()"))
     (emitLine cg "  unreachable")
     (emitLine cg "}")
     (emitLine cg "")
@@ -19401,6 +19436,18 @@
 (pub :: emitLambda (-> ASTNode Int Int))
 ;@axiom:effect(io)
 (pub fn (emitLambda node cg)
+  (emitLambdaAt node cg false))
+
+; A recovery call's immediate thunk stays in its arming frame. An
+; inner reset can reclaim every arena allocation after the shared
+; mark, including a heap closure the compiler made for an outer thunk.
+; Releasing that reclaimed closure would file storage still named by
+; the bump pointer. A frame cell remains live across the reset, and a
+; zero byte count in its shape keeps its later release out of slabs.
+; The reference map still gives its captured shares back on return.
+(pub :: emitLambdaAt (-> ASTNode Int Bool Int))
+;@axiom:effect(io)
+(pub fn (emitLambdaAt node cg scoped)
   {
     (let lparams (nodeANames node))
     (let body (nodeBChild node))
@@ -19421,11 +19468,24 @@
             (let pr (regStr pn))
             (let fr (tmpStr "f" fn2))
             {
-              (emitLine cg
-                (concat
-                  (concat (concat "  " pr)
-                    (concat " = call i64 @axiom_alloc(i64 " (fmtInt (* (+ k 1) 8))))
-                  ")"))
+              (if scoped
+                {
+                  (let cell (regStr (allocReg cg)))
+                  (let base (regStr (allocReg cg)))
+                  {
+                    (emitRecoverCell cg cell (fmtInt (+ k 3)))
+                    (emitLine cg
+                      (concat "  "
+                        (concat base (concat " = ptrtoint ptr " (concat cell " to i64")))))
+                    (emitLine cg
+                      (concat "  " (concat pr (concat " = add i64 " (concat base ", 16")))))
+                  }
+                }
+                (emitLine cg
+                  (concat
+                    (concat (concat "  " pr)
+                      (concat " = call i64 @axiom_alloc(i64 " (fmtInt (* (+ k 1) 8))))
+                    ")")))
               (emitLine cg
                 (concat (concat "  " fr)
                   (concat " = ptrtoint ptr @" (concat (llvmSym (strDup lname)) " to i64"))))
@@ -19437,7 +19497,12 @@
               ; parameters), so the record's death hands them back -
               ; a closure per iteration of a loop chained a million
               ; captured closures that nothing ever released
-              (storeShapeAt cg pr (lamShapeConst cg capNames k))
+              (storeShapeAt cg pr
+                (if scoped
+                  (if (> (+ k 1) 47)
+                    0
+                    (lamShapeBits cg capNames 0))
+                  (lamShapeConst cg capNames k)))
               ; A capture that is a REFERENCE PARAMETER of the
               ; enclosing function takes a share, and this is the one
               ; hole that would make event 4's boundary release
@@ -23126,7 +23191,11 @@
             (concat runB (concat (concat ", label %" doneB) "")))))
       (let _19 (emitLabel cg0 runB))
       {
-        (let cgT (emitExpr (vecGet args 1) cg0))
+        (let thunk (vecGet args 1))
+        (let cgT
+          (if (== (nodeTag thunk) TAG_E_LAM)
+            (emitLambdaAt thunk cg0 true)
+            (emitExpr thunk cg0)))
         {
           (let f (strDup (memGetWordStr cgT 2)))
           {

@@ -97,24 +97,59 @@
 (pub fn (pathWithSlash d)
   (if (== (strLen d) 0)
     ""
-    (if (== (strByte d (- (strLen d) 1)) 47)
+    (if (pathSepByte (strByte d (- (strLen d) 1)))
       (strDup d)
       (concat d "/"))))
 
-;; `dir` and `name` as one path, with exactly one `/` between them.
-;
-; Two cases answer `name` alone, and both are the rule a shell
-; follows: an empty `dir` is the working directory, and an ABSOLUTE
-; `name` ignores whatever it was offered as a prefix. The second is
-; what keeps `(pathJoin d n)` safe to write over a whole directory
-; listing without inspecting each name first.
+;; Join `dir` and `name`, adding a separator when needed. An empty
+;; directory or a fully qualified name answers `name`. On Windows a
+;; rooted name keeps the directory's drive or share, and a drive-relative
+;; name extends the directory only when their drives match.
 (pub :: pathJoin (-> String String String))
 (pub fn (pathJoin dir name)
   (if (== (strLen dir) 0)
     (strDup name)
-    (if (== (strByte name 0) 47)
-      (strDup name)
-      (concat (pathWithSlash dir) name))))
+    (if (== pathBackslashSeparates 1)
+      (pathJoinWindows dir name)
+      (if (pathIsAbsolute name)
+        (strDup name)
+        (concat (pathWithSlash dir) name)))))
+
+; A rooted name keeps the directory's drive when it names none itself.
+; A drive-relative name can extend a directory on that drive only.
+(:: pathJoinWindows (-> String String String))
+(fn (pathJoinWindows dir name)
+  {
+    (let d (pathDriveLength dir))
+    (let n (pathDriveLength name))
+    (if (pathIsAbsolute name)
+      (if (> n 0)
+        (strDup name)
+        (concat (strSlice dir 0 d) name))
+      (if (> n 0)
+        (if (&& (== d n) (pathSameDrive dir name d 0))
+          (concat (strSlice name 0 n)
+            (pathJoinRelative (strSlice dir d (- (strLen dir) d))
+              (strSlice name n (- (strLen name) n))))
+          (strDup name))
+        (if (&& (== (strLen dir) d) (|| (== d 2) (== (strLen name) 0)))
+          (concat dir name)
+          (concat (pathWithSlash dir) name))))
+  })
+
+(:: pathJoinRelative (-> String String String))
+(fn (pathJoinRelative dir name)
+  (if (== (strLen dir) 0)
+    (strDup name)
+    (concat (pathWithSlash dir) name)))
+
+(:: pathSameDrive (-> String String Int Int Bool))
+(fn (pathSameDrive a b n i)
+  (if (>= i n)
+    true
+    (if (== (| (strByte a i) 32) (| (strByte b i) 32))
+      (pathSameDrive a b n (+ i 1))
+      false)))
 
 ;; The index of the extension's `.` within `p`, or `None`.
 ;
@@ -184,18 +219,83 @@
     ((None) (concat p ext))
     ((Some i) (concat (strSlice p 0 i) ext))))
 
-;; True when `p` starts at the root. A relative path is resolved
-;; against the working directory, which is why `Sys.sysGetCwd` exists.
+;; True when `p` starts at a root. Windows also recognises a drive root
+;; such as `C:\work`, a UNC share, and a leading `\` on the current
+;; drive. `C:work` remains relative to that drive's working directory.
 (pub :: pathIsAbsolute (-> String Bool))
 (pub fn (pathIsAbsolute p)
-  (== (strByte p 0) 47))
+  (> (pathRootLength p) 0))
+
+; A separator on this target. POSIX keeps backslashes in file names.
+(:: pathSepByte (-> Int Bool))
+(fn (pathSepByte b)
+  (|| (== b 47) (&& (== pathBackslashSeparates 1) (== b 92))))
+
+; A Windows drive letter and colon, or a complete UNC server/share.
+; The separator after the volume belongs to the root, not the drive.
+(:: pathDriveLength (-> String Int))
+(fn (pathDriveLength p)
+  (if (== pathBackslashSeparates 0)
+      0
+    (&& (>= (strLen p) 2)
+      (&& (&& (>= (| (strByte p 0) 32) 97) (<= (| (strByte p 0) 32) 122)) (== (strByte p 1) 58)))
+      2
+    (&& (>= (strLen p) 2) (&& (pathSepByte (strByte p 0)) (pathSepByte (strByte p 1))))
+      {
+        (let root (pathUncRootLength p))
+        (if (<= root 1)
+          0
+          (if (pathSepByte (strByte p (- root 1)))
+            (- root 1)
+            root))
+      }
+    0))
+
+; The root's byte length, including its last separator when present.
+; An incomplete UNC name falls back to the current-drive root.
+(:: pathRootLength (-> String Int))
+(fn (pathRootLength p)
+  {
+    (let drive (pathDriveLength p))
+    (if (&& (> (strLen p) drive) (pathSepByte (strByte p drive)))
+        (+ drive 1)
+      (> drive 2)
+        drive
+      0)
+  })
+
+(:: pathNextSep (-> String Int Int))
+(fn (pathNextSep p i)
+  (if (>= i (strLen p))
+    i
+    (if (pathSepByte (strByte p i))
+      i
+      (pathNextSep p (+ i 1)))))
+
+(:: pathUncRootLength (-> String Int))
+(fn (pathUncRootLength p)
+  {
+    (let serverEnd (pathNextSep p 2))
+    (if (|| (== serverEnd 2) (>= serverEnd (strLen p)))
+      1
+      {
+        (let shareStart (+ serverEnd 1))
+        (let shareEnd (pathNextSep p shareStart))
+        (if (== shareEnd shareStart)
+          1
+          (if (< shareEnd (strLen p))
+            (+ shareEnd 1)
+            shareEnd))
+      })
+  })
 
 ;; `p`, lexically simplified to the shortest path naming the same
 ;; location: doubled `/`s collapse, a `.` segment is dropped, and a
 ;; real segment is cancelled by the `..` that immediately follows it.
 ;; It never touches the filesystem, so a symlink is treated as an
 ;; ordinary name. The rules are Go's `path.Clean` and Python's
-;; `posixpath.normpath`.
+;; `posixpath.normpath`. Windows also recognises backslashes as
+;; separators and preserves drive-relative prefixes and share roots.
 ;
 ; A leading `..` in a RELATIVE path has nothing to cancel against and
 ; is kept, once per unmatched `..` - `(pathClean "a/../../b")` is
@@ -215,11 +315,18 @@
   (if (== (strLen p) 0)
     "."
     {
-      (let abs (pathIsAbsolute p))
-      {
-        (let body (pathCleanFrom p (strLen p) 0 "" abs))
+      (let root (pathRootLength p))
+      (let drive (pathDriveLength p))
+      (let abs (> root 0))
+      (let prefix
         (if abs
-          (concat "/" body)
+          root
+          drive))
+      {
+        (let rest (strSlice p prefix (- (strLen p) prefix)))
+        (let body (pathCleanFrom rest (strLen rest) 0 "" abs))
+        (if (> prefix 0)
+          (concat (strSlice p 0 prefix) body)
           (if (== (strLen body) 0)
             "."
             body))

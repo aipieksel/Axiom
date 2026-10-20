@@ -1632,11 +1632,14 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (fn (pollerApply p fd rec op)
-  (if (== usesSyscallAbi 0)
-    (pollerTable p fd (ioGetWord (strData rec) 0) (ioGetWord (strData rec) pollEventFdOffset) op)
-    (if (== pollUsesKqueue 1)
-      (__syscall6 sysPollWaitNum (pollerFd p) (strData rec) 1 0 0 0)
-      (__syscall4 sysPollCtlNum (pollerFd p) op fd (strData rec)))))
+  {
+    (let pfd (pollerFd p))
+    (if (== usesSyscallAbi 0)
+      (pollerTable p fd (ioGetWord (strData rec) 0) (ioGetWord (strData rec) pollEventFdOffset) op)
+      (if (== pollUsesKqueue 1)
+        (__syscall6 sysPollWaitNum pfd (strData rec) 1 0 0 0)
+        (__syscall4 sysPollCtlNum pfd op fd (strData rec))))
+  })
 
 ; The table a poller keeps where there is no kernel object: 24-byte rows
 ; of descriptor, interest and token. `pollAddOp` adds a row, or
@@ -1726,58 +1729,61 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (pollerAddSignals p mask token)
-  (if (== usesSyscallAbi 0)
-    ; No signals to register: the token is remembered so a later wake
-    ; reports nothing as one, and the console's control events are a
-    ; later binding.
-    {
-      (set p.sigToken token)
-      (Ok 0)
-    }
-    (if (== signalUsesSignalFd 1)
+  {
+    (let _ (pollerFd p))
+    (if (== usesSyscallAbi 0)
+      ; No signals to register: the token is remembered so a later wake
+      ; reports nothing as one, and the console's control events are a
+      ; later binding.
       {
-        (let sigset (strAlloc 16))
+        (set p.sigToken token)
+        (Ok 0)
+      }
+      (if (== signalUsesSignalFd 1)
         {
-          (ioPutWord (strData sigset) 0 mask)
-          ; signalfd4(-1, mask, sizemask, SFD_CLOEXEC): -1 creates a
-          ; descriptor rather than updating one.
+          (let sigset (strAlloc 16))
           {
-            (let sfd (__syscall4 sysSignalFdNum (- 0 1) (strData sigset) sigsetBytes oCloexec))
-            (if (< sfd 0)
-              (Err (ioFdError (- 0 sfd) "pollerAddSignals"))
-              {
-                (let sf (ioAdopt sfd))
-                (match (pollerAdd p sf token)
-                  ((Err e) (Err e))
-                  ((Ok n)
-                    {
-                      (set p.sigFile (Some sf))
-                      (set p.sigToken token)
-                      (Ok n)
-                    }
-                  ))
-              })
+            (ioPutWord (strData sigset) 0 mask)
+            ; signalfd4(-1, mask, sizemask, SFD_CLOEXEC): -1 creates a
+            ; descriptor rather than updating one.
+            {
+              (let sfd (__syscall4 sysSignalFdNum (- 0 1) (strData sigset) sigsetBytes oCloexec))
+              (if (< sfd 0)
+                (Err (ioFdError (- 0 sfd) "pollerAddSignals"))
+                {
+                  (let sf (ioAdopt sfd))
+                  (match (pollerAdd p sf token)
+                    ((Err e) (Err e))
+                    ((Ok n)
+                      {
+                        (set p.sigFile (Some sf))
+                        (set p.sigToken token)
+                        (Ok n)
+                      }
+                    ))
+                })
+            }
           }
         }
-      }
-      ; The BSDs: one EVFILT_SIGNAL registration per signal in the mask.
-      ; Signals are 1..31; bit N-1 is signal N.
-      {
-        (let mut rc 0)
+        ; The BSDs: one EVFILT_SIGNAL registration per signal in the mask.
+        ; Signals are 1..31; bit N-1 is signal N.
         {
-          (for signo in 1..32
-            (if (!= (& mask (sysSigBit signo)) 0)
-              {
-                (let r
-                  (pollerApply p signo (pollerRec signo pollSignalFilter pollAddOp token)
-                    pollAddOp))
-                (if (< r 0)
-                  (set rc r))
-              }))
-          (set p.sigToken token)
-          (ioAnswer "pollerAddSignals" rc)
-        }
-      })))
+          (let mut rc 0)
+          {
+            (for signo in 1..32
+              (if (!= (& mask (sysSigBit signo)) 0)
+                {
+                  (let r
+                    (pollerApply p signo (pollerRec signo pollSignalFilter pollAddOp token)
+                      pollAddOp))
+                  (if (< r 0)
+                    (set rc r))
+                }))
+            (set p.sigToken token)
+            (ioAnswer "pollerAddSignals" rc)
+          }
+        }))
+  })
 
 ;; Wait for readiness: `(Ok n)` with `n` events to read with
 ;; `pollerToken` and `pollerSignal`, `(Ok 0)` when `timeoutMs` passed
@@ -1792,6 +1798,7 @@
   ; epoll_pwait's fifth argument is a signal mask this layer does not
   ; use, and its sixth that mask's size, which the kernel checks.
   {
+    (let pfd (pollerFd p))
     (let r
       (if (== usesSyscallAbi 0)
         ; The table: each row's descriptor and interest go to the
@@ -1841,14 +1848,13 @@
         }
         (if (== pollUsesKqueue 1)
           (if (< timeoutMs 0)
-            (__syscall6 sysPollWaitNum (pollerFd p) 0 0 (strData p.events) p.cap 0)
+            (__syscall6 sysPollWaitNum pfd 0 0 (strData p.events) p.cap 0)
             {
               (ioPutWord (strData p.ts) 0 (/ timeoutMs 1000))
               (ioPutWord (strData p.ts) 8 (* (% timeoutMs 1000) 1000000))
-              (__syscall6 sysPollWaitNum (pollerFd p) 0 0 (strData p.events) p.cap (strData p.ts))
+              (__syscall6 sysPollWaitNum pfd 0 0 (strData p.events) p.cap (strData p.ts))
             })
-          (__syscall6 sysPollWaitNum (pollerFd p) (strData p.events) p.cap timeoutMs 0
-            pollSigsetSize))))
+          (__syscall6 sysPollWaitNum pfd (strData p.events) p.cap timeoutMs 0 pollSigsetSize))))
     (if (== r (- 0 4))
       {
         (set p.count 0)
@@ -1869,9 +1875,12 @@
 ;; events that wait answered stops the program with status 77.
 (pub :: pollerToken (-> Poller Int Int))
 (pub fn (pollerToken p i)
-  (if (|| (< i 0) (>= i p.count))
-    __indexTrap
-    (ioGetWord (strData p.events) (pollerTokenOffset i))))
+  {
+    (let _ (pollerFd p))
+    (if (|| (< i 0) (>= i p.count))
+      __indexTrap
+      (ioGetWord (strData p.events) (pollerTokenOffset i)))
+  })
 
 ;; The signal event `i` of the last wait delivered, or `None` when it is
 ;; not a signal. On Linux this reads the signal descriptor, once per
@@ -1880,31 +1889,34 @@
 (pub :: pollerSignal (-> Poller Int (Option Int)))
 ;@axiom:effect(io)
 (pub fn (pollerSignal p i)
-  (if (|| (< i 0) (>= i p.count))
-    __indexTrap
-    (if (== signalUsesSignalFd 1)
-      (match p.sigFile
-        ((None) None)
-        ((Some sf)
-          (if (!= (pollerToken p i) p.sigToken)
-            None
-            {
-              (let n (ioReadFd (ioFd sf) (strData p.sigInfo) sigInfoSize))
-              (if (< n sigInfoSize)
-                None
-                (Some (ioGetInt32 (strData p.sigInfo) 0)))
-            })
-        ))
-      ; kqueue: the record's own 16-bit filter says whether it is a
-      ; signal, and its `ident` is the number.
-      {
-        (let b (strData p.events))
-        (let off (* i pollEventSize))
-        (if (&& (== (rawGetByte b (+ off 8)) (& pollSignalFilter 255))
-              (== (rawGetByte b (+ off 9)) (& (>> pollSignalFilter 8) 255)))
-          (Some (ioGetWord b off))
-          None)
-      })))
+  {
+    (let _ (pollerFd p))
+    (if (|| (< i 0) (>= i p.count))
+      __indexTrap
+      (if (== signalUsesSignalFd 1)
+        (match p.sigFile
+          ((None) None)
+          ((Some sf)
+            (if (!= (pollerToken p i) p.sigToken)
+              None
+              {
+                (let n (ioReadFd (ioFd sf) (strData p.sigInfo) sigInfoSize))
+                (if (< n sigInfoSize)
+                  None
+                  (Some (ioGetInt32 (strData p.sigInfo) 0)))
+              })
+          ))
+        ; kqueue: the record's own 16-bit filter says whether it is a
+        ; signal, and its `ident` is the number.
+        {
+          (let b (strData p.events))
+          (let off (* i pollEventSize))
+          (if (&& (== (rawGetByte b (+ off 8)) (& pollSignalFilter 255))
+                (== (rawGetByte b (+ off 9)) (& (>> pollSignalFilter 8) 255)))
+            (Some (ioGetWord b off))
+            None)
+        }))
+  })
 
 ;; Close the poller now rather than at its last share: `(Ok 0)`, or
 ;; `(Err e)`. Any later use traps 85.
