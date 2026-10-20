@@ -38,10 +38,11 @@
 #
 # Without them, deleting the mark outright would pass sections 1 and 3.
 #
-# The ablation drops the type test from `escapeArgs` in a shadow tree,
-# rebuilds, and requires the must-be-absent rows to regain the mark
-# while the controls keep it. It costs one compiler build, like
-# `check-effect-fixpoint.sh`.
+# The ablation drops the type test from `escapeArgs` in a shadow tree
+# and restores the rule that accounts for every variable argument.
+# The concrete positions regain the mark, while an unresolved callback
+# alias loses it. The controls keep their rows. This costs one compiler
+# build, like `check-effect-fixpoint.sh`.
 
 set -euo pipefail
 
@@ -53,6 +54,12 @@ failed=0
 checks=0
 ok()  { echo "ok   $*"; checks=$((checks + 1)); }
 bad() { echo "FAIL $*"; failed=$((failed + 1)); }
+
+if python3 tests/tools/callback-alias-effects.py "$axc"; then
+  ok "callback aliases preserve incomplete rows and valid controls"
+else
+  bad "callback alias effect checks"
+fi
 
 # --------------------------------------------------------------------
 # The probe: eight declarations. Four must carry the mark, two must
@@ -273,7 +280,7 @@ echo "== 4. and the type test is what does it (ablation) =="
 # --------------------------------------------------------------------
 # The seam is `escapeArgs`'s whole condition, matched exactly once, so
 # a rename or reformat upstream fails here loudly instead of ablating
-# nothing. The ablation drops only the `(arrowParamTy cty i)` type test.
+# nothing. The first seam drops the `(arrowParamTy cty i)` type test.
 # When a port or the formatter respells the condition without changing
 # the rule, update both strings to the new spelling.
 abl="$work/tree"
@@ -296,7 +303,18 @@ import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p, encoding="utf-8").read()
 assert s.count(old) == 1
-open(p, "w", encoding="utf-8").write(s.replace(old, new))
+s = s.replace(old, new)
+alias_old = '''        (let alias (bsParamAlias b (nodeAName inner)))
+        (epUseApply b alias u)
+        (if (== alias bsOpaque)
+          0
+          (match (bsValsOf b (nodeAName inner))
+            ((None) 1)
+            ((Some values) values.complete)))'''
+alias_new = '''        (epUseApply b (bsParamAlias b (nodeAName inner)) u)
+        1'''
+assert s.count(alias_old) == 1, 'missing callback alias enforcement seam'
+open(p, "w", encoding="utf-8").write(s.replace(alias_old, alias_new))
 PY
   if ! gate_build_tree "$axiom" "$abl" "$AXIOM_STDLIB" "$work/axc-abl" \
        > "$work/abl.build.log" 2>&1; then
@@ -331,6 +349,11 @@ PY
     else
       echo "FAIL: the ablation changed a control too ($kept of ${#present[@]} still marked); the seam is not the rule this gate names"
       failed=$((failed + 1))
+    fi
+    if python3 tests/tools/callback-alias-effects.py "$axc" --control "$work/axc-abl"; then
+      ok "removing alias enforcement silently certifies an unresolved callback"
+    else
+      bad "callback alias enforcement ablation"
     fi
   fi
 fi

@@ -1,0 +1,97 @@
+(struct Cell
+  (run : (-> Int Int)))
+
+(data Callback
+  (Callback (-> Int Int)))
+
+(:: invoke (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+(fn (invoke f x)
+  (f x))
+
+(:: identity (-> (-> Int Int) Int Int))
+(fn (identity f)
+  f)
+
+(:: wrap (-> (-> Int Int) Cell))
+(fn (wrap f)
+  (Cell :run f))
+
+(:: inc (-> Int Int))
+(fn (inc x)
+  (+ x 1))
+
+(:: fieldAlias (-> Cell Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, strict)
+(fn (fieldAlias cell n)
+  {
+    (let callback cell.run)
+    (let alias callback)
+    (invoke alias n)
+  })
+
+(:: resultAlias (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, strict)
+(fn (resultAlias f n)
+  {
+    (let callback (identity f))
+    (invoke callback n)
+  })
+
+(:: patternAlias (-> Callback Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, strict)
+(fn (patternAlias value n)
+  (match value
+    ((Callback callback) (invoke callback n))))
+
+(:: mutableAlias (-> Cell Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, strict)
+(fn (mutableAlias cell n)
+  {
+    (let mut callback inc)
+    (set callback cell.run)
+    (invoke callback n)
+  })
+
+(:: capturedAlias (-> Cell Int Int))
+;@axiom:restrict(no-io, strict)
+(fn (capturedAlias cell n)
+  {
+    (let callback cell.run)
+    (let captured (lambda (x) (invoke callback x)))
+    (captured n)
+  })
+
+(:: direct (-> Cell Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, strict)
+(fn (direct cell n)
+  (invoke cell.run n))
+
+(:: known (-> Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, strict)
+(fn (known n)
+  {
+    (let callback inc)
+    (invoke callback n)
+  })
+
+(:: forwarded (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+(fn (forwarded f n)
+  {
+    (let callback f)
+    (invoke callback n)
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let filled (Cell :run inc))
+    (known 41)
+  })

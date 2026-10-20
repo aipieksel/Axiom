@@ -17418,16 +17418,14 @@
         (bsWithVals bound (nodeAName e) v)
         {
           (fnValsEscape tc v bound acc)
-          (bsWith bound (nodeAName e) (- 0 1))
+          (bsWith bound (nodeAName e) bsOpaque)
         })
     )
     ((None)
       (bsWith bound (nodeAName e)
-        (if (== (nodeTag (nodeBChild e)) TAG_E_VAR)
+        (if (&& (== (nodeTag e) TAG_E_LET) (== (nodeTag (nodeBChild e)) TAG_E_VAR))
           (bsParamAlias bound (nodeAName (nodeBChild e)))
-          (if (== (nodeTag (nodeBChild e)) TAG_E_LAM)
-            (- 0 1)
-            bsOpaque)))
+          bsOpaque))
     )))
 
 ; A `handle`: its body walked with the handled effects in scope, so a
@@ -19964,15 +19962,14 @@
 ; caller decides what to do with a 0, because only the caller knows
 ; whether the position it landed in is one that gets CALLED.
 ;
-;   a name           `effRefSite` already unioned its effects, or it
-;                    aliases a parameter whose transparency is marked
-;                    here;
+;   a known name     its effects were attributed, or it aliases a
+;                    parameter whose transparency is marked here;
 ;   a lambda literal `walkEffects` walked its body where it stands;
 ;   a literal, a struct construction, an `alloc`  cannot be called at
 ;                    all, so nothing can hide in one.
 ;
-; Everything else - a field load, a call result, an `if` - is a word
-; the walk merely read.
+; An opaque local or an incomplete callable set remains unaccounted
+; for through aliases, as does a field load, call result or `if`.
 (pub fn (escapeValue b e)
   (escapeValueUse b e None))
 
@@ -19982,8 +19979,13 @@
     (let inner (stripGrouping e))
     (if (== (nodeTag inner) TAG_E_VAR)
       {
-        (epUseApply b (bsParamAlias b (nodeAName inner)) u)
-        1
+        (let alias (bsParamAlias b (nodeAName inner)))
+        (epUseApply b alias u)
+        (if (== alias bsOpaque)
+          0
+          (match (bsValsOf b (nodeAName inner))
+            ((None) 1)
+            ((Some values) values.complete)))
       }
       (if (== (nodeTag inner) TAG_E_LAM)
         1

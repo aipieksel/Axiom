@@ -1013,6 +1013,11 @@ call sites. The requirement follows parameter aliases, forwarding
 functions and captured lambdas. An IO callback passed to a `no-io`
 function is refused with `AX3049`.
 
+An unresolved callback keeps its effect row incomplete through local
+aliases, captures and mutable bindings. A purity claim draws `AX3037`;
+a strict effect restriction is refused with `AX3057`.
+Tested by `tests/diagnostics/1482-callback-alias-effects.ax`.
+
 A restriction speaks for what the function and its callees perform. A
 value made elsewhere drops at the end of the scope that held it, with
 the effects declared where it was made. `openPath` is IO, so a `no-io`

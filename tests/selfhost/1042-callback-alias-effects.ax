@@ -1,0 +1,81 @@
+; expect 42
+; Complete callable values and immutable parameter aliases stay usable.
+(struct Closed
+  (step : (-> Int Int)))
+
+(:: invoke (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+(fn (invoke f n)
+  (f n))
+
+(:: inc (-> Int Int))
+;@axiom:effect(pure)
+(fn (inc n)
+  (+ n 1))
+
+(:: dec (-> Int Int))
+;@axiom:effect(pure)
+(fn (dec n)
+  (- n 1))
+
+(:: known (-> Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, no-alloc, strict)
+(fn (known n)
+  {
+    (let callback inc)
+    (let alias callback)
+    (invoke alias n)
+  })
+
+(:: chosen (-> Bool Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, no-alloc, strict)
+(fn (chosen up n)
+  {
+    (let callback
+      (if up
+        inc
+        dec))
+    (invoke callback n)
+  })
+
+(:: stored (-> Closed Int Int))
+;@axiom:effect(pure)
+;@axiom:restrict(no-io, no-alloc, strict)
+(fn (stored closed n)
+  {
+    (let callback closed.step)
+    (invoke callback n)
+  })
+
+(:: forwarded (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+(fn (forwarded f n)
+  {
+    (let callback f)
+    (let alias callback)
+    (invoke alias n)
+  })
+
+(:: scalar (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+(fn (scalar f n)
+  {
+    (let mut value (+ n 0))
+    (set value (+ value 0))
+    (invoke f value)
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let closed (Closed :step inc))
+    (if (&& (== (known 41) 42)
+          (&& (== (chosen true 41) 42)
+            (&& (== (chosen false 43) 42)
+              (&& (== (stored closed 41) 42)
+                (&& (== (forwarded inc 41) 42) (== (scalar inc 41) 42))))))
+      42
+      1)
+  })
