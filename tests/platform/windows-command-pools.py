@@ -110,6 +110,18 @@ BRIDGE = """(import Internal.WindowsCommands)
         (let twice (windowsCommandsClose pool))
         (&& (> pid 0) (&& (== once 0) (== twice 0)))
       })))
+(pub :: failedCloseCommands (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+(pub fn (failedCloseCommands argv envp)
+  (match (windowsCommandsNew 2)
+    ((Err e) (- 0 (errCode e)))
+    ((Ok pool)
+      {
+        (let a (windowsCommandsStart pool 0 "C:/ok" argv envp ""))
+        (let b (windowsCommandsStart pool 1 "C:/ok" argv envp ""))
+        (windowsCommandsClose pool)
+      })))
 """
 
 
@@ -139,7 +151,7 @@ def main():
     assert process.count(anchor) == 1
     process = process.replace(anchor, anchor + "\n(:: usesSyscallAbi Int)\n(fn (usesSyscallAbi) 0)")
     fixture = root / "tests/platform/windows-command-pools.ax"
-    cases = 45
+    cases = 48
     assert len(re.findall(r"\(say\s", fixture.read_text())) - 1 == cases, "update the explicit assertion count"
     with tempfile.TemporaryDirectory(prefix="axiom-windows-command-pools-") as tmp:
         work = Path(tmp)
@@ -217,11 +229,17 @@ def main():
         check(2, None, (31,), "unpublished")
         print("ok   negative probe: omitting handle publication fails the before-resume ownership assertion")
         (internal / "WindowsCommandsNative.ax").write_text(native)
-        job_close = "(let _ (windowsCommandJobClose handle))"
+        job_close = "(windowsCommandJobClose handle)"
         assert pool.count(job_close) == 1, "job cleanup ablation lost its target"
-        (internal / "WindowsCommands.ax").write_text(pool.replace(job_close, "(let _ 0)"))
+        (internal / "WindowsCommands.ax").write_text(pool.replace(job_close, "0"))
         check(2, None, (33,), "unclosed-job")
         print("ok   negative probe: omitting job close fails recovery cleanup")
+        close_status = "(pub fn (windowsCommandsClose pool)\n  (__resource_close pool.owner))"
+        assert pool.count(close_status) == 1, "cleanup status ablation lost its target"
+        (internal / "WindowsCommands.ax").write_text(pool.replace(close_status,
+            "(pub fn (windowsCommandsClose pool)\n  { (let ignored (__resource_close pool.owner)) 0 })"))
+        check(2, None, (46, 47, 48), "ignored-cleanup-error")
+        print("ok   negative probe: ignoring cleanup status fails all three cleanup-error cases")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ static struct job jobs[512];
 static struct attribute attributes[4096];
 static int64_t counts[32], wait_order[8192], wait_count;
 static int process_count, job_count, file_count, attribute_count;
-static int64_t last_error, fault_stage, fault_code, fault_count;
+static int64_t last_error, fault_codes[32], fault_counts[32];
 static int64_t *watched_slot;
 
 /* counts: live children, maximum live children, created, create attempts,
@@ -36,7 +36,8 @@ static int64_t *watched_slot;
  * process closes, thread closes, created jobs, closed jobs, open jobs,
  * open process handles, ordering violations, publication violations,
  * path violations, rejected PATH launches, attribute queries,
- * initializations, deletes and live lists. */
+ * initializations, deletes and live lists. Index 31 counts every job
+ * close attempt, including one that reports a failure. */
 int64_t poolStat(int64_t index) { return counts[index]; }
 int64_t poolRecord(int64_t value) { counts[28] = value; return value; }
 int64_t poolWaitOrder(int64_t index) { return wait_order[index]; }
@@ -47,12 +48,15 @@ int64_t poolReset(void) {
     memset(attributes, 0, sizeof attributes);
     memset(wait_order, 0, sizeof wait_order);
     wait_count = process_count = job_count = file_count = attribute_count = 0;
-    last_error = fault_stage = fault_code = fault_count = 0;
+    last_error = 0;
+    memset(fault_codes, 0, sizeof fault_codes);
+    memset(fault_counts, 0, sizeof fault_counts);
     watched_slot = NULL;
     return 0;
 }
 int64_t poolFault(int64_t stage, int64_t code, int64_t count) {
-    fault_stage = stage; fault_code = code; fault_count = count; return 0;
+    if (stage < 0 || stage >= 32) return -22;
+    fault_codes[stage] = code; fault_counts[stage] = count; return 0;
 }
 int64_t poolWatchSlot(int64_t address) {
     watched_slot = (int64_t *)(intptr_t)address; return 0;
@@ -70,8 +74,8 @@ int64_t poolSay(int64_t good, int64_t label) {
 }
 
 static int fault(int stage, int64_t code, int64_t error) {
-    if (fault_stage != stage || !fault_count || (fault_code && fault_code != code)) return 0;
-    --fault_count; last_error = error; return 1;
+    if (!fault_counts[stage] || (fault_codes[stage] && fault_codes[stage] != code)) return 0;
+    --fault_counts[stage]; last_error = error; return 1;
 }
 static struct process *process_of(int64_t h) {
     if (h <= PROC_BASE || h > PROC_BASE + process_count) return NULL;
@@ -327,8 +331,9 @@ int64_t TerminateProcess(int64_t pid, int64_t code) {
 int64_t CloseHandle(int64_t handle) {
     struct job *j = job_of(handle);
     if (j) {
+        ++counts[31];
         if (!j->open) ++counts[5];
-        if (fault(10, 0, 6)) return NOISE;
+        if (fault(10, 0, 5)) return NOISE;
         j->open = 0; ++counts[17]; --counts[18];
         for (int i = 0; i < process_count; ++i)
             if (processes[i].assigned && processes[i].job == handle) finish(&processes[i]);

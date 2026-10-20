@@ -404,5 +404,33 @@
                      (&& (== (stat 26) 1)
                        (&& (== (stat 2) 0) (== (__load64 inherited 0) 21474836484)))))
                  "failed explicit-handle spawn deletes attributes and keeps caller transport")))
+    (reset)
+    (fault 10 0 1)
+    (fault 7 0 1)
+    (let firstCleanupError (failedCloseCommands argv sysEnvp))
+    (set bad (+ bad
+               (say
+                 (&& (== firstCleanupError -13)
+                   (&& (== (stat 0) 0)
+                     (&& (== (stat 19) 0)
+                       (&& (== (stat 18) 1)
+                         (&& (== (stat 31) 1) (&& (== (stat 4) 2) (== (stat 14) 2)))))))
+                 "job-close error wins over a later dispose error while all children are retired")))
+    (reset)
+    (fault 7 0 1)
+    (let disposeWaitError (failedCloseCommands argv sysEnvp))
+    (set bad (+ bad
+               (say (&& (== disposeWaitError -9) (&& clean (&& (== (stat 4) 2) (== (stat 14) 2))))
+                 "dispose wait error propagates after cleanup attempts every child")))
+    (reset)
+    (fault 11 0 1)
+    (let disposeCloseError (failedCloseCommands argv sysEnvp))
+    (set bad (+ bad
+               (say
+                 (&& (== disposeCloseError -9)
+                   (&& (== (stat 0) 0)
+                     (&& (== (stat 18) 0)
+                       (&& (== (stat 19) 1) (&& (== (stat 4) 2) (== (stat 14) 1))))))
+                 "dispose close error is reported while the remaining child is still cleaned")))
     bad
   })
