@@ -71,10 +71,10 @@ ndeclared="$(wc -l < "$work/declared" | tr -d ' ')"
 
 # A floor, because every comparison below is against this file: an empty
 # or truncated declaration would make them all agree about nothing and
-# pass. Six targets are declared and the floor is 5, low enough that
+# pass. Eight targets are declared and the floor is 7, low enough that
 # retiring one target does not trip it.
-if (( ndeclared < 5 )); then
-  echo "FAIL: seed_targets names only $ndeclared targets; the floor is 5"
+if (( ndeclared < 7 )); then
+  echo "FAIL: seed_targets names only $ndeclared targets; the floor is 7"
   echo "      Every comparison in this section is against that list, so a"
   echo "      truncated one makes the section vacuous rather than red."
   exit 1

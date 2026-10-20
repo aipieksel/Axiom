@@ -1465,9 +1465,9 @@ jobs:
   # `cross` job emitted links with an 8 MB stack and emits itself byte
   # for byte, builds and runs hello through its own driver, contains
   # every failure in `tests/testrunner/mixed-tests.ax`, and audits a
-  # fixture tree to the report the emitting host printed. There is no
-  # seed for Windows, so the compiler arrives as IR. The windows-arm
-  # job below executes the same checks on aarch64.
+  # fixture tree to the report the emitting host printed. A separate
+  # seeded ladder reaches its own fixpoint and reproduces the host
+  # emission too. The windows-arm job executes the same checks on aarch64.
   windows:
     name: Windows x86_64 execution
     needs: cross
@@ -1519,6 +1519,18 @@ jobs:
             echo "::error::expected LLVM 23, found ${got:-none}"
             exit 1
           fi
+
+      - name: Bootstrap the Windows x86_64 compiler from its committed seed
+        run: |
+          set -euo pipefail
+          target=windows-x86_64
+          seeded="$(cygpath -u "$RUNNER_TEMP")/axiom-seeded-$target"
+          ./scripts/bootstrap-from-seed.sh --install "$seeded"
+          llvm-readobj --file-headers "$seeded/axiom.exe" | grep -F 'Machine: IMAGE_FILE_MACHINE_AMD64 ('
+          export AXIOM_STDLIB="$(cygpath -m "$PWD/stdlib")"
+          unset AXIOM_PATH
+          "$seeded/axiom.exe" --diagnostic-format=ai --target="$target" emit-llvm self_host/main.ax -o "$seeded/current.ll"
+          cmp "$seeded/current.ll" "windows-hello/selfhost/axiom-$target.ll"
 
       - name: Run the Windows hello, the compiler and the tree audit
         run: ./scripts/check-windows-hello.sh --run windows-hello windows-x86_64
@@ -1595,6 +1607,18 @@ jobs:
       # The windows-aarch64 half of what the x86_64 leg does: the hello
       # case, the compiler built for this architecture from the IR the
       # cross job emitted, the tree audit and the battery.
+      - name: Bootstrap the Windows aarch64 compiler from its committed seed
+        run: |
+          set -euo pipefail
+          target=windows-aarch64
+          seeded="$(cygpath -u "$RUNNER_TEMP")/axiom-seeded-$target"
+          ./scripts/bootstrap-from-seed.sh --install "$seeded"
+          llvm-readobj --file-headers "$seeded/axiom.exe" | grep -F 'Machine: IMAGE_FILE_MACHINE_ARM64 ('
+          export AXIOM_STDLIB="$(cygpath -m "$PWD/stdlib")"
+          unset AXIOM_PATH
+          "$seeded/axiom.exe" --diagnostic-format=ai --target="$target" emit-llvm self_host/main.ax -o "$seeded/current.ll"
+          cmp "$seeded/current.ll" "windows-hello/selfhost/axiom-$target.ll"
+
       - name: Run the Windows aarch64 hello, the compiler and the tree audit
         run: ./scripts/check-windows-hello.sh --run windows-hello windows-aarch64
 
@@ -1630,9 +1654,9 @@ jobs:
 
   # `bootstrap` proves the seed can build this source. This proves the
   # seed is the output of source in this repository's history: it
-  # regenerates all six seeds from the commit that last wrote them and
+  # regenerates every declared seed from the commit that last wrote them and
   # requires byte-identity. It has its own job because it needs
-  # `fetch-depth: 0` and a compiler build plus six whole-compiler
+  # `fetch-depth: 0` and a compiler build plus the target-specific
   # emissions.
   #
   # One leg: the seed is generated on darwin-aarch64, so regenerating it
@@ -1657,7 +1681,7 @@ jobs:
       - name: The anchor's stated size, against the anchor
         run: ./scripts/check-seed-supply-chain.sh
 
-      - name: Regenerate all six seeds from the source they came from
+      - name: Regenerate every seed from the source it came from
         run: ./scripts/check-seed-provenance.sh
 
   # The seed's ancestry: the compiler that emitted the seed is on a chain

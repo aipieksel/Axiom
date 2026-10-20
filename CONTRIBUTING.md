@@ -437,7 +437,7 @@ shows the check can fail at all.
 | `check-embedded.sh` | The runtime assumptions an embedded port changes (`docs/embedded-guide.md` 4.1 to 4.3, and section 6): a per-target arena chunk size, pages from `mmap` or a static region, and a trap write that can be silenced. Every supported target must still emit the allocator it always did, and the minimal program imports only the platform's startup set and makes exactly 3 distinct syscalls. Variant compilers with rows of the target table changed must move only the lines those rows reach. With a 256 KiB static arena on the host, a program that fits must answer as the `mmap` build does, and one that outgrows it must exit 70 where the `mmap` build exits 0. A10 boots `tests/embedded/blink.ax` for `baremetal-aarch64` under QEMU: its UART bytes and exit status must match the host build, and an oversized twin must exit 70. It skips loudly when that target or QEMU is missing. `--ablations` requires every ablation to go red |
 | `check-memory-baseline.sh` | The managed Life probe holds RSS flat over 2000 generations, where its unmanaged twin grows linearly |
 | `check-cross-targets.sh` | Every target's IR assembles from one host, at every `--opt` level, with no object that isn't position-independent. `--self-test` runs the relocation rules against known input, so the gate's own verdict is tested too |
-| `check-seed-provenance.sh` | The seed is the emission of source in this repository's history. All six seeds are regenerated from the commit that last wrote them and must come back byte-identical, after that commit's sources are checked against the hash in `bootstrap/STAMP`. It runs in its own CI job, because it needs the full history (`fetch-depth: 0`) and several minutes |
+| `check-seed-provenance.sh` | The seed is the emission of source in this repository's history. Every declared seed is regenerated from the commit that last wrote the cohort and must come back byte-identical, after that commit's sources are checked against the hash in `bootstrap/STAMP`. It runs in its own CI job, because it needs the full history (`fetch-depth: 0`) and several minutes |
 | `check-seed-lineage.sh` | The seed's ancestry, back to a compiler no Axiom seed touched. For every committed seed, `bootstrap/CHAIN` names the seed it reproduces from and how. The gate replays each row: the previous seed, built with `llc` and `cc`, compiles the next seed's tree, and the emission (or its re-emission) must equal the next seed byte for byte. The first row is the Rust compiler at `bb730db`. `--full` (the nightly job, or `AXIOM_LINEAGE_FULL=1`) replays every row and needs cargo. A default run replays the newest row and every row `bootstrap/CHAIN.checkpoint` doesn't certify. The checkpoint's digest is recomputed from `CHAIN` on every run, so a covered row that moved forces a full replay, and only `AXIOM_BLESS=1 ... --full` advances it. Four probes, each checked to have applied and each required red: one byte of the seed, the newest row's predecessor, one byte of the Rust anchor's codegen, and one byte of the `.ax` tree it compiles |
 | `check-bootstrap.sh` | The self-hosting fixpoint: `stage2 == stage3`, byte for byte |
 | `check-poisoned-alloc.sh` | Poisoned allocator generations emit identical compiler IR, and allocation remains zeroed |
@@ -545,20 +545,22 @@ jobs that need a compiler get it through the same composite action,
    generated bindings match a fresh generation, and the `rust/`
    workspace's own suites run (`cargo test`).
 4. **Cross-target codegen.** Every target's IR assembles from a single
-   host at `--opt` 0, 1 and 2, and all six committed seeds assemble.
+   host at `--opt` 0, 1 and 2, and every committed seed assembles.
    This job also emits the Windows hello world, the compiler and the
    tree audit for the Windows targets (`scripts/check-windows-hello.sh
    --emit`), which two Windows legs then run: on `windows-2025`, the
    x86_64 hello, the compiler and the tree audit; on `windows-11-arm`,
    the same checks for aarch64. Both run the standard-library battery
    against `tests/stdlib/windows-skip.txt`. Both targets stay
-   source-only until that list is empty.
+   source-only until that list is empty. Each Windows leg also includes
+   a committed-seed fixpoint check and a comparison with the host's
+   cross-emission.
 5. **Self-hosting fixpoint.** `check-bootstrap.sh` checks that
    `stage2 == stage3`, byte for byte, with the ladder rooted at the
    committed seed.
-6. **Seed provenance.** `check-seed-provenance.sh` regenerates all six
-   committed seeds from the commit that last wrote them, and each must
-   come back byte-identical. It has its own job because it needs
+6. **Seed provenance.** `check-seed-provenance.sh` regenerates every
+   declared seed from the commit that last wrote them. Each must come
+   back byte-identical. It has its own job because it needs
    `fetch-depth: 0` and takes about five minutes.
 7. **Reproducible build.** Two independent runs produce identical
    bytes.

@@ -130,11 +130,10 @@ No runner builds the compiler on `baremetal-aarch64`; its embedded
 image checks and optional QEMU execution are described in the
 [embedded guide](docs/embedded-guide.md).
 
-There is no Windows seed, so no runner builds the compiler from one on
-`windows-x86_64` or `windows-aarch64`. CI cross-emits the compiler for
-each and runs it on a Windows runner of that architecture. There it
-emits itself byte for byte, builds and runs a few programs, and runs
-the test battery. `tests/stdlib/windows-skip.txt` names the cases a
+For `windows-x86_64` and `windows-aarch64`, CI includes a native seed
+bootstrap check and compares its result with the host's cross-emission.
+The jobs also run the cross-emitted compiler, build and run programs,
+and run the test battery. `tests/stdlib/windows-skip.txt` names the cases a
 target cannot run there yet, each with its reason.
 
 ## Quick start

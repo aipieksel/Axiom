@@ -25,8 +25,6 @@ Windows links use the reviewed import allowlist and an 8 MiB stack.
 The script checks each PE's architecture and imports before running
 it, and uses deterministic headers for the fixpoint comparison.
 
-Not yet: committed Windows seeds. See the [roadmap](../docs/roadmap.md).
-
 ## What's here
 
 ```
@@ -36,6 +34,8 @@ axiom-linux-aarch64.ll
 axiom-linux-x86_64.ll
 axiom-freebsd-x86_64.ll
 axiom-freebsd-aarch64.ll
+axiom-windows-aarch64.ll
+axiom-windows-x86_64.ll
 SHA256SUMS                what each of them should hash to
 STAMP                     the hash of the source they were generated from
 CHAIN                     every seed ever committed, and what reproduces it
@@ -55,6 +55,9 @@ same way. A seed is not evidence that its target runs, though:
   emulated by TCG on every runner GitHub offers.
 - `darwin-x86_64` sits under the same gates and ships no prebuilt
   archive, for the same reason: no runner executes it.
+- Windows CI includes bootstrap checks for `windows-x86_64` and
+  `windows-aarch64` on matching runners. Their remaining battery
+  exceptions are listed in `tests/stdlib/windows-skip.txt`.
 
 The [README's Targets section](../README.md#targets) has the full list.
 
@@ -212,6 +215,10 @@ from `bb730db` regardless.
 
 Answered: the seed in the tree descends, by replayable steps, from a
 compiler that no Axiom seed ever touched.
+
+Historical replay executes POSIX compilers. The Windows seeds are
+reproduced by the same generator. Native Windows CI includes a check
+for their own bootstrap fixpoint.
 
 What remains is the trust base of that replay, and it is exactly this
 list:
