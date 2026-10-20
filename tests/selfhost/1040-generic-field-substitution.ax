@@ -1,0 +1,59 @@
+; expect 42
+; Receiver arguments substitute once, even when their source names overlap.
+(import Str)
+
+(struct Pair (a b)
+  (mut first : a)
+  (second : b))
+
+(struct Triple (a b c)
+  (first : a)
+  (second : b)
+  (third : c))
+
+(type Flipped (a b) (Pair b a))
+
+(:: makeSwapped (-> a b (Pair b a)))
+(fn (makeSwapped second first)
+  (Pair :first first :second second))
+
+(:: firstSwapped (-> (Pair b a) b))
+(fn (firstSwapped pair)
+  pair.first)
+
+(:: firstAliased (-> (Flipped a b) b))
+(fn (firstAliased pair)
+  pair.first)
+
+(:: firstNested (-> (Pair (Option b) a) (Option b)))
+(fn (firstNested pair)
+  pair.first)
+
+(:: firstCycled (-> (Triple b c a) b))
+(fn (firstCycled triple)
+  triple.first)
+
+(:: writeSwapped (-> (Pair b a) b Int))
+(fn (writeSwapped pair value)
+  (set pair.first value))
+
+(:: writeNested (-> (Pair (Option b) a) (Option b) Int))
+(fn (writeNested pair value)
+  (set pair.first value))
+
+(:: main Int)
+(fn (main)
+  {
+    (let pair (makeSwapped 7 "old"))
+    (let nested (Pair :first (Some "old") :second 9))
+    (writeSwapped pair "changed")
+    (writeNested nested (Some "kept"))
+    (if (&& (strEq (firstSwapped pair) "changed")
+          (&& (strEq (firstAliased pair) "changed")
+            (&& (== (firstCycled (Triple :first 42 :second "middle" :third true)) 42)
+              (match (firstNested nested)
+                ((Some value) (strEq value "kept"))
+                ((None) false)))))
+      42
+      1)
+  })

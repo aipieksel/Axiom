@@ -21172,9 +21172,9 @@
 (pub :: checkField (-> Int ASTNode ASTNode))
 
 ; The field type with the receiver's type arguments put in place of
-; the struct's declared variables. `tyPinVar` is the substituter the
-; application path already uses; this walks the two lists in parallel
-; because position IS the correspondence - `(struct Pair (a b) ..)`
+; the struct's declared variables. The environment pairs the two lists
+; positionally, and `tyEnvSubst` inserts each argument once.
+; `(struct Pair (a b) ..)`
 ; against `(Pair Int String)` binds `a` to `Int` and `b` to `String`.
 ;
 ; Answers `fty` untouched when the struct declares no variables, when
@@ -21195,14 +21195,21 @@
           fty
           (if (!= (vecLen tvs) (vecLen args))
             fty
-            (structSubstFrom fty tvs args 0)))))
+            (if (== (vecLen tvs) 0)
+              fty
+              (tyEnvSubst fty (structSubstEnv tvs args vecNew 0)))))))
   })
 
-(pub :: structSubstFrom (-> ASTNode Ints (Vec ASTNode) Int ASTNode))
-(pub fn (structSubstFrom fty tvs args i)
+; Inserted arguments belong to the receiver's scope. Substituting them
+; again would turn `(Pair b a)`'s first field from `b` into `a`.
+(pub :: structSubstEnv (-> Ints Nodes TypeEnv Int TypeEnv))
+(pub fn (structSubstEnv tvs args env i)
   (if (>= i (vecLen tvs))
-    fty
-    (structSubstFrom (tyPinVar fty (vecGetStr tvs i) (vecGet args i)) tvs args (+ i 1))))
+    env
+    {
+      (vecPush env (TypeBinding :name (vecGetStr tvs i) :ty (vecGet args i)))
+      (structSubstEnv tvs args env (+ i 1))
+    }))
 
 (pub fn (checkField tc e)
   {
