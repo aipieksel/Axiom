@@ -747,6 +747,15 @@ own copy of captured state. `taskRunCommand` returns one command's
 Its slots contain exit codes, 128 plus a terminating signal, or a
 negative errno when the program could not start.
 
+On Windows 10 and later, command pools use native processes in a private
+cleanup job. Results keep submit order, and at most `width` commands are
+outstanding. A launch failure occupies its slot; a wait failure ends the
+pool and gives its negative errno to the remaining commands. Closing the
+pool also terminates descendants still in its job. A host job policy
+that refuses containment returns a launch error. Argument quoting and
+PATH lookup follow `Sys`; `.bat` and `.cmd` files need an explicit
+`cmd.exe` invocation. Tested by `tests/stdlib/987-command-pools.ax`.
+
 `Chan` passes words
 through a bounded channel; `Sync` provides mutexes with timeout and
 owner-death reporting. A lock call answers a guard, and the lock is

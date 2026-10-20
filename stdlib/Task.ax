@@ -144,6 +144,9 @@
 ; step.
 (import Internal.Raw)
 (import Internal.RawVec)
+(import Internal.TaskWords)
+(import Internal.Command)
+(import Internal.CommandPool)
 (import Str)
 (import Vec)
 (import Sys)
@@ -1357,46 +1360,7 @@
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (taskMapWords f n width)
-  {
-    (let w
-      (if (< width 1)
-        1
-        width))
-    (let hs
-      (vecWithCapacity
-        (if (< n w)
-          n
-          w)))
-    (let out vecNew)
-    (let mut joined 0)
-    {
-      (for i in 0..n
-        {
-          ; Block before spawning, not after, so at most `w` children
-          ; are ever outstanding. `(- i joined)` is the count of
-          ; handles spawned but not yet joined.
-          (while (>= (- i joined) w)
-            {
-              (vecPush out (__proc_join (vecGet hs (% joined w))))
-              (set joined (+ joined 1))
-            })
-          {
-            (let h (__proc_spawn f i))
-            (if (< i w)
-              (vecPush hs h)
-              (vecSet hs (% i w) h))
-          }
-        })
-      ; The drain continues the submission count left by the fill loop.
-      ; Ring length is only its capacity, not the number submitted.
-      (while (< joined n)
-        {
-          (vecPush out (__proc_join (vecGet hs (% joined w))))
-          (set joined (+ joined 1))
-        })
-      out
-    }
-  })
+  (wordPoolMap f n width))
 
 ; Join one `__proc_spawn` handle WITHOUT re-raising: `Ok` the thunk's
 ; word when the child exits 0, `Err` the child's wait status otherwise.
@@ -1551,18 +1515,7 @@
 ;; terminator. The array lives in the caller's arena.
 (pub :: taskArgvVector (-> (Vec String) Int))
 (pub fn (taskArgvVector argv)
-  {
-    (let n (vecLen argv))
-    {
-      (let v (rawAlloc (* 8 (+ n 1))))
-      {
-        (for i in 0..n
-          (rawSetWord v i (strCStr (rawVecGetStr argv i))))
-        (rawSetWord v n 0)
-        v
-      }
-    }
-  })
+  (commandArgvVector argv))
 
 ;; Run one argument vector. Element 0 is the program, looked up on
 ;; `PATH`. An empty vector answers `Err` 2 without starting a process.
@@ -1571,20 +1524,7 @@
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (taskRunCommand argv)
-  (if (== (vecLen argv) 0)
-    (Err (mkError 2 "taskRunCommand: an empty argv names no program"))
-    (sysRunPath (strDup (rawVecGetStr argv 0)) (taskArgvVector argv) sysEnvp)))
-
-; Encode a command result as the word carried by a join: an exit code
-; or 128 plus its signal, or a negative errno if it could not start.
-(:: taskRunCommandWord (-> (Vec String) Int))
-;@axiom:effect(io)
-;@axiom:effect(spawn)
-;@axiom:effect(block)
-(fn (taskRunCommandWord argv)
-  (match (taskRunCommand argv)
-    ((Ok c) c)
-    ((Err e) (- 0 (errCode e)))))
+  (commandRun argv))
 
 ;; Run argument vectors at up to `width` at once, in submit order.
 ;; Each slot contains its exit code, 128 plus its terminating signal,
@@ -1594,7 +1534,7 @@
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (taskRunCommands cmds width)
-  (taskMapWords (lambda (i) (taskRunCommandWord (vecGet cmds i))) (vecLen cmds) width))
+  (commandPoolRun cmds width))
 
 ;; Map an Int-to-Int numeric computation with the ordinary Task budgets.
 ;; Results are submit-ordered. Each word crosses as exactly eight bytes;

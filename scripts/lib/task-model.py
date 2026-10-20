@@ -60,6 +60,9 @@ obligations, exercised by check-task.sh. The clock is the model's.
 """
 
 TASK = "Task.ax"
+TASK_WORDS = "Internal/TaskWords.ax"
+COMMAND = "Internal/Command.ax"
+COMMAND_POOL = "Internal/CommandPool.ax"
 
 # Behaviours of a task's body.
 OK, BIG, TRAP, HANG, STUCK, SLOW, QUIT = 0, 1, 2, 3, 4, 5, 6
@@ -435,7 +438,7 @@ def install(ns):
     # child. Keeping both witnesses lets the checks distinguish a result
     # from the next child, a trap, and a successful child killed too late.
     F("taskMapWords", ["n", "width", "hs", "answers"],
-      ["w", "joined", "i", "h", "status", "ans"], (TASK, "taskMapWords"), [
+      ["w", "joined", "i", "h", "status", "ans"], (TASK_WORDS, "wordPoolMap"), [
         ("set", "w", "max(1, width)", "(if (< width 1)"),
         ("set", "joined", "0", "(let mut joined 0)"),
         ("set", "i", "0", "(for i in 0..n"),
@@ -1023,7 +1026,7 @@ def install(ns):
     ns["UNREACHABLE"][("taskWakeBy", ("ret", "-1"))] = (
         "no task running: taskLoop asks only when nothing moved, and then one is, as every other case "
         "starts, joins or delivers something")
-    ns["SOURCES"].append(TASK)
+    ns["SOURCES"].extend([TASK, TASK_WORDS, COMMAND, COMMAND_POOL])
     ns["WRAPPERS"].extend([
         (TASK, "taskLoadAt", "(__atomic_load a)"),
         (TASK, "taskStoreAt", "(__atomic_store a v)"),
@@ -1035,8 +1038,13 @@ def install(ns):
         (TASK, "taskSleepFor", "(if (> wake now)"),
         (TASK, "taskMapRanges", "(taskMapWith"),
         (TASK, "taskMapRanges", "(+ 1 (/ (- count 1) size)) opts)"),
-        (TASK, "taskRunCommand", "(sysRunPath (strDup (rawVecGetStr argv 0)) (taskArgvVector argv) sysEnvp)"),
-        (TASK, "taskRunCommands", "(taskMapWords (lambda (i) (taskRunCommandWord (vecGet cmds i))) (vecLen cmds) width)"),
+        (TASK, "taskMapWords", "(wordPoolMap f n width)"),
+        (TASK, "taskArgvVector", "(commandArgvVector argv)"),
+        (TASK, "taskRunCommand", "(commandRun argv)"),
+        (TASK, "taskRunCommands", "(commandPoolRun cmds width)"),
+        (COMMAND, "commandRun", "(sysRunPath (strDup (rawVecGetStr argv 0)) (commandArgvVector argv) sysEnvp)"),
+        (COMMAND, "commandRunWord", "(match (commandRun argv)"),
+        (COMMAND_POOL, "commandPoolRun", "(wordPoolMap (lambda (i) (commandRunWord (vecGet cmds i))) (vecLen cmds) width)"),
         (TASK, "taskMapCompute", "(taskMapDecodedWith (lambda (index) (taskComputeEncode (worker index))) taskComputeDecode count"),
     ])
     ns["NOT_MODELLED"][TASK] = {
@@ -1084,12 +1092,23 @@ def install(ns):
         "taskFold": "an entry: a sink that folds the answers inside a region",
         "taskFoldOne": "the fold's sink: one step on the delivered answer",
         "taskMapRanges": "partitions indices into worker bodies, then delegates to taskMapWith; in WRAPPERS",
-        "taskArgvVector": "constructs a null-terminated argument vector in the caller's arena",
-        "taskRunCommand": "an external command inside a worker body: sysRunPath's internals are outside this model; in WRAPPERS",
-        "taskRunCommandWord": "encodes the command body's Result as a scalar word",
-        "taskRunCommands": "delegates to the transcribed word pool, with a command body; in WRAPPERS",
+        "taskMapWords": "delegates to the unchanged transcribed Internal.TaskWords loop; in WRAPPERS",
+        "taskArgvVector": "delegates to the shared argument-vector encoder; in WRAPPERS",
+        "taskRunCommand": "delegates to the shared one-command launch; in WRAPPERS",
+        "taskRunCommands": "delegates to the target-selected command entry; its POSIX route is in WRAPPERS",
         "taskMapCompute": "encodes numeric worker bodies and delegates to the budgeted pool; in WRAPPERS",
         "taskComputeEncode": "serialises the worker's scalar answer as eight bytes",
         "taskComputeDecode": "checks the answer length and decodes eight bytes in the parent",
     }
+    ns["NOT_MODELLED"][TASK_WORDS] = {}
+    ns["NOT_MODELLED"][COMMAND] = {
+        "commandArgvVector": "constructs a null-terminated argument vector in the caller's arena",
+        "commandRun": "the command body's Sys launch is outside this model; in WRAPPERS",
+        "commandRunWord": "encodes the command body's Result as a scalar word; in WRAPPERS",
+    }
+    ns["NOT_MODELLED"][COMMAND_POOL] = {
+        "commandPoolRun": "the POSIX entry delegates to the transcribed word pool; in WRAPPERS; "
+                          "the Windows sibling's native lifecycle has separate runtime tests",
+    }
     ns["PROCESS_OPS"][TASK] = r"__proc_\w+|__spawn_pid|sysKill\b|sysChildExited|sysTimeoutMicros"
+    ns["PROCESS_OPS"][TASK_WORDS] = r"__proc_\w+"

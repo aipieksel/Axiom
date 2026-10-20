@@ -1,0 +1,51 @@
+;;! Internal.TaskWords - the isolated scalar word-pool loop.
+;
+; Task and the POSIX command pool use the same bounded submit-order
+; implementation. The Windows command entry selects native processes.
+(import Vec)
+
+(pub :: wordPoolMap (-> (-> Int Int) Int Int (Vec Int)))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (wordPoolMap f n width)
+  {
+    (let w
+      (if (< width 1)
+        1
+        width))
+    (let hs
+      (vecWithCapacity
+        (if (< n w)
+          n
+          w)))
+    (let out vecNew)
+    (let mut joined 0)
+    {
+      (for i in 0..n
+        {
+          ; Block before spawning, not after, so at most `w` children
+          ; are ever outstanding. `(- i joined)` is the count of
+          ; handles spawned but not yet joined.
+          (while (>= (- i joined) w)
+            {
+              (vecPush out (__proc_join (vecGet hs (% joined w))))
+              (set joined (+ joined 1))
+            })
+          {
+            (let h (__proc_spawn f i))
+            (if (< i w)
+              (vecPush hs h)
+              (vecSet hs (% i w) h))
+          }
+        })
+      ; The drain continues the submission count left by the fill loop.
+      ; Ring length is only its capacity, not the number submitted.
+      (while (< joined n)
+        {
+          (vecPush out (__proc_join (vecGet hs (% joined w))))
+          (set joined (+ joined 1))
+        })
+      out
+    }
+  })

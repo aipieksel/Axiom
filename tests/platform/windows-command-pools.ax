@@ -1,0 +1,408 @@
+; The real command pool, ownership and Windows encoding run on the
+; host against deterministic process/job boundaries. No child is run.
+(import WindowsTask)
+(import WindowsCommandTest)
+(import Sys)
+(import Err)
+(import Str)
+(import Fmt)
+(import Vec)
+
+(extern "windows_command_pool_test"
+  (say :: (-> Bool String Int) (symbol "poolSay"))
+  (reset :: Int (symbol "poolReset"))
+  (stat :: (-> Int Int) (symbol "poolStat"))
+  (waitOrder :: (-> Int Int) (symbol "poolWaitOrder"))
+  (fault :: (-> Int Int Int Int) (symbol "poolFault"))
+  (record :: (-> Int Int) (symbol "poolRecord"))
+  (watchSlot :: (-> Int Int) (symbol "poolWatchSlot")))
+
+(:: command (-> String Int (Vec String)))
+(fn (command name code)
+  {
+    (let argv (vecNew))
+    (vecPush argv name)
+    (vecPush argv (fmtInt code))
+    (vecPush argv (strSlice "XXpayloadYY" 2 7))
+    (vecPush argv "")
+    (vecPush argv "space and\ttab")
+    (vecPush argv "a\"b")
+    (vecPush argv "tail\\")
+    (vecPush argv "café")
+    argv
+  })
+
+(:: commands (-> Int Int (Vec (Vec String))))
+(fn (commands from n)
+  {
+    (let cmds (vecNew))
+    (for i in 0..n
+      (vecPush cmds (command "C:/ok" (+ from i))))
+    cmds
+  })
+
+(:: ordered (-> (Vec Int) Int Int Bool))
+(fn (ordered values from n)
+  {
+    (let mut good (== (vecLen values) n))
+    (for i in 0..(vecLen values)
+      (if (!= (vecGet values i) (+ from i))
+        (set good false)))
+    good
+  })
+
+(:: repeated (-> (Vec Int) Int Int Bool))
+(fn (repeated values want n)
+  {
+    (let mut good (== (vecLen values) n))
+    (for i in 0..(vecLen values)
+      (if (!= (vecGet values i) want)
+        (set good false)))
+    good
+  })
+
+(:: clean Bool)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (clean)
+  (&& (== (stat 0) 0)
+    (&& (== (stat 18) 0) (&& (== (stat 19) 0) (&& (== (stat 11) 0) (== (stat 27) 0))))))
+
+(:: widthCase (-> Int Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (widthCase width expected)
+  {
+    (reset)
+    (let values (WindowsTask::taskRunCommands (commands 10 5) width))
+    (&& (ordered values 10 5) (&& (== (stat 1) expected) clean))
+  })
+
+(:: launchFailure (-> Int Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (launchFailure stage error)
+  {
+    (reset)
+    (let beforeCreate (|| (== stage 4) (|| (== stage 12) (== stage 13))))
+    (fault stage
+      (if beforeCreate
+        0
+        51)
+      1)
+    (let values (WindowsTask::taskRunCommands (commands 51 3) 3))
+    (&& (== (vecLen values) 3)
+      (&& (== (vecGet values 0) error)
+        (&& (== (vecGet values 1) 52)
+          (&& (== (vecGet values 2) 53)
+            (&& clean
+              (&&
+                (== (stat 6)
+                  (if beforeCreate
+                    0
+                    1))
+                (&&
+                  (== (stat 14)
+                    (if beforeCreate
+                      2
+                      3))
+                  (&&
+                    (== (stat 15)
+                      (if beforeCreate
+                        2
+                        3))
+                    (== (stat 20) 0)))))))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  {
+    (let mut bad 0)
+    (reset)
+    (let values (WindowsTask::taskRunCommands (commands 10 12) 3))
+    (set bad (+ bad (say (ordered values 10 12) "submit order across ring reuse")))
+    (set bad (+ bad (say (== (stat 1) 3) "width bound")))
+    (set bad (+ bad (say clean "normal drain retires every process and job")))
+    (set bad (+ bad
+               (say
+                 (&& (== (stat 2) 12)
+                   (&& (== (stat 4) 12) (&& (== (stat 14) 12) (== (stat 15) 12))))
+                 "one wait and close per child")))
+    (set bad (+ bad (say (== (stat 7) 0) "sliced, empty, quoted and UTF-8 arguments")))
+    (set bad (+ bad (say (== (stat 8) 0) "forwarded environment")))
+    (set bad (+ bad (say (&& (== (stat 5) 0) (== (stat 20) 0)) "native flags and narrow results")))
+    (set bad (+ bad (say (&& (== (waitOrder 0) 10) (== (waitOrder 11) 21)) "FIFO wait order")))
+    (set bad (+ bad (say (widthCase 1 1) "width one")))
+    (set bad (+ bad (say (widthCase 0 1) "zero width clamps to one")))
+    (set bad (+ bad (say (widthCase -7 1) "negative width clamps to one")))
+    (set bad (+ bad (say (widthCase 9223372036854775807 5) "huge width caps before allocation")))
+    (reset)
+    (set bad (+ bad
+               (say
+                 (&& (== (vecLen (WindowsTask::taskRunCommands (vecNew) 9223372036854775807)) 0)
+                   (&& (== (stat 16) 0) (== (stat 3) 0)))
+                 "empty input starts no job")))
+    (let mixed (vecNew))
+    (vecPush mixed (command "C:/ok" 1))
+    (vecPush mixed (vecNew))
+    (vecPush mixed (command "C:/missing" 0))
+    (vecPush mixed (command "C:/denied" 0))
+    (vecPush mixed (command "C:/ok" 2))
+    (let mixedValues (WindowsTask::taskRunCommands mixed 2))
+    (set bad (+ bad
+               (say
+                 (&& (== (vecLen mixedValues) 5)
+                   (&& (== (vecGet mixedValues 0) 1)
+                     (&& (== (vecGet mixedValues 1) -2)
+                       (&& (== (vecGet mixedValues 2) -2)
+                         (&& (== (vecGet mixedValues 3) -13) (== (vecGet mixedValues 4) 2))))))
+                 "failed launches retain their negative-errno slots")))
+    (set bad (+ bad
+               (say (&& clean (&& (== (stat 2) 2) (== (stat 14) 2)))
+                 "later commands survive launch failures")))
+    (reset)
+    (let lookup (vecNew))
+    (vecPush lookup (command "work" 7))
+    (vecPush lookup (command "retry" 8))
+    (vecPush lookup (command "missing" 9))
+    (let lookupValues (WindowsTask::taskRunCommands lookup 3))
+    (set bad (+ bad
+               (say
+                 (&& (== (vecLen lookupValues) 3)
+                   (&& (== (vecGet lookupValues 0) 7)
+                     (&& (== (vecGet lookupValues 1) 8) (== (vecGet lookupValues 2) -2))))
+                 "actual PATH lookup preserves result order")))
+    (set bad (+ bad
+               (say (&& (> (stat 9) 0) (&& (== (stat 9) (stat 10)) clean))
+                 "quoted PATH directory and empty-entry skips close probes")))
+    (set bad (+ bad (say (== (stat 23) 1) "failed PATH launch tries the next candidate")))
+    (reset)
+    (let paths (vecNew))
+    (vecPush paths (command "relative\\tool" 22))
+    (vecPush paths (command "C:drive" 23))
+    (vecPush paths (command "C:/with.dot/tool" 24))
+    (vecPush paths (command "C:/ok.exe" 25))
+    (set bad (+ bad
+               (say
+                 (&& (ordered (WindowsTask::taskRunCommands paths 2) 22 4)
+                   (&& clean (&& (== (stat 22) 0) (== (stat 9) 0))))
+                 "Windows direct paths and suffix rules")))
+    (reset)
+    (let statuses (vecNew))
+    (vecPush statuses (command "C:/ok" 101))
+    (vecPush statuses (command "C:/ok" 300))
+    (let statusValues (WindowsTask::taskRunCommands statuses 2))
+    (set bad (+ bad
+               (say
+                 (&& (== (vecGet statusValues 0) 139) (&& (== (vecGet statusValues 1) 44) clean))
+                 "crash status and low-byte exit decoding")))
+    (reset)
+    (fault 1 0 1)
+    (set bad (+ bad
+               (say (&& (repeated (WindowsTask::taskRunCommands (commands 10 3) 3) -13 3) clean)
+                 "job creation failure starts no child")))
+    (set bad (+ bad
+               (say (&& (ordered (WindowsTask::taskRunCommands (commands 10 3) 3) 10 3) clean)
+                 "job creation can retry after failure")))
+    (reset)
+    (fault 2 0 1)
+    (set bad (+ bad
+               (say
+                 (&& (repeated (WindowsTask::taskRunCommands (commands 10 3) 3) -22 3)
+                   (&& clean (&& (== (stat 16) 1) (== (stat 17) 1))))
+                 "job configuration failure closes its job")))
+    (set bad (+ bad
+               (say (launchFailure 4 -13) "attribute initialization failure creates no child")))
+    (set bad (+ bad
+               (say (launchFailure 12 -22) "job-list update failure deletes the attribute list")))
+    (set bad (+ bad (say (launchFailure 13 -13) "attribute size query failure creates no child")))
+    (set bad (+ bad (say (launchFailure 5 -5) "resume failure rolls back process and thread")))
+    (set bad (+ bad (say (launchFailure 6 -5) "still-suspended resume count is refused")))
+    (reset)
+    (fault 7 10 1)
+    (let waitFailed (WindowsTask::taskRunCommands (commands 10 6) 3))
+    (set bad (+ bad
+               (say
+                 (&& (repeated waitFailed -9 6) (&& clean (&& (== (stat 2) 3) (== (stat 17) 1))))
+                 "wait error stops launch and cleans the whole job")))
+    (reset)
+    (fault 8 10 1)
+    (set bad (+ bad
+               (say
+                 (&& (repeated (WindowsTask::taskRunCommands (commands 10 6) 3) -13 6)
+                   (&& clean (== (stat 2) 3)))
+                 "exit-code error stops the pool and retires siblings")))
+    (reset)
+    (let rawArgv (WindowsTask::taskArgvVector (command "C:/ok" 61)))
+    (let slot (__alloc 8))
+    (__store64 slot 0 0)
+    (watchSlot slot)
+    (let job nativeNew)
+    (let pid (nativeSpawn job (strCStr "C:/ok.exe") rawArgv sysEnvp slot))
+    (set bad (+ bad
+               (say (&& (> pid 4294967295) (&& (== (__load64 slot 0) pid) (== (stat 21) 0)))
+                 "64-bit process handle is published before resume")))
+    (let status (nativeWait pid))
+    (__store64 slot 0 0)
+    (let _ (nativeClose job))
+    (set bad (+ bad
+               (say (&& (== status (* 61 256)) (&& clean (== (stat 5) 0)))
+                 "native wait owns exactly one handle")))
+    (reset)
+    (let argv (WindowsTask::taskArgvVector (command "C:/ok" 71)))
+    (let recovered (record (recoverCommands argv sysEnvp)))
+    (set bad (+ bad
+               (say (&& (== recovered 72) clean)
+                 "recovery closes the job and outstanding process handles")))
+    (reset)
+    (set bad (+ bad
+               (say (&& (closeCommands argv sysEnvp) (&& clean (== (stat 17) 1)))
+                 "explicit close is idempotent")))
+    (reset)
+    (let inherited (__alloc 24))
+    (__store64 inherited 0 21474836484)
+    (__store64 inherited 1 40)
+    (__store64 inherited 2 21474836484)
+    (__store64 slot 0 0)
+    (let inheritedArgv (WindowsTask::taskArgvVector (command "C:/ok" 81)))
+    (let inheritedJob nativeNew)
+    (let inheritedPid
+      (nativeSpawnInherited inheritedJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited
+        3))
+    (let inheritedStatus (nativeWait inheritedPid))
+    (let _ (nativeClose inheritedJob))
+    (set bad (+ bad
+               (say
+                 (&& (== inheritedStatus (* 81 256))
+                   (&& clean
+                     (&& (== (stat 30) 4)
+                       (&& (== (stat 5) 0)
+                         (&& (== (__load64 inherited 0) 21474836484)
+                           (== (__load64 inherited 2) 21474836484))))))
+                 "explicit handle list deduplicates standards and leaves transport ownership with caller")))
+    (reset)
+    (__store64 slot 0 0)
+    (let invalidJob nativeNew)
+    (let invalidCounts
+      (&&
+        (==
+          (nativeSpawnInherited invalidJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot
+            inherited -1)
+          -22)
+        (==
+          (nativeSpawnInherited invalidJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot
+            inherited 9223372036854775807)
+          -22)))
+    (set bad (+ bad
+               (say (&& invalidCounts (&& (== (stat 24) 0) (== (stat 3) 0)))
+                 "negative and overflowing inherited counts are refused before native calls")))
+    (let nullBuffer
+      (== (nativeSpawnInherited invalidJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot 0 1)
+        -22))
+    (__store64 inherited 0 5)
+    (let unaligned
+      (==
+        (nativeSpawnInherited invalidJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited
+          1)
+        -22))
+    (__store64 inherited 0 0)
+    (let nullHandle
+      (==
+        (nativeSpawnInherited invalidJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited
+          1)
+        -22))
+    (__store64 inherited 0 -1)
+    (let pseudoHandle
+      (==
+        (nativeSpawnInherited invalidJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited
+          1)
+        -22))
+    (let _ (nativeClose invalidJob))
+    (set bad (+ bad
+               (say
+                 (&& nullBuffer
+                   (&& unaligned
+                     (&& nullHandle
+                       (&& pseudoHandle (&& clean (&& (== (stat 24) 0) (== (stat 3) 0)))))))
+                 "invalid transport handles are refused without dereferencing a null buffer")))
+    (reset)
+    (__store64 slot 0 0)
+    (__store64 inherited 0 21474836484)
+    (let stdJob nativeNew)
+    (fault 15 0 1)
+    (let stdFailed
+      (nativeSpawnInherited stdJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited 1))
+    (let _ (nativeClose stdJob))
+    (set bad (+ bad
+               (say (&& (== stdFailed -13) (&& clean (&& (== (stat 25) 0) (== (stat 3) 0))))
+                 "standard inheritance failure starts no child or initialized list")))
+    (reset)
+    (__store64 slot 0 0)
+    (let listJob nativeNew)
+    (fault 16 0 1)
+    (let listFailed
+      (nativeSpawnInherited listJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited 1))
+    (let _ (nativeClose listJob))
+    (set bad (+ bad
+               (say (&& (== listFailed -22) (&& clean (&& (== (stat 26) 1) (== (stat 3) 0))))
+                 "handle-list update failure deletes the initialized list")))
+    (reset)
+    (__store64 slot 0 0)
+    (let pollJob nativeNew)
+    (let pollPid (nativeSpawn pollJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot))
+    (set bad (+ bad
+               (say (&& (== (nativePoll pollPid) 0) (&& (== (stat 19) 1) (== (stat 14) 0)))
+                 "polling a running process preserves its handle")))
+    (fault 14 81 1)
+    (set bad (+ bad
+               (say (&& (== (nativePoll pollPid) -9) (&& (== (stat 19) 1) (== (stat 14) 0)))
+                 "a poll error preserves process ownership")))
+    (let killed (nativeKill pollPid 4294967338))
+    (let ended (nativePoll pollPid))
+    (let killedAgain (nativeKill pollPid 42))
+    (set bad (+ bad
+               (say
+                 (&& (== killed 0)
+                   (&& (== ended 1) (&& (== killedAgain 0) (&& (== (stat 19) 1) (== (stat 14) 0)))))
+                 "kill masks the exit DWORD and accepts an already-ended child without closing")))
+    (let polledStatus (nativeWait pollPid))
+    (let _ (nativeClose pollJob))
+    (set bad (+ bad
+               (say (&& (== polledStatus (* 42 256)) (&& clean (== (stat 14) 1)))
+                 "wait after poll and kill retires the one owned handle")))
+    (reset)
+    (__store64 slot 0 0)
+    (let killJob nativeNew)
+    (let killPid (nativeSpawn killJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot))
+    (fault 9 81 1)
+    (let killFailed (nativeKill killPid 42))
+    (let stillOwned (&& (== (stat 0) 1) (== (stat 19) 1)))
+    (let disposed (nativeDispose killPid))
+    (let _ (nativeClose killJob))
+    (set bad (+ bad
+               (say (&& (== killFailed -13) (&& stillOwned (&& (== disposed 0) clean)))
+                 "failed kill leaves a handle that can still be disposed")))
+    (reset)
+    (__store64 slot 0 0)
+    (let createJob nativeNew)
+    (fault 3 81 1)
+    (let createFailed
+      (nativeSpawnInherited createJob (strCStr "C:/ok.exe") inheritedArgv sysEnvp slot inherited 1))
+    (let _ (nativeClose createJob))
+    (set bad (+ bad
+               (say
+                 (&& (== createFailed -2)
+                   (&& clean
+                     (&& (== (stat 26) 1)
+                       (&& (== (stat 2) 0) (== (__load64 inherited 0) 21474836484)))))
+                 "failed explicit-handle spawn deletes attributes and keeps caller transport")))
+    bad
+  })

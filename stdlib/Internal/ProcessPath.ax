@@ -1,0 +1,73 @@
+;;! Internal.ProcessPath - shared executable lookup for command launch.
+;
+; The launch callback returns a nonnegative result once a child exists,
+; or a negative errno when it could not start. An asynchronous caller
+; must publish ownership inside that callback before it returns.
+(import Str)
+(import Sys.Platform)
+
+;; Resolve `name` by the platform's path and executable rules. Empty
+;; PATH entries are skipped, including an empty or unset PATH. A
+;; failed candidate launch continues the search; success ends it.
+(pub :: processLaunchPath (-> String String (-> String Int) (-> String Bool) Int))
+(pub fn (processLaunchPath name path launch exists)
+  (if (processNameIsPath name)
+    (launch (processExeName name))
+    (processSearchPath name path 0 launch exists)))
+
+(:: processNameIsPath (-> String Bool))
+(fn (processNameIsPath name)
+  (if (isSome (strFindByte name 47 0))
+      true
+    (== pathBackslashSeparates 0)
+      false
+    (|| (isSome (strFindByte name 92 0)) (== (strByte name 1) 58))))
+
+(:: processExeName (-> String String))
+(fn (processExeName name)
+  (if (|| (== exeSuffixTried 0) (processHasExt name 0 false))
+    (strDup name)
+    (concat name ".exe")))
+
+(:: processHasExt (-> String Int Bool Bool))
+(fn (processHasExt name i dot)
+  (if (>= i (strLen name))
+      dot
+    (|| (== (strByte name i) 47) (== (strByte name i) 92))
+      (processHasExt name (+ i 1) false)
+    (== (strByte name i) 46)
+      (processHasExt name (+ i 1) true)
+    (processHasExt name (+ i 1) dot)))
+
+(:: processUnquotePath (-> String String))
+(fn (processUnquotePath dir)
+  (if (&& (== pathBackslashSeparates 1)
+        (&& (>= (strLen dir) 2)
+          (&& (== (strByte dir 0) 34) (== (strByte dir (- (strLen dir) 1)) 34))))
+    (strSlice dir 1 (- (strLen dir) 2))
+    dir))
+
+(:: processSearchPath (-> String String Int (-> String Int) (-> String Bool) Int))
+(fn (processSearchPath name path from launch exists)
+  (if (>= from (strLen path))
+    -2
+    {
+      (let end
+        (match (strFindByte path pathListSep from)
+          ((None) (strLen path))
+          ((Some separator) separator)))
+      (let dir (processUnquotePath (strSlice path from (- end from))))
+      (if (== (strLen dir) 0)
+        (processSearchPath name path (+ end 1) launch exists)
+        {
+          (let candidate (concat (concat dir "/") (processExeName name)))
+          (if (exists candidate)
+            {
+              (let result (launch candidate))
+              (if (>= result 0)
+                result
+                (processSearchPath name path (+ end 1) launch exists))
+            }
+            (processSearchPath name path (+ end 1) launch exists))
+        })
+    }))

@@ -1,0 +1,209 @@
+; External command pools use argument vectors and preserve submit order.
+; The child is this program, so the same case runs without a shell on
+; POSIX and Windows. Host process mocks separately pin the width bound.
+(import IO)
+(import Sys)
+(import Task)
+(import Vec)
+(import Str)
+(import Fmt)
+
+(:: selfPath String)
+;@axiom:effect(io)
+(fn (selfPath)
+  {
+    (let name (sysArg 0))
+    (if (|| (isSome (strFindByte name 47 0))
+          (|| (isSome (strFindByte name 92 0)) (== (strByte name 1) 58)))
+      name
+      (concat "./" name))
+  })
+
+(:: command (-> Int (Vec String)))
+;@axiom:effect(io)
+(fn (command code)
+  {
+    (let argv (vecNew))
+    (vecPush argv selfPath)
+    (vecPush argv "child")
+    (vecPush argv (fmtInt code))
+    (vecPush argv (strSlice "XXpayloadYY" 2 7))
+    (vecPush argv "")
+    (vecPush argv "space and\ttab")
+    (vecPush argv "a\"b")
+    (vecPush argv "tail\\")
+    (vecPush argv "café")
+    argv
+  })
+
+(:: child Int)
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (child)
+  (if (&& (== sysArgc 9)
+        (&& (strEq (sysArg 3) "payload")
+          (&& (strEq (sysArg 4) "")
+            (&& (strEq (sysArg 5) "space and\ttab")
+              (&& (strEq (sysArg 6) "a\"b")
+                (&& (strEq (sysArg 7) "tail\\") (strEq (sysArg 8) "café")))))))
+    (match (strParseInt (sysArg 2))
+      ((None) 98)
+      ((Some code)
+        {
+          ; Different completion times must leave result positions intact.
+          (let _ (sysSleepNanos (* (- 40 code) 1000000)))
+          code
+        }
+      ))
+    99))
+
+(:: ordered (-> Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (ordered width)
+  {
+    (let commands (vecNew))
+    (for code in 31..34
+      (vecPush commands (command code)))
+    (let codes (taskRunCommands commands width))
+    (&& (== (vecLen codes) 3)
+      (&& (== (vecGet codes 0) 31) (&& (== (vecGet codes 1) 32) (== (vecGet codes 2) 33))))
+  })
+
+(:: boom (-> Int Int))
+(fn (boom n)
+  (/ 1 n))
+
+(:: waitStarted (-> String Bool))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (waitStarted path)
+  {
+    (let mut seen false)
+    (let mut attempts 0)
+    (while (&& (! seen) (< attempts 300))
+      {
+        (set seen (fileExists path))
+        (if (! seen)
+          {
+            (let _ (sysSleepNanos 10000000))
+            ()
+          })
+        (set attempts (+ attempts 1))
+      })
+    seen
+  })
+
+; The command announces that it ran, then waits before its forbidden
+; write. The observer requires the announcement, so a failed launch
+; cannot pass the kill-on-parent-exit check.
+(:: delayedWrite Int)
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (delayedWrite)
+  {
+    (let _ (writeFile (sysArg 2) "started"))
+    (let _ (sysSleepNanos 1000000000))
+    (let _ (writeFile (sysArg 3) "unexpected survivor"))
+    0
+  })
+
+(:: poolAbort Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (poolAbort)
+  {
+    (let started (sysArg 2))
+    (let late (sysArg 3))
+    (parallel commandOwner (
+      (running {
+        (let argv (vecNew))
+        (vecPush argv selfPath)
+        (vecPush argv "delayed-write")
+        (vecPush argv started)
+        (vecPush argv late)
+        (let cmds (vecNew))
+        (vecPush cmds argv)
+        (let _ (taskRunCommands cmds 1))
+        0
+      })
+      (fatal (if (waitStarted started)
+        (boom 0)
+        96))
+    )
+      (+ running fatal))
+  })
+
+(:: fatalCleanup Bool)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (fatalCleanup)
+  (if (== usesSyscallAbi 1)
+    true
+    {
+      (let suffix (fmtInt sysPid))
+      (let started (concat "axiom-command-started-" suffix))
+      (let late (concat "axiom-command-survivor-" suffix))
+      (let errors (concat "axiom-command-abort-" suffix))
+      (let _ (removeFile started))
+      (let _ (removeFile late))
+      (let argv (vecNew))
+      (vecPush argv selfPath)
+      (vecPush argv "poolabort")
+      (vecPush argv started)
+      (vecPush argv late)
+      (let exited (sysRunPathErrTo selfPath (taskArgvVector argv) sysEnvp errors))
+      (let _ (sysSleepNanos 1500000000))
+      (let good
+        (&& (isOk exited)
+          (&& (!= (unwrapOr exited 0) 0) (&& (fileExists started) (! (fileExists late))))))
+      (let _ (removeFile started))
+      (let _ (removeFile late))
+      (let _ (removeFile errors))
+      good
+    }))
+
+(:: parent Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (parent)
+  {
+    (println (ordered 3))
+    (println (ordered 1))
+    (println (ordered 0))
+    (println (ordered (- 0 7)))
+    (println (ordered 9223372036854775807))
+    (println (== (vecLen (taskRunCommands (vecNew) 9223372036854775807)) 0))
+    (let mixed (vecNew))
+    (vecPush mixed (command 35))
+    (vecPush mixed (vecNew))
+    (let missing (vecNew))
+    (vecPush missing "./axiom-command-pool-does-not-exist")
+    (vecPush mixed missing)
+    (vecPush mixed (command 36))
+    (let codes (taskRunCommands mixed 2))
+    (println
+      (&& (== (vecLen codes) 4)
+        (&& (== (vecGet codes 0) 35)
+          (&& (== (vecGet codes 1) (- 0 2))
+            (&& (== (vecGet codes 2) (- 0 2)) (== (vecGet codes 3) 36))))))
+    (println fatalCleanup)
+    0
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  (if (strEq (sysArg 1) "child")
+      child
+    (strEq (sysArg 1) "delayed-write")
+      delayedWrite
+    (strEq (sysArg 1) "poolabort")
+      poolAbort
+    parent))

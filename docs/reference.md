@@ -2089,7 +2089,10 @@ vector; `taskRunCommands` runs a bounded command pool. The
 atomic ordering and lifecycle rules.
 
 Not yet: `Task`'s isolated worker lifecycle has no Windows lowering.
-Command spawning through `Sys` works there. See the
+`taskRunCommand`, `taskRunCommands` and command spawning through `Sys`
+work there. Windows command pools require Windows 10 or later and keep
+their processes in a cleanup job; see the [library reference](stdlib.md#task-chan-and-sync).
+See the
 [platform roadmap](roadmap.md#platforms-and-release).
 
 ## Calling Rust

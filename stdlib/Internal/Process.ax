@@ -1,0 +1,32 @@
+;;! Internal.Process - portable process-operation adapters.
+;
+; Ordinary POSIX launch and wait keep Sys's existing raw boundary and
+; effect refinements. A Windows caller supplies native operations that
+; publish a child owner before allocating or exposing a new handle.
+(import Sys)
+(import Err)
+
+;; Use the native operation where no syscall ABI exists; elsewhere use
+;; the ordinary Sys process operation. The callback must own its child
+;; before it returns. A negative result means no process was started.
+(pub :: processSpawnWith (-> (-> Int Int Int Int) Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+(pub fn (processSpawnWith nativeSpawn path argv envp)
+  (if (== usesSyscallAbi 0)
+    (nativeSpawn path argv envp)
+    (match (sysSpawn path argv envp)
+      ((Ok pid) pid)
+      ((Err e) (- 0 (errCode e))))))
+
+;; The raw wait status, with Sys's Block refinement on the POSIX route.
+;; A supplied native operation owns its handle-retirement policy.
+(pub :: processWaitWith (-> (-> Int Int) Int Int))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(pub fn (processWaitWith nativeWait pid)
+  (if (== usesSyscallAbi 0)
+    (nativeWait pid)
+    (match (sysWaitPid pid)
+      ((Ok status) status)
+      ((Err e) (- 0 (errCode e))))))

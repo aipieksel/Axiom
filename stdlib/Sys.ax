@@ -62,6 +62,7 @@
 (import Err)
 (import Str)
 (import Internal.Raw)
+(import Internal.ProcessPath)
 (import Vec)
 ; `netAddrText` renders an address as decimal octets and hexadecimal
 ; groups, both of which `Fmt` already does; a second `fmtInt` living
@@ -348,7 +349,7 @@
       ; that ran and exited 127. Conflating those two is exactly what
       ; `sysRun`'s contract says it does not do.
       ;
-      ; `sysRunSearch` has its own test for the same reason and it is
+      ; `processSearchPath` has its own test for the same reason and it is
       ; not this one: that one skips a candidate on ANY open failure,
       ; which is `execvp`'s rule for a PATH walk. This is the direct
       ; path, where ENOENT ONLY is deliberate - a file that cannot be
@@ -558,141 +559,34 @@
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (sysRunPath name argv envp)
-  (if (sysNameIsPath name)
-    (sysRun (strCStr (sysExeName name)) argv envp)
-    {
-      (let path (sysEnv "PATH"))
-      (if (== (strLen path) 0)
-        (Err (mkError 2 "sysRunPath: PATH is empty"))
-        (sysRunSearch name argv envp path 0))
-    }))
+  (sysResult "sysRunPath"
+    (processLaunchPath name (sysEnv "PATH") (lambda (path) (sysRunPathWord path argv envp))
+      sysPathExists)))
 
-; Whether `name` is a path to run as written rather than a name to look
-; for: it holds a `/`, or, where `pathBackslashSeparates` says so, a
-; `\` or a drive letter's colon.
-(:: sysNameIsPath (-> String Bool))
-(fn (sysNameIsPath name)
-  (if (isSome (strFindByte name 47 0))
-      true
-    (== pathBackslashSeparates 0)
-      false
-    (|| (isSome (strFindByte name 92 0)) (== (strByte name 1) 58))))
-
-; `name` with `.exe` added where `exeSuffixTried` says a program is
-; found that way and its last component has no extension; a fresh copy
-; either way, so `strCStr` can terminate it.
-(:: sysExeName (-> String String))
-(fn (sysExeName name)
-  (if (|| (== exeSuffixTried 0) (sysHasExt name 0 false))
-    (strDup name)
-    (concat name ".exe")))
-
-; Whether the last component of `name`, from byte `i`, holds a `.`.
-(:: sysHasExt (-> String Int Bool Bool))
-(fn (sysHasExt name i dot)
-  (if (>= i (strLen name))
-      dot
-    (|| (== (strByte name i) 47) (== (strByte name i) 92))
-      (sysHasExt name (+ i 1) false)
-    (== (strByte name i) 46)
-      (sysHasExt name (+ i 1) true)
-    (sysHasExt name (+ i 1) dot)))
-
-; A `PATH` entry without the quotes Windows lets one carry, as in
-; `"C:\Program Files\LLVM\bin"`. Only where `pathBackslashSeparates`
-; says so: on POSIX a quote is part of the name.
-(:: sysUnquote (-> String String))
-(fn (sysUnquote dir)
-  (if (&& (== pathBackslashSeparates 1)
-        (&& (>= (strLen dir) 2)
-          (&& (== (strByte dir 0) 34) (== (strByte dir (- (strLen dir) 1)) 34))))
-    (strSlice dir 1 (- (strLen dir) 2))
-    dir))
-
-; Try `name` in each `:`-separated entry of `path` starting at `from`.
-;
-; `from` past the LAST BYTE ends the walk, and `>=` is what says so: at
-; `from == strLen path` there is no entry left to read, only the empty
-; slice that `>` let through - the one `sysRunPath`'s note above is
-; about. The caller refuses an empty `path` as well; both guards are
-; here because either alone leaves this function unable to state its own
-; termination.
-(:: sysRunSearch (-> String Int Int String Int (Result Int Error)))
+; The shared PATH walk carries a scalar failure code so the native
+; command pool can publish a child owner before allocating any Result.
+; This synchronous caller keeps `sysRun`'s existing wait semantics.
+(:: sysRunPathWord (-> String Int Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
-(fn (sysRunSearch name argv envp path from)
-  (if (>= from (strLen path))
-    ; PATH exhausted: nothing was found to run, which is a spawn
-    ; failure and not a child's answer - ENOENT, in the `Err` arm.
-    (Err (mkError 2 (concat (concat "sysRunSearch: " name) ": not found on PATH")))
-    ; AN EMPTY ENTRY IS SKIPPED rather than read as the
-    ; working directory. POSIX does give `PATH=/usr/bin:`
-    ; and `PATH=:/usr/bin` a `.` entry and the shell
-    ; honours it, so this is a deliberate divergence and
-    ; not a bug fix: no caller in this library or above it
-    ; wants it. What comes through here are `llc`, `cc`
-    ; and `sh`, and a file of one of those names sitting
-    ; in whatever directory the compiler happened to be
-    ; invoked from is never the one meant - it is the
-    ; classic way a build in an untrusted tree runs that
-    ; tree's code. Measured 2026-08-23:
-    ; `env -i PATH=/nonexistent-dir: ./probe` ran `./probe`
-    ; and answered its exit code, 9; it answers -2 now.
-    ;
-    ; A caller that does mean a program beside it has the
-    ; spelling for one, and it is unambiguous: a name with
-    ; a slash in it. `sysRunPath` hands `./llc` straight to
-    ; `sysRun` and never comes here.
-    {
-      (let end
-        (match (strFindByte path pathListSep from)
-          ((None) (strLen path))
-          ((Some colon) colon)))
+(fn (sysRunPathWord path argv envp)
+  (match (sysRun (strCStr path) argv envp)
+    ((Ok code) code)
+    ((Err e) (- 0 (errCode e)))))
+
+(:: sysPathExists (-> String Bool))
+;@axiom:effect(io)
+(fn (sysPathExists path)
+  {
+    (let fd (sysOpenRaw (strCStr path) oRdonly))
+    (if (< fd 0)
+      false
       {
-        (let dir (sysUnquote (strSlice path from (- end from))))
-        (if (== (strLen dir) 0)
-          (sysRunSearch name argv envp path (+ end 1))
-          ; `concat` copies, so the candidate is
-          ; NUL-terminated even though `dir` - a slice sharing
-          ; the environment's bytes - is not.
-          ; Does it exist? A candidate that cannot be opened
-          ; cannot be executed, and under fork+exec that is
-          ; the ONLY point at which the two are still
-          ; distinguishable - once the fork has happened, "no
-          ; such file" and "the tool exited 127" are the same
-          ; integer.
-          {
-            (let cand (concat (concat dir "/") (sysExeName name)))
-            {
-              (let cpath (strCStr cand))
-              {
-                (let fd (sysOpenRaw cpath oRdonly))
-                (if (< fd 0)
-                  (sysRunSearch name argv envp path (+ end 1))
-                  {
-                    {
-                      (let _ (sysCloseFd fd))
-                      ()
-                    }
-                    ; `Ok` here means the child RAN, whatever it
-                    ; answered - a non-zero exit is this entry's
-                    ; result and ends the walk. Only a spawn failure
-                    ; (`Err`) means try the next `PATH` entry, which
-                    ; is the distinction the old `>= 0` was making by
-                    ; sign.
-                    {
-                      (let rc (sysRun cpath argv envp))
-                      (if (isOk rc)
-                        rc
-                        (sysRunSearch name argv envp path (+ end 1)))
-                    }
-                  })
-              }
-            }
-          })
-      }
-    }))
+        (let _ (sysCloseFd fd))
+        true
+      })
+  })
 
 ;; Run `name` as `sysRunPath` does, with the child's standard error
 ;; written to the file at `errPath`, created or truncated, rather than

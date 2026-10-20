@@ -1,0 +1,90 @@
+;;! Internal.CommandPool - the Windows owned command-pool entry.
+(import Internal.WindowsCommands)
+(import Internal.Command)
+(import Internal.RawVec)
+(import Sys)
+(import Str)
+(import Vec)
+(import Err)
+
+; Native command launch needs no captured-closure transfer. Each live
+; ring slot owns a process in a kill-on-close job, so scope exit and
+; recovery clean up the pool, and process exit closes the job as well.
+; Failed launches still occupy their submit-order slot. A failed wait
+; closes the pool and gives its errno to remaining launched/unstarted
+; slots; already recorded launch errors keep their own errno.
+(pub :: commandPoolRun (-> (Vec (Vec String)) Int (Vec Int)))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (commandPoolRun cmds width)
+  {
+    (let n (vecLen cmds))
+    (let out (vecWithCapacity n))
+    (if (> n 0)
+      {
+        (let w
+          (if (< width 1)
+            1
+            (if (> width n)
+              n
+              width)))
+        (match (windowsCommandsNew w)
+          ((Err e)
+            (for i in 0..n
+              (vecPush out (- 0 (errCode e))))
+          )
+          ((Ok pool)
+            {
+              (let hs (vecWithCapacity w))
+              (let env sysEnvp)
+              (let path (sysEnv "PATH"))
+              (let mut next 0)
+              (let mut joined 0)
+              (let mut stopped 0)
+              (while (&& (< joined n) (== stopped 0))
+                {
+                  (while (&& (< next n) (< (- next joined) w))
+                    {
+                      (let argv (vecGet cmds next))
+                      (let started
+                        (if (== (vecLen argv) 0)
+                          -2
+                          (windowsCommandsStart pool (% next w) (strDup (rawVecGetStr argv 0))
+                            (commandArgvVector argv) env path)))
+                      (if (< next w)
+                        (vecPush hs started)
+                        (vecSet hs (% next w) started))
+                      (set next (+ next 1))
+                    })
+                  (let started (vecGet hs (% joined w)))
+                  (let result
+                    (if (< started 0)
+                      started
+                      (windowsCommandsJoin pool (% joined w))))
+                  (vecPush out result)
+                  (set joined (+ joined 1))
+                  (if (&& (>= started 0) (< result 0))
+                    (set stopped result))
+                })
+              (if (< stopped 0)
+                (while (< joined n)
+                  {
+                    (vecPush out
+                      (if (< joined next)
+                        {
+                          (let started (vecGet hs (% joined w)))
+                          (if (< started 0)
+                            started
+                            stopped)
+                        }
+                        stopped))
+                    (set joined (+ joined 1))
+                  }))
+              (let _ (windowsCommandsClose pool))
+              ()
+            }
+          ))
+      })
+    out
+  })

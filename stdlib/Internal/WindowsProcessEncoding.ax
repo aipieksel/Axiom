@@ -1,0 +1,290 @@
+;;! Internal.WindowsProcessEncoding - Windows path, argv and environment encoding.
+;
+; Shared by ordinary process spawning and the owned command pool. These
+; routines allocate all UTF-16 buffers before a native child exists.
+; Raw pointers remain inside the standard library's Internal boundary.
+; Store the UTF-16 unit `u` at index `j` of `dst`, little-endian.
+(:: winPut16 (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winPut16 dst j u)
+  {
+    (__store8 dst (* j 2) (& u 255))
+    (__store8 dst (+ (* j 2) 1) (& (/ u 256) 255))
+    0
+  })
+
+(:: winIsCont (-> Int Bool))
+(fn (winIsCont b)
+  (== (& b 192) 128))
+
+; The length of the NUL-terminated bytes at `p`.
+(:: winCLen (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winCLen p i)
+  (if (== (__load8 p i) 0)
+    i
+    (winCLen p (+ i 1))))
+
+; Decode the UTF-8 at `src` from byte `i` into UTF-16 units at `dst`
+; from unit `j`, through the NUL. Answers the number of units before
+; the NUL, or -1 at the first malformed sequence: a stray continuation
+; byte, a truncated sequence, an overlong form, a surrogate, or a code
+; point past U+10FFFF. A continuation test fails on the NUL, so the
+; walk never reads past the end.
+(:: winWideFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winWideFrom src i dst j)
+  {
+    (let b0 (__load8 src i))
+    (if (== b0 0)
+        {
+          (winPut16 dst j 0)
+          j
+        }
+      (< b0 128)
+        {
+          (winPut16 dst j b0)
+          (winWideFrom src (+ i 1) dst (+ j 1))
+        }
+      (&& (>= b0 194) (<= b0 223))
+        {
+          (let b1 (__load8 src (+ i 1)))
+          (if (winIsCont b1)
+            {
+              (winPut16 dst j (+ (* (& b0 31) 64) (& b1 63)))
+              (winWideFrom src (+ i 2) dst (+ j 1))
+            }
+            (- 0 1))
+        }
+      (&& (>= b0 224) (<= b0 239))
+        {
+          (let b1 (__load8 src (+ i 1)))
+          (if (winIsCont b1)
+            {
+              (let b2 (__load8 src (+ i 2)))
+              (if (winIsCont b2)
+                {
+                  (let cp (+ (+ (* (& b0 15) 4096) (* (& b1 63) 64)) (& b2 63)))
+                  (if (|| (< cp 2048) (&& (>= cp 55296) (<= cp 57343)))
+                    (- 0 1)
+                    {
+                      (winPut16 dst j cp)
+                      (winWideFrom src (+ i 3) dst (+ j 1))
+                    })
+                }
+                (- 0 1))
+            }
+            (- 0 1))
+        }
+      (&& (>= b0 240) (<= b0 244))
+        {
+          (let b1 (__load8 src (+ i 1)))
+          (if (winIsCont b1)
+            {
+              (let b2 (__load8 src (+ i 2)))
+              (if (winIsCont b2)
+                {
+                  (let b3 (__load8 src (+ i 3)))
+                  (if (winIsCont b3)
+                    {
+                      (let cp
+                        (+ (+ (+ (* (& b0 7) 262144) (* (& b1 63) 4096)) (* (& b2 63) 64))
+                          (& b3 63)))
+                      (if (|| (< cp 65536) (> cp 1114111))
+                        (- 0 1)
+                        {
+                          (let c (- cp 65536))
+                          (winPut16 dst j (+ 55296 (/ c 1024)))
+                          (winPut16 dst (+ j 1) (+ 56320 (% c 1024)))
+                          (winWideFrom src (+ i 4) dst (+ j 2))
+                        })
+                    }
+                    (- 0 1))
+                }
+                (- 0 1))
+            }
+            (- 0 1))
+        }
+      (- 0 1))
+  })
+
+; A fresh NUL-terminated UTF-16 copy of the NUL-terminated UTF-8 path
+; at `p`, or 0 when the path is not valid UTF-8. A UTF-8 path never
+; needs more units than it has bytes, so the buffer is sized by bytes.
+(pub :: winWidePath (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (winWidePath p)
+  {
+    (let dst (__alloc (* (+ (winCLen p 0) 1) 2)))
+    (if (< (winWideFrom p 0 dst 0) 0)
+      0
+      dst)
+  })
+
+; Write `n` copies of the byte `b` at `dst + k`, answering the next
+; free byte.
+(:: winPutRun (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winPutRun dst k n b)
+  (if (<= n 0)
+    k
+    {
+      (__store8 dst k b)
+      (winPutRun dst (+ k 1) (- n 1) b)
+    }))
+
+; Whether the NUL-terminated argument at `p` needs quotes: it is empty,
+; or it holds a space, tab, newline, vertical tab or quote.
+(:: winArgNeedsQuote (-> Int Int Bool))
+;@axiom:effect(unsafe)
+(fn (winArgNeedsQuote p i)
+  {
+    (let c (__load8 p i))
+    (if (== c 0)
+        (== i 0)
+      (|| (|| (== c 32) (== c 34)) (&& (>= c 9) (<= c 11)))
+        true
+      (winArgNeedsQuote p (+ i 1)))
+  })
+
+; The inside of a quoted argument, from byte `i` of `src`, with `bs`
+; backslashes seen and not yet written. A run of backslashes is literal
+; unless a quote or the closing quote follows it, and then it doubles,
+; with one more to escape a quote in the argument itself.
+(:: winQuoteBody (-> Int Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winQuoteBody src i dst k bs)
+  {
+    (let c (__load8 src i))
+    (if (== c 0)
+        (winPutRun dst k (* bs 2) 92)
+      (== c 92)
+        (winQuoteBody src (+ i 1) dst k (+ bs 1))
+      (== c 34)
+        {
+          (let k2 (winPutRun dst k (+ (* bs 2) 1) 92))
+          (__store8 dst k2 34)
+          (winQuoteBody src (+ i 1) dst (+ k2 1) 0)
+        }
+      {
+        (let k2 (winPutRun dst k bs 92))
+        (__store8 dst k2 c)
+        (winQuoteBody src (+ i 1) dst (+ k2 1) 0)
+      })
+  })
+
+; Copy the NUL-terminated bytes at `src` to `dst + k`, answering the
+; next free byte.
+(:: winCopyBytes (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winCopyBytes src i dst k)
+  {
+    (let c (__load8 src i))
+    (if (== c 0)
+      k
+      {
+        (__store8 dst k c)
+        (winCopyBytes src (+ i 1) dst (+ k 1))
+      })
+  })
+
+; The bytes the quoted form of each argument from index `i` can need:
+; twice its length for doubled backslashes, two quotes and a space.
+(:: winArgvBound (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winArgvBound argv i acc)
+  {
+    (let p (__load64 argv i))
+    (if (== p 0)
+      acc
+      (winArgvBound argv (+ i 1) (+ acc (+ (* (winCLen p 0) 2) 3))))
+  })
+
+(:: winArgvFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winArgvFrom argv i dst k)
+  {
+    (let p (__load64 argv i))
+    (if (== p 0)
+      k
+      {
+        (let k1
+          (if (== i 0)
+            k
+            {
+              (__store8 dst k 32)
+              (+ k 1)
+            }))
+        (let k2
+          (if (winArgNeedsQuote p 0)
+            {
+              (__store8 dst k1 34)
+              (let k3 (winQuoteBody p 0 dst (+ k1 1) 0))
+              (__store8 dst k3 34)
+              (+ k3 1)
+            }
+            (winCopyBytes p 0 dst k1)))
+        (winArgvFrom argv (+ i 1) dst k2)
+      })
+  })
+
+; The UTF-16 command line for `argv`, or 0 when an argument is not
+; valid UTF-8. `CreateProcessW` may write to it, so it is always a
+; fresh buffer.
+(pub :: winCommandLine (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (winCommandLine argv)
+  {
+    (let utf8 (__alloc (+ (winArgvBound argv 0 0) 1)))
+    (let end (winArgvFrom argv 0 utf8 0))
+    (__store8 utf8 end 0)
+    (winWidePath utf8)
+  })
+
+(:: winEnvBytes (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winEnvBytes envp i acc)
+  {
+    (let p (__load64 envp i))
+    (if (== p 0)
+      acc
+      (winEnvBytes envp (+ i 1) (+ acc (+ (winCLen p 0) 1))))
+  })
+
+; Append each `NAME=value` from index `i` as UTF-16 at unit `j`, each
+; followed by its NUL, answering the next free unit or -1 at the first
+; one that is not valid UTF-8.
+(:: winEnvFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (winEnvFrom envp i dst j)
+  {
+    (let p (__load64 envp i))
+    (if (== p 0)
+      j
+      {
+        (let n (winWideFrom p 0 dst j))
+        (if (< n 0)
+          (- 0 1)
+          (winEnvFrom envp (+ i 1) dst (+ n 1)))
+      })
+  })
+
+; The UTF-16 environment block for `envp`, 0 for this process's own
+; when `envp` is 0, or -1 when an entry is not valid UTF-8. A block
+; ends in an empty string, so even an empty `envp` gives two NULs.
+(pub :: winEnvBlock (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (winEnvBlock envp)
+  (if (== envp 0)
+    0
+    {
+      (let dst (__alloc (* (+ (winEnvBytes envp 0 0) 2) 2)))
+      (let j (winEnvFrom envp 0 dst 0))
+      (if (< j 0)
+        (- 0 1)
+        {
+          (winPut16 dst j 0)
+          (winPut16 dst (+ j 1) 0)
+          dst
+        })
+    }))

@@ -47,13 +47,19 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     axiom = str(Path(args.axiom).resolve())
-    env = dict(os.environ, AXIOM_STDLIB=str(root / "stdlib"))
     with tempfile.TemporaryDirectory(prefix="axiom-windows-time-") as tmp:
         work = Path(tmp)
+        lib = work / "stdlib"
+        lib.mkdir()
+        for child in (root / "stdlib").iterdir():
+            (lib / child.name).symlink_to(child, target_is_directory=child.is_dir())
+        env = dict(os.environ, AXIOM_STDLIB=str(lib))
         # A distinct module name selects the Windows implementation even
-        # when this test is compiled for a POSIX host.
+        # when this test is compiled for a POSIX host. Keep the copy
+        # inside the private stdlib so its Internal imports stay valid.
         platform = (root / "stdlib/Sys/Platform.windows.ax").read_text()
-        (work / "WindowsPlatform.ax").write_text(platform)
+        module = lib / "WindowsPlatform.ax"
+        module.write_text(platform)
         shutil.copyfile(root / "tests/platform/windows-time.ax", work / "probe.ax")
         env["AXIOM_PATH"] = str(work)
         run("cc", "-c", str(root / "tests/platform/windows-time.c"), "-o", str(work / "mock.o"))
@@ -72,7 +78,7 @@ def main():
         ablated = ablated.replace(
             ";@axiom:effect(io)\n(pub fn (platformSleepNanos nanos)",
             ";@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (platformSleepNanos nanos)")
-        (work / "WindowsPlatform.ax").write_text(ablated)
+        module.write_text(ablated)
         check(root, axiom, work, env, (2,), (8, 9, 10, 11))
         print("ok   negative probe: unchecked Sleep arguments fail four duration cases")
 
@@ -82,7 +88,7 @@ def main():
         "platformRealtimeNanos")"""
         assert platform.count(old_clock) == 1, "clock ablation no longer names one conversion"
         ablated = platform.replace(old_clock, "(Ok (* (- (__load64 ft 0) 116444736000000000) 100))")
-        (work / "WindowsPlatform.ax").write_text(ablated)
+        module.write_text(ablated)
         check(root, axiom, work, env, (2,), (17, 18, 19, 20, 21))
         print("ok   negative probe: unchecked FILETIME arithmetic fails five overflow cases")
 

@@ -193,7 +193,7 @@ cuts = {
   "new": ("Chan.ax", "(pub :: chanCap (-> Chan Int))",
           "(pub :: chanPeekLock (-> Int Int))\n;@axiom:effect(unsafe)\n(pub fn (chanPeekLock ch)\n  (__atomic_load ch))\n\n(pub :: chanCap (-> Chan Int))", 1),
   # Reuse a neighbouring word-pool handle in both the fill and drain.
-  "ring": ("Task.ax", "(__proc_join (vecGet hs (% joined w)))",
+  "ring": ("Internal/TaskWords.ax", "(__proc_join (vecGet hs (% joined w)))",
            "(__proc_join (vecGet hs (% (+ joined 1) w)))", 2),
   # Refusal cleanup must kill a live word task before its join.
   "wordkill": ("Task.ax", "(sysKill (__spawn_pid h) 9)", "(sysKill (__spawn_pid h) 0)", 1),
@@ -212,7 +212,7 @@ for kind, (f, old, new, count) in cuts.items():
     open(p, "w", encoding="utf-8").write(s.replace(old, new))
 PY
 for pair in "park:chanSend" "wake:syncRelease" "kill:taskKillJoin" "new:chanPeekLock" \
-            "ring:taskMapWords" "wordkill:taskWordsKill" "wordnew:taskUncheckedJoin"; do
+            "ring:wordPoolMap" "wordkill:taskWordsKill" "wordnew:taskUncheckedJoin"; do
   kind="${pair%%:*}"; fn="${pair#*:}"
   [[ -d "$work/tx/$kind" ]] || continue
   rc=0; out="$(python3 "$model" transcription "$work/tx/$kind" --quiet 2>&1)" || rc=$?

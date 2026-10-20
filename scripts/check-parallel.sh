@@ -695,42 +695,55 @@ echo "== 6e. the ablations: each of section 6's claims, deliberately broken =="
 # it was retired (2026-09-04) and `check-compat.sh`'s `probe` still
 # does, and the reason is that a `sed` that matched nothing produces a
 # green "ablation failed to fail" that reads exactly like a passing gate.
-abl_run() {  # <tag> <sed-program> <what-must-change> [module, default Task.ax] -> 0 when the edit landed
-  local tag="$1" prog="$2" what="$3" module="${4:-Task.ax}"
+abl_run() {  # <tag> <sed-program> <what-must-change> [modules, default Task.ax] -> 0 when every edit landed
+  local tag="$1" prog="$2" what="$3" module
+  shift 3
+  (( $# > 0 )) || set -- Task.ax
   local copy="$work/abl-$tag"
   rm -rf "$copy"; mkdir -p "$copy"
   cp -r "$repo_root/stdlib" "$copy/stdlib"
-  sed -e "$prog" "$repo_root/stdlib/$module" > "$copy/stdlib/$module"
-  if cmp -s "$repo_root/stdlib/$module" "$copy/stdlib/$module"; then
-    bad "ablation $tag: the edit did not land - $what was never broken, so the arm proved nothing"
-    return 1
-  fi
+  for module in "$@"; do
+    sed -e "$prog" "$repo_root/stdlib/$module" > "$copy/stdlib/$module"
+    if cmp -s "$repo_root/stdlib/$module" "$copy/stdlib/$module"; then
+      bad "ablation $tag: the edit did not land in $module - $what was never broken, so the arm proved nothing"
+      return 1
+    fi
+  done
   return 0
 }
 
 # A multi-line form must match the expected number of times before
 # either word-pool loop is edited. Formatting drift or a new pool
 # cannot turn a partial mutation into a passing negative control.
-abl_exact() {  # <tag> <needle> <replacement> <count> <what> [module]
-  local tag="$1" needle="$2" repl="$3" count="$4" what="$5" module="${6:-Task.ax}"
+abl_exact() {  # <tag> <needle> <replacement> <total-count> <what> [modules]
+  local tag="$1" needle="$2" repl="$3" count="$4" what="$5" module
+  shift 5
+  (( $# > 0 )) || set -- Task.ax
   local copy="$work/abl-$tag"
   rm -rf "$copy"; mkdir -p "$copy"
   if ! cp -r "$repo_root/stdlib" "$copy/stdlib"; then
     bad "ablation $tag: could not copy the library, so the arm proved nothing"
     return 1
   fi
-  if ! NEEDLE="$needle" REPL="$repl" COUNT="$count" python3 - "$copy/stdlib/$module" <<'PY'
+  local paths=()
+  for module in "$@"; do paths+=("$copy/stdlib/$module"); done
+  if ! NEEDLE="$needle" REPL="$repl" COUNT="$count" python3 - "${paths[@]}" <<'PY'
 import os, sys
 from pathlib import Path
-p = Path(sys.argv[1])
-s = p.read_text()
+sources = [(Path(name), Path(name).read_text()) for name in sys.argv[1:]]
 needle, repl = os.environ['NEEDLE'], os.environ['REPL']
 expected = int(os.environ['COUNT'])
-matches = s.count(needle)
+counts = [(p, s.count(needle)) for p, s in sources]
+for p, count in counts:
+    if count == 0:
+        print(f'expected a match in {p}, found none: {needle}', file=sys.stderr)
+        sys.exit(1)
+matches = sum(count for _, count in counts)
 if matches != expected:
     print(f'expected {expected} exact matches, found {matches}: {needle}', file=sys.stderr)
     sys.exit(1)
-p.write_text(s.replace(needle, repl))
+for p, s in sources:
+    p.write_text(s.replace(needle, repl))
 PY
   then
     bad "ablation $tag: $what was not edited exactly $count time(s), so the arm proved nothing"
@@ -747,7 +760,7 @@ PY
 # once, so the ablation is a WRONG ANSWER rather than a crash - which is
 # what an ablation should be, or it is proving that the program died
 # rather than that the arm can see.
-if abl_run order 's|(lambda (i) (taskRunCommandWord (vecGet cmds i)))|(lambda (i) (taskRunCommandWord (vecGet cmds (- (- (vecLen cmds) 1) i))))|' "submit order"; then
+if abl_run order 's|(lambda (i) (commandRunWord (vecGet cmds i)))|(lambda (i) (commandRunWord (vecGet cmds (- (- (vecLen cmds) 1) i))))|' "submit order" Internal/CommandPool.ax; then
   if AXIOM_STDLIB="$work/abl-order/stdlib" "$axc" build --input "$fx476" --output "$work/abl-order.bin" > "$work/abl-order.build" 2>&1 \
      && ( cd "$work" && ./abl-order.bin > "$work/abl-order.out" 2>/dev/null ) \
      && cmp -s "$work/abl-order.out" "$gold476"; then
@@ -784,7 +797,7 @@ fi
 # sites hand `__par_spawn` a function-typed local, whose captures it
 # cannot see, and each draws AX3064. A module that still builds is
 # compared as before; a refusal for any other reason proves nothing.
-if abl_run flag 's/__proc_spawn/__par_spawn/g; s/__proc_join/__par_join/g' "the choice of primitive"; then
+if abl_run flag 's/__proc_spawn/__par_spawn/g; s/__proc_join/__par_join/g' "the choice of primitive" Task.ax Internal/TaskWords.ax; then
   if AXIOM_STDLIB="$work/abl-flag/stdlib" "$axc" --diagnostic-format=ai --threads emit-llvm "$fx476" -o "$work/abl-flag-t.ll" > "$work/abl-flag.build" 2>&1; then
     AXIOM_STDLIB="$work/abl-flag/stdlib" "$axc" emit-llvm "$fx476" -o "$work/abl-flag-p.ll" > /dev/null 2>&1
     if cmp -s "$work/abl-flag-p.ll" "$work/abl-flag-t.ll"; then
@@ -793,10 +806,10 @@ if abl_run flag 's/__proc_spawn/__par_spawn/g; s/__proc_join/__par_join/g' "the 
       ok "ablation flag: __par_spawn makes the module follow --threads ($(grep -c '^declare i32 @pthread_' "$work/abl-flag-t.ll" || true) pthread declare(s), $(grep -c 'thread_local' "$work/abl-flag-t.ll" || true) thread_local), so arm 6b is measuring the primitive"
     fi
   else
-    n_cap="$(grep -c '^E AX3064 .*/Task\.ax:' "$work/abl-flag.build" || true)"
+    n_cap="$(grep -Ec '^E AX3064 .*/(Task\.ax|Internal/TaskWords\.ax):' "$work/abl-flag.build" || true)"
     n_err="$(grep -c '^E ' "$work/abl-flag.build" || true)"
     if (( n_cap > 0 && n_cap == n_err )); then
-      ok "ablation flag: __par_spawn in the pool is refused before it can follow --threads ($n_cap AX3064 site(s) in Task.ax, nothing else)"
+      ok "ablation flag: __par_spawn in the pool is refused before it can follow --threads ($n_cap AX3064 site(s) in Task.ax and Internal/TaskWords.ax, nothing else)"
     else
       bad "ablation flag: the ablated pool failed to build for a reason other than AX3064, so the arm proved nothing"
       sed 's/^/     /' "$work/abl-flag.build" | head -5
@@ -815,7 +828,7 @@ word_width='(let w
 if abl_exact bound "$word_width" '(let w
       (if (< n 1)
         1
-        n))' 2 "the width bound"; then
+        n))' 2 "the width bound" Task.ax Internal/TaskWords.ax; then
   if AXIOM_STDLIB="$work/abl-bound/stdlib" "$axc" build --input "$work/width.ax" --output "$work/abl-bound.bin" > "$work/abl-bound.build" 2>&1; then
     abl_ratio="$(pool_ratio ./abl-bound.bin)"
     ar="${abl_ratio%% *}"
@@ -836,7 +849,7 @@ fi
 if abl_exact clamp "$word_width" '(let w
       (if (< width -1)
         1
-        width))' 2 "the width clamp"; then
+        width))' 2 "the width clamp" Task.ax Internal/TaskWords.ax; then
   if AXIOM_STDLIB="$work/abl-clamp/stdlib" "$axc" build --input "$work/width.ax" --output "$work/abl-clamp.bin" > "$work/abl-clamp.build" 2>&1; then
     ( cd "$work" && ./abl-clamp.bin 0 > "$work/abl-clamp.out" 2> "$work/abl-clamp.err" ); crc=$?
     if [[ "$crc" == 72 ]] && grep -q '^axiom: division by zero$' "$work/abl-clamp.err"; then

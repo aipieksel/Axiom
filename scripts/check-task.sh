@@ -584,7 +584,7 @@ cuts = {
   # for a tenth of the time: a sleep that ends short.
   "shortsleep": [("Sys.ax", "            (if (>= now deadline)\n              (set state 1)\n              (sysSleepSlice buf (- deadline now)))", "            {\n              (sysSleepSlice buf (/ (- deadline now) 10))\n              (set state 1)\n            }")],
   # Section 10. The raising pool's drain joins newest first.
-  "drain": [("Task.ax", "      (while (< joined n)\n        {\n          (vecPush out (__proc_join (vecGet hs (% joined w))))", "      (while (< joined n)\n        {\n          (vecPush out (__proc_join (vecGet hs (% (- n (+ joined 1)) w))))")],
+  "drain": [("Internal/TaskWords.ax", "      (while (< joined n)\n        {\n          (vecPush out (__proc_join (vecGet hs (% joined w))))", "      (while (< joined n)\n        {\n          (vecPush out (__proc_join (vecGet hs (% (- n (+ joined 1)) w))))")],
 }[kind]
 for f, old, new in cuts:
     p = os.path.join(root, f)

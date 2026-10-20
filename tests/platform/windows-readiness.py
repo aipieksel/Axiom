@@ -25,10 +25,15 @@ def main():
     platform = (root / "stdlib/Sys/Platform.windows.ax").read_text()
     with tempfile.TemporaryDirectory(prefix="axiom-windows-readiness-") as tmp:
         work = Path(tmp)
-        module = work / "WindowsPlatform.ax"
+        lib = work / "stdlib"
+        lib.mkdir()
+        for child in (root / "stdlib").iterdir():
+            (lib / child.name).symlink_to(child, target_is_directory=child.is_dir())
+        # The actual platform's Internal imports require a stdlib module.
+        module = lib / "WindowsPlatform.ax"
         module.write_text(platform)
         shutil.copyfile(root / "tests/platform/windows-readiness.ax", work / "probe.ax")
-        env = dict(os.environ, AXIOM_STDLIB=str(root / "stdlib"), AXIOM_PATH=str(work))
+        env = dict(os.environ, AXIOM_STDLIB=str(lib), AXIOM_PATH=str(work))
         run("cc", "-c", str(root / "tests/platform/windows-readiness.c"), "-o", str(work / "mock.o"))
 
         def check(level, expected_failures=()):

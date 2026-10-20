@@ -1,0 +1,191 @@
+;;! Internal.WindowsCommands - owned native command-pool slots.
+;
+; Every slot and its cleanup owner exists before a process can start.
+; Native launch publishes a process handle into its slot before resuming
+; the child or allocating again. The job kills remaining children when
+; closed, including when process exit closes the parent's own handles.
+(import Sys)
+(import Str)
+(import Vec)
+(import Err)
+(import Internal.Raw)
+(import Internal.ProcessPath)
+(import Internal.Process)
+(import Internal.WindowsCommandsNative)
+
+(struct WindowsCommandSlot
+  (mut pid : Int))
+
+(struct WindowsCommandJob
+  (mut handle : Int))
+
+(pub struct WindowsCommands sealed
+  (owner : Handle)
+  (slots : (Vec WindowsCommandSlot))
+  (job : WindowsCommandJob))
+
+; Kill the job first, then wait for and retire every handle it owned.
+; Cleanup performs no allocations, so it also runs on an arena abort.
+(:: windowsCommandsDrop (-> WindowsCommandJob (Vec WindowsCommandSlot) Int))
+;@axiom:effect(io)
+(fn (windowsCommandsDrop job slots)
+  {
+    (if (> job.handle 0)
+      {
+        (let handle job.handle)
+        (set job.handle 0)
+        (let _ (windowsCommandJobClose handle))
+        ()
+      })
+    (for i in 0..(vecLen slots)
+      {
+        (let slot (vecGet slots i))
+        (if (> slot.pid 0)
+          {
+            (let pid slot.pid)
+            (set slot.pid 0)
+            (let _ (windowsCommandDispose pid))
+            ()
+          })
+      })
+    0
+  })
+
+;; Allocate fixed slots and the owner before creating the cleanup job.
+;; Call `windowsCommandsClose` on every normal path. The resource owner
+;; also closes outstanding children when a recovery reset crosses it.
+(pub :: windowsCommandsNew (-> Int (Result WindowsCommands Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsCommandsNew width)
+  (if (< width 1)
+    (Err (mkError 22 "command pool width must be positive"))
+    {
+      (let slots (vecWithCapacity width))
+      (for i in 0..width
+        (vecPush slots (WindowsCommandSlot :pid 0)))
+      (let job (WindowsCommandJob :handle 0))
+      (let pool
+        (WindowsCommands
+          :owner (__resource_new (lambda (unused) (windowsCommandsDrop job slots)) 0)
+          :slots slots
+          :job job))
+      (let handle windowsCommandJobNew)
+      (if (< handle 0)
+        {
+          (let _ (__resource_close pool.owner))
+          (Err (mkError (- 0 handle) "command cleanup job could not be created"))
+        }
+        {
+          (set job.handle handle)
+          (Ok pool)
+        })
+    }))
+
+(:: windowsCommandsExists (-> String Bool))
+;@axiom:effect(io)
+(fn (windowsCommandsExists path)
+  {
+    (let fd (platformOpen (strCStr path) oRdonly 0))
+    (if (< fd 0)
+      false
+      {
+        (let _ (platformClose fd))
+        true
+      })
+  })
+
+; Start one command without additional transport handles.
+(pub :: windowsCommandsStart (-> WindowsCommands Int String Int Int String Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+(pub fn (windowsCommandsStart pool index name argv envp path)
+  (windowsCommandsStartInherited pool index name argv envp path 0 0))
+
+;; Start one command in an unused slot with an explicit transport handle
+;; list. Supplied handles must be live and inheritable. The native layer
+;; combines them with the standard streams, excluding unrelated handles.
+;; A negative answer means no child remains in this slot.
+(pub :: windowsCommandsStartInherited (-> WindowsCommands Int String Int Int String Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(spawn)
+(pub fn (windowsCommandsStartInherited pool index name argv envp path handles count)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (if (!= slot.pid 0)
+      -16
+      (processLaunchPath name path
+        (lambda (candidate)
+          (processSpawnWith
+            (lambda (p a e)
+              (windowsCommandSpawnInherited pool.job.handle p a e (as slot Int) handles count)
+            )
+            (strCStr candidate) argv envp)
+        )
+        windowsCommandsExists))
+  })
+
+;; Observe a slot without retiring it. A completed child must still be
+;; joined; a polling error leaves cleanup ownership with the pool.
+(pub :: windowsCommandsPoll (-> WindowsCommands Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsCommandsPoll pool index)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (if (<= slot.pid 0)
+      -10
+      (windowsCommandPoll slot.pid))
+  })
+
+;; Request termination without retiring the slot. Join establishes that
+;; the child has stopped and closes its process handle.
+(pub :: windowsCommandsKill (-> WindowsCommands Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsCommandsKill pool index code)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (if (<= slot.pid 0)
+      -10
+      (windowsCommandKill slot.pid code))
+  })
+
+;; Join one slot and retire its handle before returning the shell-style
+;; exit status. A wait error ends the pool and cleans up every other
+;; slot before it returns; no later command may then be submitted.
+(pub :: windowsCommandsJoin (-> WindowsCommands Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(block)
+(pub fn (windowsCommandsJoin pool index)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (if (<= slot.pid 0)
+      -10
+      {
+        (let status (processWaitWith windowsCommandWait slot.pid))
+        (set slot.pid 0)
+        (if (< status 0)
+          {
+            (let _ (__resource_close pool.owner))
+            status
+          }
+          (if (!= (sysTermSignal status) 0)
+            (+ 128 (sysTermSignal status))
+            (sysExitCode status)))
+      })
+  })
+
+;; End the pool once. A successful drain has already retired its slots;
+;; an early close kills and waits for those that remain.
+(pub :: windowsCommandsClose (-> WindowsCommands Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsCommandsClose pool)
+  (__resource_close pool.owner))

@@ -7,7 +7,7 @@
 # Windows has no syscall ABI, so its runtime must import SOMETHING, and
 # the claim there is a POSITIVE: nothing outside this list. Every name
 # here is one the emitted runtime, `stdlib/Sys/Platform.windows.ax` or
-# `stdlib/Internal/WindowsLiveness.windows.ax`
+# `stdlib/Internal/WindowsLiveness.windows.ax` or the native command pool
 # reaches by call where the other targets make a syscall, and the gate
 # refuses a libc name on this list whatever it says (`libc_names`), so
 # the list cannot launder one. It may shrink; it grows only in a
@@ -61,6 +61,15 @@ TerminateProcess        # kill, with exit code 128 + the signal
 GetCurrentProcessId     # getpid
 SetHandleInformation    # mark the three standard handles a child is given inheritable
 SetStdHandle            # the descriptor 2 (and 1) swap sysRunPathErrTo and sysSpawnOutErrTo make
+
+# Internal/WindowsCommandsNative.windows.ax: contain commands before
+# their first instruction, and terminate them if their pool owner exits.
+CreateJobObjectW        # one private cleanup job per command pool
+SetInformationJobObject # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+InitializeProcThreadAttributeList # allocate the job-list launch attributes
+UpdateProcThreadAttribute # assign the cleanup job during process creation
+DeleteProcThreadAttributeList # release the native launch attributes
+ResumeThread            # start a child after its cleanup owner is live
 
 # The clock, sleep and entropy (`Sys/Platform.windows.ax`). A name with
 # an `@dll` suffix is imported from that DLL rather than kernel32, and

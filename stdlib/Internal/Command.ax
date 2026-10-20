@@ -1,0 +1,44 @@
+;;! Internal.Command - shared argument encoding and one-command launch.
+(import Internal.Raw)
+(import Internal.RawVec)
+(import Sys)
+(import Str)
+(import Vec)
+(import Err)
+
+(pub :: commandArgvVector (-> (Vec String) Int))
+(pub fn (commandArgvVector argv)
+  {
+    (let n (vecLen argv))
+    {
+      (let v (rawAlloc (* 8 (+ n 1))))
+      {
+        (for i in 0..n
+          (rawSetWord v i (strCStr (rawVecGetStr argv i))))
+        (rawSetWord v n 0)
+        v
+      }
+    }
+  })
+
+;; Run one argument vector. Element 0 is the program, looked up on
+;; `PATH`. An empty vector answers `Err` 2 without starting a process.
+(pub :: commandRun (-> (Vec String) (Result Int Error)))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (commandRun argv)
+  (if (== (vecLen argv) 0)
+    (Err (mkError 2 "commandRun: an empty argv names no program"))
+    (sysRunPath (strDup (rawVecGetStr argv 0)) (commandArgvVector argv) sysEnvp)))
+
+; Encode a command result as the word carried by a join: an exit code
+; or 128 plus its signal, or a negative errno if it could not start.
+(pub :: commandRunWord (-> (Vec String) Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (commandRunWord argv)
+  (match (commandRun argv)
+    ((Ok c) c)
+    ((Err e) (- 0 (errCode e)))))

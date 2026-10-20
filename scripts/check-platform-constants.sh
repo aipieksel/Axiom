@@ -1078,6 +1078,10 @@ if ! python3 "$repo_root/tests/platform/windows-file-liveness.py" --axiom "$axc"
   status=1
 fi
 
+if ! python3 "$repo_root/tests/platform/windows-command-pools.py" --axiom "$axc"; then
+  status=1
+fi
+
 # A program must not reach raw marker addresses through a trusted
 # public function, including when IO has already loaded the internal
 # module. Pin both the removed public name and the Internal boundary.
@@ -1125,6 +1129,42 @@ PROBE
       status=1
     else
       echo "ok   Windows lifetime boundary: $access $operation is refused with AX5002"
+    fi
+  done
+done
+
+for target in windows-x86_64 windows-aarch64; do
+  for access in direct transitive encoding; do
+    case "$access" in
+      direct)
+        import_line='(import Internal.WindowsCommandsNative)'
+        expression='0'
+        internal_module='Internal.WindowsCommandsNative' ;;
+      transitive)
+        import_line='(import Task)'
+        expression='(windowsCommandSpawn 0 0 0 0 0)'
+        internal_module='Internal.WindowsCommandsNative' ;;
+      encoding)
+        import_line='(import Sys.Platform)'
+        expression='(winWidePath 0)'
+        internal_module='Internal.WindowsProcessEncoding' ;;
+    esac
+    cat > "$boundary_probe" <<PROBE
+$import_line
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:restrict(no-unsafe)
+(fn (main) $expression)
+PROBE
+    if "$axc" --diagnostic-format=ai --target="$target" check "$boundary_probe" \
+        >"$work/windows-command-boundary.log" 2>&1; then
+      echo "FAIL [$target] Windows command boundary: $access helper access was accepted"
+      status=1
+    elif ! grep -q "E AX5002 .*$internal_module" "$work/windows-command-boundary.log"; then
+      echo "FAIL [$target] Windows command boundary: $access did not report AX5002"
+      status=1
+    else
+      echo "ok   [$target] Windows command boundary: $access is refused with AX5002"
     fi
   done
 done
