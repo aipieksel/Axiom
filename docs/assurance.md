@@ -127,20 +127,28 @@ callees, and a declaration is a claim the walk answers. `Alloc` and
 `Spawn`, `Block` and `Entropy` must be declared where they are
 performed, and `Unsafe` where a raw operation, a syscall, an `asm` form
 or an `extern` call appears. A claim the walk cannot check is a warning
-on its own declaration and never a fact about the callee: a caller's
+on its own declaration and never a fact about the callee. A caller's
 row comes from the callee's body and from the callbacks it is given, so
-an unverifiable claim cannot certify the claim above it.
+an unverifiable claim cannot certify the claim above it
+(`tests/diagnostics/1472-claim-does-not-launder.ax`).
 
 | Area | Refused as | A refusal | An acceptance |
 |---|---|---|---|
 | A claim the body contradicts | `AX3010` an `effect(...)` or `effect(pure)` claim the body performs against | `tests/diagnostics/1201-field-dispatch.ax` | `tests/selfhost/1032-imported-signatures.ax` |
 | A required effect undeclared | `AX3042` IO, Spawn, Block or Entropy performed and not declared | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/stdlib/470-parallel.ax` |
-| Unsafe | `AX3073` a raw operation with no `effect(unsafe)`; `AX3010` an `effect(unsafe)` claim over a body with none | `tests/diagnostics/1004-undeclared-unsafe.ax` | `tests/selfhost/1010-trusted-wrapper.ax` |
-| A claim the walk cannot check | `AX3037`, a warning; the symbol row carries `#effects-overapprox`, `#effects-possible` or `#effect-params`, and a caller's purity or restriction is judged by what flows through the call | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/diagnostics/343-axtag-unverifiable.ax` |
+| An unsafe operation undeclared | `AX3073` a raw operation, syscall, `asm` form or `extern` call in a body with no `effect(unsafe)` | `tests/diagnostics/1004-undeclared-unsafe.ax` | `tests/selfhost/1010-trusted-wrapper.ax` |
+| An unsafe claim over a safe body | `AX3010` an `effect(unsafe)` claim where the body itself performs no unsafe operation | `tests/diagnostics/1200-unsafe-claim-open-row.ax` | `tests/selfhost/1010-trusted-wrapper.ax` |
+| A claim the walk cannot check | `AX3037`, a warning; the symbol row carries `#effects-overapprox`, `#effects-possible` or `#effect-params`, and a caller's purity or restriction is judged by what flows through the call | `tests/diagnostics/343-axtag-unverifiable.ax` | `tests/diagnostics/1257-nolint-warning.ax` |
 | Restrictions | `AX3049` a restriction the body or a callback violates; `AX3051`, a warning, one the walk cannot check; `AX3057` a `strict` one it cannot prove | `tests/diagnostics/393-restrict-strict.ax` | `tests/selfhost/132-contract.ax` |
 | Handlers and operations | `AX3011` a handle body that reaches an effect its list does not name; `AX3053` an operation with no handler; `AX3038`, a warning, a handle list the walk cannot check | `tests/diagnostics/320-unhandled-effect.ax` | `tests/stdlib/300-effect-handlers.ax` |
-| FFI | an `extern` call performs IO and is an unsafe operation, so its caller declares both | `tests/diagnostics/1041-trusted-call.ax` | `stdlib/Sys/Platform.windows.ax` |
-| Cleanup | Not checked where the drop happens: a value's drop runs at the end of the scope that held it, with the effects declared where the value was made ([roadmap](roadmap.md)) | — | `tests/stdlib/712-drop-effects-at-creation.ax` |
+| FFI | an `extern` call performs IO and is an unsafe operation: `AX3010` a claim over one that says otherwise, and the two rows above a caller that leaves them undeclared | `tests/diagnostics/1041-trusted-call.ax` | `tests/selfhost/1010-trusted-wrapper.ax` |
+
+One limit has no row, because nothing refuses it yet. A value's drop
+runs at the end of the scope that held it, with the effects declared
+where the value was made. So a `no-io` function that stores a new file
+over an old one closes the old one without the restriction seeing it
+([roadmap](roadmap.md)). `tests/stdlib/712-drop-effects-at-creation.ax`
+holds that behaviour in place.
 
 ### A. Correctness of the runtime
 
