@@ -16,6 +16,25 @@ its changelog too.
 
 ## Unreleased
 
+- A `let` bound to a string literal in a function that loops by a self
+  tail call no longer has a release emitted on the jump. The literal is
+  static and the call freed nothing; `check-static-release.sh` counts
+  such sites in the compiler's own IR and holds them at zero.
+
+- Windows programs talk over TCP. The Windows platform module binds
+  Winsock (ws2_32): `WSASocketW`, `bind`, `listen`, `accept`, `connect`,
+  `send`, `recv`, `shutdown`, `setsockopt`, `getsockopt`, `ioctlsocket`,
+  `getsockname`, `getpeername`, `closesocket` and `WSAPoll`. `IO`'s
+  socket calls take the platform's answer where there is no syscall ABI,
+  and a socket's read, write and close go through `recv`, `send` and
+  `closesocket`. Winsock's error codes come back as the errno
+  `errorKind` reads. A `Poller` there keeps its own registration table
+  and waits with `WSAPoll`, over sockets only: `pollerAddSignals`
+  registers nothing. The module's socket option and address family
+  numbers are Windows's own. The Windows runner runs
+  `tests/stdlib/650-net-tcp.ax` and `tests/stdlib/308-poll-readiness.ax`
+  to their goldens. Tested by `scripts/check-windows-hello.sh`.
+
 - Windows programs wait on words, map memory and pin it. The Windows
   platform module binds `WaitOnAddress` and `WakeByAddressAll` for the
   wait-word primitives `Sync`, `Chan` and `Task` rest on, `VirtualAlloc`,

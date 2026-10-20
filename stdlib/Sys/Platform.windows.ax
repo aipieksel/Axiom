@@ -29,10 +29,11 @@
 ; group), the clocks and sleep (`platformMonotonicNanos`,
 ; `platformRealtimeNanos`, `platformSleepNanos`), entropy
 ; (`platformRandomBytes`), waiting on a word (`platformWaitWord`,
-; `platformWakeWord`), memory (`platformMapPrivate` and its group) and
-; the signal mask, which has nothing to block (`platformSignalBlock`).
-; Sockets and the console's control events are not yet; a `Sys.ax`
-; function that needs one of them
+; `platformWakeWord`), memory (`platformMapPrivate` and its group), the
+; signal mask, which has nothing to block (`platformSignalBlock`), and
+; TCP sockets with their readiness (the `platformSocket` group and
+; `platformPoll`, over ws2_32). The console's control events are not
+; yet; a `Sys.ax` function that needs them
 ; reaches a `__syscallN` arm, which on this target the compiler lowers
 ; to a trap (`axiom: no syscall ABI on this target`, status 74) rather
 ; than to a `syscall` instruction the OS gives no meaning to. Loud, and
@@ -83,12 +84,12 @@
 (pub fn (sysWriteNum)
   0)
 
-;; open(path, flags, mode): 0 and unused until files are bound.
+;; open(path, flags, mode): 0 and unused. Files go through kernel32.
 (pub :: sysOpenNum Int)
 (pub fn (sysOpenNum)
   0)
 
-;; close(fd): 0 and unused until files are bound.
+;; close(fd): 0 and unused. Files go through kernel32.
 (pub :: sysCloseNum Int)
 (pub fn (sysCloseNum)
   0)
@@ -98,7 +99,7 @@
 (pub fn (sysExitNum)
   0)
 
-;; lseek(fd, offset, whence): 0 and unused until files are bound.
+;; lseek(fd, offset, whence): 0 and unused. Files go through kernel32.
 (pub :: sysLseekNum Int)
 (pub fn (sysLseekNum)
   0)
@@ -168,35 +169,34 @@
 (pub fn (sysExecveNum)
   0)
 
-;; wait4(pid, status, options, rusage): 0 and unused until processes
-;; are bound.
+;; wait4(pid, status, options, rusage): 0 and unused. Processes go through kernel32.
 (pub :: sysWait4Num Int)
 ;@axiom:syscall(block)
 (pub fn (sysWait4Num)
   0)
 
-;; posix_spawn: 0 and unused until processes are bound.
+;; posix_spawn: 0 and unused. Processes go through kernel32.
 (pub :: sysPosixSpawnNum Int)
 ;@axiom:syscall(spawn)
 (pub fn (sysPosixSpawnNum)
   0)
 
-;; unlink(path): 0 and unused until files are bound.
+;; unlink(path): 0 and unused. Files go through kernel32.
 (pub :: sysUnlinkNum Int)
 (pub fn (sysUnlinkNum)
   0)
 
-;; mkdir(path, mode): 0 and unused until directories are bound.
+;; mkdir(path, mode): 0 and unused. Directories go through kernel32.
 (pub :: sysMkdirNum Int)
 (pub fn (sysMkdirNum)
   0)
 
-;; rmdir(path): 0 and unused until directories are bound.
+;; rmdir(path): 0 and unused. Directories go through kernel32.
 (pub :: sysRmdirNum Int)
 (pub fn (sysRmdirNum)
   0)
 
-;; rename(from, to): 0 and unused until files are bound.
+;; rename(from, to): 0 and unused. Files go through kernel32.
 (pub :: sysRenameNum Int)
 (pub fn (sysRenameNum)
   0)
@@ -213,7 +213,7 @@
   0)
 
 ;; Where the name starts inside one directory record: 19, the offset in
-;; Linux's `dirent64`. Unused until directories are bound.
+;; Linux's `dirent64`. Unused: directories go through kernel32.
 (pub :: direntNameOffset Int)
 (pub fn (direntNameOffset)
   19)
@@ -273,44 +273,42 @@
 (pub fn (clockHasMonotonic)
   0)
 
-;; socket(domain, type, protocol): 0 and unused until sockets are bound.
+;; socket(domain, type, protocol): 0 and unused. Sockets go through Winsock.
 (pub :: sysSocketNum Int)
 (pub fn (sysSocketNum)
   0)
 
-;; bind(fd, addr, addrlen): 0 and unused until sockets are bound.
+;; bind(fd, addr, addrlen): 0 and unused. Sockets go through Winsock.
 (pub :: sysBindNum Int)
 (pub fn (sysBindNum)
   0)
 
-;; listen(fd, backlog): 0 and unused until sockets are bound.
+;; listen(fd, backlog): 0 and unused. Sockets go through Winsock.
 (pub :: sysListenNum Int)
 (pub fn (sysListenNum)
   0)
 
-;; accept(fd, addr, addrlen): 0 and unused until sockets are bound.
+;; accept(fd, addr, addrlen): 0 and unused. Sockets go through Winsock.
 (pub :: sysAcceptNum Int)
 (pub fn (sysAcceptNum)
   0)
 
-;; connect(fd, addr, addrlen): 0 and unused until sockets are bound.
+;; connect(fd, addr, addrlen): 0 and unused. Sockets go through Winsock.
 (pub :: sysConnectNum Int)
 (pub fn (sysConnectNum)
   0)
 
-;; setsockopt(fd, level, name, val, len): 0 and unused until sockets
-;; are bound.
+;; setsockopt(fd, level, name, val, len): 0 and unused. Sockets go through Winsock.
 (pub :: sysSetSockOptNum Int)
 (pub fn (sysSetSockOptNum)
   0)
 
-;; getsockopt(fd, level, name, val, lenptr): 0 and unused until sockets
-;; are bound.
+;; getsockopt(fd, level, name, val, lenptr): 0 and unused. Sockets go through Winsock.
 (pub :: sysGetSockOptNum Int)
 (pub fn (sysGetSockOptNum)
   0)
 
-;; shutdown(fd, how): 0 and unused until sockets are bound.
+;; shutdown(fd, how): 0 and unused. Sockets go through Winsock.
 (pub :: sysShutdownNum Int)
 (pub fn (sysShutdownNum)
   0)
@@ -332,7 +330,7 @@
 ;; is 30.
 (pub :: afInet6 Int)
 (pub fn (afInet6)
-  10)
+  23)
 
 ;; The `SOCK_STREAM` socket type: a TCP byte stream.
 (pub :: sockStream Int)
@@ -345,12 +343,12 @@
 ;; two doesn't fail, it sets some other option.
 (pub :: solSocket Int)
 (pub fn (solSocket)
-  1)
+  65535)
 
 ;; The `SO_REUSEADDR` socket option.
 (pub :: soReuseAddr Int)
 (pub fn (soReuseAddr)
-  2)
+  4)
 
 ;; The `SO_REUSEPORT` socket option.
 (pub :: soReusePort Int)
@@ -361,10 +359,10 @@
 ;; finishes.
 (pub :: soError Int)
 (pub fn (soError)
-  4)
+  4103)
 
 ;; fcntl's command that reads a descriptor's status flags, in Linux's
-;; spelling: 3. Unused until sockets are bound.
+;; spelling: 3. Unused: sockets go through Winsock.
 (pub :: fGetFl Int)
 (pub fn (fGetFl)
   3)
@@ -470,13 +468,13 @@
 (pub fn (pollUsesKqueue)
   0)
 
-;; The call that makes a poll set: 0 and unused until sockets are bound.
+;; The call that makes a poll set: 0 and unused. Sockets go through Winsock.
 (pub :: sysPollCreateNum Int)
 (pub fn (sysPollCreateNum)
   0)
 
-;; The call that waits on the poll set: 0 and unused until sockets are
-;; bound.
+;; The call that waits on the poll set: 0 and unused. A poller here keeps
+;; its own table and waits through `platformPoll`.
 (pub :: sysPollWaitNum Int)
 (pub fn (sysPollWaitNum)
   0)
@@ -488,15 +486,15 @@
   0)
 
 ;; The size of one readiness event record: 12, Linux's packed
-;; `epoll_event`. Unused until sockets are bound.
+;; `epoll_event`. Unused: sockets go through Winsock.
 (pub :: pollEventSize Int)
 (pub fn (pollEventSize)
-  12)
+  24)
 
 ;; The byte offset of the descriptor inside one readiness event record.
 (pub :: pollEventFdOffset Int)
 (pub fn (pollEventFdOffset)
-  4)
+  8)
 
 ;; The readability filter in epoll's spelling: EPOLLIN, 1. kqueue's
 ;; EVFILT_READ is -1, a negative event kind rather than a bitmask bit.
@@ -551,7 +549,8 @@
 (pub fn (signalUsesSignalFd)
   1)
 
-;; sigprocmask(how, set, oset): 0 and unused until signals are bound.
+;; sigprocmask(how, set, oset): 0 and unused. Windows delivers no
+;; signals; `platformSignalBlock` has nothing to block.
 (pub :: sysSigProcMaskNum Int)
 (pub fn (sysSigProcMaskNum)
   0)
@@ -569,8 +568,8 @@
 (pub fn (sigsetBytes)
   8)
 
-;; signalfd: 0 and unused until signals are bound, but defined so that
-;; `Sys.ax` type-checks against every platform module.
+;; signalfd: 0 and unused, since Windows delivers no signals, but defined
+;; so that `Sys.ax` type-checks against every platform module.
 (pub :: sysSignalFdNum Int)
 (pub fn (sysSignalFdNum)
   0)
@@ -587,7 +586,7 @@
 (pub fn (pollSignalFilter)
   0)
 
-;; kill(pid, sig): 0 and unused until processes are bound.
+;; kill(pid, sig): 0 and unused. Processes go through kernel32.
 (pub :: sysKillNum Int)
 (pub fn (sysKillNum)
   0)
@@ -773,19 +772,22 @@
 ;; errno `winErrnoOf` maps the last error to.
 ;; The platform's own way to write to a descriptor where raw `write` is
 ;; not available; `Err` 78 where the raw syscall is used instead.
+;; A socket writes through `send`.
 (pub :: platformWriteFd (-> Int Int Int (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (platformWriteFd fd buf count)
-  {
-    (let cell winCell)
+  (if (winIsSocket (winHandleOf fd))
+    (wsaSend (winHandleOf fd) buf count)
     {
-      (let ok (& (winWriteFile (winHandleOf fd) buf count cell 0) 4294967295))
-      (if (== ok 0)
-        (Err (mkError (- 0 (winErrnoOf (& winGetLastError 4294967295))) "platformWriteFd"))
-        (Ok (& (__load64 cell 0) 4294967295)))
-    }
-  })
+      (let cell winCell)
+      {
+        (let ok (& (winWriteFile (winHandleOf fd) buf count cell 0) 4294967295))
+        (if (== ok 0)
+          (Err (mkError (- 0 (winErrnoOf (& winGetLastError 4294967295))) "platformWriteFd"))
+          (Ok (& (__load64 cell 0) 4294967295)))
+      }
+    }))
 
 ;; read(fd, buf, count): `Ok` bytes read, `Ok 0` at end of file, or
 ;; `Err` carrying the errno. A broken pipe (ERROR_BROKEN_PIPE, 109) on a
@@ -795,26 +797,30 @@
 ;; directory does on Linux and Darwin.
 ;; The platform's own way to read from a descriptor where raw `read` is
 ;; not available; `Err` 78 where the raw syscall is used instead.
+;; A socket reads through `recv`, so a receive timeout on it holds and
+;; answers EAGAIN.
 (pub :: platformReadFd (-> Int Int Int (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (platformReadFd fd buf count)
-  {
-    (let cell winCell)
+  (if (winIsSocket (winHandleOf fd))
+    (wsaRecv (winHandleOf fd) buf count)
     {
-      (let ok (& (winReadFile (winHandleOf fd) buf count cell 0) 4294967295))
-      (if (== ok 0)
-        {
-          (let code (& winGetLastError 4294967295))
-          (if (== code 109)
-              (Ok 0)
-            (== code 1)
-              (Err (mkError eIsDir "platformReadFd"))
-            (Err (mkError (- 0 (winErrnoOf code)) "platformReadFd")))
-        }
-        (Ok (& (__load64 cell 0) 4294967295)))
-    }
-  })
+      (let cell winCell)
+      {
+        (let ok (& (winReadFile (winHandleOf fd) buf count cell 0) 4294967295))
+        (if (== ok 0)
+          {
+            (let code (& winGetLastError 4294967295))
+            (if (== code 109)
+                (Ok 0)
+              (== code 1)
+                (Err (mkError eIsDir "platformReadFd"))
+              (Err (mkError (- 0 (winErrnoOf code)) "platformReadFd")))
+          }
+          (Ok (& (__load64 cell 0) 4294967295)))
+      }
+    }))
 
 ;; exit(code): `ExitProcess` ends every thread, as `exit_group` does.
 ;; The platform's own way to end the process where raw `exit` is not
@@ -1147,7 +1153,16 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (platformClose fd)
-  (winBoolResult (winCloseHandle (winHandleOf fd))))
+  {
+    (let h (winHandleOf fd))
+    ; A socket goes through `closesocket`, which frees Winsock's own
+    ; state for it; anything else through `CloseHandle`.
+    (if (winIsSocket h)
+      (if (wsaFailed (winCloseSocket h))
+        wsaLastErr
+        0)
+      (winBoolResult (winCloseHandle h)))
+  })
 
 ;; lseek(fd, offset, whence): the new absolute offset, or `-errno`. FILE_BEGIN, FILE_CURRENT and FILE_END are 0, 1
 ;; and 2, as SEEK_SET, SEEK_CUR and SEEK_END are.
@@ -2054,12 +2069,12 @@
 ;; SO_RCVTIMEO - how long a read may wait, as a struct timeval
 (pub :: soRcvTimeo Int)
 (pub fn (soRcvTimeo)
-  0)
+  4102)
 
 ;; SO_SNDTIMEO - how long a write may wait
 (pub :: soSndTimeo Int)
 (pub fn (soSndTimeo)
-  0)
+  4101)
 
 ;; SO_NOSIGPIPE - a write to a closed peer answers EPIPE instead of raising SIGPIPE; 0 where the option does not exist
 (pub :: soNoSigPipe Int)
@@ -2090,7 +2105,7 @@
 ;; BSDs.
 (pub :: ipTtl Int)
 (pub fn (ipTtl)
-  2)
+  4)
 
 ;; IPPROTO_IPV6 - the level of the IPv6 socket options, 41 everywhere.
 (pub :: ipprotoIpv6 Int)
@@ -2101,7 +2116,7 @@
 ;; time-to-live: 16 on Linux, 4 on the BSDs.
 (pub :: ipv6UnicastHops Int)
 (pub fn (ipv6UnicastHops)
-  16)
+  4)
 
 ; ------------------------------------------------------------------
 ; Files a database keeps open (`stdlib/Axqlite/Pager.ax`). None of
@@ -2374,3 +2389,384 @@
 ;@axiom:effect(pure)
 (pub fn (platformSignalBlock mask setbuf)
   (Ok 0))
+
+; ------------------------------------------------------------------
+; Sockets, over ws2_32.
+;
+; A SOCKET is handle-sized and never 0, 1 or 2, so `winHandleOf` passes
+; it through, and `platformClose` asks `getsockopt(SO_TYPE)` whether a
+; handle is one before choosing `closesocket` over `CloseHandle`.
+; Sockets are made with `WSASocketW` and no WSA_FLAG_OVERLAPPED, so
+; `ReadFile` and `WriteFile`, which `IO.ax` reads and writes every
+; descriptor with, work on them synchronously. `WSAStartup` is counted
+; per call by Winsock and the process's exit undoes the count, so every
+; `platformSocket` asks for 2.2 rather than keeping a global the
+; language has no place for.
+;
+; Readiness is `WSAPoll`: IO.ax's poller keeps its own table of
+; registrations on this target and hands them here as POLLRDNORM and
+; POLLWRNORM interests, which come back as readiness in the same
+; records.
+; ------------------------------------------------------------------
+(extern "ws2_32"
+  (winWSAStartup :: (-> Int Int Int) (symbol "WSAStartup"))
+  (winWSAGetLastError :: Int (symbol "WSAGetLastError"))
+  (winWSASocketW :: (-> Int Int Int Int Int Int Int) (symbol "WSASocketW"))
+  (winBind :: (-> Int Int Int Int) (symbol "bind"))
+  (winListen :: (-> Int Int Int) (symbol "listen"))
+  (winAccept :: (-> Int Int Int Int) (symbol "accept"))
+  (winConnect :: (-> Int Int Int Int) (symbol "connect"))
+  (winSend :: (-> Int Int Int Int Int) (symbol "send"))
+  (winRecv :: (-> Int Int Int Int Int) (symbol "recv"))
+  (winShutdown :: (-> Int Int Int) (symbol "shutdown"))
+  (winSetSockOpt :: (-> Int Int Int Int Int Int) (symbol "setsockopt"))
+  (winGetSockOpt :: (-> Int Int Int Int Int Int) (symbol "getsockopt"))
+  (winIoctlSocket :: (-> Int Int Int Int) (symbol "ioctlsocket"))
+  (winGetSockName :: (-> Int Int Int Int) (symbol "getsockname"))
+  (winGetPeerName :: (-> Int Int Int Int) (symbol "getpeername"))
+  (winCloseSocket :: (-> Int Int) (symbol "closesocket"))
+  (winWSAPoll :: (-> Int Int Int Int) (symbol "WSAPoll")))
+
+; A Winsock error as the errno IO.ax compares against, negated, in the
+; Linux spellings this module keeps. Anything unmapped is EIO.
+(:: wsaErrnoOf (-> Int Int))
+(fn (wsaErrnoOf code)
+  (if (== code 10004)
+      (- 0 4)
+    (== code 10013)
+      (- 0 13)
+    (== code 10014)
+      (- 0 14)
+    (== code 10022)
+      (- 0 22)
+    (== code 10024)
+      (- 0 24)
+    (== code 10035)
+      (- 0 eAgain)
+    (== code 10036)
+      (- 0 eInProgress)
+    (== code 10037)
+      (- 0 114)
+    (== code 10038)
+      (- 0 88)
+    (== code 10048)
+      (- 0 98)
+    (== code 10049)
+      (- 0 99)
+    (== code 10051)
+      (- 0 101)
+    (== code 10053)
+      (- 0 103)
+    (== code 10054)
+      (- 0 104)
+    (== code 10056)
+      (- 0 106)
+    (== code 10057)
+      (- 0 107)
+    (== code 10058)
+      (- 0 32)
+    (== code 10060)
+      (- 0 110)
+    (== code 10061)
+      (- 0 eConnRefused)
+    (== code 10065)
+      (- 0 113)
+    (- 0 5)))
+
+(:: wsaLastErr Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wsaLastErr)
+  (wsaErrnoOf (& winWSAGetLastError 4294967295)))
+
+; SOCKET_ERROR is -1 as an int: 4294967295 once the DWORD is masked.
+(:: wsaFailed (-> Int Bool))
+(fn (wsaFailed r)
+  (== (& r 4294967295) 4294967295))
+
+; Whether a handle is a SOCKET: one answers `getsockopt(SO_TYPE)`, any
+; other handle answers WSAENOTSOCK, and before the first socket exists
+; Winsock answers WSANOTINITIALISED. The read, write and close of every
+; descriptor ask this, since a SOCKET and a file HANDLE share one
+; number space and only `recv`, `send` and `closesocket` know a socket.
+(:: winIsSocket (-> Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (winIsSocket h)
+  {
+    (let kind winCell)
+    (let len winCell)
+    (__store64 len 0 4)
+    (== (& (winGetSockOpt h 65535 4104 kind len) 4294967295) 0)
+  })
+
+; recv for a SOCKET under `platformReadFd`. A receive timeout
+; (SO_RCVTIMEO, WSAETIMEDOUT) answers EAGAIN, as a POSIX read under the
+; same option does; a peer that closed answers `Ok 0`.
+(:: wsaRecv (-> Int Int Int (Result Int Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wsaRecv h buf count)
+  {
+    (let r (winRecv h buf count 0))
+    (if (wsaFailed r)
+      {
+        (let code (& winWSAGetLastError 4294967295))
+        (Err
+          (mkError
+            (if (== code 10060)
+              eAgain
+              (- 0 (wsaErrnoOf code)))
+            "platformReadFd"))
+      }
+      (Ok (& r 4294967295)))
+  })
+
+; send for a SOCKET under `platformWriteFd`.
+(:: wsaSend (-> Int Int Int (Result Int Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wsaSend h buf count)
+  {
+    (let r (winSend h buf count 0))
+    (if (wsaFailed r)
+      (Err (mkError (- 0 wsaLastErr) "platformWriteFd"))
+      (Ok (& r 4294967295)))
+  })
+
+; A 32-bit little-endian value read from, or written to, the first four
+; bytes at `p`: the shape of a `getsockopt` cell.
+(:: wsaGet32 (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (wsaGet32 p)
+  (+ (__load8 p 0) (+ (<< (__load8 p 1) 8) (+ (<< (__load8 p 2) 16) (<< (__load8 p 3) 24)))))
+
+(:: wsaPut32 (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (wsaPut32 p v)
+  {
+    (__store8 p 0 (& v 255))
+    (__store8 p 1 (& (>> v 8) 255))
+    (__store8 p 2 (& (>> v 16) 255))
+    (__store8 p 3 (& (>> v 24) 255))
+    0
+  })
+
+;; socket(family, type, protocol) after a `WSAStartup` for 2.2: the
+;; SOCKET, or `-errno`. The socket is not overlapped and not inherited.
+(pub :: platformSocket (-> Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformSocket family kind protocol)
+  {
+    (let data (__alloc 512))
+    (let rc (& (winWSAStartup 514 data) 4294967295))
+    (if (!= rc 0)
+      (wsaErrnoOf rc)
+      {
+        (let s (winWSASocketW family kind protocol 0 0 128))
+        (if (== s (- 0 1))
+          wsaLastErr
+          s)
+      })
+  })
+
+;; bind(s, addr, len): 0, or `-errno`.
+(pub :: platformBind (-> Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformBind s addr len)
+  (if (wsaFailed (winBind s addr len))
+    wsaLastErr
+    0))
+
+;; listen(s, backlog): 0, or `-errno`.
+(pub :: platformListen (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformListen s backlog)
+  (if (wsaFailed (winListen s backlog))
+    wsaLastErr
+    0))
+
+;; accept(s): the new SOCKET, or `-errno`.
+(pub :: platformAccept (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformAccept s)
+  {
+    (let c (winAccept s 0 0))
+    (if (== c (- 0 1))
+      wsaLastErr
+      c)
+  })
+
+;; connect(s, addr, len): 0, `-EINPROGRESS` where a non-blocking connect
+;; is still under way (Winsock says WSAEWOULDBLOCK, POSIX says
+;; EINPROGRESS, and `IO.socketConnectWithin` reads the POSIX word), or
+;; `-errno`.
+(pub :: platformConnect (-> Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformConnect s addr len)
+  (if (wsaFailed (winConnect s addr len))
+    {
+      (let code (& winWSAGetLastError 4294967295))
+      (if (== code 10035)
+        (- 0 eInProgress)
+        (wsaErrnoOf code))
+    }
+    0))
+
+;; send(s, buf, n): bytes sent, or `-errno`. Windows has no SIGPIPE to
+;; suppress.
+(pub :: platformSend (-> Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformSend s buf n)
+  {
+    (let r (winSend s buf n 0))
+    (if (wsaFailed r)
+      wsaLastErr
+      (& r 4294967295))
+  })
+
+;; shutdown(s, how): 0, or `-errno`. SD_RECEIVE, SD_SEND and SD_BOTH are
+;; 0, 1 and 2, as the POSIX `how` is.
+(pub :: platformShutdown (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformShutdown s how)
+  (if (wsaFailed (winShutdown s how))
+    wsaLastErr
+    0))
+
+;; setsockopt(s, level, name, val, len): 0, or `-errno`.
+(pub :: platformSetSockOpt (-> Int Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformSetSockOpt s level name val len)
+  (if (wsaFailed (winSetSockOpt s level name val len))
+    wsaLastErr
+    0))
+
+;; getsockopt(s, level, name, val, lenCell): 0, or `-errno`. An SO_ERROR
+;; answer is rewritten from Winsock's code to the errno IO.ax reads.
+(pub :: platformGetSockOpt (-> Int Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformGetSockOpt s level name val lenCell)
+  (if (wsaFailed (winGetSockOpt s level name val lenCell))
+    wsaLastErr
+    {
+      (let _
+        (if (&& (== level 65535) (== name 4103))
+          {
+            (let code (wsaGet32 val))
+            (if (!= code 0)
+              (wsaPut32 val (- 0 (wsaErrnoOf code)))
+              0)
+          }
+          0))
+      0
+    }))
+
+;; Blocking or not: `ioctlsocket(FIONBIO)` with a nonzero argument makes
+;; the socket non-blocking. 0, or `-errno`.
+(pub :: platformSetNonBlocking (-> Int Bool Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformSetNonBlocking s on)
+  {
+    (let cell winCell)
+    (__store64 cell 0
+      (if on
+        1
+        0))
+    (if (wsaFailed (winIoctlSocket s 2147772030 cell))
+      wsaLastErr
+      0)
+  })
+
+;; getsockname, or (`peer`) getpeername, into `addr`, whose length cell
+;; is `lenCell`: 0, or `-errno`.
+(pub :: platformSocketAddr (-> Int Bool Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformSocketAddr s peer addr lenCell)
+  (if (wsaFailed
+        (if peer
+          (winGetPeerName s addr lenCell)
+          (winGetSockName s addr lenCell)))
+    wsaLastErr
+    0))
+
+;; The platform's poll over `n` records at `fds`, each three words: the
+;; SOCKET, the interest (`pollReadFilter`, `pollWriteFilter` or both)
+;; and, on return, the readiness in the same spelling, plus 24 (EPOLLERR
+;; and EPOLLHUP as Linux spells them) for an error, a hangup or a handle
+;; that is not a socket. `ms` negative waits without limit. Answers the
+;; count of ready records, or `-errno`. `WSAPoll` refuses an empty
+;; array, so with nothing registered this is a sleep that answers 0.
+(pub :: platformPoll (-> Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformPoll fds n ms)
+  (if (<= n 0)
+    {
+      (let _
+        (winSleep
+          (if (< ms 0)
+            4294967295
+            ms)))
+      0
+    }
+    {
+      ; WSAPOLLFD: the SOCKET, then a SHORT of interest and a SHORT of
+      ; readiness in one word. POLLRDNORM is 256 and POLLWRNORM 16;
+      ; POLLERR, POLLHUP and POLLNVAL are 1, 2 and 4.
+      (let w (__alloc (* n 16)))
+      (let mut i 0)
+      (while (< i n)
+        {
+          (let interest (__load64 fds (+ (* i 3) 1)))
+          (__store64 w (* i 2) (__load64 fds (* i 3)))
+          (__store64 w (+ (* i 2) 1)
+            (+
+              (if (!= (& interest pollReadFilter) 0)
+                256
+                0)
+              (if (!= (& interest pollWriteFilter) 0)
+                16
+                0)))
+          (set i (+ i 1))
+        })
+      (let r
+        (winWSAPoll w n
+          (if (< ms 0)
+            (- 0 1)
+            ms)))
+      (if (wsaFailed r)
+        wsaLastErr
+        {
+          (set i 0)
+          (while (< i n)
+            {
+              (let revents (& (>> (__load64 w (+ (* i 2) 1)) 16) 65535))
+              (__store64 fds (+ (* i 3) 2)
+                (+
+                  (if (!= (& revents 256) 0)
+                    pollReadFilter
+                    0)
+                  (+
+                    (if (!= (& revents 16) 0)
+                      pollWriteFilter
+                      0)
+                    (if (!= (& revents 7) 0)
+                      24
+                      0))))
+              (set i (+ i 1))
+            })
+          (& r 4294967295)
+        })
+    }))

@@ -124,7 +124,9 @@ retires that one value and leaves the stream open.
 
 A `Poller` watches files and sockets under tokens you choose, and a
 wait answers the tokens. It owns its kqueue or epoll descriptor, and
-closes it when its last share goes. Raw mode is an owner too: releasing
+closes it when its last share goes. On Windows it keeps a table of its
+registrations instead and waits with `WSAPoll`, over sockets only. Raw
+mode is an owner too: releasing
 the `TermGuard` that `termRaw` answers puts the terminal back as it
 was, and `termRestore` does it early.
 

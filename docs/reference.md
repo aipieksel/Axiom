@@ -2085,7 +2085,7 @@ Use the [standard-library reference](stdlib.md) to choose modules and
 copy small recipes, and the [generated API](stdlib-api.md) is the complete signature and effect
 listing. Every module is Axiom source; hosted programs reach the kernel
 without a C library unless they link foreign code. Windows uses
-kernel32 through its platform layer.
+kernel32 and ws2_32 through its platform layer.
 
 ### Talk over TCP with `Net`
 

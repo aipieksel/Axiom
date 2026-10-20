@@ -2059,7 +2059,7 @@ Sys - portable syscall wrappers.
 
 ## `Sys.Platform`
 
-`stdlib/Sys/Platform.darwin.ax` — 199 public names
+`stdlib/Sys/Platform.darwin.ax` — 211 public names
 
 Sys.Platform - the numbers this target's kernel uses: syscall
 numbers, open and socket flags, errno values, poll and signal
@@ -2268,6 +2268,18 @@ target being compiled for (this one is `darwin`).
 | `platformMlock` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own way to pin `len` bytes at `addr` in memory, where raw `mlock` is not available; `Err` 78 where the syscall serves. |
 | `platformMunlock` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own way to unpin them; `Err` 78 here. |
 | `platformSignalBlock` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own signal mask, where raw `sigprocmask` is not available; `Err` 78 where the syscall serves. |
+| `platformSocket` | value | `(-> Int Int Int Int)` |  |  | socket(family, type, protocol): the descriptor, or `-errno`. -78 here. |
+| `platformBind` | value | `(-> Int Int Int Int)` |  |  | bind(s, addr, len): 0, or `-errno`. -78 here. |
+| `platformListen` | value | `(-> Int Int Int)` |  |  | listen(s, backlog): 0, or `-errno`. -78 here. |
+| `platformAccept` | value | `(-> Int Int)` |  |  | accept(s): the new descriptor, or `-errno`. -78 here. |
+| `platformConnect` | value | `(-> Int Int Int Int)` |  |  | connect(s, addr, len): 0, `-EINPROGRESS` for a non-blocking socket still connecting, or `-errno`. -78 here. |
+| `platformSend` | value | `(-> Int Int Int Int)` |  |  | send(s, buf, n): bytes sent, or `-errno`. -78 here. |
+| `platformShutdown` | value | `(-> Int Int Int)` |  |  | shutdown(s, how): 0, or `-errno`. -78 here. |
+| `platformSetSockOpt` | value | `(-> Int Int Int Int Int Int)` |  |  | setsockopt(s, level, name, val, len): 0, or `-errno`. -78 here. |
+| `platformGetSockOpt` | value | `(-> Int Int Int Int Int Int)` |  |  | getsockopt(s, level, name, val, lenCell): 0, or `-errno`. -78 here. |
+| `platformSetNonBlocking` | value | `(-> Int Bool Int)` |  |  | Make `s` non-blocking (`on`) or blocking: 0, or `-errno`. -78 here. |
+| `platformSocketAddr` | value | `(-> Int Bool Int Int Int)` |  |  | getsockname or (`peer`) getpeername into `addr`, whose length cell is `lenCell`: 0, or `-errno`. -78 here. |
+| `platformPoll` | value | `(-> Int Int Int Int)` |  |  | poll over `n` records at `fds`, each a descriptor word, an interest word and a readiness word, for `ms` milliseconds (negative: no limit): the count of ready records, or `-errno`. -78 here. |
 
 ## `Task`
 

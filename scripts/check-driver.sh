@@ -1259,10 +1259,11 @@ for tool in lld-link llvm-dlltool; do
 done
 if command -v lld-link > /dev/null 2>&1 && command -v llvm-dlltool > /dev/null 2>&1; then
   # A hand-made import library per DLL the hello module declares a name
-  # from: kernel32's, bcryptprimitives' for `ProcessPrng` and the
-  # synchronisation API set's for `WaitOnAddress`, which the library's
-  # shims call and the linker's section GC later drops. With both on the search path the driver makes neither, so
-  # the probes below reach lld-link with no llvm-dlltool at all.
+  # from: kernel32's, bcryptprimitives' for `ProcessPrng`, the
+  # synchronisation API set's for `WaitOnAddress` and ws2_32's for the
+  # sockets, which the library's shims call and the linker's section GC
+  # later drops. With all four on the search path the driver makes none,
+  # so the probes below reach lld-link with no llvm-dlltool at all.
   mkdir -p "$work/winlib"
   printf 'LIBRARY kernel32.dll\nEXPORTS\nVirtualAlloc\nGetStdHandle\nWriteFile\nExitProcess\nGetCommandLineW\nGetEnvironmentStringsW\nReadFile\nGetLastError\n' > "$work/winlib/kernel32.def"
   llvm-dlltool -m i386:x86-64 -d "$work/winlib/kernel32.def" -l "$work/winlib/kernel32.lib"
@@ -1270,6 +1271,8 @@ if command -v lld-link > /dev/null 2>&1 && command -v llvm-dlltool > /dev/null 2
   llvm-dlltool -m i386:x86-64 -d "$work/winlib/bcryptprimitives.def" -l "$work/winlib/bcryptprimitives.lib"
   printf 'LIBRARY api-ms-win-core-synch-l1-2-0.dll\nEXPORTS\nWaitOnAddress\nWakeByAddressAll\n' > "$work/winlib/api-ms-win-core-synch-l1-2-0.def"
   llvm-dlltool -m i386:x86-64 -d "$work/winlib/api-ms-win-core-synch-l1-2-0.def" -l "$work/winlib/api-ms-win-core-synch-l1-2-0.lib"
+  printf 'LIBRARY ws2_32.dll\nEXPORTS\nWSAStartup\nWSAGetLastError\nWSASocketW\nbind\nlisten\naccept\nconnect\nsend\nrecv\nshutdown\nsetsockopt\ngetsockopt\nioctlsocket\ngetsockname\ngetpeername\nclosesocket\nWSAPoll\n' > "$work/winlib/ws2_32.def"
+  llvm-dlltool -m i386:x86-64 -d "$work/winlib/ws2_32.def" -l "$work/winlib/ws2_32.lib"
 
   "$s1" build --target=windows-x86_64 --input hello.ax --output whello --link-search "$work/winlib" >whello.log 2>&1; rc=$?
   if [[ $rc == 0 && -f whello.exe && ! -e whello ]] && [[ "$(head -c 2 whello.exe)" == "MZ" ]]; then
@@ -1360,6 +1363,7 @@ if command -v lld-link > /dev/null 2>&1 && command -v llvm-dlltool > /dev/null 2
   llvm-dlltool -m arm64 -d "$work/winlib/kernel32.def" -l "$work/winlib-arm64/kernel32.lib"
   llvm-dlltool -m arm64 -d "$work/winlib/bcryptprimitives.def" -l "$work/winlib-arm64/bcryptprimitives.lib"
   llvm-dlltool -m arm64 -d "$work/winlib/api-ms-win-core-synch-l1-2-0.def" -l "$work/winlib-arm64/api-ms-win-core-synch-l1-2-0.lib"
+  llvm-dlltool -m arm64 -d "$work/winlib/ws2_32.def" -l "$work/winlib-arm64/ws2_32.lib"
   pe_machine_of() {
     local off
     off="$(od -An -tu4 -j60 -N4 "$1" | tr -d ' ')"

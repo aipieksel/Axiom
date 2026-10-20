@@ -27700,7 +27700,14 @@
                 {
                   (let pmark (vecLen (memGetWordVec cg1 42)))
                   {
-                    (if (== releasable 1)
+                    ; A binding whose initialiser IS a string literal is
+                    ; not pending either: the register holds a
+                    ; `-1`-sentinel static, and the tail jump's release
+                    ; of it would be the same runtime no-op the scope
+                    ; end below skips. `windowsExternLibsFrom` binds its
+                    ; marker so and loops by a self tail call
+                    ; (check-static-release, the compiler's own IR).
+                    (if (&& (== releasable 1) (== (isStaticSentinelNode cg1 valExpr) 0))
                       (vecPush (memGetWordVec cg1 42) (as valReg Int))
                       (as 0 (Vec Int)))
                     {
@@ -27753,11 +27760,12 @@
                         ; too: only a bare literal initialiser spends,
                         ; never a join that merely has a literal arm.
                         ; Same shape as the stamp spends above -
-                        ; `releasable` still says 1, the pending
-                        ; vector still takes the share for the
-                        ; tail-jump path - so an ablation of the
-                        ; shared predicate restores every one of
-                        ; these releases with the other sites'.
+                        ; `releasable` still says 1 - and the pending
+                        ; vector asks the same predicate before taking
+                        ; the share for the tail-jump path, so an
+                        ; ablation of it restores every one of these
+                        ; releases, scope end and jump alike, with the
+                        ; other sites'.
                         (if (&& (== releasable 1)
                               (&& (!= (memGetWord cgB 31) 1)
                                 (== (isStaticSentinelNode cgB valExpr) 0)))
