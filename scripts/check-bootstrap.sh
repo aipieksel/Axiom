@@ -504,6 +504,8 @@ python3 "$repo_root/tests/selfhost/emitter-line-buffer.py" --axiom "$work/d3/axc
   || fail "emitter line-buffer ownership regression"
 python3 "$repo_root/tests/selfhost/emitter-symbol-scope.py" --axiom "$work/d3/axc" \
   || fail "emitter symbol and argument ownership regression"
+python3 "$repo_root/tests/selfhost/emitter-string-slots.py" --axiom "$work/d3/axc" \
+  || fail "emitter String slot ownership regression"
 
 # And a program that PRINTS, because every case above communicates
 # through its exit status alone and a compiler can get those right with

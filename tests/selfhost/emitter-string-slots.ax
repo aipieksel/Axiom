@@ -1,0 +1,176 @@
+; Typed result and label setters retain the replacement before retiring
+; the old slot share. Borrowed getters keep independent aliases alive.
+(import codegen)
+(import parser)
+(import raw)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: rc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (rc address)
+  (__load64 address -2))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: lineAt (-> Int Int String))
+;@axiom:effect(unsafe)
+(fn (lineAt cg index)
+  (as (__load64 (__load64 (__load64 cg 0) 2) index) String))
+
+(:: overwrite (-> String Int Int))
+;@axiom:effect(unsafe)
+(fn (overwrite text byte)
+  (__store8 (strData text) 0 byte))
+
+(:: resultChecks ())
+;@axiom:effect(io)
+(fn (resultChecks)
+  {
+    (let cg newCG)
+    (say 1 (strEq (memGetWordStr cg 2) ""))
+    (say 2 (strEq (memGetWordStr cg 11) "entry"))
+    (let first (strDup "%old"))
+    (let second (strDup "%new"))
+    (let label (strDup "block"))
+    (let firstCount (rc (as first Int)))
+    (probeSetResult cg first)
+    (say 3 (== (memGetWord cg 2) (as first Int)))
+    (say 4 (== (rc (as first Int)) (+ firstCount 1)))
+    (let labelCount (rc (as label Int)))
+    (probeSetBlock cg label)
+    (say 5 (== (memGetWord cg 11) (as label Int)))
+    (say 6 (== (rc (as label Int)) (+ labelCount 1)))
+    (let beforeGetter (rc (as first Int)))
+    (say 7 (== (probeGetterCount cg 2) (+ beforeGetter 1)))
+    (say 8 (== (rc (as first Int)) beforeGetter))
+    (let old (memGetWordStr cg 2))
+    (let beforeReplacement (rc (as first Int)))
+    (probeSetResult cg second)
+    (say 9 (== (rc (as first Int)) (- beforeReplacement 1)))
+    (say 10 (strEq old "%old"))
+    (say 11 (== (memGetWord cg 11) (as label Int)))
+    (let beforeLabelGetter (rc (as label Int)))
+    (say 12 (== (probeGetterCount cg 11) (+ beforeLabelGetter 1)))
+    (say 13 (== (rc (as label Int)) beforeLabelGetter))
+    (let oldLabel (memGetWordStr cg 11))
+    (let beforeLabelReplacement (rc (as label Int)))
+    (probeSetBlock cg "next")
+    (say 14 (== (rc (as label Int)) (- beforeLabelReplacement 1)))
+    (say 15 (strEq oldLabel "block"))
+    (say 16 (strEq (memGetWordStr cg 2) "%new"))
+    (say 17 (probeSameResultGetter cg "%new"))
+  })
+
+(:: emissionChecks ())
+;@axiom:effect(io)
+(fn (emissionChecks)
+  {
+    (let cg newCG)
+    (emitInt (mkEInt 42) cg)
+    (say 18 (strEq (memGetWordStr cg 2) "42"))
+    (say 19 (== (memGetWord cg 14) 0))
+    (let result (memGetWordStr cg 2))
+    (let source (strDup "snap"))
+    (emitLabel cg source)
+    (overwrite source 88)
+    (say 20 (strEq (memGetWordStr cg 11) "snap"))
+    (say 21 (strEq (lineAt cg 0) "snap:"))
+    (for i in 0..128
+      (emitLine cg (concat "line-" (fmtInt i))))
+    (say 22 (strEq result "42"))
+    (say 23 (strEq (memGetWordStr cg 11) "snap"))
+  })
+
+(:: preallocatedChecks ())
+;@axiom:effect(io)
+(fn (preallocatedChecks)
+  {
+    (let cg newCG)
+    (let a (strDup "a"))
+    (let b (strDup "b"))
+    (probeSetResult cg a)
+    (probeSetBlock cg b)
+    (let aCount (rc (as a Int)))
+    (let bCount (rc (as b Int)))
+    (let before (live))
+    (for i in 0..1000
+      {
+        (probeSetResult cg b)
+        (probeSetBlock cg a)
+        (probeSetResult cg a)
+        (probeSetBlock cg b)
+      })
+    (let growth (- (live) before))
+    (say 24 (== (rc (as a Int)) aCount))
+    (say 25 (== (rc (as b Int)) bCount))
+    (say 26 (<= growth 4096))
+    (say 27 (&& (strEq (memGetWordStr cg 2) "a") (strEq (memGetWordStr cg 11) "b")))
+  })
+
+(:: freshOverwrite (-> Int Int Int))
+(fn (freshOverwrite cg i)
+  {
+    (let value (concat "%fresh-" (fmtInt i)))
+    (probeSetResult cg value)
+    0
+  })
+
+; This reports ordinary caller ownership separately. A parked birth share
+; must remain visible rather than being released by test-only raw code.
+(:: ordinaryDiagnostic Int)
+;@axiom:effect(io)
+(fn (ordinaryDiagnostic)
+  {
+    (let cg newCG)
+    (for i in 0..16
+      (freshOverwrite cg i))
+    (let before (live))
+    (for i in 0..1000
+      (freshOverwrite cg i))
+    (let growth (- (live) before))
+    (writeStr stderr (concat "ordinary-soak-growth " (concat (fmtInt growth) "\n")))
+    growth
+  })
+
+(:: castChecks ())
+;@axiom:effect(io)
+(fn (castChecks)
+  {
+    (let cg newCG)
+    (let value (strDup "cast-boundary"))
+    (let before (rc (as value Int)))
+    (probeSetRawResult cg (as value Int))
+    (say 28 (== (rc (as value Int)) (+ before 1)))
+    (say 29 (strEq (memGetWordStr cg 2) "cast-boundary"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    resultChecks
+    emissionChecks
+    preallocatedChecks
+    (let ordinaryGrowth (ordinaryDiagnostic))
+    castChecks
+    ; These final checks never dereference a descriptor after an ablated
+    ; release-first setter has filed it. Only allocator counts are read.
+    (say 30 (probeSoleResultSame))
+    (say 31 (probeSoleBlockSame))
+    (say 32 (<= ordinaryGrowth 4096))
+    0
+  })

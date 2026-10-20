@@ -683,6 +683,29 @@
     }
   })
 
+; These fixed String slots each own one share from construction onward.
+; Take the incoming share before retiring the displaced one, including
+; when a borrowed getter or the slot itself supplies the same String.
+(:: cgSetResult (-> Int String Int))
+;@axiom:effect(unsafe)
+(fn (cgSetResult cg value)
+  {
+    (let old (memGetWord cg 2))
+    (memSetWord cg 2 value)
+    (__release old)
+    cg
+  })
+
+(:: cgSetBlock (-> Int String Int))
+;@axiom:effect(unsafe)
+(fn (cgSetBlock cg value)
+  {
+    (let old (memGetWord cg 11))
+    (memSetWord cg 11 value)
+    (__release old)
+    cg
+  })
+
 ; Slot `i` of the register-pair state: 0 mode, 1 arm, 2 names, 3 tag -
 ; and, beside them, 4 `cgThreads` and 5 `parUsed` (see `newCG`).
 ;
@@ -4035,11 +4058,11 @@
     (let symReg (lookupSym cg (evwaSym d)))
     (if (== symReg 0)
       {
-        (memSetWord cg 2 (constStr 0))
+        (cgSetResult cg (constStr 0))
         cg
       }
       {
-        (memSetWord cg 2 (strDup (as symReg String)))
+        (cgSetResult cg (strDup (as symReg String)))
         cg
       })
   })
@@ -4051,7 +4074,7 @@
     (let symReg (lookupSym cg "__evw."))
     (if (== symReg 0)
       {
-        (memSetWord cg 2 (constStr 0))
+        (cgSetResult cg (constStr 0))
         cg
       }
       (if (>= (lookupSymKind cg "__evw.") 1)
@@ -4063,13 +4086,13 @@
               (emitLine cg
                 (concat (concat "  " r)
                   (concat " = load i64, ptr " (concat (strDup (as symReg String)) ""))))
-              (memSetWord cg 2 r)
+              (cgSetResult cg r)
               cg
             }
           }
         }
         {
-          (memSetWord cg 2 (strDup (as symReg String)))
+          (cgSetResult cg (strDup (as symReg String)))
           cg
         }))
   })
@@ -4083,7 +4106,7 @@
 (pub fn (emitEvWordVal cg stamp)
   (if (nodeSame stamp nilNode)
     {
-      (memSetWord cg 2 (constStr 0))
+      (cgSetResult cg (constStr 0))
       cg
     }
     ; A witness of `EV_LAMARG` (-2) is the enclosing LIFTED LAMBDA's
@@ -4119,7 +4142,7 @@
         }
         (if (&& (== hasLam 0) (&& (== hasSym 0) (== hasHigh 0)))
           {
-            (memSetWord cg 2 (constStr c))
+            (cgSetResult cg (constStr c))
             cg
           }
           {
@@ -4275,7 +4298,7 @@
                           (set i2 (+ i2 1))
                         })
                     }
-                    (memSetWord cgX 2 acc)
+                    (cgSetResult cgX acc)
                     cgX
                   }
                 }
@@ -6379,7 +6402,7 @@
                 (concat b (concat ", i64 " (concat (memGetWordStr c 2) ")")))))
             (set i (+ i 1))
           })
-        (memSetWord c 2 "0")
+        (cgSetResult c "0")
         (memSetWord c 14 0)
         c
       }
@@ -6400,7 +6423,7 @@
           (emitLine cgA
             (concat (concat "  " r)
               (concat " = call i64 @__axiom_par_return(i64 " (concat a ")")))))
-        (memSetWord cgA 2 r)
+        (cgSetResult cgA r)
         (memSetWord cgA 14 0)
         cgA
       }
@@ -6447,7 +6470,7 @@
                       (concat " = call i64 " (concat (parRuntimeSym fnName "spawn" cgA) "(i64 "))
                       (concat f (concat ", i64 " (concat a ")"))))))
                 (emitLine cgA (concat (concat "  " r) " = call i64 @__axiom_par_unsupported()")))
-              (memSetWord cgA 2 r)
+              (cgSetResult cgA r)
               (memSetWord cgA 14 0)
               cgA
             }
@@ -6474,7 +6497,7 @@
                 (concat (concat " = call i64 " (concat (parRuntimeSym fnName "join" cgH) "(i64 "))
                   (concat h ")"))))
             (emitLine cgH (concat (concat "  " r) " = call i64 @__axiom_par_unsupported()")))
-          (memSetWord cgH 2 r)
+          (cgSetResult cgH r)
           (memSetWord cgH 14 0)
           cgH
         }
@@ -6507,7 +6530,7 @@
                     (concat " = call i64 " (concat (parRuntimeSym fnName "join_nr" cgC) "(i64 "))
                     (concat h (concat ", i64 " (concat c ")"))))))
               (emitLine cgC (concat (concat "  " r) " = call i64 @__axiom_par_unsupported()")))
-            (memSetWord cgC 2 r)
+            (cgSetResult cgC r)
             (memSetWord cgC 14 0)
             cgC
           }
@@ -6948,7 +6971,7 @@
               (concat pg (concat " = call i64 @__axiom_handle_get(i64 1, i64 " (concat h ")")))))
           (emitLine cgH (concat "  " (concat pp (concat " = inttoptr i64 " (concat pg " to ptr")))))
           (emitLine cgH (concat "  " (concat r (concat " = load i64, ptr " pp))))
-          (memSetWord cgH 2 r)
+          (cgSetResult cgH r)
           (memSetWord cgH 14 0)
           cgH
         }
@@ -6980,7 +7003,7 @@
                 (concat r
                   (concat " = call i64 "
                     (concat fn (concat "(i64 " (concat k (concat ", i64 " (concat v ")")))))))))
-            (memSetWord cgV 2 r)
+            (cgSetResult cgV r)
             (memSetWord cgV 14 0)
             cgV
           }
@@ -18811,7 +18834,7 @@
         {
           (let tm (vecGet b.term 0))
           {
-            (memSetWord cgB 2 (as (vecGet ops tm.a) String))
+            (cgSetResult cgB (as (vecGet ops tm.a) String))
             (memSetWord cgB 14 0)
             cgB
           }
@@ -19585,7 +19608,7 @@
       (releasePendingSlots cg (as (pairSlot cg 17) (Vec Int)) 0)
       (emitLine cg (concat "  br label %" (memGetWordStr cg 29)))
       (memSetWord cg 31 1)
-      (memSetWord cg 2 "0")
+      (cgSetResult cg "0")
       cg
     }
   })
@@ -19735,7 +19758,7 @@
     {
       (let cgR (releaseRefParamSlotsFrom cg slots 0))
       {
-        (memSetWord cgR 2 v)
+        (cgSetResult cgR v)
         (memSetWord cgR 14 fl)
         cgR
       }
@@ -19871,7 +19894,7 @@
       (let r (regStr rn))
       {
         (emitLine cg (concat (concat "  " r) (concat " = load i64, ptr " (concat slot ""))))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         cg
       }
     }
@@ -20329,7 +20352,7 @@
         ; legal but pointless.
         {
           (emitLabel cg3 mergeB)
-          (memSetWord cg3 2 elseVal)
+          (cgSetResult cg3 elseVal)
           (memSetWord cg3 14 (memGetWord cg3 14))
           (memSetWord cg3 31 0)
           cg3
@@ -20337,7 +20360,7 @@
         (if (== elseTerm 1)
           {
             (emitLabel cg3 mergeB)
-            (memSetWord cg3 2 thenVal)
+            (cgSetResult cg3 thenVal)
             (memSetWord cg3 14 thenFlag)
             (memSetWord cg3 31 0)
             cg3
@@ -20352,7 +20375,7 @@
                   (concat (concat (concat "  " phiR) (concat " = phi i64 [ " thenVal))
                     (concat (concat ", %" (concat thenPred " ], [ "))
                       (concat (concat elseVal (concat ", %" elsePred)) " ]"))))
-                (memSetWord cg3 2 phiR)
+                (cgSetResult cg3 phiR)
                 (memSetWord cg3 14 thenFlag)
                 (memSetWord cg3 31 0)
                 cg3
@@ -20614,7 +20637,7 @@
               (memSetWord cg 21
                 (vecPush (memGetWordVec cg 21)
                   (mkLamDesc lname lparams body capNames capFloats (nodeBinderTyChild node))))
-              (memSetWord cg 2 pr)
+              (cgSetResult cg pr)
               (memSetWord cg 14 0)
               cg
             }
@@ -21002,7 +21025,7 @@
     (let vn (allocReg cg))
     (let vr (regStr vn))
     (let _3 (emitLine cg (concat (concat "  " vr) (concat " = load i64, ptr " (concat ar "")))))
-    (let _4 (memSetWord cg 2 vr))
+    (let _4 (cgSetResult cg vr))
     cg
   })
 
@@ -21502,7 +21525,7 @@
           cg
           (emitReleaseOf cg sv)))
       {
-        (memSetWord cgR 2 v)
+        (cgSetResult cgR v)
         (memSetWord cgR 14 fl)
         cgR
       }
@@ -21932,7 +21955,7 @@
                   (emitRcIfBitOf cg v 1 "%__evwa.h" 1)
                   (emitRetainOf cg v)))
               {
-                (memSetWord cgR 2 v)
+                (cgSetResult cgR v)
                 (memSetWord cgR 14 fl)
                 cgR
               }
@@ -22123,7 +22146,7 @@
                     ; of accumulating one closure per entry.
                     (emitReleaseOf cgB (strDup rec))
                   }
-                  (memSetWord cgB 2 res)
+                  (cgSetResult cgB res)
                   (memSetWord cgB 14 flag)
                   cgB
                 }
@@ -22208,7 +22231,7 @@
                           {
                             (emitLine cgR
                               (concat "  store i64 " (concat rec (concat ", ptr @" slot))))
-                            (memSetWord cgR 2 res)
+                            (cgSetResult cgR res)
                             (memSetWord cgR 14 0)
                             cgR
                           }
@@ -22267,7 +22290,7 @@
 (pub fn (emitApplyRegsOwned args regs cg rec i recOwned snode)
   (if (>= i (vecLen regs))
     {
-      (memSetWord cg 2 rec)
+      (cgSetResult cg rec)
       (memSetWord cg 14 0)
       cg
     }
@@ -22417,7 +22440,7 @@
       (let entry (lookupType types (nodeAName node)))
       (if (== entry 0)
         {
-          (memSetWord cg 2 (constStr 0))
+          (cgSetResult cg (constStr 0))
           (memSetWord cg 14 0)
           cg
         }
@@ -22504,7 +22527,7 @@
               (emitStructFieldRc cgD cls shape bit v 0)
               cgD))
           {
-            (memSetWord cgT 2 (constStr 0))
+            (cgSetResult cgT (constStr 0))
             (memSetWord cgT 14 0)
             cgT
           }
@@ -22821,7 +22844,7 @@
   {
     (let v (nodeA node))
     {
-      (memSetWord cg 2 (constStr v))
+      (cgSetResult cg (constStr v))
       (memSetWord cg 14 0)
       cg
     }
@@ -22836,7 +22859,7 @@
   {
     (let bits (nodeA node))
     {
-      (memSetWord cg 2 (constStr bits))
+      (cgSetResult cg (constStr bits))
       (memSetWord cg 14 1)
       cg
     }
@@ -22898,26 +22921,26 @@
                   (emitLine cg
                     (concat (concat "  " r)
                       (concat " = load i64, ptr " (concat (strDup (as symReg String)) ""))))
-                  (memSetWord cg 2 r)
+                  (cgSetResult cg r)
                   (memSetWord cg 14 (lookupSymFloat cg name))
                   cg
                 }
               }
             }
             {
-              (memSetWord cg 2 (strDup (as symReg String)))
+              (cgSetResult cg (strDup (as symReg String)))
               (memSetWord cg 14 (lookupSymFloat cg name))
               cg
             })
           (if (strEq name "true")
             {
-              (memSetWord cg 2 (constStr 1))
+              (cgSetResult cg (constStr 1))
               (memSetWord cg 14 0)
               cg
             }
             (if (strEq name "false")
               {
-                (memSetWord cg 2 (constStr 0))
+                (cgSetResult cg (constStr 0))
                 (memSetWord cg 14 0)
                 cg
               }
@@ -22941,7 +22964,7 @@
                     {
                       (let z 0)
                       {
-                        (memSetWord cg 2 (constStr z))
+                        (cgSetResult cg (constStr z))
                         (memSetWord cg 14 0)
                         cg
                       }
@@ -22981,7 +23004,7 @@
                             (emitLine cg
                               (concat (concat "  " r)
                                 (concat " = call i64 @" (concat (llvmSym (strDup full)) "()"))))
-                            (memSetWord cg 2 r)
+                            (cgSetResult cg r)
                             (memSetWord cg 14 (fnRetIsFloat cg full))
                             cg
                           }
@@ -23002,7 +23025,7 @@
                           (let ti (thunkIndexFor cg full (fnArityOfCg cg full)))
                           ; Capture-free function values share an immutable
                           ; descriptor with an immortal header, like strings.
-                          (memSetWord cg 2
+                          (cgSetResult cg
                             (concat "ptrtoint (ptr getelementptr ([3 x i64], ptr @.fnval."
                               (concat (fmtInt ti) ", i64 0, i64 2) to i64)")))
                           (memSetWord cg 14 0)
@@ -23014,7 +23037,7 @@
                         {
                           (let x (concat "%" (llvmSym (strDup name))))
                           {
-                            (memSetWord cg 2 x)
+                            (cgSetResult cg x)
                             (memSetWord cg 14 (paramFloatByName cg name))
                             cg
                           }
@@ -23275,13 +23298,13 @@
       ; struct alike (the handle is the value).
       (if (strEq fnName "sizeof")
         {
-          (memSetWord cg 2 (constStr 8))
+          (cgSetResult cg (constStr 8))
           (memSetWord cg 14 0)
           cg
         }
         (if (strEq fnName "alignof")
           {
-            (memSetWord cg 2 (constStr 8))
+            (cgSetResult cg (constStr 8))
             (memSetWord cg 14 0)
             cg
           }
@@ -23421,7 +23444,7 @@
 (pub fn (emitApplyChainOwned args cg rec i recOwned evs snode arel)
   (if (>= i (vecLen args))
     {
-      (memSetWord cg 2 rec)
+      (cgSetResult cg rec)
       (memSetWord cg 14 0)
       cg
     }
@@ -23525,7 +23548,7 @@
                       (concat (concat (concat "  " r) (concat " = call i64 " fp))
                         (concat "(i64 " (concat (strDup rec) (concat ", i64 " a))))
                       (concat (concat ", i64 " fullEv) (concat ")" ""))))
-                  (memSetWord cgL 2 r)
+                  (cgSetResult cgL r)
                   cgL
                 }
               }
@@ -23801,7 +23824,7 @@
     (let _4 (emitLine cg2 (concat "  call i64 @__axiom_contract_fail(i64 " (concat m ")"))))
     (let _5 (emitLine cg2 "  unreachable"))
     (let _6 (emitLabel cg2 okB))
-    (let _7 (memSetWord cg2 2 (constStr 0)))
+    (let _7 (cgSetResult cg2 (constStr 0)))
     cg2
   })
 
@@ -23881,7 +23904,7 @@
     (let _4 (emitLine cg2 (concat "  call i64 @__axiom_contract_fail(i64 " (concat m ")"))))
     (let _5 (emitLine cg2 "  unreachable"))
     (let _6 (emitLabel cg2 okB))
-    (let _7 (memSetWord cg2 2 v))
+    (let _7 (cgSetResult cg2 v))
     cg2
   })
 
@@ -23989,7 +24012,7 @@
               (emitLine cg2
                 (concat (concat (concat "  " rr) (concat " = call i64 " pr))
                   (concat "(i64 " (concat av ")"))))
-              (memSetWord cg2 2 rr)
+              (cgSetResult cg2 rr)
               (memSetWord cg2 14 0)
               cg2
             }
@@ -24013,7 +24036,7 @@
       (let h (strDup (memGetWordStr cg1 2)))
       {
         (emitLine cg1 (concat "  call void " (concat sym (concat "(i64 " (concat h ")")))))
-        (memSetWord cg1 2 "0")
+        (cgSetResult cg1 "0")
         (memSetWord cg1 14 0)
         cg1
       }
@@ -24099,7 +24122,7 @@
 (pub :: retainRefAnswer (-> Int String Int))
 (pub fn (retainRefAnswer cg r)
   {
-    (memSetWord cg 2 r)
+    (cgSetResult cg r)
     (memSetWord cg 14 0)
     cg
   })
@@ -24149,7 +24172,7 @@
                     (concat a (concat ", i64 " (concat b ")")))))))
             (if (== want 1)
               {
-                (memSetWord cg3 2 r)
+                (cgSetResult cg3 r)
                 cg3
               }
               {
@@ -24158,7 +24181,7 @@
                   (let cg4
                     (emitLine cg3 (concat (concat "  " n) (concat " = xor i64 " (concat r ", 1")))))
                   {
-                    (memSetWord cg4 2 n)
+                    (cgSetResult cg4 n)
                     cg4
                   }
                 }
@@ -24324,7 +24347,7 @@
                 (let _24
                   (emitLine cgA (concat "  store i64 " (concat pv ", ptr @__axiom_recover_top"))))
                 {
-                  (memSetWord cgA 2 res)
+                  (cgSetResult cgA res)
                   (memSetWord cgA 14 0)
                   cgA
                 }
@@ -24365,7 +24388,7 @@
     {
       (let cg1 (emitLine cg (concat (concat "  " r) " = call i64 @__axiom_arena_mark_fn()")))
       {
-        (memSetWord cg1 2 r)
+        (cgSetResult cg1 r)
         cg1
       }
     }
@@ -24384,7 +24407,7 @@
           (emitLine cg0
             (concat "  "
               (concat r (concat " = call i64 @.axiom.arena.mark.into(i64 " (concat cell ")")))))
-          (memSetWord cg0 2 r)
+          (cgSetResult cg0 r)
           cg0
         }
       }
@@ -24406,7 +24429,7 @@
               (concat (concat "  " r)
                 (concat " = call i64 @__axiom_arena_reset_fn(i64 " (concat cell ")")))))
           {
-            (memSetWord cg1 2 (constStr 0))
+            (cgSetResult cg1 (constStr 0))
             cg1
           }
         }
@@ -24433,7 +24456,7 @@
               (concat "  "
                 (concat r (concat " = call i64 @__axiom_mem_stat_fn(i64 " (concat k ")"))))))
           {
-            (memSetWord cg1 2 r)
+            (cgSetResult cg1 r)
             cg1
           }
         }
@@ -24457,7 +24480,7 @@
           (let cg1 (emitLine cg0 (concat "  " (concat r " = load i64, ptr @__axiom_arena_cap"))))
           {
             (emitLine cg1 (concat "  store i64 " (concat v ", ptr @__axiom_arena_cap")))
-            (memSetWord cg1 2 r)
+            (cgSetResult cg1 r)
             cg1
           }
         }
@@ -24498,7 +24521,7 @@
                       (concat " = call i64 @__axiom_stack_run(i64 "
                         (concat b (concat ", i64 " (concat f (concat ", i64 " (concat a ")"))))))))
                   (emitReleaseOf cgA (strDup f))
-                  (memSetWord cgA 2 r)
+                  (cgSetResult cgA r)
                   (memSetWord cgA 14 0)
                   cgA
                 }
@@ -24539,7 +24562,7 @@
                             (concat cell ", i64 ")))
                         (concat src (concat ", i64 " (concat n ")"))))))
                   {
-                    (memSetWord cg3 2 r)
+                    (cgSetResult cg3 r)
                     cg3
                   }
                 }
@@ -24568,7 +24591,7 @@
       (let r (regStr rn))
       {
         (emitLine cg (concat (concat "  " r) " = call i64 @__axiom_index_out_of_range()"))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         cg
       }
     }
@@ -24581,7 +24604,7 @@
       (let r (regStr rn))
       {
         (emitLine cg (concat (concat "  " r) " = load i64, ptr @__axiom_argc"))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         cg
       }
     }
@@ -24613,7 +24636,7 @@
             (concat
               (concat (concat "  " g) (concat " = getelementptr i64, ptr " (concat p ", i64 "))) i))
           (emitLine cg1 (concat (concat "  " r) (concat " = load i64, ptr " (concat g ""))))
-          (memSetWord cg1 2 r)
+          (cgSetResult cg1 r)
           cg1
         }
       }
@@ -24639,7 +24662,7 @@
           (emitLine cg1 (concat (concat "  " dr) (concat " = sitofp i64 " (concat v " to double"))))
           (emitLine cg1
             (concat (concat "  " r) (concat " = bitcast double " (concat dr " to i64"))))
-          (memSetWord cg1 2 r)
+          (cgSetResult cg1 r)
           (memSetWord cg1 14 1)
           cg1
         }
@@ -24697,7 +24720,7 @@
           (emitLine cg1
             (concat (concat "  " r)
               (concat (concat " = select i1 " nan) (concat ", i64 0, i64 " sb))))
-          (memSetWord cg1 2 r)
+          (cgSetResult cg1 r)
           (memSetWord cg1 14 0)
           cg1
         }
@@ -24809,7 +24832,7 @@
 (pub fn (emitPrimFence cg)
   {
     (emitLine cg "  fence seq_cst")
-    (memSetWord cg 2 (constStr 0))
+    (cgSetResult cg (constStr 0))
     cg
   })
 
@@ -24826,7 +24849,7 @@
           (emitLine cg1
             (concat (concat "  " vr)
               (concat " = load atomic i64, ptr " (concat pr " seq_cst, align 8"))))
-          (memSetWord cg1 2 vr)
+          (cgSetResult cg1 vr)
           cg1
         }
       }
@@ -24847,7 +24870,7 @@
         (emitLine cg2
           (concat (concat "  store atomic i64 " val)
             (concat ", ptr " (concat pr " seq_cst, align 8"))))
-        (memSetWord cg2 2 (constStr 0))
+        (cgSetResult cg2 (constStr 0))
         cg2
       }
     }
@@ -24869,7 +24892,7 @@
           (emitLine cg2
             (concat (concat (concat "  " vr) (concat " = atomicrmw add ptr " pr))
               (concat ", i64 " (concat val " seq_cst, align 8"))))
-          (memSetWord cg2 2 vr)
+          (cgSetResult cg2 vr)
           cg2
         }
       }
@@ -24903,7 +24926,7 @@
             (emitLine cg3
               (concat (concat "  " vr)
                 (concat " = extractvalue { i64, i1 } " (concat pairR ", 0"))))
-            (memSetWord cg3 2 vr)
+            (cgSetResult cg3 vr)
             cg3
           }
         }
@@ -25105,14 +25128,14 @@
               (concat (concat " = load volatile " (concat ty ", ptr "))
                 (concat pr (concat ", align " (fmtInt (/ bits 8)))))))
           (if (== bits 64)
-            (memSetWord cg1 2 vr)
+            (cgSetResult cg1 vr)
             {
               (let wr (regStr (allocReg cg1)))
               {
                 (emitLine cg1
                   (concat (concat "  " wr)
                     (concat (concat " = zext " (concat ty " ")) (concat vr " to i64"))))
-                (memSetWord cg1 2 wr)
+                (cgSetResult cg1 wr)
               }
             })
           cg1
@@ -25149,7 +25172,7 @@
           (emitLine cg2
             (concat (concat "  store volatile " (concat ty (concat " " sv)))
               (concat ", ptr " (concat pr (concat ", align " (fmtInt (/ bits 8)))))))
-          (memSetWord cg2 2 (constStr 0))
+          (cgSetResult cg2 (constStr 0))
           cg2
         }
       }
@@ -25170,7 +25193,7 @@
             (emitLine cg1
               (concat "  call void asm sideeffect \""
                 (concat (armPrimAsm fnName) (concat "\", \"r,~{memory}\"(i64 " (concat a ")")))))
-            (memSetWord cg1 2 (constStr 0))
+            (cgSetResult cg1 (constStr 0))
             cg1
           })
       }
@@ -25185,7 +25208,7 @@
               (concat (concat "  " r)
                 (concat " = call i64 asm sideeffect \""
                   (concat (armPrimAsm fnName) (concat "\", " (armPrimReadCons fnName))))))
-            (memSetWord cg 2 r)
+            (cgSetResult cg r)
             cg
           }
         }
@@ -25193,7 +25216,7 @@
           (emitLine cg
             (concat "  call void asm sideeffect \""
               (concat (armPrimAsm fnName) "\", \"~{memory}\"()")))
-          (memSetWord cg 2 (constStr 0))
+          (cgSetResult cg (constStr 0))
           cg
         }))))
 
@@ -25216,7 +25239,7 @@
               (if (targetIsAArch64 (memGetWord cg 26))
                 " runs programs at EL0 - only baremetal-aarch64 runs one at EL1"
                 " is not an AArch64 target"))))))
-    (memSetWord cg 2 (constStr 0))
+    (cgSetResult cg (constStr 0))
     cg
   })
 
@@ -25808,7 +25831,7 @@
                   (emitLine cg "  unreachable")
                   (emitLabel cg (concat "asmnr" (fmtInt (allocReg cg))))
                 })
-              (memSetWord cg 2 res)
+              (cgSetResult cg res)
               (memSetWord cg 14 0)
               cg
             }
@@ -25886,7 +25909,7 @@
       (concat (concat "  ; axiom-device-refused an `asm` form has no `" arch)
         (concat (concat "` arm, and " (targetSpelling (memGetWord cg 26)))
           (concat " is an " (concat arch " target")))))
-    (memSetWord cg 2 (constStr 0))
+    (cgSetResult cg (constStr 0))
     cg
   })
 
@@ -25922,7 +25945,7 @@
                   at))
               (concat pad (concat ")" ""))))
           (emitLine cg1 (concat (concat "  " r) (concat " = call i64 @__axiom_no_syscall()" ""))))
-        (memSetWord cg1 2 r)
+        (cgSetResult cg1 r)
         cg1
       }
     }
@@ -25946,7 +25969,7 @@
       {
         (emitLine cg1
           (concat (concat "  " r) (concat " = call i64 @axiom_alloc(i64 " (concat n ")"))))
-        (memSetWord cg1 2 r)
+        (cgSetResult cg1 r)
         cg1
       }
     }
@@ -25997,7 +26020,7 @@
                           (concat ", ptr " (concat gr "")))))
                     (if (== width 8)
                       {
-                        (memSetWord cg5 2 vr)
+                        (cgSetResult cg5 vr)
                         cg5
                       }
                       {
@@ -26008,7 +26031,7 @@
                             (emitLine cg5
                               (concat (concat "  " wr)
                                 (concat " = zext i8 " (concat vr " to i64"))))
-                            (memSetWord cg5 2 wr)
+                            (cgSetResult cg5 wr)
                             cg5
                           }
                         }
@@ -26069,7 +26092,7 @@
                           "  store ")
                         (concat ty " "))
                       (concat sv (concat (concat ", ptr " gr) ""))))
-                  (memSetWord cg5 2 (constStr 0))
+                  (cgSetResult cg5 (constStr 0))
                   cg5
                 }
               }
@@ -26118,7 +26141,7 @@
             (emitLine cg
               (concat (concat "  " r)
                 (concat " = ptrtoint ptr @str_" (concat (fmtInt id) " to i64"))))
-            (memSetWord cg 2 r)
+            (cgSetResult cg r)
             cg
           }
         }
@@ -26282,7 +26305,7 @@
     {
       (memSetWord cg 14 0)
       (if (== bits 64)
-        (memSetWord cg 2 value)
+        (cgSetResult cg value)
         {
           (let r (regStr (allocReg cg)))
           {
@@ -26294,7 +26317,7 @@
                       " = zext i"
                       " = sext i")
                     (concat (fmtInt bits) (concat " " (concat value " to i64")))))))
-            (memSetWord cg 2 r)
+            (cgSetResult cg r)
           }
         })
       cg
@@ -26321,7 +26344,7 @@
                     " = sitofp i64 ")
                   (concat value " to double")))))
           (emitLine cg (concat "  " (concat r (concat " = bitcast double " (concat d " to i64")))))
-          (memSetWord cg 2 r)
+          (cgSetResult cg r)
           (memSetWord cg 14 1)
           cg
         }
@@ -26428,7 +26451,7 @@
           (let word (regStr (allocReg cg3)))
           {
             (emitLine cg3 (concat "  " (concat word (concat " = zext i1 " (concat r " to i64")))))
-            (memSetWord cg3 2 word)
+            (cgSetResult cg3 word)
             (memSetWord cg3 14 0)
             cg3
           }
@@ -26484,7 +26507,7 @@
             (emitLine cgG
               (concat (concat (concat "  " r) (concat " = " (binopToLLVM fnName)))
                 (concat " i64 " (concat (concat a (concat ", " bSafe)) ""))))
-            (memSetWord cgG 2 r)
+            (cgSetResult cgG r)
             (memSetWord cgG 14 0)
             cgG
           }
@@ -26510,7 +26533,7 @@
           (emitLine cg "  unreachable")
           (emitLabel cg db)
           (emitLine cg (concat (concat "  " r) " = add i64 0, 0"))
-          (memSetWord cg 2 r)
+          (cgSetResult cg r)
           (memSetWord cg 14 floatFlag)
           cg
         }
@@ -26649,7 +26672,7 @@
             (concat (concat (concat "  " fr) (concat " = " (fbinopToLLVM fnName)))
               (concat " double " (concat (concat ar (concat ", " br)) ""))))
           (emitLine cg (concat (concat "  " r) (concat " = bitcast double " (concat fr " to i64"))))
-          (memSetWord cg 2 r)
+          (cgSetResult cg r)
           (memSetWord cg 14 1)
           cg
         }
@@ -26693,7 +26716,7 @@
           (concat (concat (concat "  " cr) (concat " = icmp " (cmpToLLVM fnName)))
             (concat " i64 " (concat (concat a (concat ", " b)) ""))))
         (emitLine cg (concat (concat "  " r) (concat " = zext i1 " (concat cr " to i64"))))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         (memSetWord cg 14 0)
         cg
       }
@@ -26721,7 +26744,7 @@
           (concat (concat (concat "  " cr) (concat " = fcmp " (fcmpToLLVM fnName)))
             (concat " double " (concat (concat ar (concat ", " br)) ""))))
         (emitLine cg (concat (concat "  " r) (concat " = zext i1 " (concat cr " to i64"))))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         (memSetWord cg 14 0)
         cg
       }
@@ -26808,7 +26831,7 @@
                                 (concat (concat "  " pr)
                                   (concat " = extractvalue { i64, i64 } " (concat r ", 1"))))
                               (releaseOwnedArgs cgE fnName args argRegs 0)
-                              (memSetWord cgE 2 pr)
+                              (cgSetResult cgE pr)
                               (memSetWord cgE 14 0)
                               (pairSetSlot cgE 3 (as tr Int))
                               (pairSetSlot cgE 1 2)
@@ -26855,7 +26878,7 @@
                                       (concat " = musttail call i64 @" (llvmSym (strDup full))))
                                     (concat "(i64 " (concat argStrT (concat evStr ")")))))
                                 (emitLine cgE (concat "  ret i64 " r))
-                                (memSetWord cgE 2 r)
+                                (cgSetResult cgE r)
                                 (memSetWord cgE 14 (fnRetIsFloat cgE full))
                                 (memSetWord cgE 31 1)
                                 cgE
@@ -26881,7 +26904,7 @@
                                     (let bc bc0)
                                     (if (== bc 0)
                                       {
-                                        (memSetWord cgE 2 r)
+                                        (cgSetResult cgE r)
                                         (memSetWord cgE 14 (fnRetIsFloat cgE full))
                                         cgE
                                       }
@@ -26893,7 +26916,7 @@
                                         {
                                           (let cgF (releaseBorrowedFrom cgR fnName args argRegs 0))
                                           {
-                                            (memSetWord cgF 2 r)
+                                            (cgSetResult cgF r)
                                             (memSetWord cgF 14 (fnRetIsFloat cgF full))
                                             cgF
                                           }
@@ -26937,7 +26960,7 @@
 (pub fn (emitArgsRegs args cg regs i fnName bc)
   (if (>= i (vecLen args))
     {
-      (memSetWord cg 2 "")
+      (cgSetResult cg "")
       (memSetWord cg 9 "")
       cg
     }
@@ -26972,12 +26995,12 @@
                 (let restT (memGetWordStr restCg 9))
                 (if (== (strLen rest) 0)
                   {
-                    (memSetWord restCg 2 reg)
+                    (cgSetResult restCg reg)
                     (memSetWord restCg 9 (strDup reg))
                     restCg
                   }
                   {
-                    (memSetWord restCg 2 (concat reg (concat ", " rest)))
+                    (cgSetResult restCg (concat reg (concat ", " rest)))
                     (memSetWord restCg 9 (concat (strDup reg) (concat ", i64 " restT)))
                     restCg
                   })
@@ -27524,7 +27547,7 @@
         (concat (concat (concat "  " pr) (concat " = phi i64 [ " zr))
           (concat (concat ", %" (concat rhsPred " ], [ "))
             (concat (concat shortVal (concat ", %" shortB)) " ]")))))
-    (let _11 (memSetWord cg2 2 pr))
+    (let _11 (cgSetResult cg2 pr))
     cg2
   })
 
@@ -27649,7 +27672,7 @@
 (pub fn (emitArgsList args cg i)
   (if (>= i (vecLen args))
     {
-      (memSetWord cg 2 "")
+      (cgSetResult cg "")
       (memSetWord cg 9 "")
       cg
     }
@@ -27666,12 +27689,12 @@
               (let restT (memGetWordStr restCg 9))
               (if (== (strLen rest) 0)
                 {
-                  (memSetWord restCg 2 reg)
+                  (cgSetResult restCg reg)
                   (memSetWord restCg 9 (strDup reg))
                   restCg
                 }
                 {
-                  (memSetWord restCg 2 (concat reg (concat ", " rest)))
+                  (cgSetResult restCg (concat reg (concat ", " rest)))
                   (memSetWord restCg 9 (concat (strDup reg) (concat ", i64 " restT)))
                   restCg
                 })
@@ -28858,7 +28881,7 @@
           (concat (concat ", %" (concat lSome " ], [ "))
             (concat (concat (constStr (eTag noneE)) (concat ", %" lNone)) " ]")))))
     {
-      (memSetWord cg 2 res)
+      (cgSetResult cg res)
       (memSetWord cg 14 0)
       cg
     }
@@ -28897,7 +28920,7 @@
           (concat (concat ", %" (concat lOk " ], [ "))
             (concat (concat b2 (concat ", %" lErr)) " ]")))))
     {
-      (memSetWord cg 2 res)
+      (cgSetResult cg res)
       (memSetWord cg 14 0)
       cg
     }
@@ -29035,12 +29058,12 @@
     (let rep (eRep entry))
     (if (&& (== kind TF_DATA) (&& (== arity 0) (!= rep 0)))
       {
-        (memSetWord cg 2 (constStr ctorTag))
+        (cgSetResult cg (constStr ctorTag))
         cg
       }
       (if (&& (== kind TF_STRUCT) (== arity 0))
         {
-          (memSetWord cg 2 (constStr 0))
+          (cgSetResult cg (constStr 0))
           cg
         }
         ; `axiom_alloc` answers a machine word like everything
@@ -29084,7 +29107,7 @@
                           {
                             (let cg3 (emitFieldStores cgC ptr args 0 base entry stamp))
                             {
-                              (memSetWord cg3 2 ptr)
+                              (cgSetResult cg3 ptr)
                               cg3
                             }
                           }
@@ -29506,7 +29529,7 @@
                               (let res (strDup (memGetWordStr cgB 2)))
                               (let cgR (emitReleaseOf cgB valReg))
                               {
-                                (memSetWord cgR 2 res)
+                                (cgSetResult cgR res)
                                 cgR
                               }
                             })
@@ -29526,7 +29549,7 @@
                                   (emitRcIfBitOf cgW valReg (- bitCls 2)
                                     (strDup (memGetWordStr cgW 2)) 0))
                                 {
-                                  (memSetWord cgR 2 res)
+                                  (cgSetResult cgR res)
                                   cgR
                                 }
                               }
@@ -31095,7 +31118,7 @@
                                   (let fl (memGetWord cgB 14))
                                   (let cgR (releaseSlotValue cgB ar))
                                   {
-                                    (memSetWord cgR 2 res)
+                                    (cgSetResult cgR res)
                                     (memSetWord cgR 14 fl)
                                     cgR
                                   }
@@ -31172,7 +31195,7 @@
                         cg1))
                     (emitLine cgR (concat "  store i64 " (concat v (concat ", ptr " ptr))))
                   })
-                (memSetWord cg1 2 v)
+                (cgSetResult cg1 v)
                 cg1
               }
             }
@@ -31822,7 +31845,7 @@
             (let _6 (emitLine cgB (concat "  br label %" hdrB)))
             (let _7 (emitLabel cgB exitB))
             {
-              (memSetWord cgB 2 (constStr 0))
+              (cgSetResult cgB (constStr 0))
               (memSetWord cgB 14 0)
               cgB
             }
@@ -31980,7 +32003,7 @@
                 (concat (concat "  " rr)
                   (concat " = call i64 @__axiom_arena_reset_fn(i64 " (concat ci ")")))))
             {
-              (memSetWord cgB 2 val)
+              (cgSetResult cgB val)
               (memSetWord cgB 14 flag)
               cgB
             }
@@ -32038,7 +32061,7 @@
         (concat (concat (concat "  " phiR) (concat " = phi i64 [ " thenVal))
           (concat (concat ", %" (concat thenPred " ], [ "))
             (concat (concat elseVal (concat ", %" elsePred)) " ]")))))
-    (let _9 (memSetWord cg3 2 phiR))
+    (let _9 (cgSetResult cg3 phiR))
     (let _10 (memSetWord cg3 14 thenFlag))
     cg3
   })
@@ -32048,7 +32071,7 @@
 (pub fn (emitLabel cg name)
   {
     (emitLine cg (concat name ":"))
-    (memSetWord cg 11 (strDup name))
+    (cgSetBlock cg (strDup name))
     cg
   })
 
@@ -32173,7 +32196,7 @@
                         (let cgR
                           (emitRcIfBitOf cgW res (- tcls 2) (strDup (memGetWordStr cgW 2)) 0))
                         {
-                          (memSetWord cgR 2 res)
+                          (cgSetResult cgR res)
                           cgR
                         }
                       }
@@ -32208,7 +32231,7 @@
             (concat
               " = ptrtoint ptr getelementptr inbounds ({ i64, i64, i64, ptr, i64 }, ptr @strhdr_"
               (concat (fmtInt id) ", i64 0, i32 2) to i64"))))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         (memSetWord cg 14 0)
         cg
       }
@@ -32218,7 +32241,7 @@
 (pub :: emitDefault (-> Int Int))
 (pub fn (emitDefault cg)
   {
-    (memSetWord cg 2 "0")
+    (cgSetResult cg "0")
     (memSetWord cg 14 0)
     cg
   })
@@ -32494,7 +32517,7 @@
 (pub fn (emitPrimResUnwinding cg)
   (if (== (resRegistryOn cg) 0)
     {
-      (memSetWord cg 2 "0")
+      (cgSetResult cg "0")
       (memSetWord cg 14 0)
       cg
     }
@@ -32502,7 +32525,7 @@
       (let r (regStr (allocReg cg)))
       {
         (emitLine cg (concat (concat "  " r) " = load i64, ptr @__axiom_res_unwinding"))
-        (memSetWord cg 2 r)
+        (cgSetResult cg r)
         (memSetWord cg 14 0)
         cg
       }
@@ -32538,7 +32561,7 @@
           (emitReleaseOf cg1 first)
           cg1)
       }
-      (memSetWord cg1 2 r)
+      (cgSetResult cg1 r)
       (memSetWord cg1 14 0)
       cg1
     }
@@ -32743,7 +32766,7 @@
 (pub fn (emitClosureResultWord cg e final)
   (if (== final 0)
     {
-      (memSetWord cg 2 "2")
+      (cgSetResult cg "2")
       cg
     }
     {
@@ -32770,7 +32793,7 @@
                   (emitLine cgW
                     (concat (concat "  " r)
                       (concat " = shl i64 " (concat (memGetWordStr cgW 2) ", 1"))))
-                  (memSetWord cgW 2 r)
+                  (cgSetResult cgW r)
                   cgW
                 }
               }
