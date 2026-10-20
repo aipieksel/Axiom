@@ -616,7 +616,9 @@ lock on the whole file:
 
 The lock is `flock`, which is advisory: a program that writes the file
 without taking it isn't stopped. On a network file system the lock may
-not work at all, so keep a database on a local disk.
+not work at all, so keep a database on a local disk. On Windows the lock
+is `LockFileEx` on one byte far past the end of the file, and the rules
+above hold unchanged.
 
 Tested by `tests/axqlite/615-api-two-connections.ax`.
 

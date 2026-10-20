@@ -637,6 +637,10 @@
   (winCreateFileW :: (-> Int Int Int Int Int Int Int Int) (symbol "CreateFileW"))
   (winCloseHandle :: (-> Int Int) (symbol "CloseHandle"))
   (winSetFilePointerEx :: (-> Int Int Int Int Int) (symbol "SetFilePointerEx"))
+  (winFlushFileBuffers :: (-> Int Int) (symbol "FlushFileBuffers"))
+  (winSetEndOfFile :: (-> Int Int) (symbol "SetEndOfFile"))
+  (winLockFileEx :: (-> Int Int Int Int Int Int Int) (symbol "LockFileEx"))
+  (winUnlockFileEx :: (-> Int Int Int Int Int Int) (symbol "UnlockFileEx"))
   (winDeleteFileW :: (-> Int Int) (symbol "DeleteFileW"))
   (winMoveFileExW :: (-> Int Int Int Int) (symbol "MoveFileExW"))
   (winCreateDirectoryW :: (-> Int Int Int) (symbol "CreateDirectoryW"))
@@ -1183,6 +1187,143 @@
     (if (== (& (winSetFilePointerEx (winHandleOf fd) offset cell whence) 4294967295) 0)
       winLastErr
       (__load64 cell 0))
+  })
+
+; An OVERLAPPED record carrying `offset` and no event: 32 bytes,
+; Internal and InternalHigh clear, Offset and OffsetHigh as one
+; little-endian word at byte 16, hEvent 0. `ReadFile`, `WriteFile` and
+; the lock calls take the position from it on a synchronous handle.
+(:: winOverlappedAt (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (winOverlappedAt offset)
+  {
+    (let ovl (__alloc 32))
+    {
+      (__store64 ovl 0 0)
+      (__store64 ovl 1 0)
+      (__store64 ovl 2 offset)
+      (__store64 ovl 3 0)
+      ovl
+    }
+  })
+
+;; pread(fd, buf, count, offset): bytes read, 0 at or past the end of
+;; the file (ERROR_HANDLE_EOF, 38), or `-errno`.
+;; The platform's own way to read at an offset where raw `pread` is not
+;; available; -ENOSYS where the raw syscall is used instead.
+(pub :: platformPread (-> Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformPread fd buf count offset)
+  {
+    (let cell winCell)
+    (let ovl (winOverlappedAt offset))
+    (if (== (& (winReadFile (winHandleOf fd) buf count cell ovl) 4294967295) 0)
+      {
+        (let code (& winGetLastError 4294967295))
+        (if (== code 38)
+          0
+          (winErrnoOf code))
+      }
+      (& (__load64 cell 0) 4294967295))
+  })
+
+;; pwrite(fd, buf, count, offset): bytes written, or `-errno`.
+;; The platform's own way to write at an offset where raw `pwrite` is
+;; not available; -ENOSYS where the raw syscall is used instead.
+(pub :: platformPwrite (-> Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformPwrite fd buf count offset)
+  {
+    (let cell winCell)
+    (let ovl (winOverlappedAt offset))
+    (if (== (& (winWriteFile (winHandleOf fd) buf count cell ovl) 4294967295) 0)
+      winLastErr
+      (& (__load64 cell 0) 4294967295))
+  })
+
+;; fsync(fd): 0, or `-errno`. `FlushFileBuffers` writes the file's data
+;; and metadata through to the disk.
+;; The platform's own way to flush a descriptor where raw `fsync` is not
+;; available; -ENOSYS where the raw syscall is used instead.
+(pub :: platformFsync (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformFsync fd)
+  (winBoolResult (winFlushFileBuffers (winHandleOf fd))))
+
+;; ftruncate(fd, len): 0, or `-errno`. The end of the file moves to
+;; `len` through the file pointer, which is put back where it was, as
+;; `ftruncate` leaves it.
+;; The platform's own way to cut a file where raw `ftruncate` is not
+;; available; -ENOSYS where the raw syscall is used instead.
+(pub :: platformFtruncate (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformFtruncate fd len)
+  {
+    (let h (winHandleOf fd))
+    (let cell winCell)
+    (if (== (& (winSetFilePointerEx h 0 cell 1) 4294967295) 0)
+      winLastErr
+      {
+        (let was (__load64 cell 0))
+        (if (== (& (winSetFilePointerEx h len cell 0) 4294967295) 0)
+          winLastErr
+          {
+            (let r (winBoolResult (winSetEndOfFile h)))
+            (let _ (winSetFilePointerEx h was cell 0))
+            r
+          })
+      })
+  })
+
+;; flock(fd, op): 0, or `-errno`, with `op` in the POSIX spelling: 1
+;; shared, 2 exclusive, 4 or'd in for non-blocking, 8 release. One byte
+;; at 2^62, past any file, stands for the whole file, so the mandatory
+;; byte-range lock never stops the holder's own reads and writes. A
+;; shared or exclusive request releases the byte first, as the POSIX
+;; conversion may; a held byte answers EAGAIN at once under
+;; LOCKFILE_FAIL_IMMEDIATELY, as LOCK_NB does, and a release of a byte
+;; that is not held (ERROR_NOT_LOCKED, 158) is 0, as LOCK_UN is.
+;; The platform's own way to lock a file where raw `flock` is not
+;; available; -ENOSYS where the raw syscall is used instead.
+(pub :: platformFlock (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformFlock fd op)
+  {
+    (let h (winHandleOf fd))
+    (let ovl (winOverlappedAt 4611686018427387904))
+    (if (!= (& op 8) 0)
+      (if (== (& (winUnlockFileEx h 0 1 0 ovl) 4294967295) 0)
+        {
+          (let code (& winGetLastError 4294967295))
+          (if (== code 158)
+            0
+            (winErrnoOf code))
+        }
+        0)
+      {
+        (let _ (winUnlockFileEx h 0 1 0 ovl))
+        (let flags
+          (+
+            (if (!= (& op 2) 0)
+              2
+              0)
+            (if (!= (& op 4) 0)
+              1
+              0)))
+        (if (== (& (winLockFileEx h flags 0 1 0 ovl) 4294967295) 0)
+          {
+            (let code (& winGetLastError 4294967295))
+            (if (== code 33)
+              (- 0 eAgain)
+              (winErrnoOf code))
+          }
+          0)
+      })
   })
 
 ;; unlink(path): 0, or `-errno`.
@@ -2401,9 +2542,13 @@
 ; A SOCKET is handle-sized and never 0, 1 or 2, so `winHandleOf` passes
 ; it through, and `platformClose` asks `getsockopt(SO_TYPE)` whether a
 ; handle is one before choosing `closesocket` over `CloseHandle`.
-; Sockets are made with `WSASocketW` and no WSA_FLAG_OVERLAPPED, so
-; `ReadFile` and `WriteFile`, which `IO.ax` reads and writes every
-; descriptor with, work on them synchronously. `WSAStartup` is counted
+; Sockets are made with `WSASocketW` and WSA_FLAG_OVERLAPPED, because
+; Winsock keeps a receive or send timeout (SO_RCVTIMEO, SO_SNDTIMEO)
+; only on an overlapped socket: a blocking `recv` on one made without
+; the flag waits in the kernel with no timeout to apply, and
+; `tests/stdlib/843-net-stream.ax` sat in its first timed read until
+; the runner stopped it. `recv` and `send`, which `platformReadFd` and
+; `platformWriteFd` route a socket to, block as before. `WSAStartup` is counted
 ; per call by Winsock and the process's exit undoes the count, so every
 ; `platformSocket` asks for 2.2 rather than keeping a global the
 ; language has no place for.
@@ -2577,7 +2722,7 @@
     (if (!= rc 0)
       (wsaErrnoOf rc)
       {
-        (let s (winWSASocketW family kind protocol 0 0 128))
+        (let s (winWSASocketW family kind protocol 0 0 129))
         (if (== s (- 0 1))
           wsaLastErr
           s)

@@ -351,6 +351,11 @@ connection that fails to upgrade has lost its read lock too, and its
 transaction must start again. `flock` is advisory, and on a network
 file system it may not work at all.
 
+On Windows the lock is `LockFileEx` on one byte at 2^62, past any page,
+so the mandatory byte-range lock never stops the holder's own reads and
+writes. Converting the lock releases that byte first, which is the same
+loss of the read lock the paragraph above describes.
+
 ## Limits
 
 - Pages are 4096 bytes, and a file holds at most 2^31 of them.

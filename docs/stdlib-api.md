@@ -2059,7 +2059,7 @@ Sys - portable syscall wrappers.
 
 ## `Sys.Platform`
 
-`stdlib/Sys/Platform.darwin.ax` — 215 public names
+`stdlib/Sys/Platform.darwin.ax` — 220 public names
 
 Sys.Platform - the numbers this target's kernel uses: syscall
 numbers, open and socket flags, errno values, poll and signal
@@ -2174,6 +2174,11 @@ target being compiled for (this one is `darwin`).
 | `platformOpen` | value | `(-> Int Int Int Int)` |  |  | The platform's own way to open a path where raw `open` is not available; -78 where the raw syscall is used instead. |
 | `platformClose` | value | `(-> Int Int)` |  |  | The platform's own way to close a descriptor where raw `close` is not available; -78 where the raw syscall is used instead. |
 | `platformSeek` | value | `(-> Int Int Int Int)` |  |  | The platform's own way to move a descriptor's offset where raw `lseek` is not available; -78 where the raw syscall is used instead. |
+| `platformPread` | value | `(-> Int Int Int Int Int)` |  |  | The platform's own way to read at an offset where raw `pread` is not available; -78 where the raw syscall is used instead. |
+| `platformPwrite` | value | `(-> Int Int Int Int Int)` |  |  | The platform's own way to write at an offset where raw `pwrite` is not available; -78 where the raw syscall is used instead. |
+| `platformFsync` | value | `(-> Int Int)` |  |  | The platform's own way to flush a descriptor where raw `fsync` is not available; -78 where the raw syscall is used instead. |
+| `platformFtruncate` | value | `(-> Int Int Int)` |  |  | The platform's own way to cut a file where raw `ftruncate` is not available; -78 where the raw syscall is used instead. |
+| `platformFlock` | value | `(-> Int Int Int)` |  |  | The platform's own way to lock a file where raw `flock` is not available; -78 where the raw syscall is used instead. |
 | `platformUnlink` | value | `(-> Int Int)` |  |  | The platform's own way to remove a file where raw `unlink` is not available; -78 where the raw syscall is used instead. |
 | `platformRename` | value | `(-> Int Int Int)` |  |  | The platform's own way to rename a path where raw `rename` is not available; -78 where the raw syscall is used instead. |
 | `platformMkdir` | value | `(-> Int Int Int)` |  |  | The platform's own way to make a directory where raw `mkdir` is not available; -78 where the raw syscall is used instead. |

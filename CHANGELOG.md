@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- AXQLite opens, locks and writes its database on Windows: the pager
+  reaches the file through the platform module where the target has no
+  syscall ABI (`pread`, `pwrite`, `fsync`, `ftruncate`, `flock`, open
+  and close), and a byte far past the file carries the lock. A socket's
+  read and write timeouts hold on Windows; before, a timed read on one
+  waited for ever.
+
 - On windows-x86_64 a trap's report ends with its backtrace and a
   recovery point lands with every register the Win64 ABI keeps across
   a call restored. Before, the walk after the trap's message faulted,
