@@ -16,6 +16,12 @@ its changelog too.
 
 ## Unreleased
 
+- On windows-x86_64 a trap's report ends with its backtrace and a
+  recovery point lands with every register the Win64 ABI keeps across
+  a call restored. Before, the walk after the trap's message faulted,
+  and a recovery point inside a thunk could return to its caller with
+  a register the abandoned callee had changed.
+
 - The handle table is mapped on Windows, so spawn, channel, mutex and
   token handles exist there and `parallel` reaches its thread lowering;
   before, every one of them was status 78. The Windows runner's skip

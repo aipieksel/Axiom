@@ -9892,6 +9892,34 @@
     "\"mov $0, x29\", \"=r\""
     "\"movq %rbp, $0\", \"=r\""))
 
+; The Win64 arm block: `targetRecoverArmAsm` says why it saves more
+; than the SysV one. `xmmOff` is the byte offset of the xmm6-xmm15 area
+; in the record, twenty words the arm site adds past the spawn sequence.
+(:: win64RecoverArmAsm (-> Int String))
+(fn (win64RecoverArmAsm xmmOff)
+  (concat
+    (concat
+      "\"movq %rbx, 48($0)\\0Amovq %r12, 56($0)\\0Amovq %r13, 64($0)\\0Amovq %r14, 72($0)\\0Amovq %r15, 80($0)\\0Amovq %rdi, 88($0)\\0Amovq %rsi, 96($0)\\0A"
+      (win64XmmMoves xmmOff 6 "" true))
+    (concat
+      "movq %rsp, ($0)\\0Amovq %rbp, 8($0)\\0Aleaq 1f(%rip), %rax\\0Amovq %rax, 16($0)\\0Ajmp 2f\\0A1:\\0Amovq 48(%rax), %rbx\\0Amovq 56(%rax), %r12\\0Amovq 64(%rax), %r13\\0Amovq 72(%rax), %r14\\0Amovq 80(%rax), %r15\\0Amovq 88(%rax), %rdi\\0Amovq 96(%rax), %rsi\\0A"
+      (concat (win64XmmMoves xmmOff 6 "" false)
+        "2:\", \"r,~{rax},~{rcx},~{rdx},~{r8},~{r9},~{r10},~{r11},~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{memory},~{cc}\""))))
+
+; `movups %xmmN, off($0)` for xmm6 to xmm15 when `saving`, sixteen bytes
+; apart from `off`; the landing's `movups off(%rax), %xmmN` otherwise.
+(:: win64XmmMoves (-> Int Int String Bool String))
+(fn (win64XmmMoves off n acc saving)
+  (if (> n 15)
+    acc
+    (win64XmmMoves (+ off 16) (+ n 1)
+      (concat acc
+        (if saving
+          (concat "movups %xmm" (concat (fmtInt n) (concat ", " (concat (fmtInt off) "($0)\\0A"))))
+          (concat "movups "
+            (concat (fmtInt off) (concat "(%rax), %xmm" (concat (fmtInt n) "\\0A"))))))
+      saving)))
+
 ; The setjmp half of `__axiom_recover`, per architecture, in the shape
 ; `targetSyscallAsm` uses: the `"body", "constraints"` middle of an
 ; `asm sideeffect` call, escaped and ready to sit between it and the
@@ -9939,8 +9967,8 @@
 ; about `~{cc}`: LLVM silently IGNORES an unrecognised AArch64 clobber
 ; name, and `~{x30}` is one - measured, with `_top@PAGE` parked in x30
 ; across the block and a SIGSEGV at every level above -O0.
-(pub :: targetRecoverArmAsm (-> Int String))
-(pub fn (targetRecoverArmAsm t)
+(pub :: targetRecoverArmAsm (-> Int Int String))
+(pub fn (targetRecoverArmAsm t xmmOff)
   (if (targetIsAArch64 t)
     ; ONE BODY, TWO CLOBBER LISTS, and the difference is a single
     ; register whose ABI role is not the same across the AArch64
@@ -10009,23 +10037,34 @@
           ",~{x18}"
           "")
         ",~{v0},~{v1},~{v2},~{v3},~{v4},~{v5},~{v6},~{v7},~{v8},~{v9},~{v10},~{v11},~{v12},~{v13},~{v14},~{v15},~{v16},~{v17},~{v18},~{v19},~{v20},~{v21},~{v22},~{v23},~{v24},~{v25},~{v26},~{v27},~{v28},~{v29},~{v30},~{v31},~{memory},~{cc}\""))
-    "\"movq %rbx, 48($0)\\0Amovq %r12, 56($0)\\0Amovq %r13, 64($0)\\0Amovq %r14, 72($0)\\0Amovq %r15, 80($0)\\0Amovq %rsp, ($0)\\0Amovq %rbp, 8($0)\\0Aleaq 1f(%rip), %rax\\0Amovq %rax, 16($0)\\0Ajmp 2f\\0A1:\\0Amovq 48(%rax), %rbx\\0Amovq 56(%rax), %r12\\0Amovq 64(%rax), %r13\\0Amovq 72(%rax), %r14\\0Amovq 80(%rax), %r15\\0A2:\", \"r,~{rax},~{rcx},~{rdx},~{rsi},~{rdi},~{r8},~{r9},~{r10},~{r11},~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7},~{xmm8},~{xmm9},~{xmm10},~{xmm11},~{xmm12},~{xmm13},~{xmm14},~{xmm15},~{memory},~{cc}\""))
+    (if (== t 6)
+      (win64RecoverArmAsm xmmOff)
+      "\"movq %rbx, 48($0)\\0Amovq %r12, 56($0)\\0Amovq %r13, 64($0)\\0Amovq %r14, 72($0)\\0Amovq %r15, 80($0)\\0Amovq %rsp, ($0)\\0Amovq %rbp, 8($0)\\0Aleaq 1f(%rip), %rax\\0Amovq %rax, 16($0)\\0Ajmp 2f\\0A1:\\0Amovq 48(%rax), %rbx\\0Amovq 56(%rax), %r12\\0Amovq 64(%rax), %r13\\0Amovq 72(%rax), %r14\\0Amovq 80(%rax), %r15\\0A2:\", \"r,~{rax},~{rcx},~{rdx},~{rsi},~{rdi},~{r8},~{r9},~{r10},~{r11},~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{xmm6},~{xmm7},~{xmm8},~{xmm9},~{xmm10},~{xmm11},~{xmm12},~{xmm13},~{xmm14},~{xmm15},~{memory},~{cc}\"")))
 
-; ONE x86-64 ARM SERVES THREE TARGETS, Windows included, and the
-; argument is the same accounting as above. Win64's callee-saved set is
-; rbx, rbp, rdi, rsi, r12-r15 and xmm6-xmm15 - a SUPERSET of SysV's
-; rbx, rbp, r12-r15. Every register Win64 adds to it (rdi, rsi,
-; xmm6-15) is already in the CLOBBER half here, and declaring a
-; callee-saved register clobbered is always sound: LLVM answers by
-; spilling it in the enclosing function's own prologue, which is
-; strictly more conservative than the block preserving it. The register
-; file is the same sixteen-and-sixteen, so every register is still in
-; exactly one of the three sets. What is NOT the same on Windows is the
-; stack: it is committed lazily behind a guard page, and restoring rsp
-; to a SHALLOWER address - which is all `targetRecoverJumpAsm` ever does
-; - is safe; the hazard would be the reverse, and the mechanism never
-; goes deeper. Stated here so the day someone adds a deeper restore they
-; find the sentence.
+; TWO x86-64 ARMS. SysV (linux, freebsd) and Win64 (windows) share the
+; register file and not the callee-saved set: Win64's is rbx, rbp, rdi,
+; rsi, r12-r15 AND xmm6-xmm15. The landing has to put back EVERY
+; register the ABI lets a function keep across a call, because the
+; abandoned callees' epilogues never run: the arming function's caller
+; may hold a value in rdi, rsi or xmm6 across its call; the trapping
+; callee may have saved and used that register; after the jump the
+; arming function returns to its caller with the callee's value still
+; in it. Declaring such a register clobbered at the block protects the
+; arming function's own values and nothing above it. The first Windows
+; arm did exactly that, and `tests/stdlib/560-recover-record.ax`, whose
+; `nested` arms a point inside a thunk, faulted on the Windows runner
+; (run 39414173001) where the flat cases passed. So the Win64 block
+; keeps rdi and rsi at 88 and 96, two words the x86-64 layout left
+; empty, and xmm6-xmm15 in twenty words past the spawn sequence, at the
+; byte offset the arm site passes as `xmmOff`, through `movups` because
+; that offset is a multiple of 8 and not always of 16; and its clobber
+; half is exactly the caller-saved set, rax, rcx, rdx, r8-r11 and
+; xmm0-xmm5. What is NOT the same on Windows is the stack: it is
+; committed lazily behind a guard page, and restoring rsp to a
+; SHALLOWER address - which is all `targetRecoverJumpAsm` ever does -
+; is safe; the hazard would be the reverse, and the mechanism never
+; goes deeper. Stated here so the day someone adds a deeper restore
+; they find the sentence.
 ;
 ; The longjmp half. `$0` is the record (landing in the scratch register
 ; the block above reads its restores through), `$1` the saved stack
@@ -10596,6 +10635,8 @@
         {
           (vecPush v "VirtualAlloc")
           (vecPush v "VirtualFree")
+          (if (== t 6)
+            (vecPush v "RtlCaptureStackBackTrace"))
           (vecPush v "GetStdHandle")
           (vecPush v "WriteFile")
           (vecPush v "ExitProcess")
@@ -10635,6 +10676,8 @@
     (emitLine cg "; axiom-extern-lib kernel32")
     (emitLine cg "declare dllimport i64 @VirtualAlloc(i64, i64, i64, i64) #0")
     (emitLine cg "declare dllimport i64 @VirtualFree(i64, i64, i64) #0")
+    (if (== (memGetWord cg 26) 6)
+      (emitLine cg "declare dllimport i64 @RtlCaptureStackBackTrace(i64, i64, i64, i64) #0"))
     (emitLine cg "declare dllimport i64 @GetStdHandle(i64) #0")
     (emitLine cg "declare dllimport i64 @WriteFile(i64, i64, i64, i64, i64) #0")
     (emitLine cg "declare dllimport i64 @ExitProcess(i64) #0")
@@ -15478,6 +15521,89 @@
 ; would bury the message it exists to qualify.
 (pub :: emitBtWalk (-> Int Names Int))
 (pub fn (emitBtWalk cg names)
+  (if (== (memGetWord cg 26) 6)
+    (emitBtWalkCaptured cg names)
+    (emitBtWalkFrames cg names)))
+
+; `%ma`, the entry function's address the walk stops at: through the
+; symbol table's base when the module is position-independent.
+(pub :: emitBtMainAddr (-> Int Names Int))
+(pub fn (emitBtMainAddr cg names)
+  (if (&& (btRelative cg) (symtabHas names (targetEntryName (memGetWord cg 26)) 0))
+    {
+      (emitLine cg "  %maoff = load i64, ptr @__axiom_bt_mainaddr")
+      (emitLine cg "  %mbase = ptrtoint ptr @__axiom_symtab to i64")
+      (emitLine cg "  %ma = add i64 %mbase, %maoff")
+    }
+    (emitLine cg "  %ma = load i64, ptr @__axiom_bt_mainaddr")))
+
+; windows-x86_64 keeps no frame-pointer chain to walk: llc sets rbp a
+; fixed distance above rsp for SEH, under the registers it pushed, so
+; `[rbp]` is a local and `[rbp+8]` a saved register, and the walk below
+; read both as a frame and faulted after naming a wrong one
+; (`tests/stdlib/314-out-of-memory.ax` exited 139 after its message on
+; the Windows runner, run 39414173001). The system unwinder reads the
+; `.pdata` llc emits for every function here, so this target asks it:
+; `RtlCaptureStackBackTrace` fills up to sixty-four return addresses,
+; skipping the frame that asked, and the loop names each with the same
+; `__axiom_bt_name` and stops at the same entry function. `%fpi` is the
+; array and `%lo` its count; `%hi` and `%pc` are unused, and the
+; signature stays so the two walkers are one symbol. windows-aarch64
+; keeps the chain (x29 points at the saved pair) and walks it.
+(pub :: emitBtWalkCaptured (-> Int Names Int))
+(pub fn (emitBtWalkCaptured cg names)
+  {
+    (emitLine cg "define internal void @__axiom_backtrace() #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %buf = alloca [64 x i64], align 16")
+    (emitLine cg "  %bufi = ptrtoint ptr %buf to i64")
+    (emitLine cg "  %n0 = call i64 @RtlCaptureStackBackTrace(i64 1, i64 64, i64 %bufi, i64 0)")
+    (emitLine cg "  %n = and i64 %n0, 65535")
+    (emitLine cg "  notail call void @__axiom_backtrace_from(i64 %bufi, i64 %n, i64 0, i64 0)")
+    (emitLine cg "  ret void")
+    (emitLine cg "}")
+    (emitLine cg
+      "define internal void @__axiom_backtrace_from(i64 %fpi, i64 %lo, i64 %hi, i64 %pc) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %li0 = call i64 @__axiom_lineinit()")
+    (emitLine cg "  %hp = ptrtoint ptr @__axiom_bt_hdr to i64")
+    (emitBtWrite cg "%hp" "42")
+    (emitLine cg "  br label %loop")
+    (emitLine cg "loop:")
+    (emitLine cg "  %d = phi i64 [ 0, %entry ], [ %d1, %frame ]")
+    (emitLine cg "  %deep = icmp uge i64 %d, %lo")
+    (emitLine cg "  br i1 %deep, label %done, label %read")
+    (emitLine cg "read:")
+    (emitLine cg "  %off = mul i64 %d, 8")
+    (emitLine cg "  %raa = add i64 %fpi, %off")
+    (emitLine cg "  %rap = inttoptr i64 %raa to ptr")
+    (emitLine cg "  %ra = load i64, ptr %rap")
+    (emitLine cg "  %raz = icmp eq i64 %ra, 0")
+    (emitLine cg "  br i1 %raz, label %done, label %frame")
+    (emitLine cg "frame:")
+    (emitLine cg "  %at = call i64 @__axiom_bt_name(i64 %ra)")
+    (emitBtMainAddr cg names)
+    (emitLine cg "  %ismain = icmp eq i64 %at, %ma")
+    (emitLine cg "  %ismain0 = xor i1 %ismain, true")
+    (emitLine cg "  %d1 = add i64 %d, 1")
+    (if (&& (cgThreads cg) (symtabHas names "__axiom_par_entry" 0))
+      {
+        (emitLine cg "  %pe = ptrtoint ptr @__axiom_par_entry to i64")
+        (emitLine cg "  %isentry = icmp eq i64 %at, %pe")
+        (emitLine cg "  %isentry0 = xor i1 %isentry, true")
+        (emitLine cg "  %go = and i1 %ismain0, %isentry0")
+        (emitLine cg "  br i1 %go, label %loop, label %done")
+      }
+      (emitLine cg "  br i1 %ismain0, label %loop, label %done"))
+    (emitLine cg "done:")
+    (emitLine cg "  ret void")
+    (emitLine cg "}")
+    (emitLine cg "")
+    cg
+  })
+
+(pub :: emitBtWalkFrames (-> Int Names Int))
+(pub fn (emitBtWalkFrames cg names)
   {
     (emitLine cg "define internal void @__axiom_backtrace() #0 {")
     (emitLine cg "entry:")
@@ -15532,13 +15658,7 @@
     ; printed with the same confidence as a right one. Measured at
     ; `--opt 0` before this existed: a trailing `at __axiom_user_main`
     ; under `at main`, naming a frame that is not on the stack.
-    (if (&& (btRelative cg) (symtabHas names (targetEntryName (memGetWord cg 26)) 0))
-      {
-        (emitLine cg "  %maoff = load i64, ptr @__axiom_bt_mainaddr")
-        (emitLine cg "  %mbase = ptrtoint ptr @__axiom_symtab to i64")
-        (emitLine cg "  %ma = add i64 %mbase, %maoff")
-      }
-      (emitLine cg "  %ma = load i64, ptr @__axiom_bt_mainaddr"))
+    (emitBtMainAddr cg names)
     (emitLine cg "  %ismain = icmp eq i64 %at, %ma")
     (emitLine cg "  %ismain0 = xor i1 %ismain, true")
     (emitLine cg "  %d1 = add i64 %d, 1")
@@ -22802,8 +22922,14 @@
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
       (let mark (strDup (memGetWordStr cg0 2)))
+      ; windows-x86_64 keeps xmm6-xmm15 past the spawn sequence: twenty
+      ; words more, at byte `(* 8 words)` (`targetRecoverArmAsm`).
+      (let words (+ (+ 16 (parRegistryOn cg0)) (distinctSlotCount (memGetWordVec cg0 32) 0 0)))
       (let size
-        (fmtInt (+ (+ 16 (parRegistryOn cg0)) (distinctSlotCount (memGetWordVec cg0 32) 0 0))))
+        (fmtInt
+          (if (== (memGetWord cg0 26) 6)
+            (+ words 20)
+            words)))
       (let cell (regStr (allocReg cg0)))
       (let rec (regStr (allocReg cg0)))
       (let pv (regStr (allocReg cg0)))
@@ -22844,7 +22970,8 @@
       (let _14
         (emitLine cg0
           (concat "  call void asm sideeffect "
-            (concat (targetRecoverArmAsm (memGetWord cg0 26)) (concat "(i64 " (concat rec ")"))))))
+            (concat (targetRecoverArmAsm (memGetWord cg0 26) (* 8 words))
+              (concat "(i64 " (concat rec ")"))))))
       (let _15 (emitLine cg0 (concat (concat "  " st) (concat " = load i64, ptr " p5))))
       (let _17
         (emitLine cg0 (concat (concat "  " ok) (concat " = icmp eq i64 " (concat st ", 0")))))

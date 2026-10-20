@@ -188,6 +188,9 @@ have() { # have <got> <want> <what>
 # d7465b73 and this tree with the same compiler changes no other row.
 # The REPL's declaration check adds `replCheckDecls` (Alloc,IO,Mut,
 # Unsafe), `replDiagsButDeferred` (Alloc,Mut) and the pure `replPrelude`.
+# The Windows runtime's walker and arm block add five Alloc,Mut
+# emitters: `emitBtWalkCaptured`, `emitBtWalkFrames`, `emitBtMainAddr`,
+# `win64RecoverArmAsm` and `win64XmmMoves`.
 # The full stdlib view also charges the closure factories fallibleCounting
 # (Mut to Alloc,Mut) and fallibleDefault (pure to Alloc).
 # Typed AST migration compared against 63883c3d with the same compiler:
@@ -215,7 +218,7 @@ echo "== compiler view: symbols --calls self_host/main.ax =="
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3218 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3223 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 451 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 189 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 114 "exactly Alloc"

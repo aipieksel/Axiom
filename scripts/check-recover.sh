@@ -557,11 +557,13 @@ triple_of() {
     linux-x86_64)    echo "x86_64-unknown-linux-gnu" ;;
     freebsd-x86_64)  echo "x86_64-unknown-freebsd14.0" ;;
     freebsd-aarch64) echo "aarch64-unknown-freebsd14.0" ;;
+    windows-x86_64)  echo "x86_64-pc-windows-msvc" ;;
+    windows-aarch64) echo "aarch64-pc-windows-msvc" ;;
   esac
 }
 
 acct_checked=0
-acct_targets="darwin-aarch64 darwin-x86_64 linux-aarch64 linux-x86_64 freebsd-x86_64 freebsd-aarch64"
+acct_targets="darwin-aarch64 darwin-x86_64 linux-aarch64 linux-x86_64 freebsd-x86_64 freebsd-aarch64 windows-x86_64 windows-aarch64"
 for target in $acct_targets; do
   ir="$work/acct-$target.ll"
   if ! "$axc" --target="$target" emit-llvm tests/stdlib/403-recover-div.ax -o "$ir" >/dev/null 2>&1; then
@@ -630,8 +632,8 @@ for target in $acct_targets; do
     acct_checked=$((acct_checked + 1))
   fi
 done
-if (( acct_checked != 6 )); then
-  echo "FAIL only $acct_checked of 6 targets reached the register-accounting check"
+if (( acct_checked != 8 )); then
+  echo "FAIL only $acct_checked of 8 targets reached the register-accounting check"
   status=1
 fi
 # Negative probe: remove `,~{x18}` for one aarch64 target where llc does
