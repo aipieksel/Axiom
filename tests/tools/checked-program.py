@@ -105,8 +105,8 @@ def main():
 
         for name, status in (('1033-checked-declarations.ax', 42),
                              ('1034-checked-declarations-stale.ax', 80),
-                             ('1040-checked-nested.ax', 42),
-                             ('1041-checked-nested-stale.ax', 80)):
+                             ('1035-checked-nested.ax', 42),
+                             ('1036-checked-nested-stale.ax', 80)):
             executable = work / name.removesuffix('.ax')
             build_probe(name, executable, probe_env)
             result = subprocess.run([str(executable)], cwd=work,
@@ -193,7 +193,7 @@ def main():
         assert source.count(nested_seam) == 1, 'missing nested-syntax enforcement seam'
         (control / 'checked.ax').write_text(source.replace(nested_seam, ''))
         executable = work / 'unchecked-nested-control'
-        build_probe('1041-checked-nested-stale.ax', executable, control_env)
+        build_probe('1036-checked-nested-stale.ax', executable, control_env)
         result = subprocess.run([str(executable)], cwd=work,
                                 capture_output=True, timeout=30)
         assert result.returncode == 0, (result.returncode, result.stderr)
