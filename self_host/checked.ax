@@ -1,0 +1,57 @@
+; The synchronous compilation handoff. Only a successful final check
+; constructs this sealed value; emission consumes it once. The driver
+; keeps the input syntax private and makes no edits after this check.
+; This retains existing checker facts, including their incompleteness;
+; it does not turn the word-based backend into a typed semantic IR.
+(import core)
+(import parser)
+(import typecheck)
+(import codegen)
+(import diag)
+(import Vec)
+
+(pub struct CheckedProgram sealed
+  (declarations : Nodes)
+  (functions : (Vec FnEnt))
+  (mut available : Bool))
+
+(pub struct CheckedResult
+  (diagnostics : Diags)
+  (program : (Option CheckedProgram)))
+
+; Called after import resolution, expansion and any generated bindings.
+; Neither errors nor their poisoned syntax receive an emission value.
+(pub :: checkExpandedProgram (-> Nodes Nodes Units CheckedResult))
+(pub fn (checkExpandedProgram entry declarations units)
+  {
+    (let tc (checkModuleTcTyped entry declarations units))
+    (let diagnostics (tcOutVec tc))
+    (let program
+      (if (> (countErrorDiags diagnostics) 0)
+        None
+        {
+          (wordLowerApply tc)
+          (Some
+            (CheckedProgram :declarations declarations :functions (tcFnsVec tc) :available true))
+        }))
+    (CheckedResult :diagnostics diagnostics :program program)
+  })
+
+(pub :: checkedProgramOf (-> CheckedResult CheckedProgram))
+;@axiom:pre((isSome result.program))
+(pub fn (checkedProgramOf result)
+  (match result.program
+    ((Some program) program)
+    ((None) __indexTrap)))
+
+; The type, effect and region records stay owned by the handoff while
+; the emitter uses the checked AST stamps for representation decisions.
+; Unknown effects and absent region facts retain their original status.
+(pub :: emitCheckedProgram (-> CheckedProgram Names Names Int Bool String))
+;@axiom:effect(io)
+;@axiom:pre(program.available)
+(pub fn (emitCheckedProgram program bares fulls target obscure)
+  {
+    (set program.available false)
+    (emitResolvedMode program.declarations bares fulls target obscure)
+  })

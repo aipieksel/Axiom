@@ -1,0 +1,56 @@
+; expect 42
+(import core)
+(import lexer)
+(import parser)
+(import checked)
+(import codegen)
+(import expand)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: outcome (-> String CheckedResult))
+;@axiom:effect(io)
+(fn (outcome source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units vecNew)
+    (vecPush units (as (CUnit2 :file "checked.ax" :src source :name "" :imports vecNew) Int))
+    (let bares vecNew)
+    (let fulls vecNew)
+    (let mods vecNew)
+    (let allDecls (resolveImports declarations bares fulls mods 0 "" units))
+    (let diagnostics vecNew)
+    (expandProgram declarations allDecls diagnostics vecNew units bares fulls mods)
+    (checkExpandedProgram declarations allDecls units)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let good (outcome "(:: main Int) (fn (main) 42)"))
+    (let bad (outcome "(:: main Int) (fn (main) true)"))
+    (let unknown (outcome "(:: main Int) (fn (main) missing)"))
+    (if (&& (== (countErrorDiags good.diagnostics) 0)
+          (&& (isSome good.program)
+            (&& (> (countErrorDiags bad.diagnostics) 0)
+              (&& (isNone bad.program)
+                (&& (> (countErrorDiags unknown.diagnostics) 0) (isNone unknown.program))))))
+      {
+        (let ir (emitCheckedProgram (checkedProgramOf good) vecNew vecNew 0 false))
+        (let reused
+          (__axiom_recover __axiom_arena_mark
+            (lambda (ignored)
+              {
+                (let again (emitCheckedProgram (checkedProgramOf good) vecNew vecNew 0 false))
+                (strLen again)
+              }
+            )))
+        (if (&& (isSome (strFind ir "define" 0)) (== reused 80))
+          42
+          2)
+      }
+      1)
+  })

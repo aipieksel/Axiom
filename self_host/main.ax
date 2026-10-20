@@ -20,6 +20,7 @@
 (import render)
 (import repl)
 (import typecheck)
+(import checked)
 (import expand)
 (import codegen)
 (import driver)
@@ -36,15 +37,15 @@
 (import pkg)
 (import obfuscate)
 
-(:: emitBinaryIr (-> (Vec ASTNode) Names Names Int String))
+(:: emitBinaryIr (-> CheckedProgram Names Names Int String))
 ;@axiom:effect(io)
 ;@axiom:effect(entropy)
-(fn (emitBinaryIr decls bares fulls target)
+(fn (emitBinaryIr program bares fulls target)
   {
     (let obscure (hasFlagAnywhere subcommandName "--obfuscate"))
     {
       (let phaseT (phaseNow))
-      (let ir (emitResolvedMode decls bares fulls target obscure))
+      (let ir (emitCheckedProgram program bares fulls target obscure))
       (phaseLog "emit" phaseT)
       (if obscure
         (match (obfuscateIr ir)
@@ -306,23 +307,24 @@
 ; frame(s) naming the macro, with the declaration's span and unit
 ; (macro-system.md MAC-DIAG-4). One expression, so the two call shapes
 ; below swap in without moving any parentheses around them.
-(:: checkWithFrames (-> (Vec ASTNode) (Vec ASTNode) Units Frames Diags))
+(:: checkWithFrames (-> (Vec ASTNode) (Vec ASTNode) Units Frames CheckedResult))
 (fn (checkWithFrames decls allDecls units ftbl)
   ; A warning a `;@axiom:nolint(...)` tag quiets is dropped here, for
   ; `check`, `build` and `run` alike (`nolintQuietDiags`); the
   ; language server drops the same ones, so the two agree.
   {
-    (let cds (nolintQuietDiags decls (checkModule decls allDecls units)))
+    (let checked (checkExpandedProgram decls allDecls units))
+    (let cds (nolintQuietDiags decls checked.diagnostics))
     {
       (expAttachFrames cds ftbl units)
-      cds
+      (CheckedResult :diagnostics cds :program checked.program)
     }
   })
 
 ; Binding accessors are generated from checked nominal types, then
 ; checked with the module. This preserves aliases and module identities
 ; across both the archive and the Rust file.
-(:: checkWithBindingShims (-> (Vec ASTNode) (Vec ASTNode) Units Frames Names Diags))
+(:: checkWithBindingShims (-> (Vec ASTNode) (Vec ASTNode) Units Frames Names CheckedResult))
 ;@axiom:effect(io)
 (fn (checkWithBindingShims decls allDecls units ftbl pubNames)
   (if (== (strLen (flagValue "--emit-rust-binding" 1)) 0)
@@ -334,15 +336,18 @@
         {
           (expAttachFrames ds ftbl units)
           (if (> (countErrorDiags ds) 0)
-            ds
+            (CheckedResult :diagnostics ds :program None)
             {
               (let collision (rbCollisionName decls pubNames))
               (if (> (strLen collision) 0)
-                (vecPush ds
-                  (mkDiag SEV_ERROR "AX3006" "duplicate-definition" 0
-                    (concat "generated Rust accessor names collide for `" (concat collision "`")) 0
-                    0
-                    "rename one of the source types so its generated accessor names are distinct"))
+                {
+                  (vecPush ds
+                    (mkDiag SEV_ERROR "AX3006" "duplicate-definition" 0
+                      (concat "generated Rust accessor names collide for `" (concat collision "`"))
+                      0 0
+                      "rename one of the source types so its generated accessor names are distinct"))
+                  (CheckedResult :diagnostics ds :program None)
+                }
                 {
                   (let first (vecLen decls))
                   {
@@ -494,7 +499,7 @@
     }
   })
 
-(:: timedCheck (-> Nodes Nodes Units Frames Names Diags))
+(:: timedCheck (-> Nodes Nodes Units Frames Names CheckedResult))
 ;@axiom:effect(io)
 (fn (timedCheck decls allDecls units ftbl pubNames)
   {
@@ -725,9 +730,8 @@
                           ; does; the AXDL gate never saw it because its
                           ; grep keeps only `^[EWNH] ` lines.
                           {
-                            (let ds
-                              (orderDiags
-                                (expMergeInto eds (timedCheck decls allDecls units ftbl pubFns))))
+                            (let checked (timedCheck decls allDecls units ftbl pubFns))
+                            (let ds (orderDiags (expMergeInto eds checked.diagnostics)))
                             {
                               (if (> (vecLen ds) 0)
                                 (writeStderrStr (renderDiagsFormat dfmt ds units)))
@@ -859,7 +863,9 @@
                                                   }
                                                   units)))
                                             (refuseDeviceIr
-                                              (emitBinaryIr allDecls bares fulls tcode) dfmt units)
+                                              (emitBinaryIr (checkedProgramOf checked) bares fulls
+                                                tcode)
+                                              dfmt units)
                                           })
                                         {
                                           (if (&& (== needMain 0)

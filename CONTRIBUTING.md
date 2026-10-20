@@ -82,6 +82,7 @@ axiom/
 │   ├── namespace.ax      how a bare name reaches a declaration, and what `pub` lets out
 │   ├── expand.ax         macro expansion, hygiene, expansion diagnostics
 │   ├── typecheck.ax      name resolution, types, effects, AXTAG validation
+│   ├── checked.ax        sealed final-check handoff for synchronous CLI emission
 │   ├── codegen.ax        import resolution, name mangling, LLVM text emission
 │   ├── diag.ax           diagnostics, AXDL and JSON rendering, source maps
 │   ├── render.ax         the human diagnostic renderer
@@ -139,6 +140,8 @@ The shape is a DAG rather than a chain:
 - `codegen` reads `parser`, `namespace` and `expand`, and never
   `typecheck`. Emission reads the AST and the mangled namespace, not
   the checker's judgements.
+- `checked` reads `typecheck` and `codegen`. The CLI hands its final
+  successful check to emission through a sealed `CheckedProgram`.
 - `driver` reads `parser` and `codegen`. `main` imports what the
   command line needs, and reaches `namespace` through `expand` and
   `codegen`. `mireval` stays outside that set.

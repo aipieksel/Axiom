@@ -5552,6 +5552,56 @@
 ; blaming the toolchain. The clean AX3023 is this function's job.
 (pub :: findFnEnt (-> Int String Int))
 (pub fn (findFnEnt tc name)
+  (resolveSignatureEntry tc (findFnEntDeclared tc name)))
+
+; A signature without a local definition describes an imported function.
+; It must resolve to that function's entry, including its effects, arity,
+; ownership facts and unsafe role, rather than an empty signature entry.
+(:: signatureEntryOnly (-> Int Bool))
+(fn (signatureEntryOnly ent)
+  (if (== ent 0)
+    false
+    (&& (< (memGetWord ent 2) 0) (&& (== (memGetWord ent 3) 0) (== (memGetWord ent 4) 0)))))
+
+(:: resolveSignatureEntry (-> Int Int Int))
+(fn (resolveSignatureEntry tc ent)
+  (if (! (signatureEntryOnly ent))
+    ent
+    {
+      (let name (bareOf (memGetWordStr ent 0)))
+      (let bucket
+        (if (== (memGetWord tc 26) 0)
+          (tcFnsVec tc)
+          {
+            (let buckets (memGetWordVec tc 26))
+            (vecGetVec buckets (% (fnIdxHash name) (vecLen buckets)))
+          }))
+      (signatureDefinitionIn tc bucket name 0 ent)
+    }))
+
+(:: signatureDefinitionIn (-> Int Ints String Int Int Int))
+(fn (signatureDefinitionIn tc entries name i fallback)
+  (if (|| (== (as entries Int) 0) (>= i (vecLen entries)))
+    fallback
+    {
+      (let candidate (vecGet entries i))
+      (if (&& (! (signatureEntryOnly candidate))
+            (&& (== (nameMatches (memGetWordStr candidate 0) name) 1)
+              (&&
+                (==
+                  (fnEntOutOfModuleScope tc (memGetWord tc 16) (memGetWordStr candidate 0)
+                    candidate)
+                  0)
+                (==
+                  (privBlocks (memGetWordVec tc 27) (memGetWordStr candidate 0)
+                    (memGetWordStr tc 16))
+                  0))))
+        candidate
+        (signatureDefinitionIn tc entries name (+ i 1) fallback))
+    }))
+
+(:: findFnEntDeclared (-> Int String Int))
+(fn (findFnEntDeclared tc name)
   {
     (let m (memGetWord tc 16))
     {
@@ -7032,6 +7082,10 @@
 
 (pub :: emitWordSealedRead (-> Int Int String Int Int))
 (pub fn (emitWordSealedRead tc ent field span)
+  (emitWordSealedAccess tc ent field span "read"))
+
+(:: emitWordSealedAccess (-> Int Int String Int String Int))
+(fn (emitWordSealedAccess tc ent field span operation)
   (if (== span 0)
     0
     {
@@ -7042,7 +7096,8 @@
               (concat
                 (concat
                   (concat
-                    (concat (concat "only module `" (wordEntModuleName ent)) "` can read field `")
+                    (concat (concat "only module `" (wordEntModuleName ent))
+                      (concat "` can " (concat operation " field `")))
                     field)
                   "` of `")
                 (memGetWordStr ent 0))
@@ -7055,7 +7110,7 @@
             (if (!= (& (memGetWord ent 4) 1) 0)
               "a word struct is sealed: what its word means is its module's business, and code that read it could hand the same word to something else (docs/memory-model.md MM-VAL-10a)"
               "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
-          "read outside its module"))
+          (concat operation " outside its module")))
       0
     }))
 
@@ -11180,7 +11235,10 @@
           (|| (! (== (ownCtor tc name) 0))
             (if (== (memGetWord tc 16) 0)
               false
-              (!= (fnEntQual tc (memGetWordStr tc 16) name) 0))))
+              {
+                (let local (fnEntQual tc (memGetWordStr tc 16) name))
+                (&& (!= local 0) (! (signatureEntryOnly local)))
+              })))
       0
       (if (< (vecLen mods) 2)
         0
@@ -21417,59 +21475,62 @@
       (if (== (nodeTag baseTy) TAG_T_CON)
         {
           (let ent (findStruct tc (nodeAName baseTy)))
-          {
-            (let fty
-              (if (== ent 0)
-                nilNode
-                (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))))
-            (if (! (nodeSame fty nilNode))
-              ; Field found: the VALUE is checked, against the
-              ; field's type. On a miss the value is NEVER checked
-              ; - stage0's rule, probed; its diagnostics are lost.
-              ; The store is stamped as the read is - the write
-              ; path was the worse half of the by-name defect:
-              ; `(set q.tag 123)` stored an integer over a live
-              ; String pointer when `P` declared `tag` first.
-              ; A pending value grounds against the field's
-              ; declared arrow, is inferred standalone into a
-              ; variable field, or is refused into any other
-              ; ground field: the compatibility below is lenient
-              ; to pending nodes, so without this a function
-              ; stored into any field would pass in silence
-              ; with its body unchecked.
-              {
-                (let vty
-                  {
-                    (let vty1 (checkExprH tc (nodeCChild e) 0))
-                    (if (== (isPendingNode vty1) 1)
-                      (if (== (nodeTag fty) TAG_T_ARR)
-                        (groundArgByDecl tc vty1 fty (spanOf (nodeCChild e)))
-                        (if (== (nodeTag fty) TAG_T_VAR)
-                          (groundStandalone tc vty1 (spanOf (nodeCChild e)))
-                          {
-                            (refusePendingOperand tc vty1 (tyRender fty) (spanOf (nodeCChild e)))
-                            vty1
-                          }))
-                      vty1)
-                  })
+          (if (== (wordSealedHere tc (findStructAnyVis tc (nodeAName baseTy))) 1)
+            (emitWordSealedAccess tc (findStructAnyVis tc (nodeAName baseTy)) (nodeBName e)
+              (nodeSpan e) "write")
+            {
+              (let fty
+                (if (== ent 0)
+                  nilNode
+                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))))
+              (if (! (nodeSame fty nilNode))
+                ; Field found: the VALUE is checked, against the
+                ; field's type. On a miss the value is NEVER checked
+                ; - stage0's rule, probed; its diagnostics are lost.
+                ; The store is stamped as the read is - the write
+                ; path was the worse half of the by-name defect:
+                ; `(set q.tag 123)` stored an integer over a live
+                ; String pointer when `P` declared `tag` first.
+                ; A pending value grounds against the field's
+                ; declared arrow, is inferred standalone into a
+                ; variable field, or is refused into any other
+                ; ground field: the compatibility below is lenient
+                ; to pending nodes, so without this a function
+                ; stored into any field would pass in silence
+                ; with its body unchecked.
                 {
-                  (stampFieldStruct e ent)
-                  ; `(set a.b v)` inside a `region` is a store into
-                  ; `a`; the same rule as `checkSet`'s (AX3059).
-                  (rgCheckFieldStore tc (nodeAChild e) vty (nodeSpan e))
-                  ; The MUTABILITY refusal runs beside the type
-                  ; check, not instead of it: a write to an
-                  ; immutable field with the wrong type is two
-                  ; mistakes and reporting one hides the other.
-                  (if (== (structFieldMut ent (nodeBName e)) 0)
-                    (emitSetImmutableField (nodeBName e) (nodeAName baseTy) (tyRender fty)
-                      (nodeSpan e) tc))
-                  (if (== (tyCompat tc vty fty) 0)
-                    (emitMismatchTy tc fty vty (spanOf (nodeCChild e))))
+                  (let vty
+                    {
+                      (let vty1 (checkExprH tc (nodeCChild e) 0))
+                      (if (== (isPendingNode vty1) 1)
+                        (if (== (nodeTag fty) TAG_T_ARR)
+                          (groundArgByDecl tc vty1 fty (spanOf (nodeCChild e)))
+                          (if (== (nodeTag fty) TAG_T_VAR)
+                            (groundStandalone tc vty1 (spanOf (nodeCChild e)))
+                            {
+                              (refusePendingOperand tc vty1 (tyRender fty) (spanOf (nodeCChild e)))
+                              vty1
+                            }))
+                        vty1)
+                    })
+                  {
+                    (stampFieldStruct e ent)
+                    ; `(set a.b v)` inside a `region` is a store into
+                    ; `a`; the same rule as `checkSet`'s (AX3059).
+                    (rgCheckFieldStore tc (nodeAChild e) vty (nodeSpan e))
+                    ; The MUTABILITY refusal runs beside the type
+                    ; check, not instead of it: a write to an
+                    ; immutable field with the wrong type is two
+                    ; mistakes and reporting one hides the other.
+                    (if (== (structFieldMut ent (nodeBName e)) 0)
+                      (emitSetImmutableField (nodeBName e) (nodeAName baseTy) (tyRender fty)
+                        (nodeSpan e) tc))
+                    (if (== (tyCompat tc vty fty) 0)
+                      (emitMismatchTy tc fty vty (spanOf (nodeCChild e))))
+                  }
                 }
-              }
-              (emitFieldNotFound tc (nodeBName e) (nodeAName baseTy) (nodeSpan e)))
-          }
+                (emitFieldNotFound tc (nodeBName e) (nodeAName baseTy) (nodeSpan e)))
+            })
         }
         ; A pending base would render its raw node as the "found"
         ; type below; name the shape instead (same expectation).
@@ -24243,6 +24304,7 @@
             (if (== tag TAG_D_SIG)
               {
                 (refuseReservedBinder tc (nodeAName d) (nodeSpan d) 1)
+                (checkImportedSignature tc d)
                 (pushScope (tcScopeVec tc) (nodeAText d) 0 (nodeSpan d)
                   (if (== (nodeTy d) 0)
                     mkSilentWild
@@ -24299,6 +24361,53 @@
           (tcWalkDecls tc (+ i 1))
         }
       })
+  })
+
+; Redeclarations may rename type parameters, but cannot alter a callee's
+; signature. Both type trees use the same rigid names in first-use order;
+; repeated variables therefore remain repeated, rather than unifying away.
+(:: signatureCanonicalType (-> Int ASTNode ASTNode))
+(fn (signatureCanonicalType tc ty)
+  {
+    (let names vecNew)
+    (sigTyVarsInto ty names)
+    (let env vecNew)
+    (let mut i 0)
+    (while (< i (vecLen names))
+      {
+        (vecPush env
+          (TypeBinding :name (vecGet names i) :ty (mkTVar (concat "signaturevar" (fmtInt i)))))
+        (set i (+ i 1))
+      })
+    (tyInstIn tc ty env)
+  })
+
+(:: checkImportedSignature (-> Int ASTNode Int))
+(fn (checkImportedSignature tc d)
+  {
+    (let declared (fnEntExact tc (nodeAName d)))
+    (if (signatureEntryOnly declared)
+      {
+        (let saved (memGetWord tc 16))
+        (memSetWord tc 16 (nodeModule d))
+        (let definition (resolveSignatureEntry tc declared))
+        (if (!= definition declared)
+          {
+            (let ambiguous (checkAmbiguous tc (bareOf (nodeAName d)) (nodeSpan d)))
+            (if (== ambiguous 0)
+              {
+                (let expected (readAstNode definition 1))
+                (let actual (nodeTyChild d))
+                (if (==
+                      (tyCompat tc (signatureCanonicalType tc expected)
+                        (signatureCanonicalType tc actual))
+                      0)
+                  (emitMismatchTy tc expected actual (nodeSpan d)))
+              })
+          })
+        (memSetWord tc 16 saved)
+      })
+    0
   })
 
 ; Every AXTAG belonging to one function.

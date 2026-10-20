@@ -1628,5 +1628,10 @@ fi
 echo
 passed="$(grep -c '^ok$' "$verdicts" || true)"
 failed="$(grep -c '^bad$' "$verdicts" || true)"
+if python3 "$repo_root/tests/tools/checked-program.py" "$s1"; then
+  passed=$((passed + 1))
+else
+  failed=$((failed + 1))
+fi
 echo "$passed passed, $failed failed"
 [[ "$failed" == 0 ]]

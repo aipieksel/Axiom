@@ -16,6 +16,20 @@ its changelog too.
 
 ## Unreleased
 
+- Imported signature redeclarations retain their implementation's type
+  and effects. Refuse incompatible types and ambiguous imports. Tested by
+  `tests/diagnostics/1468-imported-signature-boundary.ax` and
+  `tests/selfhost/1032-imported-signatures.ax`.
+
+- The synchronous CLI hands a successful final check to emission through
+  a sealed, single-use `CheckedProgram`, retaining the existing function
+  types, effect rows and region facts. Failed checks preserve previous
+  output files. Tested by `tests/tools/checked-program.py`.
+
+- Refuse writes to sealed fields outside their declaring module, using
+  the same access boundary as field reads. Tested by
+  `tests/diagnostics/1467-checked-program-boundary.ax`.
+
 - Windows: the standard library reaches files, directories and child
   processes through kernel32 (`stdlib/Sys/Platform.windows.ax`), and a
   compiler built for `windows-x86_64` runs on Windows and builds
