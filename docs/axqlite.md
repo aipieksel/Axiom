@@ -281,7 +281,10 @@ inserted.
 ## Query
 
 A `SELECT` reads one table, and through its links the rows they point
-at. It can filter, sort, group and work out values:
+at. Follow a chain with `author.team.name`; the form is
+`(link (link author team) name)`. A missing row's columns read as NULL.
+
+A `SELECT` can filter, sort, group and work out values:
 
 ```text
 SELECT name, team.name AS team FROM players WHERE name LIKE 'A%' ORDER BY goals DESC LIMIT 10

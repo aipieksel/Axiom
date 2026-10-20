@@ -1,0 +1,194 @@
+# Every path follows its finite list of links, including self-links.
+# Expected rows are calculated from these small tables by hand.
+statement ok
+CREATE TABLE countries (id INTEGER PRIMARY KEY, name TEXT)
+
+statement ok
+CREATE TABLE teams (id INTEGER PRIMARY KEY, title TEXT, country LINK countries)
+
+statement ok
+CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, team LINK teams, boss LINK people)
+
+statement ok
+CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, author LINK people, editor LINK people)
+
+statement ok
+INSERT INTO countries VALUES (1, 'UK'), (2, 'NZ')
+
+statement ok
+INSERT INTO teams VALUES (10, 'Research', 1), (20, 'Arts', 2), (30, 'Other', 1)
+
+statement ok
+INSERT INTO people VALUES (1, 'Ada', 10, NULL), (2, 'Bea', 20, 1), (3, 'Cy', NULL, 2), (4, 'Di', 30, 2)
+
+statement ok
+INSERT INTO books VALUES (101, 'One', 1, 2), (102, 'Two', 2, NULL), (103, 'Three', 3, 1), (104, 'Four', NULL, 3)
+
+query
+SELECT title, author.team.country.name, editor.team.country.name FROM books ORDER BY id
+----
+'One','UK','NZ'
+'Two','NZ',NULL
+'Three',NULL,'UK'
+'Four',NULL,NULL
+
+query
+SELECT author.team.* FROM books ORDER BY id
+----
+10,'Research',1
+20,'Arts',2
+NULL,NULL,NULL
+NULL,NULL,NULL
+
+query
+SELECT author.team.country.*, author.team.rowid, author.team.country.rowid FROM books WHERE id = 101
+----
+1,'UK',10,1
+
+query
+SELECT title, author.boss.team.country.name FROM books ORDER BY id
+----
+'One',NULL
+'Two','UK'
+'Three','NZ'
+'Four',NULL
+
+query
+SELECT AUTHOR.Team.country.name, author.team.COUNTRY.name FROM books WHERE id = 101
+----
+'UK','UK'
+
+query
+SELECT title FROM books WHERE author.team.country.name IN ('UK', 'NZ') ORDER BY author.team.country.name
+----
+'Two'
+'One'
+
+query
+SELECT author.team.country.name, count(*) FROM books GROUP BY author.team.country.name HAVING count(*) > 1
+----
+NULL,2
+
+query
+SELECT coalesce(author.team.country.name, 'none') FROM books WHERE id = 104
+----
+'none'
+
+statement error axqSchema no such column: missing in teams
+SELECT author.team.missing FROM books
+
+statement error axqSchema no such column: missing in people
+SELECT author.missing.name FROM books
+
+statement error axqSchema name isn't a LINK column
+SELECT author.name.bad FROM books
+
+statement error axqSchema belongs in a SELECT list
+SELECT title FROM books WHERE author.team.* IS NULL
+
+statement error axqSchema SET can't read through a link
+UPDATE books SET title = author.team.country.name
+
+statement ok
+UPDATE books SET title = 'Changed' WHERE author.team.country.name = 'NZ'
+
+query
+SELECT title FROM books WHERE id = 102
+----
+'Changed'
+
+statement ok
+DELETE FROM books WHERE editor.team.country.name = 'UK'
+
+query
+SELECT id FROM books ORDER BY id
+----
+101
+102
+104
+
+statement ok
+CREATE TABLE quoted ("to.person" LINK people)
+
+statement ok
+INSERT INTO quoted VALUES (1)
+
+query
+SELECT "to.person".team.country.name FROM quoted
+----
+'UK'
+
+statement ok
+CREATE TABLE dotted (id INTEGER PRIMARY KEY, "value.name" TEXT, "next.link" LINK dotted)
+
+statement ok
+INSERT INTO dotted VALUES (1, 'first', 2), (2, 'second', 1)
+
+query
+SELECT "next.link"."next.link"."value.name" FROM dotted ORDER BY id
+----
+'first'
+'second'
+
+query
+SELECT "next.link"."next.link".* FROM dotted WHERE id = 1
+----
+1,'first',2
+
+statement ok
+DELETE FROM teams WHERE id = 20
+
+query
+SELECT author.team.rowid, author.team.title, author.team.country.rowid, author.team.country.name FROM books WHERE id = 102
+----
+20,NULL,NULL,NULL
+
+statement ok
+DELETE FROM people WHERE id = 2
+
+query
+SELECT author.rowid, author.team.rowid, author.team.country.name FROM books WHERE id = 102
+----
+2,NULL,NULL
+
+query
+SELECT name, boss.boss.team.country.name FROM people WHERE id = 4
+----
+'Di',NULL
+
+statement ok
+UPDATE people SET boss = id
+
+query
+SELECT boss.boss.boss.team.country.name FROM people WHERE id = 1
+----
+'UK'
+
+
+statement ok
+CREATE TABLE star_targets (id INTEGER PRIMARY KEY, "*" TEXT)
+
+statement ok
+CREATE TABLE star_links (id INTEGER PRIMARY KEY, "*" LINK star_targets)
+
+statement ok
+CREATE TABLE star_base (via LINK star_links)
+
+statement ok
+INSERT INTO star_targets VALUES (1, 'literal star')
+
+statement ok
+INSERT INTO star_links VALUES (2, 1)
+
+statement ok
+INSERT INTO star_base VALUES (2)
+
+query
+SELECT via."*"."*", via."*".* FROM star_base
+----
+'literal star',1,'literal star'
+
+query
+SELECT "*"."*", "*".* FROM star_links
+----
+'literal star',1,'literal star'

@@ -303,7 +303,7 @@
 (fn (kwWhere)
   132)
 
-;; How deep parentheses may nest in one expression. The parser is
+;; How deep parentheses and link paths may nest in one expression. The parser is
 ;; recursive, so this is a stack budget: a deeper expression is a
 ;; refusal rather than a crash.
 (pub :: axqlMaxDepth Int)
@@ -1346,16 +1346,9 @@
             (parseCall p t)
             (if (== (peekKind p) tkDot)
               {
-                (advance p)
-                (if (== (peekKind p) tkStar)
-                  {
-                    (advance p)
-                    (Ok (ELink t.text "*" t.start))
-                  }
-                  {
-                    (let f (parseName p "a column of the linked table")?)
-                    (Ok (ELink t.text f t.start))
-                  })
+                (let links vecNew)
+                (vecPush links t.text)
+                (parseLinkPath p links t.start)
               }
               (Ok (EName t.text t.start))))
         }
@@ -1378,6 +1371,38 @@
           })
       (expected p "an expression"))
   })
+
+; Keep every identifier separately: a quoted name may itself contain a
+; dot. Each recursive step consumes one dot and one name, with the same
+; stack budget as a parenthesised expression.
+(:: parseLinkPath (-> Ps (Vec String) Int (Result Expr Error)))
+(fn (parseLinkPath p links at)
+  (if (> (+ p.depth (vecLen links)) axqlMaxDepth)
+    (failHere p (concat "link paths and parentheses nested deeper than " (fmtInt axqlMaxDepth)))
+    {
+      (advance p)
+      (let spread (== (peekKind p) tkStar))
+      (let c
+        (if spread
+          {
+            (advance p)
+            (Ok "*")
+          }
+          (parseName p "a column of the linked table"))?)
+      (if (&& (! spread) (== (peekKind p) tkDot))
+        {
+          (vecPush links c)
+          (parseLinkPath p links at)
+        }
+        (Ok
+          (if (&& (== (vecLen links) 1) (|| spread (! (strEq c "*"))))
+            (ELink (vecGet links 0) c at)
+            (EPath links
+              (if spread
+                None
+                (Some c))
+              at))))
+    }))
 
 ; The aggregate a name spells, or 0.
 (:: aggKindOf (-> String Int))

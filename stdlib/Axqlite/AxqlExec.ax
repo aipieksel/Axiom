@@ -35,9 +35,9 @@
 ; (`prepareRules`). When `ex.logging` is true, each change is recorded
 ; so a failed statement can be undone inside an explicit transaction.
 ;
-; Links: a TableDef carries its LINK columns' target tables. A path
-; `link.column` binds to a column past the table's own, in a row
-; widened with each linked row (`widenRow`), and only the links a
+; Links: a TableDef carries its LINK columns' target tables. Link
+; paths bind to columns past the table's own, in a row widened with
+; each requested prefix (`widenRow`), and only the links a
 ; statement reads are fetched. A link to no row widens as NULLs.
 ;
 ; Grouping: a SELECT with GROUP BY, HAVING or an aggregate is planned by
@@ -309,6 +309,7 @@
       }
     )
     ((ELink l c at) (bindLink ex t l c at))
+    ((EPath links c at) (bindPath ex t links c at))
     (_ (Ok e))))
 
 (:: bindAll (-> Exec (Option TableDef) (Vec Expr) (Result (Vec Expr) Error)))
@@ -443,6 +444,153 @@
       }
     )))
 
+; Follow the requested finite path, adding each missing prefix to the
+; row layout when the schema is available. A later step reads its link
+; value from the earlier step's columns. This avoids expanding an entire
+; schema graph, which may contain cycles.
+(:: pathLink (-> Exec (Option Schema) TableDef (Vec String) Int (Result Int Error)))
+(fn (pathLink ex schema t links at)
+  {
+    (let mut target t)
+    (let mut base 0)
+    (let mut last -1)
+    (let mut failure None)
+    (for name in links
+      (if (isNone failure)
+        (match (pathStep ex schema t target base name at)
+          ((Err e)
+            (set failure (Some e))
+          )
+          ((Ok k)
+            {
+              (let ld (vecGet t.links k))
+              (set target ld.target)
+              (set base (linkBase t k))
+              (set last k)
+            }
+          ))))
+    (match failure
+      ((Some e) (Err e))
+      ((None)
+        (if (< last 0)
+          (axqErr axqSchema (atPos ex at "a link path needs at least one LINK column") "axqlBind")
+          (Ok last))
+      ))
+  })
+
+(:: pathStep (-> Exec (Option Schema) TableDef TableDef Int String Int (Result Int Error)))
+(fn (pathStep ex schema t target base name at)
+  {
+    (let ci (axqlColumnIndex target.cols name))
+    (if (< ci 0)
+      (axqErr axqSchema
+        (atPos ex at
+          (concat (concat (concat "no such column: " name) (concat " in " target.name))
+            (columnHint target name)))
+        "axqlBind")
+      {
+        (let c (vecGet target.cols ci))
+        (if (strIsEmpty c.link)
+          (axqErr axqSchema
+            (atPos ex at (concat name " isn't a LINK column, so the path has no row to read"))
+            "axqlBind")
+          (match (linkNumber t (+ base ci))
+            ((Some k) (Ok k))
+            ((None)
+              (match schema
+                ((None) (axqErr axqSchema "the link path wasn't planned" "axqlBind"))
+                ((Some sc)
+                  {
+                    (let next (axqlBareTableDef sc c.link)?)
+                    (let k (vecLen t.links))
+                    (vecPush t.links (LinkDef :col (+ base ci) :target next))
+                    (Ok k)
+                  }
+                ))
+            )))
+      })
+  })
+
+(:: bindPath (-> Exec (Option TableDef) (Vec String) (Option String) Int (Result Expr Error)))
+(fn (bindPath ex t links column at)
+  (match t
+    ((None) (axqErr axqSchema (atPos ex at "a link path needs a table to read") "axqlBind"))
+    ((Some td)
+      {
+        (let k (pathLink ex None td links at)?)
+        (let ld (vecGet td.links k))
+        (let target ld.target)
+        (match column
+          ((None)
+            (axqErr axqSchema (atPos ex at "a link path ending in .* belongs in a SELECT list")
+              "axqlBind")
+          )
+          ((Some c)
+            {
+              (let ci (axqlColumnIndex target.cols c))
+              (if (>= ci 0)
+                (Ok (ECol (+ (linkBase td k) ci)))
+                (if (axqlNameEq c "rowid")
+                  (Ok (ECol ld.col))
+                  (axqErr axqSchema
+                    (atPos ex at
+                      (concat (concat (concat "no such column: " c) (concat " in " target.name))
+                        (columnHint target c)))
+                    "axqlBind")))
+            }
+          ))
+      }
+    )))
+
+; Materialise only the prefixes this expression asks for, before binding
+; or checking types. Their column numbers then remain stable.
+(:: extendExprPaths (-> Exec Schema TableDef Expr (Result Int Error)))
+(fn (extendExprPaths ex schema t e)
+  {
+    (let _
+      (match e
+        ((EPath links _ at) (pathLink ex (Some schema) t links at))
+        (_ (Ok 0)))?)
+    (extendPaths ex schema t (axqlChildren e))
+  })
+
+(:: extendPaths (-> Exec Schema TableDef (Vec Expr) (Result Int Error)))
+(fn (extendPaths ex schema t es)
+  {
+    (let mut failure None)
+    (for e in es
+      (if (isNone failure)
+        (match (extendExprPaths ex schema t e)
+          ((Err er)
+            (set failure (Some er))
+          )
+          ((Ok _) ()))))
+    (match failure
+      ((Some er) (Err er))
+      ((None) (Ok 0)))
+  })
+
+(:: extendWherePaths (-> Exec Schema TableDef (Option Expr) (Result Int Error)))
+(fn (extendWherePaths ex schema t w)
+  (match w
+    ((None) (Ok 0))
+    ((Some e) (extendExprPaths ex schema t e))))
+
+(:: extendSelectPaths (-> Exec Schema TableDef Select (Result Int Error)))
+(fn (extendSelectPaths ex schema t sel)
+  {
+    (let es vecNew)
+    (for item in sel.items
+      (vecPush es item.expr))
+    (for e in sel.groupBy
+      (vecPush es e))
+    (for term in sel.orderBy
+      (vecPush es term.expr))
+    (let _ (extendPaths ex schema t es)?)
+    (let _ (extendWherePaths ex schema t sel.where)?)
+    (extendWherePaths ex schema t sel.having)
+  })
+
 ; A widened row's column types: the table's, then each link's.
 (:: widenedTypes (-> TableDef (Vec Int)))
 (fn (widenedTypes t)
@@ -480,6 +628,24 @@
                 (set used true)))
             (vecPush out used)
           }
+        })
+      (let mut k (- (vecLen t.links) 1))
+      (while (>= k 0)
+        {
+          (let ld (vecGet t.links k))
+          (if (&& (vecGet out k) (>= ld.col (vecLen t.cols)))
+            {
+              (let mut lo (vecLen t.cols))
+              (for (parent j) in t.links
+                {
+                  (let pt parent.target)
+                  (let hi (+ lo (vecLen pt.cols)))
+                  (if (&& (< j k) (&& (>= ld.col lo) (< ld.col hi)))
+                    (vecSet out j true))
+                  (set lo hi)
+                })
+            })
+          (set k (- k 1))
         })
       out
     }
@@ -533,7 +699,7 @@
                 {
                   (let tgt ld.target)
                   (match (if (vecGet used k)
-                    (fetchLinked ex ld (vecGet r.values ld.col))
+                    (fetchLinked ex ld (vecGet out ld.col))
                     (Ok None))
                     ((Ok got)
                       (match got
@@ -638,6 +804,7 @@
     ((ELike x _ _ at) at)
     ((EIn x _ _ at) at)
     ((ELink _ _ at) at)
+    ((EPath _ _ at) at)
     (_ -1)))
 
 ; The static type of a bound expression.
@@ -1348,6 +1515,10 @@
         (match (axqlTableDef schema sel.from)
           ((Err er) (Err er))
           ((Ok td) (Ok (Some td)))))?)
+    (let _
+      (match t
+        ((None) (Ok 0))
+        ((Some td) (extendSelectPaths ex schema td sel)))?)
     (if (selectIsGrouped sel)
       (planGrouped ex t sel)
       {
@@ -1458,6 +1629,11 @@
         (spreadLink ex t l at names exprs)
         (addPrepared ex t item allowAgg names exprs))
     )
+    ((EPath links c at)
+      (if (isNone c)
+        (spreadPath ex t links at names exprs)
+        (addPrepared ex t item allowAgg names exprs))
+    )
     (_ (addPrepared ex t item allowAgg names exprs))))
 
 (:: addPrepared
@@ -1512,6 +1688,29 @@
                 }
               }
             )))
+      }
+    )))
+
+(:: spreadPath
+  (-> Exec (Option TableDef) (Vec String) Int (Vec String) (Vec Expr) (Result Int Error)))
+(fn (spreadPath ex t links at names exprs)
+  (match t
+    ((None) (axqErr axqSchema "a link path needs a table to read" "axqlPlan"))
+    ((Some td)
+      {
+        (let k (pathLink ex None td links at)?)
+        (let ld (vecGet td.links k))
+        (let target ld.target)
+        (let base (linkBase td k))
+        (let mut prefix "")
+        (for name in links
+          (set prefix (concat prefix (concat name "."))))
+        (for (c j) in target.cols
+          {
+            (vecPush names (concat prefix c.name))
+            (vecPush exprs (ECol (+ base j)))
+          })
+        (Ok 0)
       }
     )))
 
@@ -1621,9 +1820,9 @@
                   (let tgt ld.target)
                   (if (&& (>= ci lo) (< ci (+ lo (vecLen tgt.cols))))
                     {
-                      (let lc (vecGet td.cols ld.col))
+                      (let prefix (colLabel (Some td) ld.col))
                       (let c (vecGet tgt.cols (- ci lo)))
-                      (set label (concat (concat lc.name ".") c.name))
+                      (set label (concat (concat prefix ".") c.name))
                     }
                     label)
                 })
@@ -2829,7 +3028,7 @@
     (let mut failure None)
     {
       (for ld in t.links
-        (if (! (isSome failure))
+        (if (&& (isNone failure) (< ld.col (vecLen t.cols)))
           (match (vecGet values ld.col)
             ((VInt n)
               {
@@ -3521,6 +3720,7 @@
 (fn (runDelete ex schema table w)
   {
     (let t (axqlTableDef schema table)?)
+    (let _ (extendWherePaths ex schema t w)?)
     (let rows (collectMatches ex t w)?)
     (deleteRows ex t rows 0)
   })
@@ -3651,6 +3851,8 @@
 (fn (runUpdate ex schema table names exprs w)
   {
     (let t (axqlTableDef schema table)?)
+    (let _ (extendPaths ex schema t exprs)?)
+    (let _ (extendWherePaths ex schema t w)?)
     (let sets (prepareSets ex t names exprs)?)
     (let rules (prepareRules ex t)?)
     (let rows (collectMatches ex t w)?)
@@ -4918,6 +5120,10 @@
             (match (axqlTableDef schema sel.from)
               ((Err er) (Err er))
               ((Ok td) (Ok (Some td)))))?)
+        (let _
+          (match t
+            ((None) (Ok 0))
+            ((Some td) (extendSelectPaths ex schema td sel)))?)
         (let _ (checkAllNames ex t (selectExprs sel))?)
         (Ok 0)
       }
@@ -4948,6 +5154,7 @@
               ((Some e) (vecPush all e))
               ((None) all))
             {
+              (let _ (extendPaths ex schema t all)?)
               (let _ (checkAllNames ex (Some t) all)?)
               (Ok 0)
             }
@@ -4961,6 +5168,7 @@
         (match w
           ((Some e)
             {
+              (let _ (extendExprPaths ex schema t e)?)
               (let _ (bind ex (Some t) e)?)
               (Ok 0)
             }
@@ -4982,6 +5190,11 @@
         (match item.expr
           ((ELink _ c _)
             (if (strEq c "*")
+              out
+              (vecPush out item.expr))
+          )
+          ((EPath _ c _)
+            (if (isNone c)
               out
               (vecPush out item.expr))
           )

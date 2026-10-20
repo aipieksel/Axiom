@@ -1,0 +1,63 @@
+; Prepared statements and nested link forms use the same finite paths.
+(import IO)
+(import Str)
+(import Vec)
+(import Err)
+(import Axqlite)
+(import Axqlite.Value)
+(import AxqlKit)
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let db (kitOpen "paths.db"))
+    (kitRun "schema"
+      (axqExecBatch db
+        "CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT); CREATE TABLE people (id INTEGER PRIMARY KEY, team LINK teams, boss LINK people); CREATE TABLE books (id INTEGER PRIMARY KEY, author LINK people); INSERT INTO teams VALUES (1, 'Research'), (2, 'Arts'); INSERT INTO people VALUES (10, 1, 10), (20, 2, 10); INSERT INTO books VALUES (100, 10), (200, 20)"))
+    (let q (axqlSelect books (link (link author team) name) (where (= id (int 200)))))
+    (println q.text)
+    (kitRows "macro" (axqQueryOn db q))
+    (kitRows "spread" (axqQueryOn db (axqlSelect books (link (link author team) *))))
+    (kitRows "nested operand"
+      (axqQueryOn db
+        (axqlSelect books id (where (= (link (link author team) name) (text "Arts"))))))
+    (kitRows "three links"
+      (axqQueryOn db (axqlSelect books (link (link (link author boss) team) name))))
+    (match (axqPrepare db "SELECT author.team.name FROM books WHERE id = ?")
+      ((Err e) (kitDone "prepare" (Err e)))
+      ((Ok st)
+        {
+          (kitRows "prepared 100" (axqQuery st (vec1 (VInt 100))))
+          (kitRows "prepared 200" (axqQuery st (vec1 (VInt 200))))
+          (kitRun "alter" (axqExec db "ALTER TABLE teams ADD COLUMN score INTEGER DEFAULT 7"))
+          (kitRows "reprepared" (axqQuery st (vec1 (VInt 100))))
+          (kitRun "remove target" (axqExec db "DELETE FROM teams WHERE id = 2"))
+          (kitRows "missing target" (axqQuery st (vec1 (VInt 200))))
+          (kitRun "finalise" (axqFinalize st))
+        }
+      ))
+    (kitDone "missing prefix" (axqPrepare db "SELECT author.nope.name FROM books"))
+    (kitDone "missing column" (axqPrepare db "SELECT author.team.nope FROM books"))
+    (kitRows "group error"
+      (axqQueryOn db (Query :text "SELECT author.team.name, count(*) FROM books" :params vecNew)))
+    (kitDone "update prepare"
+      (match (axqPrepare db "UPDATE books SET id = id WHERE author.team.name = ?")
+        ((Err e) (Err e))
+        ((Ok st)
+          {
+            (kitRun "update" (axqRun st (vec1 (VText "Research"))))
+            (axqFinalize st)
+          }
+        )))
+    (kitDone "delete prepare"
+      (match (axqPrepare db "DELETE FROM books WHERE author.team.name = ?")
+        ((Err e) (Err e))
+        ((Ok st)
+          {
+            (kitRun "delete" (axqRun st (vec1 (VText "Research"))))
+            (axqFinalize st)
+          }
+        )))
+    (kitRun "close" (axqClose db))
+  })

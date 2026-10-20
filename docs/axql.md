@@ -616,8 +616,19 @@ SELECT author.name, book.title, year FROM wrote WHERE author.name = 'Le Guin'
 SELECT book.title, count(*) FROM wrote GROUP BY book.title HAVING count(*) > 1
 ```
 
-A path has one step: `author.name`, never `author.team.name`. Not yet:
-paths of more steps, and links followed backwards; see the
+Follow more links with `author.team.name` or `author.boss.team.name`.
+Each step follows one row, including a link back to the same table.
+`author.team.*` spreads the final row's columns, named `author.team.column`.
+A NULL link or a missing row makes its following columns read as NULL.
+`author.team.rowid` reads the final link's stored value, even if that target row was deleted.
+The path's links and surrounding parentheses share the parser's nesting budget, `axqlMaxDepth`.
+
+In a form, nest `link`: `(link (link author team) name)` reads
+`author.team.name`, and `(link (link author team) *)` spreads that team's columns.
+
+Tested by `tests/axqlite/517-axql-link-paths.ax` and `tests/axqlite/627-api-link-paths.ax`.
+
+Not yet: links followed backwards; see the
 [roadmap](roadmap.md#standard-library).
 
 ## Rowids
@@ -719,7 +730,7 @@ The rest of the expression forms:
 | `(isIn a e ...)`, `(notIn a e ...)` | `a IN (e, ...)`, `a NOT IN (e, ...)`, one to eight items |
 | `(between a lo hi)` | `a BETWEEN lo AND hi` |
 | `(concat a b ...)` | `a \|\| b \|\| ...`, two to eight operands |
-| `(link l c)`, `(link l *)` | `l.c`, `l.*` |
+| `(link l c)`, `(link l *)`, `(link (link l m) c)` | `l.c`, `l.*`, `l.m.c` |
 | `(lower e)`, `(substr s (int 2))` and every other function | `lower(e)`, `substr(s, ?)` |
 | `(count *)`, `(sum e)` and the other aggregates | `count(*)`, `sum(e)` |
 

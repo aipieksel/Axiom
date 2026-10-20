@@ -324,8 +324,8 @@ def call_rules(macro):
             xs = names("axqlArgX", n)
             body = [f'(axqlPut axqlArgQb "{f}(")'] + joined([f"(axqlExpr axqlArgQb {x})" for x in xs], ", ", 0) + ['(axqlPut axqlArgQb ")")']
             rules.append(rule(f"{macro} axqlArgQb ({f} {' '.join(xs)})", body))
-    rules.append(rule(f"{macro} axqlArgQb (link axqlArgL *)", ["(axqlPutName axqlArgQb (syntax/name axqlArgL))", '(axqlPut axqlArgQb ".*")']))
-    rules.append(rule(f"{macro} axqlArgQb (link axqlArgL axqlArgC)", ["(axqlPutName axqlArgQb (syntax/name axqlArgL))", '(axqlPut axqlArgQb ".")', "(axqlPutName axqlArgQb (syntax/name axqlArgC))"]))
+    rules.append(rule(f"{macro} axqlArgQb (link axqlArgL *)", ["(axqlLinkPrefix axqlArgQb axqlArgL)", '(axqlPut axqlArgQb ".*")']))
+    rules.append(rule(f"{macro} axqlArgQb (link axqlArgL axqlArgC)", ["(axqlLinkPrefix axqlArgQb axqlArgL)", '(axqlPut axqlArgQb ".")', "(axqlPutName axqlArgQb (syntax/name axqlArgC))"]))
     return rules
 
 

@@ -341,7 +341,7 @@ Axqlite.AxqlParse - AXQL text to statements.
 
 | Name | Kind | Type | Effects | Contracts | Summary |
 |---|---|---|---|---|---|
-| `axqlMaxDepth` | value | `Int` |  |  | How deep parentheses may nest in one expression. The parser is recursive, so this is a stack budget: a deeper expression is a refusal rather than a crash. |
+| `axqlMaxDepth` | value | `Int` |  |  | How deep parentheses and link paths may nest in one expression. The parser is recursive, so this is a stack budget: a deeper expression is a refusal rather than a crash. |
 | `axqlMaxOperators` | value | `Int` |  |  | The most operators one statement may hold. Its expressions are parsed, checked and worked out by recursion, so this is a stack budget, as `axqlMaxDepth` is: a longer statement is a refusal rather than a crash, on a thread's stack as on a process's. |
 | `axqlMaxParams` | value | `Int` |  |  | The most parameters a statement may take, and the largest `?N`. |
 | `axqlParse` | value | `(-> String (Result Parsed Error))` | `Alloc,Mut` |  | Parse exactly one statement, with an optional `;` after it and nothing else but whitespace and comments. |
@@ -369,7 +369,7 @@ Axqlite.AxqlSchema - the tables and indices a database holds.
 | `Schema` | struct |  |  |  | Every entry, in rowid order. |
 | `IndexDef` | struct |  |  |  | An index: its name, root page, whether it's UNIQUE, and the numbers of the table columns it covers, in order. |
 | `TableDef` | struct |  |  |  | A table: its name as created, root page, columns, the number of its INTEGER PRIMARY KEY column (-1 when it has none), its indices, and the tables its LINK columns point at. |
-| `LinkDef` | struct |  |  |  | A LINK column: its number in the table, and the table it points at, whose own indices and links are left empty. |
+| `LinkDef` | struct |  |  |  | A LINK column: its number in the row layout, and the table it points at, whose own indices and links are left empty. |
 | `kindTable` | value | `String` |  |  | The kind of a table entry. |
 | `kindIndex` | value | `String` |  |  | The kind of an index entry. |
 | `axqlLoadSchema` | value | `(-> Pager (Result Schema Error))` | `Alloc,IO,Mut` |  | Read every entry of the schema table. Needs a lock. |
