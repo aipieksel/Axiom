@@ -3,7 +3,7 @@
 #
 # It is pure shell, kept out of `gate.sh`, because some consumers must
 # not run the gate preamble. `scripts/bootstrap-from-seed.sh` runs on a
-# fresh clone with no Axiom toolchain and sources nothing else, and
+# fresh clone with no Axiom toolchain and sources only audited helpers;
 # `scripts/reseed.sh` never calls `gate_init`. So this file needs no
 # `$AXIOM`, work directory or trap, and builds nothing. Every consumer
 # sources it, so the gate that probes it probes the code a clone runs.
@@ -22,18 +22,16 @@
 # committed together. `check-seed-provenance.sh` and
 # `check-seed-lineage.sh` answer the trust question.
 
-# The six targets a seed is committed for, one per line.
+# The targets a seed is committed for, one per line.
 #
 # Consumers (add any new one here):
 #   scripts/reseed.sh                    generates one seed per target
-#   scripts/check-seed-provenance.sh     regenerates and compares all six
+#   scripts/check-seed-provenance.sh     regenerates and compares every target
 #   scripts/check-seed-supply-chain.sh   holds the five copies together
 #
-# `scripts/check-cross-targets.sh` keeps its own, longer list. It adds
-# `windows-x86_64` and `windows-aarch64`. Native Windows CI runs a compiler
-# built from cross-emitted IR, but neither target has a committed seed
-# or a local seed-bootstrap path. Cross-emission, native execution and
-# committed-seed bootstrap need separate target lists.
+# This registry describes committed seed inputs. Emission and native
+# execution have separate target lists: supporting an emission does not
+# by itself provide a committed seed, or prove that it runs.
 seed_targets() {
   cat <<'TARGETS'
 darwin-aarch64

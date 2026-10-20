@@ -44,8 +44,8 @@ THREATS.md                what the seed is defended against, and what it is not
 lineage/                  the commit list and the one patch a CHAIN row names
 ```
 
-All six seeds are emitted, hashed, regenerated and assembled the same
-way. A seed is not evidence that its target runs, though:
+Every declared seed is emitted, hashed, regenerated and assembled the
+same way. A seed is not evidence that its target runs, though:
 
 - `linux-x86_64` and `freebsd-x86_64` are built from. CI bootstraps
   from these seeds on every change, on an x86_64 runner and in a
@@ -64,16 +64,16 @@ A binary would be smaller than the IR that produces it, but it is the
 wrong thing to commit. Nobody can review an opaque binary before
 trusting it, and it would need rebuilding for every libc and linker.
 
-The IR is text, so you can review it in a diff. The six files are one
-program compiled for six targets, differing only in the target triple,
-the syscall instruction and the syscall numbers, so `git`
-delta-compresses them well. The same `llc` call the project already
-uses turns the IR into whatever your host needs.
+The IR is text, so you can review it in a diff. Each file is the
+compiler for one target, with its syscall ABI, import bindings and
+native entry point. `git` delta-compresses their common code. The same
+`llc` call the project already uses turns the IR into whatever your host
+needs.
 
 Every size moves with every reseed, so measure them yourself:
 
 ```bash
-du -sh bootstrap                       # all six, plus SHA256SUMS and STAMP
+du -sh bootstrap                       # all targets, plus SHA256SUMS and STAMP
 wc -l bootstrap/*.ll                   # lines per target
 ls -l .axiom-bin/axiom                 # what one of them turns into
 diff bootstrap/axiom-darwin-aarch64.ll \
@@ -97,7 +97,7 @@ A seed generated from the previous commit's compiler builds the current
 tree to a byte-identical `stage2 == stage3`.
 
 Lagging in time is not a gap in provenance. The seed is the IR of the
-source at the commit that last wrote the six `.ll` files, and
+source at the commit that last wrote the seed `.ll` files, and
 `scripts/check-seed-provenance.sh` asserts that by regenerating it.
 
 ## What this does and does not prove
@@ -126,7 +126,7 @@ backs.
 ### Provenance: `check-seed-provenance.sh`
 
 The trust check is `scripts/check-seed-provenance.sh`. It finds the
-commit that last wrote the six `.ll` files, regenerates all six from
+commit that last wrote the seed `.ll` files, regenerates each target from
 that commit's source, and requires the result to be byte-identical. It
 looks for the `.ll` files specifically, because this directory also
 holds metadata about them. So the seed is a build product of `.ax`
@@ -289,7 +289,7 @@ scripts/bootstrap-from-seed.sh          # always, before committing
 
 `reseed.sh` builds its generator from the committed seed and nothing
 else. The host's seed goes through `llc` and `cc`, compiles this tree,
-and the result emits the six files. So the new seed is the previous
+and the result emits every declared target. So the new seed is the previous
 seed's emission of this tree, or that emission's own re-emission. The
 row `reseed.sh` appends to `CHAIN` says which, `stage1` or `stage2`.
 
@@ -311,7 +311,7 @@ reseed, and only then use it.
 
 ### Determinism
 
-Re-running `reseed.sh` on an unchanged tree leaves all six `.ll` files
+Re-running `reseed.sh` on an unchanged tree leaves the seed `.ll` files
 and `SHA256SUMS` byte-identical, because the compiler is deterministic.
 
 `scripts/check-reproducible.sh` holds it to that. It compiles every

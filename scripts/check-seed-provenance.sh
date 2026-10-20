@@ -7,7 +7,7 @@
 # question: is the seed the output of source anyone can read?
 #
 # It proves the seed is a reproducible build product of reviewable
-# source on all six targets. A tamper then has to be findable in `.ax`
+# source on every declared seed target. A tamper then has to be findable in `.ax`
 # files, not only in the LLVM IR beside them (`wc -l bootstrap/*.ll`
 # shows how much IR that is). It cannot answer Ken Thompson's attack:
 # the compiler that regenerates the seed is itself seed-descended.
@@ -21,12 +21,12 @@
 # the falsifiable half: the commit's sources must hash to it before
 # anything is regenerated.
 #
-# The seed is the six `.ll` files, not the `bootstrap/` directory. A
+# The seed is the declared `.ll` set, not the `bootstrap/` directory. A
 # commit that only edits `bootstrap/STAMP` or `bootstrap/README.md`
 # changes metadata about the seed and must not read as a reseed.
 #
-# It costs one compiler build plus six whole-compiler emissions, about
-# seven minutes, so it is its own CI job. It needs the full history
+# It costs one compiler build and one whole-compiler emission per
+# target, so it is its own CI job. It needs the full history
 # (`fetch-depth: 0`) because a shallow clone cannot see the commit that
 # introduced a file it did not fetch.
 set -euo pipefail

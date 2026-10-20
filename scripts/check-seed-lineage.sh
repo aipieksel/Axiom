@@ -4,7 +4,7 @@
 # link under `--full`.
 #
 # WHAT `check-seed-provenance.sh` LEAVES OPEN. That gate regenerates the
-# six seeds from their own commit's sources and requires byte identity,
+# declared seeds from their own commit's sources and requires byte identity,
 # so a tampered seed must be a tamper someone can find by reading `.ax`
 # files. But the compiler doing the regenerating is built FROM the seed
 # under test, so a seed that reproduces a backdoor in its own output
@@ -47,10 +47,11 @@
 # THE HOST TARGET ONLY. Every link builds a compiler and runs it, which
 # needs the host's seed; a seed for another target is text this host
 # cannot execute. Emission is a pure function of source and target
-# (`check-reproducible.sh`, `check-cross-targets.sh`, and the six-target
-# regeneration in `check-seed-provenance.sh`), so a link that replays
-# for one target replays for all six, and the row's stage is the same
-# on every host.
+# (`check-reproducible.sh`, `check-cross-targets.sh`, and regeneration
+# of every declared seed in `check-seed-provenance.sh`). The lineage
+# replay runs on POSIX; reproducible cross-emissions bind seeds for
+# targets added later to that generator. This is not a claim that
+# historical Windows seed binaries were executed.
 #
 # THE CHECKPOINT, and the one thing it must not become. Replaying from
 # the anchor costs time linear in the number of reseeds this project has
@@ -182,7 +183,9 @@ case "$(uname -s)" in
   Darwin)  os=darwin ;;
   Linux)   os=linux ;;
   FreeBSD) os=freebsd ;;
-  *) echo "FAIL: no seed for $(uname -s); the seeds cover darwin, linux and freebsd"; exit 1 ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    echo "FAIL: lineage replay runs on POSIX; Windows validation uses all-target provenance and native seeded bootstrap"; exit 1 ;;
+  *) echo "FAIL: lineage replay does not support $(uname -s)"; exit 1 ;;
 esac
 case "$(uname -m)" in
   arm64|aarch64) arch=aarch64 ;;
@@ -521,7 +524,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   # `next` names the seed the tree holds whose commit did not exist when
   # `reseed.sh` wrote the row - the same reason `STAMP` records a hash
   # and not a commit. It resolves to the commit that last wrote the
-  # six `.ll` files, and only the last row may say it.
+  # seed `.ll` files, and only the last row may say it.
   if [[ "$seed_word" == next ]]; then seed_full="$current"; else seed_full="$(resolve "$seed_word")"; fi
   [[ -n "$seed_full" ]] || { fail "$chain:$lineno: seed $seed_word is not a commit"; continue; }
   from_full="$(resolve "$from_word")"

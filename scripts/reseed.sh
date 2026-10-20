@@ -21,7 +21,7 @@
 # WHO GENERATES. The generator is built here, from the committed seed
 # and nothing else: the host's `bootstrap/axiom-<target>.ll` through
 # `llc` and `cc` is the previous compiler, it compiles this tree, and
-# the result - `gen` - emits the six seeds. So the seed about to be
+# the result - `gen` - emits every declared seed. So the seed about to be
 # committed is, by construction, the previous seed's emission of this
 # tree or that emission's own re-emission, which is what
 # `scripts/check-seed-lineage.sh` replays and what a row of
@@ -51,7 +51,7 @@
 #
 # The seeds are REPRODUCIBLE - scripts/check-reproducible.sh is the gate
 # that says so - which means re-running this against an unchanged tree
-# brings the six `.ll` files and `SHA256SUMS` back byte-identical. If
+# brings the declared `.ll` files and `SHA256SUMS` back byte-identical. If
 # one of THOSE moves without the compiler moving, the compiler has a
 # nondeterminism bug and that is the thing to fix.
 #
@@ -95,7 +95,9 @@ case "$(uname -s)" in
   Darwin)  os=darwin ;;
   Linux)   os=linux ;;
   FreeBSD) os=freebsd ;;
-  *) fail "no seed for $(uname -s)" ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    fail "seed cohort generation runs on POSIX; use bootstrap-from-seed.sh for native Windows bootstrap" ;;
+  *) fail "seed cohort generation does not support $(uname -s)" ;;
 esac
 case "$(uname -m)" in
   arm64|aarch64) arch=aarch64 ;;
@@ -110,9 +112,10 @@ host="$os-$arch"
 # fact that nothing compared. `check-seed-supply-chain.sh` compares them
 # now, and this is the copy it treats as the declaration.
 targets="$(seed_targets | tr '\n' ' ')"
+target_count="$(seed_targets | wc -l | tr -d ' ')"
 
 # --------------------------------------------------------------------
-# The previous seed: the commit that last wrote the six `.ll` files,
+# The previous seed: the commit that last wrote the seed `.ll` files,
 # and the files in the tree must be that commit's - a seed edited in
 # the working tree has no lineage to record.
 # --------------------------------------------------------------------
@@ -135,7 +138,7 @@ build_compiler() {  # <in.ll> <out>
     && cc "$2.o" -o "$2" $link_entry 2>>"$2.err"
 }
 emit() {  # <compiler> <target> <out.ll>: the shape every seed is emitted in
-  ( cd "$work" && AXIOM_STDLIB="$repo_root/stdlib" AXIOM_PATH=self_host "$1" emit-llvm in.ax --target "$2" > "$3" 2> "$3.err" ) || return 1
+  ( cd "$work" && AXIOM_STDLIB="$repo_root/stdlib" AXIOM_PATH=self_host "$1" --diagnostic-format=ai emit-llvm in.ax --target "$2" > "$3" 2> "$3.err" ) || return 1
   grep -q '^target triple' "$3" || return 1
   (( $(wc -l < "$3") > 10000 )) || return 1
 }
@@ -168,7 +171,7 @@ else
     exit 1
   fi
   echo "generating with the bridge compiler $bridge instead, and recording that"
-  if ! "$bridge" build --input self_host/main.ax --output "$work/gen" >"$work/build.log" 2>&1; then
+  if ! "$bridge" --diagnostic-format=ai build --input self_host/main.ax --output "$work/gen" >"$work/build.log" 2>&1; then
     tail -20 "$work/build.log" >&2
     fail "could not build a generator with $bridge either"
   fi
@@ -177,10 +180,8 @@ fi
 echo "generator built"
 
 mkdir -p bootstrap
-# Six since 2026-08-29. The FreeBSD pair were minted the commit after
-# `targetCode` learned their names, which is the only order that works:
-# a seed can be emitted only by a compiler that knows the target, and
-# `gen` here is built from THIS tree and is what emits.
+# The generator must know every declared target. It is built from
+# this tree, and emits the whole cohort before any seed is replaced.
 for t in $targets; do
   emit "$work/gen" "$t" "$work/out-$t.ll" \
     || { head -3 "$work/out-$t.ll.err" >&2; fail "could not emit the seed for $t (a seed that is empty or the wrong target fails far from here)"; }
@@ -213,7 +214,7 @@ echo "wrote bootstrap/SHA256SUMS"
 #
 # A hash of the bytes that were actually read cannot have that failure
 # mode. `scripts/check-seed-provenance.sh` resolves the commit the
-# other way - the one that last touched the six `.ll` files - and requires its
+# other way - the one that last touched the seed `.ll` files - and requires its
 # sources to hash to this line before regenerating from them.
 stamp="$(gate_seed_source_stamp "$repo_root")"
 nfiles="$( cd "$repo_root" && find self_host stdlib -name '*.ax' -type f | wc -l | tr -d ' ' )"
@@ -253,9 +254,9 @@ nfiles="$( cd "$repo_root" && find self_host stdlib -name '*.ax' -type f | wc -l
   printf 'the `self_host/**.ax` and `stdlib/**.ax` bytes these seeds were\n'
   printf 'generated from: the path list, then every byte, hashed. It is the\n'
   printf 'CHECKABLE claim here, and `scripts/check-seed-provenance.sh` checks it -\n'
-  printf 'it finds the commit that last touched the six `.ll` files - not this\n'
+  printf 'it finds the commit that last touched the seed `.ll` files - not this\n'
   printf 'directory, which also holds metadata about them - requires that\n'
-  printf "commit's sources to hash to this line, and then regenerates all six\n"
+  printf "commit's sources to hash to this line, and then regenerates all %s\n" "$target_count"
   printf 'seeds from them and requires the result to be byte-identical.\n'
   printf '\n'
   printf '`Generated on host:` is a REPORT, not a claim: nothing can check where\n'

@@ -63,7 +63,7 @@ fail() {
 ok() { (( probe_mode )) || echo "ok   $*"; }
 
 # ---------------------------------------------------------------------
-echo "== 1. the six-target set is one fact, and its copies agree =="
+echo "== 1. the seed target set is one fact, and its copies agree =="
 # ---------------------------------------------------------------------
 # The declaration is `seed_targets`. Everything else is compared to it.
 seed_targets | LC_ALL=C sort > "$work/declared"
@@ -165,7 +165,7 @@ targets_on_disk "$pdir" > "$pdir/t"
 probe_mode=1; probe_failed=0; probe_first=""
 compare_targets "the .ll files (probe)" "$pdir/t"
 probe_mode=0
-if (( probe_failed )); then ok "probe: a seventh unlisted seed on disk is refused ($probe_first)"
+if (( probe_failed )); then ok "probe: an additional unlisted seed on disk is refused ($probe_first)"
 else fail "probe: an unlisted axiom-linux-riscv64.ll was accepted"; fi
 rm -f "$pdir/axiom-linux-riscv64.ll"
 
