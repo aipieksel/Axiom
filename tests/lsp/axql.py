@@ -140,13 +140,24 @@ def run(compiler):
                 "position": boundaries.position(incomplete, incomplete.index('"SEL"') + 4)})
             assert any(item["label"] == "SELECT" for item in completions["items"]), completions
 
+            quoted = source.replace("SELEC name FROM users", r'\" while \"')
+            client.change(path.as_uri(), quoted, 6)
+            hints = [d for d in client.latest(path.as_uri())["diagnostics"]
+                     if d["code"] == "lint-axql"]
+            assert len(hints) == 1, hints
+            # One occurrence in the quoted source and one in the parser's
+            # refusal. Context must be read from Error, never split out of
+            # user text that happens to contain the same word.
+            assert hints[0]["message"].count("while") == 2, hints
+            assert " while axqlParse" not in hints[0]["message"], hints
+
             # A real Axiom type error still agrees with the CLI beside
             # the query hint; the editor never treats it as checked data.
             refused = source.replace('(axqSql "SELEC name FROM users")', '(axqSql 7)')
             path.write_text(refused)
             checked = boundaries.terminal(compiler, path)
             assert [d["code"] for d in checked] == ["AX3004"], checked
-            client.change(path.as_uri(), refused, 6)
+            client.change(path.as_uri(), refused, 7)
             published = [d for d in client.latest(path.as_uri())["diagnostics"]
                          if d["severity"] != 4]
             assert [d["code"] for d in published] == ["AX3004"], published
@@ -154,7 +165,7 @@ def run(compiler):
             # A declaration tag and a file tag both recognise the new hint.
             for tag in ("lint-axql", "hints"):
                 changed = source.replace("(:: queries", f";@axiom:nolint({tag})\n(:: queries")
-                client.change(path.as_uri(), changed, 7 if tag == "lint-axql" else 8)
+                client.change(path.as_uri(), changed, 8 if tag == "lint-axql" else 9)
                 diagnostics = client.latest(path.as_uri())["diagnostics"]
                 assert not [d for d in diagnostics if d["code"] in (
                     "lint-axql", "lint-unknown-nolint")], diagnostics
