@@ -30,9 +30,11 @@
 ; syscall in this file into four copies of the platform layer. The
 ; clocks, sleep and entropy go the same way (`platformMonotonicNanos`,
 ; `platformRealtimeNanos`, `platformSleepNanos`, `platformRandomBytes`).
-; What is NOT yet routed that way (sockets, shared memory, signals)
-; reaches its `__syscallN` arm on Windows, which the compiler lowers
-; there to a trap that says so (`emitPrimSyscall`).
+; Waiting on a word, mapping and locking memory and the signal mask go
+; the same way too. What is NOT yet routed that way (sockets, and the
+; console's control events) reaches its `__syscallN` arm on Windows,
+; which the compiler lowers there to a trap that says so
+; (`emitPrimSyscall`).
 ;
 ; Return values are raw kernel results, not exceptions: a successful
 ; result as-is, or `-errno` on failure. That convention holds on every
@@ -1519,15 +1521,17 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysSignalBlock mask setbuf)
-  {
-    (rawSet setbuf 0 sigsetBytes)
-    (netPutWord setbuf 0 mask)
-    ; The BSDs' `sigprocmask` takes three arguments and Linux's
-    ; `rt_sigprocmask` takes a fourth, the mask's size, which it checks
-    ; exactly. Passing it unconditionally is the shape `IO.socketAccept`
-    ; uses for `accept` against `accept4`.
-    (sysResult "sysSignalBlock" (__syscall4 sysSigProcMaskNum sigBlockHow setbuf 0 sigsetBytes))
-  })
+  (if (== usesSyscallAbi 0)
+    (platformSignalBlock mask setbuf)
+    {
+      (rawSet setbuf 0 sigsetBytes)
+      (netPutWord setbuf 0 mask)
+      ; The BSDs' `sigprocmask` takes three arguments and Linux's
+      ; `rt_sigprocmask` takes a fourth, the mask's size, which it checks
+      ; exactly. Passing it unconditionally is the shape `IO.socketAccept`
+      ; uses for `accept` against `accept4`.
+      (sysResult "sysSignalBlock" (__syscall4 sysSigProcMaskNum sigBlockHow setbuf 0 sigsetBytes))
+    }))
 
 ;; Send a signal, which is how a test raises one against itself.
 ;
@@ -1606,7 +1610,9 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysMapShared len)
-  (sysResult "sysMapShared" (__syscall6 sysMmapNum 0 len 3 mapSharedAnon (- 0 1) 0)))
+  (if (== usesSyscallAbi 0)
+    (platformMapShared len)
+    (sysResult "sysMapShared" (__syscall6 sysMmapNum 0 len 3 mapSharedAnon (- 0 1) 0))))
 
 ;; Unmap a mapping `sysMapShared` answered. `addr` and `len` must name
 ;; the whole mapping, and nothing may touch it afterwards.
@@ -1614,7 +1620,9 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysUnmapShared addr len)
-  (sysResult "sysUnmapShared" (__syscall3 sysMunmapNum addr len 0)))
+  (if (== usesSyscallAbi 0)
+    (platformUnmapShared addr len)
+    (sysResult "sysUnmapShared" (__syscall3 sysMunmapNum addr len 0))))
 
 ; ------------------------------------------------------------------
 ; Private pages, and keeping them out of swap and core files.
@@ -1637,10 +1645,9 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysMapPrivate len)
-  (sysResult "sysMapPrivate"
-    (if (== usesSyscallAbi 0)
-      sysNoCall
-      (__syscall6 sysMmapNum 0 len 3 mapPrivateAnon (- 0 1) 0))))
+  (if (== usesSyscallAbi 0)
+    (platformMapPrivate len)
+    (sysResult "sysMapPrivate" (__syscall6 sysMmapNum 0 len 3 mapPrivateAnon (- 0 1) 0))))
 
 ;; Unmap a mapping `sysMapPrivate` answered. `addr` and `len` must name
 ;; the whole mapping, and nothing may touch it afterwards.
@@ -1648,10 +1655,9 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysUnmapPrivate addr len)
-  (sysResult "sysUnmapPrivate"
-    (if (== usesSyscallAbi 0)
-      sysNoCall
-      (__syscall3 sysMunmapNum addr len 0))))
+  (if (== usesSyscallAbi 0)
+    (platformUnmapPrivate addr len)
+    (sysResult "sysUnmapPrivate" (__syscall3 sysMunmapNum addr len 0))))
 
 ;; Lock `len` bytes at `addr` into memory, so the kernel never writes
 ;; them to swap. The kernel may refuse: `RLIMIT_MEMLOCK` caps how much
@@ -1661,10 +1667,12 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysMlock addr len)
-  (sysResult "sysMlock"
-    (if (== sysMlockNum 0)
-      sysNoCall
-      (__syscall3 sysMlockNum addr len 0))))
+  (if (== usesSyscallAbi 0)
+    (platformMlock addr len)
+    (sysResult "sysMlock"
+      (if (== sysMlockNum 0)
+        sysNoCall
+        (__syscall3 sysMlockNum addr len 0)))))
 
 ;; Let the `len` bytes at `addr` be paged out again, undoing
 ;; `sysMlock`.
@@ -1672,10 +1680,12 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysMunlock addr len)
-  (sysResult "sysMunlock"
-    (if (== sysMunlockNum 0)
-      sysNoCall
-      (__syscall3 sysMunlockNum addr len 0))))
+  (if (== usesSyscallAbi 0)
+    (platformMunlock addr len)
+    (sysResult "sysMunlock"
+      (if (== sysMunlockNum 0)
+        sysNoCall
+        (__syscall3 sysMunlockNum addr len 0)))))
 
 ;; Keep `len` bytes at `addr` out of a core file (`MADV_DONTDUMP` on
 ;; Linux, `MADV_NOCORE` on FreeBSD). Darwin has no such advice, and
@@ -1730,11 +1740,13 @@
 ;@axiom:effect(unsafe)
 ;@axiom:effect(block)
 (fn (sysWaitWordRaw addr expected)
-  (if (== waitWordKind 1)
-    (__syscall6 sysWaitWordNum addr 0 expected 0 0 0)
-    (if (== waitWordKind 2)
-      (__syscall4 sysWaitWordNum 6 addr expected 0)
-      0)))
+  (if (== waitWordKind 3)
+    (platformWaitWord addr expected (- 0 1))
+    (if (== waitWordKind 1)
+      (__syscall6 sysWaitWordNum addr 0 expected 0 0 0)
+      (if (== waitWordKind 2)
+        (__syscall4 sysWaitWordNum 6 addr expected 0)
+        0))))
 
 ;; Wake every binding blocked in `sysWaitWord` on `addr`: FUTEX_WAKE (1)
 ;; for INT_MAX waiters, or `__ulock_wake` with UL_COMPARE_AND_WAIT64_SHARED
@@ -1754,11 +1766,13 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (fn (sysWakeWordRaw addr)
-  (if (== waitWordKind 1)
-    (__syscall6 sysWakeWordNum addr 1 2147483647 0 0 0)
-    (if (== waitWordKind 2)
-      (__syscall3 sysWakeWordNum 262 addr 0)
-      0)))
+  (if (== waitWordKind 3)
+    (platformWakeWord addr)
+    (if (== waitWordKind 1)
+      (__syscall6 sysWakeWordNum addr 1 2147483647 0 0 0)
+      (if (== waitWordKind 2)
+        (__syscall3 sysWakeWordNum 262 addr 0)
+        0))))
 
 ; ------------------------------------------------------------------
 ; A TIMED wait on a shared word, and a look at a child that does not
@@ -1861,34 +1875,36 @@
 ;@axiom:effect(unsafe)
 ;@axiom:effect(block)
 (fn (sysWaitWordTimed addr expected nanos)
-  (if (== waitWordKind 1)
-    {
-      (let ts (sysScratch 16))
+  (if (== waitWordKind 3)
+    (platformWaitWord addr expected nanos)
+    (if (== waitWordKind 1)
       {
-        (rawSetWord ts 0 (/ nanos 1000000000))
-        (rawSetWord ts 1 (% nanos 1000000000))
+        (let ts (sysScratch 16))
         {
-          (let r (__syscall6 sysWaitWordNum addr 0 expected ts 0 0))
+          (rawSetWord ts 0 (/ nanos 1000000000))
+          (rawSetWord ts 1 (% nanos 1000000000))
           {
-            (sysScratchDone ts)
-            (sysWaitAnswer r 0)
+            (let r (__syscall6 sysWaitWordNum addr 0 expected ts 0 0))
+            {
+              (sysScratchDone ts)
+              (sysWaitAnswer r 0)
+            }
           }
         }
       }
-    }
-    ; A wait past the kernel's 32-bit microseconds goes straight to the
-    ; clamped path: rounding such a `nanos` up by adding 999 could wrap
-    ; it negative, skip the clamp, and hand the kernel a truncated,
-    ; SHORTER wait that it then reports as timed out.
-    {
-      (let us
-        (if (> nanos 4294967295000)
-          4294967296
-          (/ (+ nanos 999) 1000)))
-      (if (> us 4294967295)
-        (sysWaitAnswer (sysUlockWait addr expected 4294967295) 1)
-        (sysWaitAnswer (sysUlockWait addr expected us) 0))
-    }))
+      ; A wait past the kernel's 32-bit microseconds goes straight to the
+      ; clamped path: rounding such a `nanos` up by adding 999 could wrap
+      ; it negative, skip the clamp, and hand the kernel a truncated,
+      ; SHORTER wait that it then reports as timed out.
+      {
+        (let us
+          (if (> nanos 4294967295000)
+            4294967296
+            (/ (+ nanos 999) 1000)))
+        (if (> us 4294967295)
+          (sysWaitAnswer (sysUlockWait addr expected 4294967295) 1)
+          (sysWaitAnswer (sysUlockWait addr expected us) 0))
+      })))
 
 ; `__ulock_wait(UL_COMPARE_AND_WAIT64_SHARED, addr, expected, us)`: the
 ; kernel's raw answer.

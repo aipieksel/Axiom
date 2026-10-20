@@ -1,0 +1,53 @@
+; The wait-word primitives with no other binding in play, so every
+; target answers the same: a wait on a word nobody changes times out, a
+; wait whose word already differs says so at once, and a private mapping
+; can be pinned, unpinned and released. Windows answers these through
+; `WaitOnAddress` and `VirtualAlloc`, the POSIX targets through their
+; futex and `mmap`.
+(import IO)
+(import Sys)
+(import Err)
+(import Fmt)
+
+(:: say (-> Bool String Int))
+;@axiom:effect(io)
+(fn (say ok label)
+  {
+    (println
+      (concat
+        (if ok
+          "ok   "
+          "FAIL ")
+        label))
+    0
+  })
+
+(:: codeOf (-> (Result Int Error) Int))
+(fn (codeOf r)
+  (match r
+    ((Ok v) v)
+    ((Err e) (- 0 (errCode e)))))
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (main)
+  (match (sysMapPrivate 4096)
+    ((Ok page)
+      {
+        (say (== (sysWaitWordTimeout page 0 20000000) 1) "a wait on an unchanged word times out")
+        (say (== (sysWaitWordTimeout page 7 20000000) 2)
+          "a wait on a word that already differs answers at once")
+        (say (== (sysWaitWordTimeout page 0 0) 1) "a zero timeout answers timed out")
+        (say (>= (codeOf (sysMlock page 4096)) 0) "the page can be pinned")
+        (say (>= (codeOf (sysMunlock page 4096)) 0) "and unpinned")
+        (say (>= (codeOf (sysUnmapPrivate page 4096)) 0) "and released")
+        0
+      }
+    )
+    ((Err e)
+      {
+        (println (concat "FAIL no private mapping: " (fmtInt (errCode e))))
+        1
+      }
+    )))

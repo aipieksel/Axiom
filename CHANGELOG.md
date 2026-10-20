@@ -16,6 +16,16 @@ its changelog too.
 
 ## Unreleased
 
+- Windows programs wait on words, map memory and pin it. The Windows
+  platform module binds `WaitOnAddress` and `WakeByAddressAll` for the
+  wait-word primitives `Sync`, `Chan` and `Task` rest on, `VirtualAlloc`,
+  `VirtualFree`, `VirtualLock` and `VirtualUnlock` for private and shared
+  mappings and the secret store's pinning, and answers the signal mask
+  with nothing to block. Crypto's key types work there; a secret's pages
+  are not kept out of a crash dump. The Windows runner runs
+  `tests/stdlib/495-wait-word.ax` to its golden. Tested by
+  `scripts/check-windows-hello.sh`.
+
 - Windows programs have a clock, a sleep and entropy. `Sys.Platform`'s
   Windows module binds `QueryPerformanceCounter` and
   `GetSystemTimePreciseAsFileTime` for the monotonic and wall clocks,

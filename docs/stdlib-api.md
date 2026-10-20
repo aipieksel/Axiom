@@ -2059,7 +2059,7 @@ Sys - portable syscall wrappers.
 
 ## `Sys.Platform`
 
-`stdlib/Sys/Platform.darwin.ax` — 190 public names
+`stdlib/Sys/Platform.darwin.ax` — 199 public names
 
 Sys.Platform - the numbers this target's kernel uses: syscall
 numbers, open and socket flags, errno values, poll and signal
@@ -2259,6 +2259,15 @@ target being compiled for (this one is `darwin`).
 | `platformSleepNanos` | value | `(-> Int (Result Int Error))` | `Alloc` |  | The platform's own sleep for at least `nanos` nanoseconds, where the raw wait is not available; `Err` 78 where the syscall serves. |
 | `platformHasEntropy` | value | `Int` |  |  | Whether `Sys.ax` draws entropy through `platformRandomBytes`: 0 here, where the kernel's entropy call serves. |
 | `platformRandomBytes` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own entropy source, filling `n` bytes at `buf`, where the raw entropy call is not available; `Err` 78 where it serves. |
+| `platformWaitWord` | value | `(-> Int Int Int Int)` |  |  | Block until the word at `addr` differs from `expected`, for at most `nanos` nanoseconds (negative: no limit): 0 woken or spurious, 1 timed out, 2 the word already differed. Unreached here: `waitWordKind` picks the kernel's own wait. |
+| `platformWakeWord` | value | `(-> Int Int)` |  |  | Wake every waiter on the word at `addr`. Unreached here. |
+| `platformMapPrivate` | value | `(-> Int (Result Int Error))` | `Alloc` |  | The platform's own private mapping of `len` zeroed bytes, where raw `mmap` is not available; `Err` 78 where the syscall serves. |
+| `platformUnmapPrivate` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own release of a private mapping; `Err` 78 here. |
+| `platformMapShared` | value | `(-> Int (Result Int Error))` | `Alloc` |  | The platform's own shared mapping of `len` zeroed bytes; `Err` 78 here. |
+| `platformUnmapShared` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own release of a shared mapping; `Err` 78 here. |
+| `platformMlock` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own way to pin `len` bytes at `addr` in memory, where raw `mlock` is not available; `Err` 78 where the syscall serves. |
+| `platformMunlock` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own way to unpin them; `Err` 78 here. |
+| `platformSignalBlock` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | The platform's own signal mask, where raw `sigprocmask` is not available; `Err` 78 where the syscall serves. |
 
 ## `Task`
 

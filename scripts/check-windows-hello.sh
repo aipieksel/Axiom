@@ -426,10 +426,10 @@ AX
         echo "ok   axiom.exe built the hello case, and it runs to the golden"
       fi
 
-      # The clock, sleep and entropy, which the platform module binds
-      # rather than a syscall. Each case prints its own verdicts, and the
-      # golden is the one every POSIX target answers.
-      for case in 306-monotonic-clock 309-entropy 851-instant-sleep; do
+      # The clock, sleep, entropy, wait-words and memory, which the
+      # platform module binds rather than a syscall. Each case prints its
+      # own verdicts, and the golden is the one every POSIX target answers.
+      for case in 306-monotonic-clock 309-entropy 851-instant-sleep 495-wait-word; do
         set +e
         ( cd "$repo_root" && "$ax" build "tests/stdlib/$case.ax" -o "$w/$case.exe" ) > "$w/$case.build.log" 2>&1
         rc=$?
