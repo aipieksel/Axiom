@@ -16,6 +16,19 @@ its changelog too.
 
 ## Unreleased
 
+- CI runs `windows-x86_64` on a Windows runner. The compiler the
+  `cross` job emits for it links there with an 8 MB stack, emits
+  itself byte for byte, builds and runs the hello case, and reports
+  `tests/testrunner/mixed-tests.ax` to its golden. The test battery
+  doesn't run there, so the target stays source-only. Tested by
+  `scripts/check-windows-hello.sh`.
+
+- Add `examples/tree-audit`, a directory inventory that reads the same
+  on every platform, after the tree auditor @JessicaTemplet used to
+  check the Windows compiler. CI requires its report over a fixture
+  tree to match on Linux and Windows. Tested by
+  `scripts/check-windows-hello.sh`.
+
 - Remove the `;@axiom:raw` and `;@axiom:precondition(...)` tags.
   `raw` no longer exempts a declaration from AX3040: return a concrete
   word type and let callers write `as`, or make the function diverge.
@@ -38,23 +51,23 @@ its changelog too.
   the same access boundary as field reads. Tested by
   `tests/diagnostics/1467-checked-program-boundary.ax`.
 
-- Windows: the standard library reaches files, directories and child
-  processes through kernel32 (`stdlib/Sys/Platform.windows.ax`), and a
-  compiler built for `windows-x86_64` runs on Windows and builds
-  itself there. Its emission of `self_host/main.ax` is byte-identical
-  to a Linux compiler's cross-emission. A Windows link makes the
-  `kernel32` import library with `llvm-dlltool` and reserves an 8 MB
-  stack. Tested by `scripts/check-driver.sh` and
-  `scripts/check-freestanding.sh`; the Windows runs themselves were
-  by hand on Windows 11 x86-64, because no CI job runs Windows yet.
+- Adopt [@JessicaTemplet's Windows self-hosting](https://github.com/chrispaig3/Axiom/pull/47):
+  the standard library reaches files, directories and child processes
+  through kernel32 (`stdlib/Sys/Platform.windows.ax`), and a compiler
+  built for `windows-x86_64` runs on Windows and builds itself there.
+  Its emission of `self_host/main.ax` is byte-identical to a Linux
+  compiler's cross-emission. A Windows link makes the `kernel32` import
+  library with `llvm-dlltool` and reserves an 8 MB stack. Tested by
+  `scripts/check-driver.sh`, `scripts/check-freestanding.sh` and, on
+  Windows, `scripts/check-windows-hello.sh`.
 
 - Windows: a recovery point recovers on `windows-x86_64` at every
   optimisation level, so `axiom test` reports every test after a
   failing one. Above `--opt 0`, llc put an `int3` between the abort's
   last call and its jump, and the process ended in `STATUS_BREAKPOINT`.
   The abort now ends in `llvm.trap` after the jump. Tested by
-  `scripts/check-recover.sh`; `tests/testrunner/mixed-tests.ax` was
-  run by hand on Windows 11 x86-64.
+  `scripts/check-recover.sh` and, on Windows, by
+  `scripts/check-windows-hello.sh`.
 
 - Check selective import names inside dependencies, including names
   the entry file never uses. An invalid name reports AX3023 at the

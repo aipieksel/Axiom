@@ -1,0 +1,108 @@
+; Walk a directory tree in a fixed order and print an inventory of it:
+; one line per file with the SHA-256 of its bytes, its size and its
+; path, then the counts and one SHA-256 over the whole listing.
+;
+; The report depends only on names and bytes. `listDir` answers names in
+; byte order, paths print with `/` on every platform, and nothing reads
+; a clock, an owner or an inode. The same tree gives the same report on
+; Linux, macOS and Windows, so two reports that differ mean two trees
+; that differ.
+;
+;     axiom run examples/tree-audit/tree-audit.ax [DIR]
+(import IO)
+(import Path)
+(import Str)
+(import Sys)
+(import Vec)
+(import Crypto.Bytes)
+(import Crypto.Sha2)
+
+; What the walk has seen so far. `listing` takes every file line in
+; the order it prints, so its digest identifies the whole tree.
+(struct Tally
+  (mut dirs : Int)
+  (mut files : Int)
+  (mut bytes : Int)
+  (listing : Sha256))
+
+; How deep the walk goes. A symbolic link that leads back up the tree
+; would otherwise recurse until the stack ran out.
+(:: maxDepth Int)
+(fn (maxDepth)
+  64)
+
+; The path a report prints for `name` inside `rel`.
+(:: shownPath (-> String String String))
+(fn (shownPath rel name)
+  (if (== (strLen rel) 0)
+    name
+    (concat rel (concat "/" name))))
+
+; One file: print its line and add the line to the listing.
+(:: auditFile (-> Tally String String (Result () Error)))
+;@axiom:effect(io)
+(fn (auditFile tally path shown)
+  {
+    (let bytes (readFile path)?)
+    (let digest (hexEncode (sha256 bytes)))
+    (let size (strLen bytes))
+    (let line (format "{digest} {size} {shown}"))
+    (println line)
+    (sha256Update tally.listing (concat line "\n"))
+    (set tally.files (+ tally.files 1))
+    (set tally.bytes (+ tally.bytes size))
+    (Ok ())
+  })
+
+; One directory: count it, then visit its entries in byte order.
+(:: auditDir (-> Tally String String Int (Result () Error)))
+;@axiom:effect(io)
+(fn (auditDir tally dir rel depth)
+  {
+    (if (> depth maxDepth)
+      (die (format "tree-audit: more than {maxDepth} levels below {dir}") 1))
+    (let names (listDir dir)?)
+    (set tally.dirs (+ tally.dirs 1))
+    (auditEntries tally dir rel names 0 depth)
+  })
+
+(:: auditEntries (-> Tally String String (Vec String) Int Int (Result () Error)))
+;@axiom:effect(io)
+(fn (auditEntries tally dir rel names i depth)
+  (if (>= i (vecLen names))
+    (Ok ())
+    {
+      (let name (vecGet names i))
+      (let path (pathJoin dir name))
+      (let shown (shownPath rel name))
+      (let visited
+        (if (isDir path)
+          (auditDir tally path shown (+ depth 1))
+          (auditFile tally path shown)))
+      (match visited
+        ((Err e) (Err e))
+        ((Ok _) (auditEntries tally dir rel names (+ i 1) depth)))
+    }))
+
+(:: main (Result Int Error))
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let root
+      (if (> sysArgc 1)
+        (sysArg 1)
+        "."))
+    (if (! (isDir root))
+      (die (format "tree-audit: {root} is not a directory") 2))
+    (let tally (Tally :dirs 0 :files 0 :bytes 0 :listing sha256New))
+    (auditDir tally root "" 0)?
+    (let dirs tally.dirs)
+    (let files tally.files)
+    (let bytes tally.bytes)
+    (let tree (hexEncode (sha256Final tally.listing)))
+    (println "dirs {dirs}")
+    (println "files {files}")
+    (println "bytes {bytes}")
+    (println "tree {tree}")
+    (Ok 0)
+  })

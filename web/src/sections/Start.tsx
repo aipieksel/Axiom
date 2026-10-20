@@ -274,7 +274,8 @@ export function Start() {
             </p>
             <p className="hint">
               Bare-metal AArch64 uses a board-defined platform seam and an optional QEMU smoke
-              run. The compiler doesn't run on Windows: cross-compile to it from Linux or macOS.{' '}
+              run. A compiler built for Windows x86-64 runs there and builds itself, though
+              Windows stays source-only.{' '}
               <a href={`${DOCS}/embedded-guide.md`} target="_blank" rel="noreferrer noopener">
                 Embedded targets <ArrowUpRight size={12} />
               </a>

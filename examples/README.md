@@ -27,6 +27,36 @@ allowed expressions and what happens when a clause fails.
 
 Tested by `scripts/check-contracts.sh`.
 
+## tree-audit
+
+[`examples/tree-audit/tree-audit.ax`](tree-audit/tree-audit.ax) walks
+a directory tree and prints an inventory of it: each file's SHA-256,
+size and path, then the counts and one SHA-256 over the whole listing.
+Names are visited in byte order and paths print with `/`, so the same
+tree gives the same report on Linux, macOS and Windows.
+
+```bash
+mkdir -p demo/docs
+printf 'hello\n' > demo/README
+printf 'notes\n' > demo/docs/notes.txt
+axiom run examples/tree-audit/tree-audit.ax demo
+```
+
+```text
+5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03 6 README
+444e0fffbd825e9610ff5b199485707a0c895339ae80c15cc8a8aee41b106fda 6 docs/notes.txt
+dirs 2
+files 2
+bytes 12
+tree 692361ae1a719850db068d414f31770faf33f08432dfdefaaa256e0fbb27c0d9
+```
+
+With no `DIR` it audits the working directory. A file it can't read
+ends the run with that file's error and status 70.
+
+Tested by `scripts/check-windows-hello.sh`, which runs it on Linux and
+on Windows x86-64 and requires the two reports to match.
+
 ## batch-fallible
 
 [`examples/batch-fallible/batch-fallible.ax`](batch-fallible/batch-fallible.ax)

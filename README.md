@@ -103,8 +103,12 @@ published for them. CI builds the compiler from the seed in
 `bootstrap/` on `linux-x86_64`, and on `freebsd-x86_64` and
 `freebsd-aarch64` in FreeBSD 14.4 VMs. No runner builds it on
 `darwin-x86_64`.
-The compiler doesn't run on Windows, so `windows-aarch64` and
-`windows-x86_64` are targets you cross-compile to from Linux or macOS.
+No runner builds the compiler from the seed on `windows-x86_64` or
+`windows-aarch64`, because there is no Windows seed. CI cross-emits the
+compiler for `windows-x86_64` instead and runs it on a Windows runner:
+it emits itself byte for byte and builds and runs a few programs, but
+the test battery doesn't run there. No runner executes `windows-aarch64`
+code; CI only links it.
 No runner builds the compiler on `baremetal-aarch64`; its embedded
 image checks and optional QEMU execution are described in the
 [embedded guide](docs/embedded-guide.md).

@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# A hello world for both Windows targets, windows-x86_64 and
-# windows-aarch64. It is emitted on any host, then linked and executed on
-# a Windows runner. Its output must match the golden byte for byte, and
-# its imports must stay within `scripts/platform-allow.windows.txt`.
+# The Windows targets, windows-x86_64 and windows-aarch64: emitted on any
+# host, then linked on a Windows runner and executed there on x86-64.
+# Three things run:
+#
+#   1. A hello world for each target. Its output must match the golden
+#      byte for byte, and its imports must stay within
+#      `scripts/platform-allow.windows.txt`.
+#   2. The compiler itself, emitted for windows-x86_64 and linked with
+#      an 8 MB stack. It emits `self_host/main.ax` again byte for byte,
+#      builds and runs the hello case through its own driver, and
+#      reports `tests/testrunner/mixed-tests.ax` to its golden.
+#   3. `examples/tree-audit/tree-audit.ax`, built and run by that
+#      compiler over a fixture tree. Its report must equal the one the
+#      emitting host printed, which a Python oracle checked there.
 #
 # README's Targets section calls a target supported when "a CI job
 # executes what the compiler emits there". For Windows, this gate is
@@ -11,8 +21,9 @@
 #
 #   --emit DIR     on a host with the tree's compiler: emit the hello
 #                  case and the leaky probe for each Windows target into
-#                  DIR/<target>/, beside the golden they must match. The
-#                  `cross` CI job runs this half.
+#                  DIR/<target>/, beside the golden they must match, and
+#                  the compiler and the tree audit's report into
+#                  DIR/selfhost/. The `cross` CI job runs this half.
 #
 #   --run DIR [TARGET]
 #                  on a Windows runner with LLVM, for each target in DIR:
@@ -24,6 +35,8 @@
 #                  runner's own target (TARGET, or the one `uname -m`
 #                  names) and require exit 0 and the golden's bytes. The
 #                  other target is linked and reports "NOT EXECUTED".
+#                  Then link the compiler, and on windows-x86_64 run
+#                  parts 2 and 3 with it.
 #
 #   --link DIR     everything --run does except execution, for a host
 #                  that cannot run a PE. Its verdict lines say "not
@@ -70,6 +83,53 @@ dlltool_machine() { case "$1" in windows-x86_64) echo i386:x86-64 ;; windows-aar
 link_machine()    { case "$1" in windows-x86_64) echo x64 ;; windows-aarch64) echo arm64 ;; esac; }
 pe_machine()      { case "$1" in windows-x86_64) echo IMAGE_FILE_MACHINE_AMD64 ;; windows-aarch64) echo IMAGE_FILE_MACHINE_ARM64 ;; esac; }
 triple_of()       { case "$1" in windows-x86_64) echo x86_64-pc-windows-msvc ;; windows-aarch64) echo aarch64-pc-windows-msvc ;; esac; }
+
+# The tree the auditor reads, written the same way on every host: a
+# file with CRLF line ends that must not be translated, an empty file,
+# every byte value, a UTF-8 name, and two names whose byte order is not
+# their alphabetical order.
+tree_fixture() {  # <dir>
+  local d="$1"
+  rm -rf "$d"
+  mkdir -p "$d/docs" "$d/src/nested"
+  printf 'hello\n' > "$d/README"
+  printf 'line one\r\nline two\r\n' > "$d/docs/crlf.txt"
+  : > "$d/docs/empty"
+  printf '(:: main ())\n' > "$d/src/main.ax"
+  printf 'upper\n' > "$d/src/B"
+  printf 'lower\n' > "$d/src/a"
+  local i
+  for i in $(seq 0 255); do printf "\\$(printf '%03o' "$i")"; done > "$d/src/nested/bytes.bin"
+  printf 'caf\303\251\n' > "$d/src/nested/caf$(printf '\303\251').txt"
+}
+
+# The report `tree-audit.ax` must print for <dir>, computed by Python
+# from the same rule: names in byte order, `/` between path components,
+# and one SHA-256 over every file line.
+tree_oracle() {  # <dir>
+  python3 -I - "$1" <<'PY'
+import hashlib, os, sys
+lines, count = [], {'dirs': 0, 'bytes': 0}
+def walk(d, rel):
+    count['dirs'] += 1
+    for name in sorted(os.listdir(d), key=os.fsencode):
+        path = os.path.join(d, name)
+        shown = name if not rel else rel + '/' + name
+        if os.path.isdir(path):
+            walk(path, shown)
+            continue
+        with open(path, 'rb') as f:
+            data = f.read()
+        count['bytes'] += len(data)
+        digest = hashlib.sha256(data).hexdigest().encode()
+        lines.append(b'%s %d %s' % (digest, len(data), os.fsencode(shown)))
+walk(sys.argv[1], '')
+listing = b''.join(line + b'\n' for line in lines)
+tree = hashlib.sha256(listing).hexdigest().encode()
+summary = b'dirs %d\nfiles %d\nbytes %d\ntree %s\n' % (count['dirs'], len(lines), count['bytes'], tree)
+sys.stdout.buffer.write(listing + summary)
+PY
+}
 
 case "$mode" in
   --emit)
@@ -119,6 +179,27 @@ AX
       done
       echo "ok   emitted hello.ll and leaky.ll for $t into $d ($(grep -c '^define' "$d/hello.ll") defines in hello, triple $(triple_of "$t"))"
     done
+    # 2. The compiler, for the Windows target a runner executes. The
+    #    runner's own build of it must emit this again, byte for byte.
+    sh="$dir/selfhost"
+    mkdir -p "$sh"
+    "$axc" --target=windows-x86_64 emit-llvm self_host/main.ax -o "$sh/axiom.ll"
+    if [[ "$(head -1 "$sh/axiom.ll")" != "target triple = \"$(triple_of windows-x86_64)\"" ]]; then
+      echo "FAIL --emit: the compiler's IR opens with '$(head -1 "$sh/axiom.ll")', not the $(triple_of windows-x86_64) triple"
+      exit 1
+    fi
+    echo "ok   emitted the compiler for windows-x86_64 into $sh ($(grep -c '^define' "$sh/axiom.ll") defines)"
+    # 3. The tree audit's report over the fixture, from this host's
+    #    compiler, held to an independent oracle before it travels.
+    tree_fixture "$work/tree"
+    "$axc" run examples/tree-audit/tree-audit.ax "$work/tree" > "$sh/tree-audit.out"
+    tree_oracle "$work/tree" > "$work/tree-oracle.out"
+    if ! cmp -s "$sh/tree-audit.out" "$work/tree-oracle.out"; then
+      echo "FAIL --emit: the tree audit's report is not the oracle's"
+      { diff "$work/tree-oracle.out" "$sh/tree-audit.out" || true; } | head -10 | sed 's/^/    /'
+      exit 1
+    fi
+    echo "ok   the tree audit's report over the fixture equals the oracle's ($(grep -c . "$sh/tree-audit.out") lines)"
     ;;
 
   --run|--link)
@@ -254,6 +335,120 @@ AX
         status=1
       fi
     done
+
+    # 2 and 3. The compiler, linked the way the driver links a Windows
+    # executable, then run on a windows-x86_64 runner.
+    sh="$dir/selfhost"
+    allow="$dir/windows-x86_64/platform-allow.windows.txt"
+    for f in axiom.ll tree-audit.out; do
+      [[ -s "$sh/$f" ]] || { echo "FAIL: $sh/$f is missing or empty; run --emit first"; exit 1; }
+    done
+    w="$work/selfhost"
+    mkdir -p "$w"
+    { printf 'LIBRARY kernel32.dll\nEXPORTS\n'; permitted_windows "$allow"; } > "$w/kernel32.def"
+    llvm-dlltool -m "$(dlltool_machine windows-x86_64)" -d "$w/kernel32.def" -l "$w/kernel32.lib"
+    if ! llc -filetype=obj -O1 -relocation-model=pic "$sh/axiom.ll" -o "$w/axiom.obj" 2>"$w/axiom.llc.err"; then
+      echo "FAIL axiom.exe: llc refused the compiler's IR"
+      sed 's/^/    /' "$w/axiom.llc.err" | head -5
+      exit 1
+    fi
+    # The 8 MB stack the driver gives every Windows executable. The
+    # compiler overflows Windows' 1 MB default compiling itself.
+    if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine windows-x86_64)" -stack:8388608 "-out:$w/axiom.exe" "$w/axiom.obj" "$w/kernel32.lib" >"$w/axiom.link.log" 2>&1; then
+      echo "FAIL axiom.exe: lld-link failed"
+      { grep -o 'undefined symbol: [A-Za-z_][A-Za-z0-9_]*' "$w/axiom.link.log" || true; } | sed 's/^/    /' | sort -u
+      sed 's/^/    /' "$w/axiom.link.log" | head -5
+      exit 1
+    fi
+    imports_of "$w/axiom.exe" > "$w/axiom.imports"
+    unexpected="$(unpermitted_imports "$w/axiom.imports" "$allow")"
+    if [[ -n "$unexpected" ]]; then
+      echo "FAIL axiom.exe imports symbols $allow does not permit:"
+      printf '%s\n' "$unexpected" | sed 's/^/    /'
+      status=1
+    else
+      echo "ok   axiom.exe links ($(wc -c < "$w/axiom.exe" | tr -d ' ') bytes) and imports only permitted names ($(grep -c . "$w/axiom.imports"))"
+    fi
+
+    if [[ "$mode" == "--run" && "$run_target" == windows-x86_64 ]]; then
+      # Two levels below `stdlib/`, where the compiler looks for its
+      # library when nothing names one.
+      ax="$repo_root/.axiom-bin/axiom.exe"
+      mkdir -p "$repo_root/.axiom-bin"
+      cp "$w/axiom.exe" "$ax"
+      unset AXIOM_STDLIB AXIOM_PATH
+
+      # 2a. It emits itself as the host's compiler emitted it.
+      if ( cd "$repo_root" && "$ax" --target=windows-x86_64 emit-llvm self_host/main.ax -o "$w/native.ll" ) > "$w/native.log" 2>&1 \
+         && cmp -s "$w/native.ll" "$sh/axiom.ll"; then
+        echo "ok   axiom.exe EXECUTED: its emission of self_host/main.ax is the host's, byte for byte ($(wc -l < "$w/native.ll" | tr -d ' ') lines)"
+        { cat "$sh/axiom.ll"; printf 'x'; } > "$w/axiom.ll.corrupt"
+        if cmp -s "$w/native.ll" "$w/axiom.ll.corrupt"; then
+          echo "FAIL negative probe [compiler]: a corrupted emission still matched"
+          status=1
+        else
+          echo "ok   negative probe [compiler]: a corrupted emission does not match"
+        fi
+      else
+        echo "FAIL axiom.exe did not emit self_host/main.ax as the host did"
+        sed 's/^/    /' "$w/native.log" | head -5
+        [[ -s "$w/native.ll" ]] && { diff "$sh/axiom.ll" "$w/native.ll" || true; } | head -10 | sed 's/^/    /'
+        status=1
+      fi
+
+      # 2b. Its driver builds hello: llc, a kernel32.lib it makes with
+      #     llvm-dlltool, and lld-link.
+      set +e
+      ( cd "$repo_root" && "$ax" build tests/stdlib/010-hello.ax -o "$w/hello-native.exe" ) > "$w/build.log" 2>&1
+      rc=$?
+      [[ "$rc" -eq 0 ]] && "$w/hello-native.exe" > "$w/hello-native.stdout" 2>&1
+      rc2=$?
+      set -e
+      if [[ "$rc" -ne 0 ]]; then
+        echo "FAIL axiom.exe build of the hello case exited $rc"
+        sed 's/^/    /' "$w/build.log" | head -5
+        status=1
+      elif [[ "$rc2" -ne 0 ]] || ! cmp -s "$w/hello-native.stdout" tests/stdlib/010-hello.out; then
+        echo "FAIL the hello axiom.exe built exited $rc2, or its output is not the golden's"
+        status=1
+      else
+        echo "ok   axiom.exe built the hello case, and it runs to the golden"
+      fi
+
+      # 3. The tree audit, built and run by this compiler, reports the
+      #    fixture exactly as the emitting host did.
+      tree_fixture "$w/tree"
+      set +e
+      ( cd "$repo_root" && "$ax" run examples/tree-audit/tree-audit.ax "$w/tree" ) > "$w/tree-audit.out" 2> "$w/tree-audit.err"
+      rc=$?
+      set -e
+      if [[ "$rc" -eq 0 ]] && cmp -s "$w/tree-audit.out" "$sh/tree-audit.out"; then
+        echo "ok   the tree audit's report on Windows is the emitting host's, byte for byte"
+      else
+        echo "FAIL the tree audit exited $rc, or its report differs from the emitting host's"
+        { diff "$sh/tree-audit.out" "$w/tree-audit.out" || true; } | head -10 | sed 's/^/    /'
+        sed 's/^/    /' "$w/tree-audit.err" | head -5
+        status=1
+      fi
+
+      # 2c. Three failures, each contained by its recovery point, and
+      #     a last test that still runs: exit 1 and the golden's report.
+      set +e
+      mixed="$( ( cd "$repo_root" && "$ax" test tests/testrunner/mixed-tests.ax ) 2>&1 )"
+      rc=$?
+      set -e
+      if [[ "$rc" -eq 1 ]] && diff -u tests/testrunner/mixed-tests.out <(printf '%s\n' "$mixed") > "$w/mixed.diff"; then
+        echo "ok   axiom.exe test reports tests/testrunner/mixed-tests.ax to its golden, exit 1"
+      else
+        echo "FAIL axiom.exe test on mixed-tests.ax exited $rc (want 1), or its report is not the golden"
+        sed 's/^/    /' "$w/mixed.diff" | head -12
+        status=1
+      fi
+    elif [[ "$mode" == "--run" ]]; then
+      echo "ok   axiom.exe NOT EXECUTED: this runner executes $run_target, and the compiler is built for windows-x86_64"
+    else
+      echo "ok   axiom.exe NOT EXECUTED: --link assembles, links and reads imports on a host that cannot run a PE; a Windows runner runs --run"
+    fi
     exit "$status"
     ;;
   *) usage ;;

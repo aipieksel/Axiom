@@ -92,9 +92,9 @@ way in CI. See `CONTRIBUTING.md` and `bootstrap/README.md`.
   battery on these, and no release archive is published for them. This
   policy doesn't cover binaries emitted for them until a CI job runs
   them.
-- **Windows as a host.** The compiler doesn't run on Windows. There is
-  no Windows seed in `bootstrap/`, and `scripts/install.sh` refuses a
-  Windows host.
+- **Windows as a host.** A compiler built for `windows-x86_64` runs on
+  Windows, but Windows isn't a supported host. There is no Windows seed
+  in `bootstrap/`, and `scripts/install.sh` refuses a Windows host.
 - **`rust/examples/`.** These crates exist to exercise the FFI tests.
   They aren't shipped, and the compiler doesn't depend on them.
 

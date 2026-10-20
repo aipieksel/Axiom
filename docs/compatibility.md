@@ -244,9 +244,10 @@ it would refuse releases we intend to make.
   lockfile isn't a step towards a fetcher either: over a path you
   already control, a digest protects nothing and changes on every edit
   of your own code.
-- **Windows as a host.** The compiler doesn't run on Windows.
-  `windows-x86_64` and `windows-aarch64` are source-only targets you
-  cross-compile to.
+- **Windows as a host.** A compiler built for `windows-x86_64` runs on
+  Windows and builds itself there, but `windows-x86_64` and
+  `windows-aarch64` are source-only targets, so this policy doesn't
+  cover a compiler or program built for them.
 
 <a id="5-cutting-a-release"></a>
 ## Cut a release
