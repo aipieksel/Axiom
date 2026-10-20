@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- The assurance page states the safety contract: what the compiler
+  guarantees code with no `effect(unsafe)` declaration and no `extern`
+  block, how each guarantee is enforced, a program it refuses and where
+  it stops; what memory safety, resource cleanup, leak freedom and
+  bounded execution each mean here; and the trusted boundaries a review
+  must cover. See `docs/assurance.md`.
+
 - The REPL checks a declaration as it is typed, as `check` would check
   the file it will become: a declaration the compiler refuses is
   reported and not kept, so a session never holds what a program could

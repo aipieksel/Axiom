@@ -55,6 +55,70 @@ The rules are in [the memory model](memory-model.md) and
 [the restricted profile](restricted-profile.md). The IDs match the
 memory model's *Assurance evidence* table.
 
+### The safety contract
+
+Safe code is code with no `effect(unsafe)` declaration of its own and no
+`extern` block. This is what the compiler guarantees for it, how each
+guarantee is enforced, a program it refuses, and where the guarantee
+stops.
+
+| Invariant | Enforced by | A program it refuses | Limit |
+|---|---|---|---|
+| A reference is made only by a constructor, by an allocation the library types, or by a trusted function that says so | `AX3073` on a forging `as`; `AX5002` keeps `Internal.Raw` and `Internal.RawVec` inside the library (`MM-EXEC-9d`, `MM-EXEC-9g`) | `(as 7 Hid)` in an untagged function; `(import Internal.Raw)` from a program | A trusted body is reviewed, never proved |
+| A word that reaches the kernel or a primitive as an address was made by the function that passes it, or its caller said so | `effect(unsafe)` on every user of a primitive; `restrict(no-unsafe)` names the path to any untrusted one (`MM-EXEC-9d`) | `(__load64 a 0)` in an untagged function | A public function that still takes an address as an `Int`, such as `sysWaitWord`, trusts its caller |
+| A typed read or write checks its range before memory or the kernel sees it | The index trap, status 77, in `vecGet`, `vecSet`, `strByte`, `strSlice` and `fileRead` (`MM-MUT-5a`, `MM-EXEC-9f`) | `(vecGet v 9)` over three elements | A raw `Int` index into a raw block has no range |
+| Every value is released once, by its owner, and never while a share is live | The ownership events of `MM-LIFE-2`, the counted stores of `MM-LIFE-2g`, the `result(owned)` claims | a `set` that drops a `File` without its release | A cycle leaks until an arena reset; `(as v Int)` and an `Int` slot in a container untrack a value (`MM-VAL-24`) |
+| A region's values do not outlive it | `MM-RGN-1` to `MM-RGN-6`: store, return, capture and argument escapes are refused (`AX3059`, `AX3060`) | storing a region value into an outer struct | Typed promotion out of a region is `MM-RGN-7`, planned |
+| A `parallel` or spawned binding reaches nothing its parent still owns, except what it borrows under a count freeze | `AX3064` on captures; the lend block of `MM-PAR-6` | a `Vec` captured by a spawned thunk | A trusted accessor inside the library could still hand a word back |
+| A trap is a defined exit status, never undefined behaviour | The trap table of the memory model, statuses 70 to 86, and the recovery record (`MM-ALLOC-23`) | division by zero exits 72 | A trusted body or an `extern` can still corrupt memory |
+| What the checker accepted is what the emitter compiles | The sealed `CheckedProgram` handoff from the final check to emission, the emitter's one way in | an emitter reached without a final check | A library caller constructs the sealed value itself (`tests/selfhost/290-emit.ax`) |
+
+Four properties are kept apart. Memory safety is the first seven rows:
+no read, write or release outside what the types allow. Resource
+cleanup is `MM-LIFE-2`'s owners releasing their `File`, `Poller` and
+`TermGuard` values at scope end. Leak freedom is weaker than both: a
+cycle leaks until its arena resets, and the model says so. Bounded
+execution is promised only where a trap or a budget says so: the index
+and count traps, `Task`'s stacks and deadlines, and the restricted
+profile's rules.
+
+The contract does not cover the trusted boundaries, so a review must.
+They are the compiler's own raw layer (`self_host/raw.ax`) and every
+`effect(unsafe)` body in `self_host/`. They are the runtime the
+compiler emits, from the allocator to the traps. They are
+`Internal.Raw`, `Internal.RawVec` and every `effect(unsafe)` body in
+the standard library, which `tests/agent/stdlib-effects.allow` lists.
+And they are the `extern` blocks of `Ffi.ax` and
+`Sys/Platform.windows.ax`, with any crate a program links
+([the FFI guide](ffi.md)).
+
+What is not promised: a trusted body's correctness, the behaviour of an
+`extern`, timing, and anything after a hardware fault.
+
+### Type soundness, rule by rule
+
+Each area the type checker is responsible for has a program it accepts
+and a program it refuses by code, and `scripts/check-diagnostics.sh`
+holds every refusal to its code, span and exit status. The fixtures
+named are one of each; the diagnostics corpus holds the rest.
+
+| Area | Refused as | A refusal | An acceptance |
+|---|---|---|---|
+| Generic instantiation | `AX3124` wrong number of type arguments | `tests/diagnostics/1420-generic-alias-arity.ax` | `tests/selfhost/972-polymorphic-signature.ax` |
+| Recursive unification and aliases | `AX3126` a type alias that expands recursively; `AX3125` an invalid type parameter | `tests/diagnostics/1422-recursive-alias.ax` | `tests/selfhost/973-type-alias.ax` |
+| Nominal identity | `AX3044` a type name declared in two imported modules; `AX3006` a duplicate definition | `tests/diagnostics/1424-generic-alias-ambiguity.ax` | `tests/selfhost/134-subtype-checked.ax` |
+| Mutation | `AX3012` assignment to an immutable binding | `tests/diagnostics/1015-set-not-binding.ax` | `tests/selfhost/561-field-store-mut.ax` |
+| Callable signatures | `AX3040` a type variable the caller chooses and the callee produces; `AX3036` an `extern` type that cannot cross | `tests/diagnostics/353-callback-tyvar.ax` | `tests/selfhost/1011-cast-arrow-alias.ax` |
+| Constructor layouts | `AX3067` a struct built with the wrong field count; `AX3132` invalid named construction; `AX3056` a field with no type | `tests/diagnostics/270-struct-field-count.ax` | `tests/selfhost/1003-data-field-agree.ax` |
+| Pattern exhaustiveness | `AX3005` a match that misses a case; `AX3009` a constructor pattern of the wrong arity; `AX3134` an arm that can never match | `tests/diagnostics/1107-match-literal-column.ax` | `tests/selfhost/750-builtin-option-match.ax` |
+| Macros | `AX3018` an invocation no rule accepts; `AX3133` a rule that does not open with its macro's name | `tests/diagnostics/478-json-control-bytes.ax` | `tests/selfhost/1028-macro-syntax-identity.ax` |
+| Module boundaries | `AX3023` a name its module does not export; `AX3085` a sealed struct built outside its module; `AX5002` an internal module reached from a program | `tests/diagnostics/1470-internal-import.ax` | `tests/selfhost/1032-imported-signatures.ax` |
+
+The checker's answers reach a program through four doors, and they give
+one answer: for every diagnostics fixture, `check` on the command line,
+the language server, the REPL and `build` report the same diagnostics
+(`scripts/check-surface-agreement.sh`).
+
 ### A. Correctness of the runtime
 
 | ID | Guarantee | Rule | Evidence |
