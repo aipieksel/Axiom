@@ -106,7 +106,7 @@ named are one of each; the diagnostics corpus holds the rest.
 |---|---|---|---|
 | Generic instantiation | `AX3124` wrong number of type arguments | `tests/diagnostics/1420-generic-alias-arity.ax` | `tests/selfhost/972-polymorphic-signature.ax` |
 | Recursive unification and aliases | `AX3126` a type alias that expands recursively; `AX3125` an invalid type parameter | `tests/diagnostics/1422-recursive-alias.ax` | `tests/selfhost/973-type-alias.ax` |
-| Nominal identity | `AX3044` a type name declared in two imported modules; `AX3006` a duplicate definition | `tests/diagnostics/1424-generic-alias-ambiguity.ax` | `tests/selfhost/134-subtype-checked.ax` |
+| Nominal identity | `AX3044` a type name declared in two imported modules; `AX3006` a duplicate definition; `AX3004` one module's struct where another module's same-named struct is declared | `tests/diagnostics/1473-cross-module-nominal.ax` | `tests/selfhost/134-subtype-checked.ax` |
 | Mutation | `AX3012` assignment to an immutable binding | `tests/diagnostics/1015-set-not-binding.ax` | `tests/selfhost/561-field-store-mut.ax` |
 | Callable signatures | `AX3040` a type variable the caller chooses and the callee produces; `AX3036` an `extern` type that cannot cross | `tests/diagnostics/353-callback-tyvar.ax` | `tests/selfhost/1011-cast-arrow-alias.ax` |
 | Constructor layouts | `AX3067` a struct built with the wrong field count; `AX3132` invalid named construction; `AX3056` a field with no type | `tests/diagnostics/270-struct-field-count.ax` | `tests/selfhost/1003-data-field-agree.ax` |
@@ -118,6 +118,29 @@ The checker's answers reach a program through four doors, and they give
 one answer: for every diagnostics fixture, `check` on the command line,
 the language server, the REPL and `build` report the same diagnostics
 (`scripts/check-surface-agreement.sh`).
+
+### Effects, rule by rule
+
+The effect walk infers each function's row from its body and its
+callees, and a declaration is a claim the walk answers. `Alloc` and
+`Mut` need no declaration, and `effect(pure)` excludes them. `IO`,
+`Spawn`, `Block` and `Entropy` must be declared where they are
+performed, and `Unsafe` where a raw operation, a syscall, an `asm` form
+or an `extern` call appears. A claim the walk cannot check is a warning
+on its own declaration and never a fact about the callee: a caller's
+row comes from the callee's body and from the callbacks it is given, so
+an unverifiable claim cannot certify the claim above it.
+
+| Area | Refused as | A refusal | An acceptance |
+|---|---|---|---|
+| A claim the body contradicts | `AX3010` an `effect(...)` or `effect(pure)` claim the body performs against | `tests/diagnostics/1201-field-dispatch.ax` | `tests/selfhost/1032-imported-signatures.ax` |
+| A required effect undeclared | `AX3042` IO, Spawn, Block or Entropy performed and not declared | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/stdlib/470-parallel.ax` |
+| Unsafe | `AX3073` a raw operation with no `effect(unsafe)`; `AX3010` an `effect(unsafe)` claim over a body with none | `tests/diagnostics/1004-undeclared-unsafe.ax` | `tests/selfhost/1010-trusted-wrapper.ax` |
+| A claim the walk cannot check | `AX3037`, a warning; the symbol row carries `#effects-overapprox`, `#effects-possible` or `#effect-params`, and a caller's purity or restriction is judged by what flows through the call | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/diagnostics/1463-callback-restrictions.ax` |
+| Restrictions | `AX3049` a restriction the body or a callback violates; `AX3051`, a warning, one the walk cannot check; `AX3057` a `strict` one it cannot prove | `tests/diagnostics/393-restrict-strict.ax` | `tests/selfhost/132-contract.ax` |
+| Handlers and operations | `AX3011` a handle body that reaches an effect its list does not name; `AX3053` an operation with no handler; `AX3038`, a warning, a handle list the walk cannot check | `tests/diagnostics/320-unhandled-effect.ax` | `tests/stdlib/300-effect-handlers.ax` |
+| FFI | an `extern` call performs IO and is an unsafe operation, so its caller declares both | `tests/diagnostics/1041-trusted-call.ax` | `stdlib/Sys/Platform.windows.ax` |
+| Cleanup | Not checked where the drop happens: a value's drop runs at the end of the scope that held it, with the effects declared where the value was made ([roadmap](roadmap.md)) | — | `tests/stdlib/712-drop-effects-at-creation.ax` |
 
 ### A. Correctness of the runtime
 

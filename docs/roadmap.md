@@ -85,6 +85,7 @@ integrator would still need.
 | Unsafe declarations retain type, effect and restriction checks | Done | `tests/diagnostics/1395-unsafe-checks-retained.ax` |
 | Checked memory boundaries explain source representation and lifetime obligations consistently in the compiler and editor | Done | `tests/lsp/memory-boundaries.py` |
 | An `effect(unsafe)` claim is judged by what the body itself performs | Done | `AX3010`, `tests/diagnostics/1200-unsafe-claim-open-row.ax` |
+| A drop's effects count where the value drops, not only where it was made | Not started | `tests/stdlib/712-drop-effects-at-creation.ax` holds the current limit |
 | A statically certain defect or a refuted claim is an error, not a warning | Done | `tests/diagnostics/severity.policy` |
 | Retired and never-assigned codes are recorded and never reused | Done | `ERR-DIAG-2` |
 | A check after an error is poisoned, not cascaded | Done | `ERR-DIAG-3`, `tests/diagnostics/1380-poisoned-checks.ax` |

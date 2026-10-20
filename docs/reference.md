@@ -734,8 +734,11 @@ Tested by `tests/stdlib/954-nominal-identity.ax` and
 The upper bound is excluded. Narrowing with `(as n Percent)`, or at
 a declared parameter/result boundary, checks the range at run time and
 traps with status 80 on failure. Widening to `Int` needs no check.
-Arithmetic does not prove that its result stays within the range. Passing between different modules’ same-named
-subtypes checks the target range too.
+Arithmetic does not prove that its result stays within the range. A
+subtype is a checked range, not a nominal type: a value of one subtype
+passes where another subtype of the same base is declared, with the
+target's range checked at run time, and so does a same-named subtype
+from another module.
 
 Use an alias for naming, a subtype for a checked integer range, and a
 `struct` or `data` wrapper for another nominal type.
@@ -1010,7 +1013,15 @@ call sites. The requirement follows parameter aliases, forwarding
 functions and captured lambdas. An IO callback passed to a `no-io`
 function is refused with `AX3049`.
 
-Tested by `tests/diagnostics/1463-callback-restrictions.ax`.
+A restriction speaks for what the function and its callees perform. A
+value made elsewhere drops at the end of the scope that held it, with
+the effects declared where it was made. `openPath` is IO, so a `no-io`
+function that stores a new file over an old one closes the old one
+without the restriction seeing it. Not yet: a drop's effects count
+where the value drops ([roadmap](roadmap.md)).
+
+Tested by `tests/diagnostics/1463-callback-restrictions.ax` and
+`tests/stdlib/712-drop-effects-at-creation.ax`.
 
 ### Contracts: pre and post
 

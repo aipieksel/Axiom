@@ -1,0 +1,44 @@
+; An effect claim the walk cannot check is a warning on its own
+; declaration (AX3037, silenced here) and never a fact about the
+; callee: a caller's row comes from what the callee's body does and
+; from the callbacks it is given, so a purity claim or a restriction
+; above an unverifiable claim is refused by what flows through it.
+(import IO)
+
+; `f` claims purity and calls its parameter: the walk cannot check it,
+; and the row says the effects depend on `k`.
+(:: f (-> (-> Int Int) Int Int))
+;@axiom:effect(pure)
+;@axiom:nolint(AX3037)
+(fn (f k x)
+  (k x))
+
+; `g` claims purity and calls only `f`: refused for the lambda's Alloc.
+(:: g (-> Int Int))
+;@axiom:effect(pure)
+(fn (g x)
+  (f (lambda (y) (+ y 1)) x))
+
+; `h` forbids IO and hands `f` a lambda that prints: refused, with the
+; chain through the lambda, and the IO it performs is undeclared.
+(:: h (-> Int Int))
+;@axiom:restrict(no-io)
+(fn (h x)
+  (f
+    (lambda (y)
+      {
+        (println "io")
+        y
+      }
+    )
+    x))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let a (g 1))
+    (let b (h 2))
+    (println "{a} {b}")
+    0
+  })

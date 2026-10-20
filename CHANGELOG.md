@@ -16,6 +16,12 @@ its changelog too.
 
 ## Unreleased
 
+- The assurance page maps each effect rule to the code that refuses it
+  and a fixture on each side, and names the one limit: a value's drop
+  runs with the effects declared where the value was made, not where it
+  drops. A new fixture shows that an effect claim the walk cannot check
+  never stands in for its callee.
+
 - `IO.nullDevice` is the path of the null device, `/dev/null` or `NUL`
   on Windows, for a program that needs a file it can always open and
   that keeps nothing.
