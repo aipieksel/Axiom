@@ -83,6 +83,11 @@
   (name : String)
   (node : ASTNode))
 
+(struct LspImportChunk
+  (name : String)
+  (start : Int)
+  (end : Int))
+
 (type LspNodeBuckets (Vec (Vec LspNamedNode)))
 
 ; A null slot has no bucket to inspect.
@@ -12686,8 +12691,11 @@
           "codeActionProvider"
           (jsonObjPut jsonObj "codeActionKinds"
             (jsonArrPush
-              (jsonArrPush (jsonArrPush jsonArr (jsonStr "quickfix")) (jsonStr "refactor.rewrite"))
-              (jsonStr "refactor.extract"))))
+              (jsonArrPush
+                (jsonArrPush (jsonArrPush jsonArr (jsonStr "quickfix"))
+                  (jsonStr "refactor.rewrite"))
+                (jsonStr "refactor.extract"))
+              (jsonStr "source.organizeImports"))))
         "typeDefinitionProvider" (jsonBool 1))
       "codeLensProvider" (jsonObjPut jsonObj "resolveProvider" (jsonBool 0)))
     "experimental" (jsonObjPut jsonObj "expandMacro" (jsonBool 1))))
@@ -12825,6 +12833,316 @@
 (pub :: lspCodeAction (-> LspWorkspace String String Int Int))
 ;@axiom:effect(io)
 (pub fn (lspCodeAction workspace src uri params)
+  {
+    (let only (jsonGet (jsonGet params "context") "only"))
+    (let out jsonArr)
+    {
+      ; Source actions are requested explicitly, including on save.
+      (if (&& (!= only 0) (lspActionKindWanted only "source.organizeImports"))
+        {
+          (let action (lspOrganizeImports workspace src uri))
+          (if (!= action 0)
+            (jsonArrPush out action))
+        })
+      (if (|| (== only 0)
+            (|| (lspActionKindWanted only "quickfix")
+              (|| (lspActionKindWanted only "refactor.rewrite")
+                (lspActionKindWanted only "refactor.extract"))))
+        {
+          (let actions (lspCodeActionLocal workspace src uri params))
+          (let mut i 0)
+          (while (< i (jsonArrLen actions))
+            {
+              (let action (jsonArrGet actions i))
+              (if (|| (== only 0) (lspActionKindWanted only (jsonStrVal (jsonGet action "kind"))))
+                (jsonArrPush out action))
+              (set i (+ i 1))
+            })
+        })
+      out
+    }
+  })
+
+; A kind includes its dot-separated descendants; `source` requests
+; organise imports, while `source.organizeImports.extra` does not.
+(pub :: lspActionKindWanted (-> Int String Bool))
+(pub fn (lspActionKindWanted only kind)
+  {
+    (let mut i 0)
+    (let mut wanted false)
+    (while (< i (jsonArrLen only))
+      {
+        (let parent (jsonStrVal (jsonArrGet only i)))
+        (if (|| (== (strLen parent) 0)
+              (|| (strEq parent kind) (strStartsWith kind (concat parent "."))))
+          (set wanted true))
+        (set i (+ i 1))
+      })
+    wanted
+  })
+
+; Whole import lines and their attached comment blocks move together.
+; Separators stay in their original slots, keeping blank lines and line
+; endings. Module docs and banners remain outside a movable block.
+(pub :: lspOrganizeImports (-> LspWorkspace String String Int))
+;@axiom:effect(io)
+(pub fn (lspOrganizeImports workspace src uri)
+  {
+    (let tokens (lex src))
+    (let tags (scanAxtags src))
+    (let pr (parseModuleWith tokens tags))
+    (if (== (memGetWord pr 0) 0)
+      0
+      {
+        (let decls (readAstNodes pr 1))
+        (let edit (lspOrganizeEdit src uri decls tokens tags))
+        (if (== edit 0)
+          0
+          {
+            ; Macro lookup and structural syntax queries can depend on
+            ; declaration order. Include generated declarations,
+            ; transitive dependencies and unsaved overlays.
+            (let expanded (lspFixExpand workspace (lspUriToPath uri) src decls))
+            (if (== expanded 0)
+              0
+              (if (|| (> (countErrorDiags (memGetWordVec expanded 2)) 0)
+                    (lspOrganizeConflict (readAstNodes expanded 0)))
+                0
+                (jsonObjPut
+                  (jsonObjPut (jsonObjPut jsonObj "title" (jsonStr "Organise imports")) "kind"
+                    (jsonStr "source.organizeImports"))
+                  "edit" edit)))
+          })
+      })
+  })
+
+(pub :: lspOrganizeConflict (-> (Vec ASTNode) Bool))
+(pub fn (lspOrganizeConflict decls)
+  {
+    (let seen (lspBucketsNew LSP_VIEW_IDX_SLOTS))
+    (let mut conflict false)
+    (let mut i 0)
+    (while (< i (vecLen decls))
+      {
+        (let d (vecGet decls i))
+        (if (!= (nodeModule d) 0)
+          {
+            (if (|| (== (nodeTag d) TAG_D_MACRO)
+                  (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT)))
+              (if (lspOrganizeRemember seen (nodeAName d) d)
+                (set conflict true)))
+            (if (== (nodeTag d) TAG_D_DATA)
+              {
+                (let constructors (nodeBChildren d))
+                (let mut j 0)
+                (while (< j (vecLen constructors))
+                  {
+                    (if (lspOrganizeRemember seen (nodeAName (vecGet constructors j)) d)
+                      (set conflict true))
+                    (set j (+ j 1))
+                  })
+              })
+          })
+        (set i (+ i 1))
+      })
+    conflict
+  })
+
+; Constructor nodes need their enclosing data declaration's module.
+; A name shared within one module keeps its written declaration order.
+(pub :: lspOrganizeRemember (-> LspNodeBuckets String ASTNode Bool))
+(pub fn (lspOrganizeRemember seen name owner)
+  {
+    (let previous (lspViewIdxFind seen name))
+    (if (nodeSame previous nilNode)
+      {
+        (lspViewIdxAdd seen name owner)
+        false
+      }
+      (! (strEq (nodeModuleName previous) (nodeModuleName owner))))
+  })
+
+; The lexer finds the opener even with comments in the import header.
+; The parser has already refused late, nested and incomplete imports.
+(pub :: lspOrganizeEdit (-> String String (Vec ASTNode) Ints Ints Int))
+(pub fn (lspOrganizeEdit src uri decls tokens tags)
+  {
+    (let chunks vecNew)
+    (let sorted vecNew)
+    (if (|| (! (lspOrganizeCollect src decls tokens chunks sorted)) (< (vecLen chunks) 2))
+      0
+      (lspOrganizeSorted src uri chunks sorted tags))
+  })
+
+(pub :: lspOrganizeCollect
+  (-> String (Vec ASTNode) Ints (Vec LspImportChunk) (Vec LspImportChunk) Bool))
+(pub fn (lspOrganizeCollect src decls tokens chunks sorted)
+  {
+    (let mut i 0)
+    (let mut t 0)
+    (let mut opener (- 0 1))
+    (let mut valid true)
+    (while (< i (vecLen decls))
+      {
+        (let d (vecGet decls i))
+        (if (== (nodeTag d) TAG_D_IMPORT)
+          {
+            (while (if (< t (vecLen tokens))
+              (<= (spanStart (tokenSpan (vecGet tokens t))) (spanStart (nodeSpan d)))
+              false)
+              {
+                (let token (vecGet tokens t))
+                (if (== (kindInt (tokenKind token)) (kindInt TK_LPAREN))
+                  (set opener (spanStart (tokenSpan token))))
+                (set t (+ t 1))
+              })
+            (let start (lspOrganizeStart src opener))
+            (let end (lspOrganizeEnd src (lspFormEnd src opener)))
+            (if (|| (< start 0) (< end 0))
+              (set valid false)
+              {
+                (let chunk (LspImportChunk :name (nodeAName d) :start start :end end))
+                (vecPush chunks chunk)
+                (if (> (vecLen chunks) 1)
+                  {
+                    (let previous (vecGet chunks (- (vecLen chunks) 2)))
+                    (if (! (lspOrganizeBlank src previous.end start))
+                      (set valid false))
+                  })
+                (vecPush sorted chunk)
+              })
+          })
+        (set i (+ i 1))
+      })
+    valid
+  })
+
+; Only whitespace may separate movable blocks. A section comment,
+; block comment or metadata tag with unclear attachment refuses.
+(pub :: lspOrganizeBlank (-> String Int Int Bool))
+(pub fn (lspOrganizeBlank src start end)
+  {
+    (let mut i start)
+    (let mut blank true)
+    (while (< i end)
+      {
+        (if (! (lspIsSpace (strByte src i)))
+          (set blank false))
+        (set i (+ i 1))
+      })
+    blank
+  })
+
+(pub :: lspOrganizeStart (-> String Int Int))
+(pub fn (lspOrganizeStart src opener)
+  (if (< opener 0)
+    (- 0 1)
+    {
+      (let mut start (lineStartOf src opener))
+      (let mut go true)
+      (let mut valid (lspOrganizeBlank src start opener))
+      (while (&& go (> start 0))
+        {
+          (let previous (docPrevLineStart src start))
+          (let end
+            (if (if (> start 1)
+              (== (strByte src (- start 2)) 13)
+              false)
+              (- start 2)
+              (- start 1)))
+          (let line (strSlice src previous (- end previous)))
+          (if (&& (docIsDocLine line) (! (docIsModuleDocLine line)))
+            (set start previous)
+            (set go false))
+        })
+      (if valid
+        start
+        (- 0 1))
+    }))
+
+; The line ending is a separator, so a last import without a newline
+; can move without joining the next form onto its line.
+(pub :: lspOrganizeEnd (-> String Int Int))
+(pub fn (lspOrganizeEnd src formEnd)
+  {
+    (let end (docLineEndFrom src formEnd))
+    (let mut i formEnd)
+    (while (if (< i end)
+      (lspIsSpace (strByte src i))
+      false)
+      (set i (+ i 1)))
+    (if (if (< i end)
+      (!= (strByte src i) 59)
+      false)
+      (- 0 1)
+      (if (if (> end 0)
+        (== (strByte src (- end 1)) 13)
+        false)
+        (- end 1)
+        end))
+  })
+
+(pub :: lspOrganizeSorted (-> String String (Vec LspImportChunk) (Vec LspImportChunk) Ints Int))
+(pub fn (lspOrganizeSorted src uri chunks sorted tags)
+  {
+    (let n (vecLen sorted))
+    (let mut i 1)
+    (let mut valid true)
+    (while (< i n)
+      {
+        (let chunk (vecGet sorted i))
+        (let mut j i)
+        (while (if (> j 0)
+          {
+            (let previous (vecGet sorted (- j 1)))
+            (> (strCmp previous.name chunk.name) 0)
+          }
+          false)
+          {
+            (vecSet sorted j (vecGet sorted (- j 1)))
+            (set j (- j 1))
+          })
+        (vecSet sorted j chunk)
+        (set i (+ i 1))
+      })
+    (let mut text "")
+    (set i 0)
+    (while (< i n)
+      {
+        (let chunk (vecGet sorted i))
+        (if (> i 0)
+          {
+            (let before (vecGet sorted (- i 1)))
+            (if (strEq before.name chunk.name)
+              (set valid false))
+            (let previous (vecGet chunks (- i 1)))
+            (let current (vecGet chunks i))
+            (set text (concat text (strSlice src previous.end (- current.start previous.end))))
+          })
+        (set text (concat text (strSlice src chunk.start (- chunk.end chunk.start))))
+        (set i (+ i 1))
+      })
+    (let first (vecGet chunks 0))
+    (let last (vecGet chunks (- n 1)))
+    (let start first.start)
+    (let end last.end)
+    ; Tags attach by source offset, including inside and trailing
+    ; comments and tags separated from the header by blank lines.
+    (set i 0)
+    (while (< i (vecLen tags))
+      {
+        (if (< (memGetWord (vecGet tags i) 0) end)
+          (set valid false))
+        (set i (+ i 1))
+      })
+    (if (|| (! valid) (strEq text (strSlice src start (- end start))))
+      0
+      (lspEditJson uri (lspRangeIx src (lspLineIndex src) (mkSpan start end)) text))
+  })
+
+(pub :: lspCodeActionLocal (-> LspWorkspace String String Int Int))
+;@axiom:effect(io)
+(pub fn (lspCodeActionLocal workspace src uri params)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
     (if (== (memGetWord pr 0) 0)

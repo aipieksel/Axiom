@@ -4575,8 +4575,8 @@ elif ftail:
     fwhy = f"{len(ftail)} trailing bytes after the last frame"
 elif fcaps.get("documentFormattingProvider") is not True:
     fwhy = f"documentFormattingProvider is not advertised: {sorted(fcaps)}"
-elif (fcaps.get("codeActionProvider") or {}).get("codeActionKinds") != ["quickfix", "refactor.rewrite", "refactor.extract"]:
-    fwhy = f"codeActionProvider is {fcaps.get('codeActionProvider')!r}, want the three kinds"
+elif (fcaps.get("codeActionProvider") or {}).get("codeActionKinds") != ["quickfix", "refactor.rewrite", "refactor.extract", "source.organizeImports"]:
+    fwhy = f"codeActionProvider is {fcaps.get('codeActionProvider')!r}, want the four kinds"
 elif fcaps.get("typeDefinitionProvider") is not True:
     fwhy = f"typeDefinitionProvider is not advertised: {sorted(fcaps)}"
 elif fcaps.get("codeLensProvider") != {"resolveProvider": False}:
@@ -5211,8 +5211,8 @@ if cp.returncode != 0:
     cawhy = f"the server exited {cp.returncode}: {cp.stderr[:200]!r}"
 elif ctail:
     cawhy = f"{len(ctail)} trailing bytes after the last frame"
-elif (ccaps.get("codeActionProvider") or {}).get("codeActionKinds") != ["quickfix", "refactor.rewrite", "refactor.extract"]:
-    cawhy = f"codeActionProvider is {ccaps.get('codeActionProvider')!r}, want quickfix, refactor.rewrite and refactor.extract"
+elif (ccaps.get("codeActionProvider") or {}).get("codeActionKinds") != ["quickfix", "refactor.rewrite", "refactor.extract", "source.organizeImports"]:
+    cawhy = f"codeActionProvider is {ccaps.get('codeActionProvider')!r}, want quickfix, refactor.rewrite, refactor.extract and source.organizeImports"
 # --- import ----------------------------------------------------------------
 elif ca_import_is(2, SHOUT, HELPER_MOD, "AX3001", {"line": 0, "character": 0}, f"(import {HELPER_MOD} ({SHOUT}))\n"):
     cawhy = "import, no import present: " + ca_import_is(2, SHOUT, HELPER_MOD, "AX3001", {"line": 0, "character": 0}, f"(import {HELPER_MOD} ({SHOUT}))\n")
@@ -7089,6 +7089,15 @@ if compute_check.returncode:
     failed += 1
 else:
     print(compute_check.stdout.strip())
+    passed += 1
+
+organize_check = subprocess.run([sys.executable, os.path.join(fixdir, "organize-imports.py"), stage1],
+                               capture_output=True, text=True)
+if organize_check.returncode:
+    print(organize_check.stdout + organize_check.stderr)
+    failed += 1
+else:
+    print(organize_check.stdout.strip())
     passed += 1
 
 print(f"\nlsp: {passed} passed, {failed} failed, "

@@ -207,7 +207,7 @@ including pattern matching, remain work to do.
 | Workspace request results are cached by revision, with exact file and module-search validation | Done |
 | Parsed and checked semantic models are reused across different requests | Not started |
 | Completion uses expected types, offers auto-import edits and resolves expensive details on demand | Not started |
-| Safe assists organise top-level imports and preserve attached comments | Not started |
+| Safe assists organise top-level imports and preserve attached comments | Done; `tests/lsp/organize-imports.py` checks source edits and refusals |
 | Semantic tokens support range and delta requests | Done |
 | The language server answers inside macro invocations | Not started |
 | Packages can pin a version | Not started |

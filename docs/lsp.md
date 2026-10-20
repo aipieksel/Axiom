@@ -1056,9 +1056,10 @@ is the only formatting the server does.
 
 #### Code actions
 
-`textDocument/codeAction` offers three kinds, all advertised in
-`codeActionKinds`: `quickfix`, `refactor.rewrite` and
-`refactor.extract`.
+`textDocument/codeAction` offers four kinds, all advertised in
+`codeActionKinds`: `quickfix`, `refactor.rewrite`, `refactor.extract`
+and `source.organizeImports`. The request's `context.only` filters
+these kinds, including descendants of a requested kind such as `source`.
 
 Every machine-applicable fix the compiler attaches to a diagnostic in
 the range is offered as a preferred `quickfix`. That's a help carrying a
@@ -1076,10 +1077,30 @@ The server also writes these assists itself:
 | *Add type signature for `f`* | `refactor.rewrite` | A `fn` with no `::` |
 | *Simplify to `c`* | `refactor.rewrite` | The `lint-bool-if` Hint |
 | *Extract to `let`* | `refactor.extract` | A selected range, with no diagnostic |
+| *Organise imports* | `source.organizeImports` | An explicit `context.only` request for `source` or `source.organizeImports` |
 
 This request runs the pipeline for the kinds attached to diagnostics
 (see [The cost rule](#the-cost-rule)), and reads the raw tree for
-extraction. It answers `[]` on a document that doesn't parse.
+extraction. Import organisation reads the raw header and expands its
+dependencies to check for declarations whose lookup depends on order.
+It does not check bodies. The request answers
+`[]` on a document that doesn't parse.
+
+*Organise imports* sorts the module header by module name. Each import
+moves with its directly attached `;` and `;;` comments and its trailing
+line comment. Selective name lists, comments inside forms, indentation,
+blank separators and line endings keep their bytes. Module documentation
+and the comments above the first declaration stay in place.
+
+The action leaves repeated modules and already sorted headers alone.
+It refuses imports sharing a line, metadata tags in the import header, and
+separate comments or section banners between imports. An unreadable
+dependency, a failed expansion or colliding imported macro, type or
+constructor names also prevents the action: macro lookup and structural
+queries depend on declaration order. It retains unused
+imports and keeps selective lists in their written order.
+
+Tested by `tests/lsp/organize-imports.py`.
 
 *Import `name` from `Mod`* looks at every module the resolver could
 reach: the entry file's directory, `axiom.pkg`'s `depend` and `crate`
