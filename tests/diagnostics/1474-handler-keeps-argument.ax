@@ -1,0 +1,244 @@
+; A handler runs where its operation is performed, which may be inside
+; a region or a recovery point, so what the operation hands it and what
+; it allocates belong to that extent (docs/memory-model.md MM-RGN-3).
+; Measured with no rule here: `keptInCell` passed `check`, the region's
+; end reclaimed the string the handler had stored into `c`, and the
+; next allocation trapped inside `strAlloc`.
+;
+;   1  `keptInCell`: a lambda handler installed outside a region stores
+;      the operation's argument into a captured cell. One AX3060.
+;   2  `keptInVec`: the same into a captured `Vec`, through `vecPush`.
+;      Two AX3060: the grown buffer and the element.
+;   3  `keptCopy`: a copy made in the handler, `strDup`, belongs to the
+;      extent too. One AX3060.
+;   4  `keptClosure`: a closure over the argument, stored into a
+;      captured hook. One AX3062.
+;   5  `keptAcrossRecovery`: the store of row 1 under a recovery
+;      point, the operation performed by a callee of the thunk. One
+;      AX3060.
+;   6  `namedKeeps`: a top-level function handler of a two-argument
+;      operation stores the second argument into the first. One AX3060
+;      at the handler's name, plus the unresolved operation call.
+;   7  `scalarOut`: a handler that keeps only `(strLen s)`, in a
+;      captured `mut` field. Silent: the control.
+;   8  `namedReads`: a top-level function handler that reads its
+;      argument. Silent.
+;   9  `constant`: a handler answering a constant. Silent.
+(import Str)
+(import Vec)
+
+(effect Keep
+  (keep :: (-> String Int)))
+
+(effect Keep2
+  (keep2 :: (-> Cell String Int)))
+
+(struct Cell
+  (mut s : String))
+
+(struct Count
+  (mut n : Int))
+
+(struct Hook
+  (mut f : (-> Int Int)))
+
+(:: keptInCell (-> Cell Int))
+(fn (keptInCell c)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set c.s s)
+        0
+      }
+    )))
+
+(:: keptInVec (-> (Vec String) Int))
+(fn (keptInVec v)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (vecPush v s)
+        0
+      }
+    )))
+
+(:: keptCopy (-> Cell Int))
+(fn (keptCopy c)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set c.s (strDup s))
+        0
+      }
+    )))
+
+(:: keptClosure (-> Hook Int))
+(fn (keptClosure h)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set h.f (lambda (n) (+ n (strLen s))))
+        0
+      }
+    )))
+
+(:: inside (-> Int Int))
+(fn (inside x)
+  {
+    (keep (concat "inner " "value"))
+    (/ 1 0)
+  })
+
+(:: keptAcrossRecovery (-> Cell Int))
+(fn (keptAcrossRecovery c)
+  (handle
+    (__axiom_recover __axiom_arena_mark (lambda (x) (inside x)))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set c.s s)
+        0
+      }
+    )))
+
+(:: stash (-> Cell String Int))
+(fn (stash c)
+  (lambda (s)
+    {
+      (set c.s s)
+      0
+    }
+  ))
+
+(:: namedKeeps (-> Cell Int))
+(fn (namedKeeps c)
+  (handle
+    (region r
+      (keep2 c (concat "inner " "value")))
+    (Keep2 Alloc Mut)
+    stash))
+
+(:: shortCall (-> Int Int))
+(fn (shortCall ignored)
+  (region nested
+    (keep (strDup "inner"))))
+
+(:: keptThroughCallee (-> Cell Int))
+(fn (keptThroughCallee c)
+  (handle
+    (shortCall 0)
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set c.s s)
+        0
+      }
+    )))
+
+(:: keptThroughUnknown (-> Cell (-> Int Int) Int))
+(fn (keptThroughUnknown c call)
+  (handle
+    (call 0)
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set c.s s)
+        0
+      }
+    )))
+
+(effect Forward
+  (forward :: (-> Int Int)))
+
+(:: installForward (-> (-> Int Int) Int))
+(fn (installForward h)
+  (handle
+    (forward 0)
+    (Forward Alloc Mut)
+    h))
+
+(:: redirect (-> Int Int))
+(fn (redirect ignored)
+  (region nested
+    (keep (strDup "inner"))))
+
+(:: keptThroughInstalledHandler (-> Cell Int))
+(fn (keptThroughInstalledHandler c)
+  (handle
+    (installForward redirect)
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set c.s s)
+        0
+      }
+    )))
+
+(:: mutatingLength (-> Cell String Int))
+(fn (mutatingLength c s)
+  {
+    (set c.s s)
+    (strLen s)
+  })
+
+(:: sideEffectScalar (-> Cell Count Int))
+(fn (sideEffectScalar c k)
+  (handle
+    (region r
+      (keep (strDup "inner")))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set k.n (mutatingLength c s))
+        0
+      }
+    )))
+
+(:: scalarOut (-> Count Int))
+(fn (scalarOut k)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    (lambda (s)
+      {
+        (set k.n (+ k.n (strLen s)))
+        0
+      }
+    )))
+
+(:: reads (-> String Int))
+(fn (reads s)
+  (strLen s))
+
+(:: namedReads Int)
+(fn (namedReads)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    reads))
+
+(:: constant Int)
+(fn (constant)
+  (handle
+    (region r
+      (keep (concat "inner " "value")))
+    (Keep Alloc Mut)
+    (lambda (s) 7)))
+
+(:: main Int)
+(fn (main)
+  0)

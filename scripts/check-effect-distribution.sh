@@ -240,15 +240,18 @@ have() { # have <got> <want> <what>
 # Err.mapOk/mapErr/andThen/optMap/optAndThen and to the full-library
 # Btree.btreeCheck/checkChain/checkTree lower bounds. Concrete effects
 # and their existing callback effect parameters remain unchanged.
+# Handler lifetime analysis adds four Alloc,Mut helpers, one Mut helper
+# and two pure predicates. Comparing both source trees with the same
+# compiler changes no existing function's effect row, including IO.
 echo "== compiler view: symbols --calls self_host/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3356 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3360 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 455 "Alloc,IO,Mut"
-have "$(bucket "$work/main.axsym" 'Mut')" 193 "exactly Mut"
+have "$(bucket "$work/main.axsym" 'Mut')" 194 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 117 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
@@ -281,7 +284,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2429 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2431 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 33 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"

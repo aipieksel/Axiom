@@ -1,0 +1,209 @@
+; A recovery point's thunk is an extent an abort reclaims, so a value
+; built inside it may be stored nowhere older (docs/memory-model.md
+; MM-ALLOC-23, MM-RGN-3). 1033 pins a `Vec` grown inside the thunk;
+; these are the other routes to something older, each refused.
+;
+;   1  `setField`: a `mut` field of a struct passed in. One AX3060.
+;   2  `setSlot`: `vecSet` into a `Vec` passed in, without growing it.
+;      One AX3060.
+;   3  `pushNested`: a `Vec` inside a `Vec` passed in, grown. AX3060
+;      twice: the grown buffer and the element.
+;   4  `setDeep`: a field of a field. One AX3060.
+;   5  `setHook`: a closure over a string built inside, stored into a
+;      `mut` field. One AX3062.
+;   6  `putMap`: `mapInsert` into a `Map` passed in. AX3060 twice: the
+;      entry and the value.
+;   7  `setSlice`: a slice of an outer string. Its bytes are the
+;      outer string's; its descriptor is built inside. One AX3060.
+;   8  `consBag`: a cons cell built inside, holding the old list. One
+;      AX3060.
+;   9  `viaAlias`: the struct, through an alias bound inside. One
+;      AX3060.
+;  10  `viaGet`: a cell fetched from a `Vec` passed in. One AX3060.
+;  11  `viaMatch`: a cell bound by a match on a data value passed in.
+;      One AX3060.
+;  12  `setOuter`: a value built before the point, stored into a
+;      struct passed in. Silent: the control, the abort leaves both.
+;  13  `setLit`: a literal. Silent.
+;  14  `setWord`: a word into a slot of a `Vec` passed in. Silent.
+(import Str)
+(import Vec)
+(import Map)
+
+(struct Cell
+  (mut s : String))
+
+(struct Inner
+  (mut s : String))
+
+(struct Outer
+  (inner : Inner))
+
+(struct Hook
+  (mut f : (-> Int Int)))
+
+(data L
+  (Nil)
+  (Cons String L))
+
+(struct Bag
+  (mut l : L))
+
+(data Box
+  (B Cell))
+
+(:: setField (-> Cell Int))
+(fn (setField c)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (set c.s (strDup "inner"))
+        (/ 1 0)
+      }
+    )))
+
+(:: setSlot (-> (Vec String) Int))
+(fn (setSlot v)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (vecSet v 0 (strDup "inner"))
+        (/ 1 0)
+      }
+    )))
+
+(:: pushNested (-> (Vec (Vec String)) Int))
+(fn (pushNested vv)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (vecPush (vecGet vv 0) (strDup "inner"))
+        (/ 1 0)
+      }
+    )))
+
+(:: setDeep (-> Outer Int))
+(fn (setDeep o)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (set o.inner.s (strDup "inner"))
+        (/ 1 0)
+      }
+    )))
+
+(:: setHook (-> Hook Int))
+(fn (setHook h)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (let s (strDup "inner"))
+        {
+          (set h.f (lambda (n) (+ n (strLen s))))
+          (/ 1 0)
+        }
+      }
+    )))
+
+(:: putMap (-> (Map String) Int))
+(fn (putMap m)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (mapInsert m 1 (strDup "inner"))
+        (/ 1 0)
+      }
+    )))
+
+(:: setSlice (-> Cell String Int))
+(fn (setSlice c base)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (set c.s (strSlice base 0 2))
+        (/ 1 0)
+      }
+    )))
+
+(:: consBag (-> Bag Int))
+(fn (consBag b)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (set b.l (Cons (strDup "inner") b.l))
+        (/ 1 0)
+      }
+    )))
+
+(:: viaAlias (-> Cell Int))
+(fn (viaAlias c)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (let d c)
+        {
+          (set d.s (strDup "inner"))
+          (/ 1 0)
+        }
+      }
+    )))
+
+(:: viaGet (-> (Vec Cell) Int))
+(fn (viaGet cells)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (let d (vecGet cells 0))
+        {
+          (set d.s (strDup "inner"))
+          (/ 1 0)
+        }
+      }
+    )))
+
+(:: viaMatch (-> Box Int))
+(fn (viaMatch b)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      (match b
+        ((B cell)
+          {
+            (set cell.s (strDup "inner"))
+            (/ 1 0)
+          }
+        ))
+    )))
+
+(:: setOuter (-> Cell String Int))
+(fn (setOuter c base)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (set c.s base)
+        (/ 1 0)
+      }
+    )))
+
+(:: setLit (-> Cell Int))
+(fn (setLit c)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (set c.s "literal")
+        (/ 1 0)
+      }
+    )))
+
+(:: setWord (-> (Vec Int) Int))
+(fn (setWord v)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (x)
+      {
+        (vecSet v 0 9)
+        (/ 1 0)
+      }
+    )))
+
+(:: main Int)
+(fn (main)
+  0)

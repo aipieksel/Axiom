@@ -178,6 +178,15 @@ else
   bad "tests/region/escape-store.ax is not refused with AX3060"; sed 's/^/     /' "$work/run/escape-store.err" | cut -c1-160 | head -4
 fi
 
+# Store, capture, backing-view and concurrent-sharing probes carry
+# source-derived refusal counts and executable positive controls.
+echo "== 2b. lifetime store and sharing shapes =="
+if python3 "$repo_root/tests/region/lifetime-probes.py" "$axc"; then
+  ok "lifetime refusal counts and valid views, captures and scalar stores"
+else
+  bad "a lifetime shape escaped checking or a valid lifetime was refused"
+fi
+
 # ---------------------------------------------------------------
 # 3. the ablation: the pass answering 0 accepts them, and the accepted
 #    program reads reclaimed memory
@@ -316,6 +325,42 @@ else
     bad "the two-pass runtime probe did not execute"
     head -8 "$work/run/loop-ablated.err"
   fi
+fi
+
+# Keep the reporting pass and the loop rule; remove only handler
+# invocation checking. Both direct and unseen handlers must become
+# accepted, and the executable witness must expose reclaimed storage.
+echo "== 3c. ablation: handler invocations use their installation's lifetime =="
+cp "$work/typecheck.unablated.ax" "$abl/self_host/typecheck.ax"
+python3 - "$abl/self_host/typecheck.ax" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+local_start = s.index("(pub fn (rgnHandlerLocal rc h)")
+local_end = s.index("\n; A recovery point", local_start)
+local_part = s[local_start:local_end]
+if local_part.count("(rgnUnknownCall rc") != 1 or local_part.count("(rgnParamMask rc)") != 1:
+    raise SystemExit("same-scope handler lifetime ablation no longer matches")
+s = s[:local_start] + "(pub fn (rgnHandlerLocal rc h) (rgnExpr rc h))\n" + s[local_end:]
+start = s.index("(pub fn (rgnHandlerValue rc h)")
+end = s.index("\n; Whether a function may store", start)
+part = s[start:end]
+if part.count("(rgnFormWalk rc h") != 1 or part.count('"AX3060"') != 2:
+    raise SystemExit("handler lifetime ablation no longer matches")
+s = s[:start] + "(pub fn (rgnHandlerValue rc h) (rgnExpr rc h))\n" + s[end:]
+p.write_text(s)
+PY
+if [[ $? -ne 0 ]]; then
+  bad "could not apply the handler lifetime ablation"
+elif ! gate_build_tree "$axc" "$abl" "$abl/stdlib" \
+     "$work/axc-handler-ablated" > "$work/handler-ablated.build.log" 2>&1; then
+  bad "the handler-ablated compiler did not build"
+  head -12 "$work/handler-ablated.build.log"
+elif python3 "$repo_root/tests/region/lifetime-probes.py" \
+    "$work/axc-handler-ablated" --handler-ablated; then
+  ok "handler checking prevents an executable reference from outliving its region"
+else
+  bad "the handler refusal or reclaimed-storage witness survived its ablation"
 fi
 
 # Diagnostic labels must not turn the facts walk into a whole-module

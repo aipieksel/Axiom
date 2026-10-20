@@ -16,6 +16,20 @@ its changelog too.
 
 ## Unreleased
 
+- Effect handlers cannot retain references allocated inside an operation's
+  region or recovery scope. Lambda handlers are checked per invocation;
+  named functions need complete lifetime facts, and unseen handler bodies
+  are conservatively refused across shorter extents. Reclamation facts
+  propagate through callees while preserving handler values when the body
+  stays in its current scope. A handler that kept a reclaimed string
+  previously passed checking and crashed after reset. The lifetime gate
+  removes this enforcement and requires the unsafe path to execute again.
+  Scalar field stores keep their checked type while their computations'
+  stores remain checked. `scripts/check-region-escape.sh` also covers
+  recovery stores, nested mutable captures, backing views, vector growth
+  and immutable sharing, with the interrupted M5 fixtures recovered from
+  Claude's worktree.
+
 - Windows builds report AX4007 only when a process trap survives in the
   emitted program. Importing `Task` or declaring an unused process
   function no longer warns. Live unsupported calls still warn and emit

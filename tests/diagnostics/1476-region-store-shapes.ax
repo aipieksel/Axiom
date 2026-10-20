@@ -1,0 +1,196 @@
+; The routes by which a value built inside a region could reach
+; something older (docs/memory-model.md MM-RGN-3). A direct `set` on a
+; binding bound outside the region is the scope check's, AX3059; a
+; store through a container, a callee, an alias or an element fetched
+; inside is the origin check's, AX3060; a closure over an inner value
+; stored older is AX3062. 645, 647 and 653 pin the callee-mediated
+; shapes; these are the rest.
+;
+;   1  `setField`: a `mut` field of a struct passed in. One AX3059.
+;   2  `setSlot`: `vecSet` into a `Vec` passed in, without growing it.
+;      One AX3060.
+;   3  `pushNested`: a `Vec` inside a `Vec` passed in, grown. AX3060
+;      twice: the grown buffer and the element.
+;   4  `setDeep`: a field of a field. One AX3059.
+;   5  `setHook`: a closure over an inner string, stored into a `mut`
+;      field. One AX3059.
+;   6  `putMap`: `mapInsert` into a `Map` passed in. AX3060 twice: the
+;      entry and the value.
+;   7  `setSlice`: a slice of an outer string, whose descriptor is
+;      built inside. One AX3059.
+;   8  `consBag`: a cons cell built inside, holding the old list. One
+;      AX3059.
+;   9  `viaAlias`: the struct, through an alias bound inside. One
+;      AX3060: the binding is inside, so the scope check is silent.
+;  10  `viaGet`: a cell fetched from a `Vec` passed in. One AX3060.
+;  11  `viaMatch`: a cell bound by a match on a data value passed in.
+;      One AX3060.
+;  12  `pushHook`: a closure over an inner string, pushed onto a `Vec`
+;      passed in. AX3060 for the grown buffer and AX3062 for the
+;      closure.
+;  13  `setWord`: a word into a slot of a `Vec` passed in. Silent: the
+;      control.
+;  14  `setCount`: a scalar computed from an inner string, into a `mut`
+;      field. Silent.
+(import Str)
+(import Vec)
+(import Map)
+
+(struct Cell
+  (mut s : String))
+
+(struct Inner
+  (mut s : String))
+
+(struct Outer
+  (inner : Inner))
+
+(struct Hook
+  (mut f : (-> Int Int)))
+
+(struct Count
+  (mut n : Int))
+
+(data L
+  (Nil)
+  (Cons String L))
+
+(struct Bag
+  (mut l : L))
+
+(data Box
+  (B Cell))
+
+(:: setField (-> Cell Int))
+(fn (setField c)
+  (region r
+    {
+      (set c.s (strDup "inner"))
+      0
+    }))
+
+(:: setSlot (-> (Vec String) Int))
+(fn (setSlot v)
+  (region r
+    {
+      (vecSet v 0 (strDup "inner"))
+      0
+    }))
+
+(:: pushNested (-> (Vec (Vec String)) Int))
+(fn (pushNested vv)
+  (region r
+    {
+      (vecPush (vecGet vv 0) (strDup "inner"))
+      0
+    }))
+
+(:: setDeep (-> Outer Int))
+(fn (setDeep o)
+  (region r
+    {
+      (set o.inner.s (strDup "inner"))
+      0
+    }))
+
+(:: setHook (-> Hook Int))
+(fn (setHook h)
+  (region r
+    {
+      (let s (strDup "inner"))
+      {
+        (set h.f (lambda (n) (+ n (strLen s))))
+        0
+      }
+    }))
+
+(:: putMap (-> (Map String) Int))
+(fn (putMap m)
+  (region r
+    {
+      (mapInsert m 1 (strDup "inner"))
+      0
+    }))
+
+(:: setSlice (-> Cell String Int))
+(fn (setSlice c base)
+  (region r
+    {
+      (set c.s (strSlice base 0 2))
+      0
+    }))
+
+(:: consBag (-> Bag Int))
+(fn (consBag b)
+  (region r
+    {
+      (set b.l (Cons (strDup "inner") b.l))
+      0
+    }))
+
+(:: viaAlias (-> Cell Int))
+(fn (viaAlias c)
+  (region r
+    {
+      (let d c)
+      {
+        (set d.s (strDup "inner"))
+        0
+      }
+    }))
+
+(:: viaGet (-> (Vec Cell) Int))
+(fn (viaGet cells)
+  (region r
+    {
+      (let d (vecGet cells 0))
+      {
+        (set d.s (strDup "inner"))
+        0
+      }
+    }))
+
+(:: viaMatch (-> Box Int))
+(fn (viaMatch b)
+  (region r
+    (match b
+      ((B cell)
+        {
+          (set cell.s (strDup "inner"))
+          0
+        }
+      ))))
+
+(:: pushHook (-> (Vec (-> Int Int)) Int))
+(fn (pushHook hooks)
+  (region r
+    {
+      (let s (strDup "inner"))
+      {
+        (vecPush hooks (lambda (n) (+ n (strLen s))))
+        0
+      }
+    }))
+
+(:: setWord (-> (Vec Int) Int))
+(fn (setWord v)
+  (region r
+    {
+      (vecSet v 0 9)
+      0
+    }))
+
+(:: setCount (-> Count Int))
+(fn (setCount k)
+  (region r
+    {
+      (let s (strDup "inner"))
+      {
+        (set k.n (strLen s))
+        0
+      }
+    }))
+
+(:: main Int)
+(fn (main)
+  0)

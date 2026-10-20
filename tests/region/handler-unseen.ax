@@ -1,0 +1,106 @@
+; Indirection cannot hide a handler's captures from lifetime checking.
+(import Str)
+
+(effect Keep
+  (keep :: (-> String Int)))
+
+(struct Cell
+  (mut s : String))
+
+(struct Handler
+  (f : (-> String Int)))
+
+(:: bound (-> Cell Int))
+(fn (bound c)
+  {
+    (let h
+      (lambda (s)
+        {
+          (set c.s s)
+          0
+        }
+      ))
+    (handle
+      (region short
+        (keep (strDup "inner")))
+      (Keep Alloc Mut)
+      h)
+  })
+
+(:: parameter (-> (-> String Int) Int))
+(fn (parameter h)
+  (handle
+    (region short
+      (keep (strDup "inner")))
+    (Keep Alloc Mut)
+    h))
+
+(:: field (-> Handler Int))
+(fn (field h)
+  (handle
+    (region short
+      (keep (strDup "inner")))
+    (Keep Alloc Mut)
+    h.f))
+
+(:: make (-> Cell String Int))
+(fn (make c)
+  (lambda (s)
+    {
+      (set c.s s)
+      0
+    }
+  ))
+
+(:: returned (-> Cell Int))
+(fn (returned c)
+  (handle
+    (region short
+      (keep (strDup "inner")))
+    (Keep Alloc Mut)
+    (make c)))
+
+(:: factory (-> String Int))
+(fn (factory)
+  {
+    (let c (Cell :s "empty"))
+    (lambda (s)
+      {
+        (set c.s s)
+        0
+      }
+    )
+  })
+
+(:: nullary Int)
+(fn (nullary)
+  (handle
+    (region short
+      (keep (strDup "inner")))
+    (Keep Alloc Mut)
+    factory))
+
+(:: install (-> (-> String Int) Int))
+(fn (install h)
+  (handle
+    (keep (strDup "inner"))
+    (Keep Alloc Mut)
+    h))
+
+(:: callerExtent (-> Cell Int))
+(fn (callerExtent c)
+  {
+    (let h
+      (lambda (s)
+        {
+          (set c.s s)
+          0
+        }
+      ))
+    (region shorter
+      (install h))
+  })
+
+(:: main Int)
+(fn (main)
+  0)

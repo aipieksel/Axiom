@@ -2850,6 +2850,31 @@ call may store arguments and fresh values into any argument or capture.
 Its result depends on those captures too. This conservative rule can
 refuse a call whose body would be safe.
 
+An effect handler runs in the extent where its operation is performed.
+A lambda written at `handle` is checked as a separate invocation extent:
+its arguments and fresh allocations cannot be retained in older captures
+when the handled body may enter a shorter extent. Reclamation facts
+propagate through resolved calls; an unknown call may enter such an extent.
+A handler uses its installation scope when the handled body enters no
+shorter extent.
+
+A named non-nullary function handler must have complete facts that store
+no references into its parameters. A handler held in a binding, parameter
+or field, or produced by a factory, is conservatively refused when the
+handled body may enter a shorter extent. Write its lambda at the form
+instead.
+
+An unseen invocation still conservatively records stores and
+possible reclamation, so callers and enclosing handlers retain those facts.
+Built-in-only handle lists never evaluate their handler.
+Tested by `tests/diagnostics/1474-handler-keeps-argument.ax` and
+`tests/region/handler-unseen.ax`.
+
+A checked scalar result carries no reference when stored in a field.
+Evaluating that result still checks any stores made by the computation.
+Tested by `tests/region/lifetime-controls.ax` and
+`tests/diagnostics/1476-region-store-shapes.ax`.
+
 Loop back edges widen local origins until they stop changing. Each lexical
 extent keeps its identity across analysis rounds. A store delayed through
 several local aliases is checked against every origin it can eventually hold.

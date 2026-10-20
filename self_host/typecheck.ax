@@ -20873,7 +20873,11 @@
           }
           (groundArgByDecl tc (checkExprH tc h 0) arrow (spanOf h))))
       (if (== (tyCompat tc hty arrow) 0)
-        (emitMismatchTy tc arrow hty (spanOf h))
+        {
+          (emitMismatchTy tc arrow hty (spanOf h))
+          (setNodeBinderTyChild h (nodeBuildTErrPlain 0 0 0))
+          0
+        }
         0)
     }))
 
@@ -29780,11 +29784,11 @@
 ;   j: parameter j's value flows into parameter i)   3 resultFrom
 ;   (bit j)   4 resultCUR   5 unknownCalls   6 culprits, Vec String
 ;   per parameter (the callee the fresh value went in through, "" for
-;   this body)   7 nparams
+;   this body)   7 nparams   8 may enter a reclaimed invocation extent
 (pub :: rgnFactsNew (-> Int Int))
 (pub fn (rgnFactsNew n)
   {
-    (let f (memAlloc 64))
+    (let f (memAlloc 72))
     (let ff (rgnIntVec))
     (let cu (rgnStrVec))
     {
@@ -29798,6 +29802,7 @@
       (memSetWord f 5 0)
       (memSetWord f 6 (as cu Int))
       (memSetWord f 7 n)
+      (memSetWord f 8 0)
       f
     }
   })
@@ -30031,6 +30036,7 @@
 ;   16 capture names (Vec String)   17 lexical extent bodies (Vec ASTNode)
 ;   18 capture origin masks (Vec Int), for AX3062 to name the capture
 ;   19 extent boundary spans (Vec Int), for diagnostics and the LSP
+;   20 a reclaimed extent may be entered by the expression being walked
 ; A checker walks one function at a time. Reuse this frame and its
 ; vectors across worklist rounds; per-function facts live in FnEnt.
 (pub :: rgnCtxNew (-> Int ASTNode Int Int Int))
@@ -30041,7 +30047,7 @@
     (let mut rc (memGetWord state 14))
     (if (== rc 0)
       {
-        (set rc (memAlloc 160))
+        (set rc (memAlloc 168))
         (memSetWord state 14 rc)
         (memSetWord rc 4 (as (rgnStrVec) Int))
         (memSetWord rc 5 (as (rgnIntVec) Int))
@@ -30077,6 +30083,7 @@
     (memSetWord rc 13 0)
     (memSetWord rc 14 -1)
     (memSetWord rc 15 0)
+    (memSetWord rc 20 0)
     rc
   })
 
@@ -30178,6 +30185,8 @@
           "the recovery point (reclaimed on abort)"
         (strEq nm "#scoped callback")
           "this scoped callback invocation"
+        (strEq nm "#handler")
+          "the handler's extent (the region or recovery point an operation is performed in)"
         (concat (concat "region `" nm) "`"))
     }))
 
@@ -30380,6 +30389,18 @@
       })
   })
 
+; Reclamation is a monotone function fact, and a local expression fact.
+; A handle brackets the latter to distinguish its body from other
+; scopes in the same function. Unknown calls may reclaim too.
+(pub :: rgnNoteReclaim (-> Int Int Int))
+(pub fn (rgnNoteReclaim rc possible)
+  (if (== possible 0)
+    0
+    {
+      (memSetWord rc 20 1)
+      (rgnFactsOr rc 8 1)
+    }))
+
 ; A value with origins `valMask` flows into a place with origins
 ; `tgtMask`: every parameter among the targets learns what flowed in.
 ; `via` names the callee the flow went through, "" for this body.
@@ -30499,13 +30520,7 @@
                           (if (== tag TAG_E_FIELD)
                             (rgnExpr rc (nodeAChild e))
                             (if (== tag TAG_E_HANDLE)
-                              {
-                                (let b (rgnExpr rc (nodeAChild e)))
-                                {
-                                  (rgnExpr rc (nodeCChild e))
-                                  b
-                                }
-                              }
+                              (rgnHandle rc e)
                               (if (== tag TAG_E_REGION)
                                 (rgnRegionForm rc e)
                                 0)))))))))))))
@@ -30720,12 +30735,19 @@
       })
   })
 
-; `(set b.f v)`: the field's owner is the place.
+; `(set b.f v)`: the field's owner is the place. Walk the value even
+; when its checked type is scalar: evaluating it can store elsewhere.
+; A scalar result itself carries no reference origin, including a
+; length read through the raw implementation of `strLen`.
 (pub :: rgnSetField (-> Int ASTNode Int))
 (pub fn (rgnSetField rc e)
   {
     (let b (rgnExpr rc (nodeAChild e)))
-    (let v (rgnExpr rc (nodeCChild e)))
+    (let origins (rgnExpr rc (nodeCChild e)))
+    (let v
+      (if (== (rgTyScalar (rgnTc rc) (rgnCheckedTy (nodeCChild e))) 1)
+        0
+        origins))
     {
       (rgnEmitEscape rc (rgnStoreBadMask rc v b) (nodeSpan e)
         (concat (concat "the field `" (nodeBName e)) "` of a value") "" (nodeCChild e))
@@ -30873,10 +30895,13 @@
 ; One lexical extent reclaimed as a whole: `body` is walked with a fresh
 ; region bit current, so what it allocates carries the bit and a store
 ; of it anywhere older is MM-RGN-3's refusal. A `(region r ...)` form
-; and a recovery point's thunk (`rgnRecoverForm`) both come here.
+; a recovery point's thunk (`rgnRecoverForm`) and a handler invocation
+; (`rgnHandlerValue`) all come here.
 (pub :: rgnFormWalk (-> Int ASTNode String Int Int))
 (pub fn (rgnFormWalk rc body name boundary)
   {
+    (if (! (strEq name "#handler"))
+      (rgnNoteReclaim rc 1))
     (let n (memGetWord rc 3))
     (let forms (readAstNodes rc 17))
     (let mut k 0)
@@ -30926,6 +30951,40 @@
     }
   })
 
+; Only a shorter extent below the handled body changes the lifetime
+; of its operation arguments. The function fact propagates through
+; resolved callees, while an unknown invocation may enter one. Other
+; regions elsewhere in this function do not shorten these arguments.
+(pub :: rgnHandle (-> Int ASTNode Int))
+(pub fn (rgnHandle rc e)
+  {
+    (let saved (memGetWord rc 20))
+    (memSetWord rc 20 0)
+    (let b (rgnExpr rc (nodeAChild e)))
+    (let shorter (memGetWord rc 20))
+    (if (! (nodeSame (handleOpDecl (rgnTc rc) (nodeBChildren e) 0 nilNode) nilNode))
+      (if (== shorter 1)
+        (rgnHandlerValue rc (nodeCChild e))
+        (rgnHandlerLocal rc (nodeCChild e))))
+    (memSetWord rc 20 (| saved (memGetWord rc 20)))
+    b
+  })
+
+; Without a shorter body extent, lambda parameters live in the current
+; scope. An unseen handler may store fresh values into any argument or
+; capture, including references derived from this function's parameters.
+; Record those flows so a caller cannot install it in a shorter scope.
+; Its invocation may reclaim and therefore constrains an outer handler.
+(pub :: rgnHandlerLocal (-> Int ASTNode Int))
+(pub fn (rgnHandlerLocal rc h)
+  (if (== (tyIsErr (rgnCheckedTy h)) 1)
+    0
+    (if (== (nodeTag h) TAG_E_LAM)
+      (rgnExpr rc h)
+      (if (== (rgnScopedStatic rc h) 1)
+        (rgnHandlerValue rc h)
+        (rgnUnknownCall rc nodesNew (spanOf h) (| (rgnExpr rc h) (rgnParamMask rc)))))))
+
 ; A recovery point, `(__axiom_recover mark thunk)`: an abort resets the
 ; arena to `mark`, reclaiming everything the thunk allocated, so the
 ; thunk is an extent reclaimed as a whole, exactly as a region is, and
@@ -30962,6 +31021,78 @@
       0
     }
   })
+
+; The handler of `(handle body (E) handler)` runs where an operation of
+; `E` is performed, and that may be inside a region or a recovery point
+; anywhere below the form: what the operation hands it and what it
+; allocates belong to that extent, and the extent reclaims them when
+; it ends (MM-RGN-3). Measured with no rule here: a handler installed
+; outside a region that kept the operation's argument in a captured
+; cell left the cell naming reclaimed memory, and the next allocation
+; trapped inside the allocator (`tests/diagnostics/1474-handler-keeps-argument.ax`).
+;
+; A lambda written at the form is walked as an extent of its own, so
+; its parameters carry the extent's bit as a region's fresh values do:
+; storing one, or a copy made in the handler, into a capture is
+; AX3060, and a closure over one stored older is AX3062. A top-level
+; function handler reaches nothing older than the operation's own
+; arguments, so its facts answer: a flow between its parameters, or a
+; fresh value into one, is the same store. A handler held in a
+; binding, a parameter, a field or a call's answer has an unseen body.
+; Refuse it rather than certifying its installation's lifetime for
+; calls made in a shorter extent. Built-in-only handle lists never
+; evaluate their handler, so the caller skips this walk for them.
+(pub :: rgnHandlerValue (-> Int ASTNode Int))
+(pub fn (rgnHandlerValue rc h)
+  (if (== (tyIsErr (rgnCheckedTy h)) 1)
+    0
+    (if (== (nodeTag h) TAG_E_LAM)
+      (rgnFormWalk rc h "#handler" (nodeSpan h))
+      {
+        (let ent
+          (if (== (rgnScopedStatic rc h) 1)
+            (findFnEnt (rgnTc rc) (nodeAName h))
+            0))
+        {
+          (if (!= ent 0)
+            (if (!= (memGetWord ent 8) 0)
+              (rgnNoteReclaim rc (memGetWord (memGetWord ent 8) 8))))
+          (if (&& (== (rgnReport rc) 1) (!= (spanOf h) 0))
+            (if (== ent 0)
+              (emitDiag (rgnTc rc)
+                (mkDiag SEV_ERROR "AX3060" "region-escape" (spanOf h)
+                  "region safety cannot be proved: the handler's body is not visible at its installation"
+                  0 0
+                  "write the handler as a lambda at the handle form, or name a top-level function; an operation may run inside a shorter region or recovery point, so its handler must retain none of that extent's references or allocations"))
+              (if (== (rgnFactsKeep (memGetWord ent 8)) 1)
+                (emitDiag (rgnTc rc)
+                  (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan h)
+                    (concat (concat "the handler `" (nodeAName h))
+                      "` may store a value it is handed, or one it allocates, into another of its arguments; an operation performed inside a region or a recovery point hands it values that extent reclaims")
+                    0 0
+                    "a handler runs where the operation is performed, so what it is handed and what it allocates belong to that extent: compute a scalar in the handler, or perform the operation outside the region or recovery point")))))
+          (rgnExpr rc h)
+        }
+      })))
+
+; Whether a function may store a parameter, or a fresh value, into
+; one of its parameters. Missing facts and unknown calls prove no
+; handler lifetime guarantee.
+(pub :: rgnFactsKeep (-> Int Int))
+(pub fn (rgnFactsKeep f)
+  (if (== f 0)
+    1
+    (if (|| (!= (memGetWord f 1) 0) (!= (memGetWord f 5) 0))
+      1
+      (rgnAnyFlow (memGetWordVec f 2) 0))))
+
+(pub :: rgnAnyFlow (-> Ints Int Int))
+(pub fn (rgnAnyFlow v i)
+  (if (>= i (vecLen v))
+    0
+    (if (!= (vecGet v i) 0)
+      1
+      (rgnAnyFlow v (+ i 1)))))
 
 ; ---- calls ----
 (pub :: rgnApp (-> Int ASTNode Int))
@@ -31004,7 +31135,10 @@
                         (if (== (memGetWord ent 3) 1)
                           (rgnBuiltinCall rc n args (spanOf e))
                           (if (== (memGetWord ent 4) 1)
-                            (rgnUnknownCall rc args (spanOf e) 0)
+                            ; The installed handler supplies any nested
+                            ; reclamation fact. Dispatch alone enters no
+                            ; region, while argument stores stay unknown.
+                            (rgnOpaqueCall rc args (spanOf e) 0 0)
                             (if (== (memGetWord ent 4) 2)
                               {
                                 (rgnArgsUnion rc args 0 0)
@@ -31041,7 +31175,12 @@
 ; of the lifetime relation, including calls with no reference arguments.
 (pub :: rgnUnknownCall (-> Int Nodes Int Int Int))
 (pub fn (rgnUnknownCall rc args span captures)
+  (rgnOpaqueCall rc args span captures 1))
+
+(pub :: rgnOpaqueCall (-> Int Nodes Int Int Int Int))
+(pub fn (rgnOpaqueCall rc args span captures reclaims)
   {
+    (rgnNoteReclaim rc reclaims)
     (let masks (rgnIntVec))
     (let mut i 0)
     (let mut u captures)
@@ -31156,6 +31295,7 @@
         ; The facts say what the callee stores through each parameter.
         (if (! (== f 0))
           {
+            (rgnNoteReclaim rc (memGetWord f 8))
             (set i 0)
             (while (< i (vecLen args))
               {

@@ -1,0 +1,164 @@
+; Views keep their backing string across calls, captures and vector growth.
+; Scalars and older values may cross a shorter region or recovery scope.
+(import Str)
+(import Vec)
+
+(struct Cell
+  (mut s : String))
+
+(struct Count
+  (mut n : Int))
+
+(effect Measure
+  (measure :: (-> String Int)))
+
+(data Text
+  (T String))
+
+(:: view String)
+(fn (view)
+  (strSlice (strDup "abcdef") 1 3))
+
+(:: viewHook (-> Int Int String))
+(fn (viewHook ignored)
+  {
+    (let s view)
+    (lambda (n) (strSlice s n 2))
+  })
+
+(:: readLength (-> String Int))
+(fn (readLength s)
+  (strLen s))
+
+(:: localViews Int)
+(fn (localViews)
+  (region local
+    {
+      (let values vecNew)
+      (vecPush values view)
+      (let mut i 0)
+      (while (< i 128)
+        {
+          (vecPush values (strDup "grow"))
+          (set i (+ i 1))
+        })
+      (let f (viewHook 0))
+      (if (&& (strEq (vecGet values 0) "bcd") (strEq (f 1) "cd"))
+        0
+        1)
+    }))
+
+(:: recoverOlder Int)
+(fn (recoverOlder)
+  {
+    (let c (Cell :s "empty"))
+    (let older view)
+    (let status
+      (__axiom_recover __axiom_arena_mark
+        (lambda (x)
+          {
+            (set c.s older)
+            (/ 1 0)
+          }
+        )))
+    (if (&& (== status 72) (strEq c.s "bcd"))
+      0
+      2)
+  })
+
+(:: scalarHandler Int)
+(fn (scalarHandler)
+  {
+    (let count (Count :n 0))
+    (let answer
+      (handle
+        (region short
+          (measure view))
+        (Measure Alloc Mut)
+        (lambda (s)
+          {
+            (set count.n (strLen s))
+            7
+          }
+        )))
+    (if (&& (== answer 7) (== count.n 3))
+      0
+      4)
+  })
+
+(:: namedHandler Int)
+(fn (namedHandler)
+  (if (==
+        (handle
+          (region short
+            (measure view))
+          (Measure Alloc Mut)
+          readLength)
+        3)
+    0
+    8))
+
+(:: ignoredHandler Int)
+(fn (ignoredHandler)
+  {
+    (let c (Cell :s "empty"))
+    (handle
+      (region short
+        0)
+      (Alloc Mut)
+      (lambda (s)
+        {
+          (set c.s s)
+          0
+        }
+      ))
+  })
+
+(:: sharedView Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (sharedView)
+  {
+    (let text (T view))
+    (let result
+      (parallel p (
+        (a (match text
+          ((T s) (strLen s))))
+        (b 2)
+      )
+        (+ a b)))
+    (if (== result 5)
+      0
+      16)
+  })
+
+(:: sameExtentHandler Int)
+(fn (sameExtentHandler)
+  {
+    (let c (Cell :s "empty"))
+    (let h
+      (lambda (s)
+        {
+          (set c.s s)
+          0
+        }
+      ))
+    (region unrelated
+      0)
+    (handle
+      (measure view)
+      (Measure Alloc Mut)
+      h)
+    (if (strEq c.s "bcd")
+      0
+      32)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  (+ (+ (+ localViews recoverOlder) (+ scalarHandler namedHandler))
+    (+ ignoredHandler (+ sharedView sameExtentHandler))))

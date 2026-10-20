@@ -1,0 +1,113 @@
+; What a `parallel` binding may carry in and out (docs/memory-model.md
+; MM-PAR-6, MM-PAR-6a, MM-PAR-6b). A borrowed graph has to be immutable
+; all the way down, and a binding answers a word.
+;
+;   1  `viaData`: a `data` value wrapping a `Vec`. One AX3064: the
+;      buffer is mutable however deep it sits.
+;   2  `viaOption`: an `Option` of a struct. One AX3064: a struct's
+;      fields can be set.
+;   3  `viaDeep`: a data value two constructors above a struct. One
+;      AX3064.
+;   4  `carryBack`: a binding whose thunk answers a `String`. One
+;      AX3004: what crosses a join is a word, and a thread's arena is
+;      unmapped when it ends.
+;   5  `viaMut`: a `mut Int`, captured by snapshot. Silent: the
+;      control.
+;   6  `viaMutString`: a `mut String`, captured by snapshot and
+;      borrowed for the form. Silent.
+(import IO)
+(import Vec)
+(import Str)
+
+(data Holder
+  (H (Vec Int)))
+
+(struct Named
+  (name : String)
+  (n : Int))
+
+(data Wrap
+  (W Named))
+
+(data Deep
+  (D Wrap))
+
+(:: viaData (-> Holder Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (viaData h)
+  (parallel p (
+    (a (match h
+      ((H v) (vecLen v))))
+    (b 2)
+  )
+    (+ a b)))
+
+(:: viaOption (-> (Option Named) Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (viaOption o)
+  (parallel p (
+    (a (match o
+      ((Some r) r.n)
+      ((None) 0)))
+    (b 2)
+  )
+    (+ a b)))
+
+(:: viaDeep (-> Deep Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (viaDeep d)
+  (parallel p (
+    (a (match d
+      ((D (W r)) r.n)))
+    (b 2)
+  )
+    (+ a b)))
+
+(:: carryBack Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (carryBack)
+  (parallel p (
+    (a (strDup "x"))
+    (b 2)
+  )
+    (+ a b)))
+
+(:: viaMut Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (viaMut)
+  {
+    (let mut n 1)
+    (parallel p (
+      (a (+ n 1))
+      (b 2)
+    )
+      (+ a b))
+  })
+
+(:: viaMutString Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (viaMutString)
+  {
+    (let mut s "x")
+    (parallel p (
+      (a (strLen s))
+      (b 2)
+    )
+      (+ a b))
+  })
+
+(:: main Int)
+(fn (main)
+  0)
