@@ -30,3 +30,35 @@ seed_emit_argv() {
     seed_argv=(in.ax "$target")
   fi
 }
+
+# seed_probe_path <private copy of Path.ax>
+#
+# The provenance ablation must work with the source of the seed's own
+# commit. Older sources compare byte zero directly; current sources
+# share a separator predicate. Change one ASCII byte (47 -> 46), once,
+# so '/' becomes '.' without depending on which source layout is read.
+seed_probe_path() {
+  local file="$1" needle replacement tmp="$1.probe.$$"
+  if grep -Fq '(== (strByte p 0) 47)' "$file"; then
+    needle='(== (strByte p 0) 47)'
+    replacement='(== (strByte p 0) 46)'
+  elif grep -Fq '(== b 47)' "$file"; then
+    needle='(== b 47)'
+    replacement='(== b 46)'
+  else
+    echo "the provenance probe has no recognised separator predicate in $file" >&2
+    return 1
+  fi
+  if ! awk -v needle="$needle" -v replacement="$replacement" '
+      !changed && (at=index($0, needle)) {
+        $0=substr($0, 1, at-1) replacement substr($0, at+length(needle))
+        changed=1
+      }
+      { print }
+      END { if (!changed) exit 1 }
+    ' "$file" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$file"
+}

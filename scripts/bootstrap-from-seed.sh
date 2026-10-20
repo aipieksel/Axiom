@@ -35,7 +35,8 @@
 # is what answers it, by replaying the seed's ancestry from the Rust
 # compiler at `bb730db`, which no Axiom seed ever touched.
 #
-# Requires: llc, cc. Not cargo, not rustc.
+# Requires llc and, on POSIX, cc. Windows uses llvm-dlltool, lld-link,
+# llvm-readobj and Git Bash instead. No Rust compiler is needed.
 
 #
 # With `--install DIR` it also copies the verified compiler to
@@ -62,8 +63,31 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+source "$repo_root/scripts/lib/seed-sums.sh"
+source "$repo_root/scripts/lib/imports.sh"
+source "$repo_root/scripts/lib/seed-toolchain.sh"
+
+seed_host_target "$(uname -s)" "$(uname -m)" || fail "cannot select a native seed"
+os="$seed_os"
+arch="$seed_arch"
+target="$seed_target"
+exe_suffix="$seed_exe_suffix"
+seed_ll="bootstrap/axiom-$target.ll"
+if [[ ! -f "$seed_ll" ]]; then
+  if [[ "$os" == windows ]]; then
+    fail "no committed seed for $target at $seed_ll; Windows seeds and their integrity/provenance records must land together before native seed bootstrap is available"
+  fi
+  fail "no seed for this host at $seed_ll"
+fi
+
 command -v llc >/dev/null || fail "llc is not on PATH"
-command -v cc  >/dev/null || fail "cc is not on PATH"
+if [[ "$os" == windows ]]; then
+  for tool in llvm-dlltool lld-link llvm-readobj cygpath; do
+    command -v "$tool" >/dev/null || fail "$tool is not on PATH (Windows bootstrap needs Git Bash and LLVM)"
+  done
+else
+  command -v cc >/dev/null || fail "cc is not on PATH"
+fi
 
 # ---------------------------------------------------------------
 # The LLVM middle end, which this script used to skip entirely.
@@ -104,43 +128,22 @@ optimised() {
   fi
 }
 
-# The host target names the seed to use. A freestanding binary cannot
-# ask the kernel what it is running on, so the target is chosen when the
-# compiler is COMPILED - which is exactly why there is one seed per
-# target rather than one seed.
-case "$(uname -s)" in
-  Darwin)  os=darwin ;;
-  Linux)   os=linux ;;
-  FreeBSD) os=freebsd ;;
-  MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    fail "no committed Windows seed or bootstrap path: bootstrap/ has neither axiom-windows-x86_64.ll nor axiom-windows-aarch64.ll. See docs/roadmap.md for Windows seed support" ;;
-  *) fail "unsupported OS $(uname -s): the seeds cover darwin, linux and freebsd" ;;
-esac
-case "$(uname -m)" in
-  arm64|aarch64) arch=aarch64 ;;
-  x86_64|amd64)  arch=x86_64 ;;
-  *) fail "unsupported architecture $(uname -m)" ;;
-esac
-target="$os-$arch"
-seed_ll="bootstrap/axiom-$target.ll"
-
-# The entry flag the two link lines below pass: `-e _main` on Darwin
-# and nothing anywhere else. This script does not source
-# `scripts/lib/gate.sh` (it is what that preamble runs when there is
-# no compiler yet), so the rule is restated here; `gate_link_entry`
-# there carries the measurement behind it.
-case "$os" in
-  darwin) link_entry="-e _main" ;;
-  *)      link_entry="" ;;
-esac
-[[ -f "$seed_ll" ]] || fail "no seed for this host at $seed_ll"
-
+# The target is selected before invoking the toolchain. A missing seed
+# is a missing coordinated input, rather than a reason to download or
+# substitute a compiler from another target.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # The copied entry file still imports the repository's compiler modules.
 export AXIOM_STDLIB="$repo_root/stdlib"
 export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+if [[ "$os" == windows ]]; then
+  # The native compiler reads native paths from its environment. Keep
+  # AXIOM_PATH relative to the repository: its colon-separated grammar
+  # must not split a Windows drive prefix. Emissions below run here.
+  export AXIOM_STDLIB="$(cygpath -m "$repo_root/stdlib")"
+  export AXIOM_PATH=self_host
+fi
 
 # ---------------------------------------------------------------
 # Integrity: the seed is what the tree says it is.
@@ -159,14 +162,22 @@ export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
 # files as sets, both directions, before it hashes anything.
 #
 # `scripts/lib/seed-sums.sh` and NOT `scripts/lib/gate.sh`: this script
-# sources nothing that assumes a compiler (see the note above the
-# `link_entry` case), and seed-sums.sh assumes none - it is shell, a
-# `mktemp -d`, `sed`, `comm` and `shasum`.
+# sources nothing that assumes a compiler. seed-sums.sh is shell, a
+# `mktemp -d`, `sed`, `comm` and a SHA-256 tool; the linker helpers use
+# only the selected host's local toolchain.
 # ---------------------------------------------------------------
-source "$repo_root/scripts/lib/seed-sums.sh"
 seed_sums_verify bootstrap \
   || fail "bootstrap/SHA256SUMS does not account for the seeds in bootstrap/"
 echo "ok   the seeds match bootstrap/SHA256SUMS, and it names every seed present"
+seed_prepare_link "$target" "$work/imports" "$repo_root/scripts/platform-allow.windows.txt" \
+  || fail "could not prepare the $target linker"
+
+validate_module() {
+  if [[ "$os" == windows && "$(head -1 "$1")" != "target triple = \"$seed_triple\"" ]]; then
+    fail "$1 does not name the native Windows triple $seed_triple"
+  fi
+}
+validate_module "$seed_ll"
 
 # NO SEPARATE "and this host's seed is named" CHECK, deliberately. The
 # first draft of this block had one, and it could not fail: `$seed_ll`
@@ -190,8 +201,8 @@ echo "ok   the seeds match bootstrap/SHA256SUMS, and it names every seed present
 llc -filetype=obj -relocation-model=pic "$(optimised "$seed_ll" "$work/seed.opt.ll")" \
     -o "$work/seed.o" 2>"$work/llc.err" \
   || { head -3 "$work/llc.err" >&2; fail "llc rejected $seed_ll"; }
-cc "$work/seed.o" -o "$work/seed" $link_entry 2>"$work/cc.err" \
-  || { head -3 "$work/cc.err" >&2; fail "could not link the seed"; }
+seed_link "$target" "$work/seed.o" "$work/seed$exe_suffix" 2>"$work/link.err" \
+  || { head -5 "$work/link.err" >&2; fail "could not link or validate the seed"; }
 echo "ok   seed built for $target from $seed_ll (no Rust)"
 
 # A stage compiles the file it is given and writes LLVM to stdout, so
@@ -224,10 +235,13 @@ build_next() {
   local from="$1" dir="$2"
   mkdir -p "$work/$dir"
   cp "$repo_root/self_host/main.ax" "$work/in.ax"
-  # The compile itself runs with cwd=$work, where the stdlib/self_host
-  # symlinks are, so `(import IO)` resolves for every stage.
-  (cd "$work" && "./$from" emit-llvm in.ax >"$dir/axc.ll" 2>"$dir/axc.ll.err") \
-    || { head -5 "$work/$dir/axc.ll.err" >&2; fail "$from could not compile self_host/main.ax"; }
+  # POSIX uses absolute module roots. Windows uses the repository cwd
+  # and a relative compiler-module root, with a native stdlib path.
+  if [[ "$os" == windows ]]; then
+    (cd "$repo_root" && "$work/$from" --diagnostic-format=ai emit-llvm "$(cygpath -m "$work/in.ax")" >"$work/$dir/axc.ll" 2>"$work/$dir/axc.ll.err")
+  else
+    (cd "$work" && "./$from" --diagnostic-format=ai emit-llvm in.ax >"$dir/axc.ll" 2>"$dir/axc.ll.err")
+  fi || { head -5 "$work/$dir/axc.ll.err" >&2; fail "$from could not compile self_host/main.ax"; }
   # Blame the stage that produced the garbage, not the tool that
   # chokes on it. Ablated with a seed that was a valid Axiom program
   # but not a compiler, the failure without these two lines read
@@ -236,12 +250,13 @@ build_next() {
     || fail "$from emitted no LLVM module - it is not a compiler"
   (( $(wc -l <"$work/$dir/axc.ll") > 10000 )) \
     || fail "$from emitted only $(wc -l <"$work/$dir/axc.ll") lines for the compiler - the emit was truncated"
+  validate_module "$work/$dir/axc.ll"
   llc -filetype=obj -relocation-model=pic \
       "$(optimised "$work/$dir/axc.ll" "$work/$dir/axc.opt.ll")" \
       -o "$work/$dir/axc.o" 2>"$work/llc.err" \
     || { head -3 "$work/llc.err" >&2; fail "llc rejected the IR $from produced"; }
-  cc "$work/$dir/axc.o" -o "$work/$dir/axc" $link_entry 2>"$work/cc.err" \
-    || { head -3 "$work/cc.err" >&2; fail "could not link $dir/axc"; }
+  seed_link "$target" "$work/$dir/axc.o" "$work/$dir/axc$exe_suffix" 2>"$work/link.err" \
+    || { head -5 "$work/link.err" >&2; fail "could not link or validate $dir/axc$exe_suffix"; }
 }
 
 # ---------------------------------------------------------------
@@ -251,20 +266,20 @@ build_next() {
 # compile, it fails HERE, naming the construct, rather than in some
 # consumer months later.
 # ---------------------------------------------------------------
-build_next seed d1
+build_next "seed$exe_suffix" d1
 echo "ok   the seed compiled the current self_host/ into stage1"
 
-build_next d1/axc d2
-build_next d2/axc d3
+build_next "d1/axc$exe_suffix" d2
+build_next "d2/axc$exe_suffix" d3
 
 # Anti-vacuousness before the comparison, not after it: `cmp` is
 # happiest when both files are empty, and two missing compilers are
 # byte-identical. build_next's floors cover the IR; these cover what
 # came out of the linker.
 for stage in d2 d3; do
-  [[ -x "$work/$stage/axc" ]] || fail "$stage/axc is not an executable file"
-  (( $(wc -c <"$work/$stage/axc") > 100000 )) \
-    || fail "$stage/axc is $(wc -c <"$work/$stage/axc") bytes - too small to be the compiler"
+  [[ -x "$work/$stage/axc$exe_suffix" ]] || fail "$stage/axc is not an executable file"
+  (( $(wc -c <"$work/$stage/axc$exe_suffix") > 100000 )) \
+    || fail "$stage/axc is $(wc -c <"$work/$stage/axc$exe_suffix") bytes - too small to be the compiler"
 done
 
 if ! cmp -s "$work/d2/axc.ll" "$work/d3/axc.ll"; then
@@ -283,7 +298,7 @@ if ! cmp -s "$work/d2/axc.o" "$work/d3/axc.o"; then
   cmp -l "$work/d2/axc.o" "$work/d3/axc.o" 2>&1 | head -5 | sed 's/^/    /' >&2
   fail "stage2 and stage3 IR matched but their objects differ"
 fi
-if ! cmp -s "$work/d2/axc" "$work/d3/axc"; then
+if ! cmp -s "$work/d2/axc$exe_suffix" "$work/d3/axc$exe_suffix"; then
   fail "stage2 and stage3 objects matched but their binaries differ"
 fi
 echo "ok   stage2 and stage3 are byte-identical - the fixpoint holds from the seed"
@@ -300,9 +315,9 @@ cat >"$work/prog/hello.ax" <<'CASE'
 ;@axiom:effect(io)
 (fn (main) { (println "bootstrapped") 42 })
 CASE
-(cd "$work/prog" && "$work/d3/axc" build --input hello.ax --output hello >build.log 2>&1) \
+(cd "$work/prog" && "$work/d3/axc$exe_suffix" --diagnostic-format=ai build --input hello.ax --output "hello$exe_suffix" >build.log 2>&1) \
   || { sed 's/^/    /' "$work/prog/build.log" | head -5 >&2; fail "stage3 could not build a program"; }
-out="$("$work/prog/hello")"; got=$?
+out="$("$work/prog/hello$exe_suffix")"; got=$?
 [[ "$got" == 42 && "$out" == "bootstrapped" ]] \
   || fail "a program built from the seeded compiler said '$out'/$got, want 'bootstrapped'/42"
 echo "ok   a program built by the seeded compiler runs correctly"
@@ -318,14 +333,14 @@ if [[ -n "$install_dir" ]]; then
   # while three gates shared one `.axiom-bin/axiom` - every `check`
   # in the tree died silently for 45 minutes. A rename is atomic and
   # gives the kernel a new inode.
-  cp "$work/d3/axc" "$install_dir/axiom.new.$$" || fail "could not install to $install_dir"
-  chmod +x "$install_dir/axiom.new.$$"
-  mv -f "$install_dir/axiom.new.$$" "$install_dir/axiom" || fail "could not install to $install_dir"
+  cp "$work/d3/axc$exe_suffix" "$install_dir/axiom.new.$$${exe_suffix}" || fail "could not install to $install_dir"
+  chmod +x "$install_dir/axiom.new.$$${exe_suffix}"
+  mv -f "$install_dir/axiom.new.$$${exe_suffix}" "$install_dir/axiom$exe_suffix" || fail "could not install to $install_dir"
   # Installed only AFTER the fixpoint and the running program, so
   # `$install_dir/axiom` existing means every check above passed. A
   # gate that finds a compiler there has one that was verified, not
   # one that merely linked.
-  echo "ok   installed the verified compiler at $install_dir/axiom"
+  echo "ok   installed the verified compiler at $install_dir/axiom$exe_suffix"
 fi
 
 echo

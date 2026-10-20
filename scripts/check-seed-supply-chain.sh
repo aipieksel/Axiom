@@ -33,8 +33,8 @@
 #      auditing the trust root costs. Every site that states it must
 #      agree, with each other and with `bb730db`.
 #
-# It needs no compiler, no `llc` and no network: pure shell over the
-# tree, about a second. That is why it does not use `gate_init`.
+# It needs no compiler, LLVM or network: shell checks over the tree
+# and a Python standard-library probe of the Windows bootstrap branch. That is why it does not use `gate_init`.
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -591,6 +591,15 @@ check_anchor_sites p5b "$p11"
 probe_mode=0
 if (( probe_failed )); then ok "probe: the anchor's size stated too few times trips the floor ($probe_first)"
 else fail "probe: a document stating the anchor's size nowhere was accepted"; fi
+
+echo
+echo "== 6. the Windows bootstrap selects, links and checks its native tools =="
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$repo_root/tests/bootstrap/windows-seed-toolchain.py" || fail "the Windows bootstrap mock probes failed"
+  python3 "$repo_root/tests/bootstrap/seed-path-probe.py" || fail "the historical/current provenance probe failed"
+else
+  fail "python3 is needed for the Windows bootstrap mock probes"
+fi
 
 echo
 if (( failed )); then

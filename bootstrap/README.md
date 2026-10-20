@@ -9,17 +9,23 @@ a clean checkout build it without already having a compiler.
 ./scripts/bootstrap-from-seed.sh --install .axiom-bin
 ```
 
-You need `llc` and a C compiler on `PATH`, and nothing else: no `cargo`
-and no `rustc`.
+On macOS, Linux and FreeBSD, you need `llc` and a C compiler on `PATH`.
+The Windows link path uses Git Bash, `llc`, `llvm-dlltool`, `lld-link`
+and `llvm-readobj`. Neither path needs Rust or a Windows SDK.
 
-The script picks the seed that matches your host and runs `llc` and
-`cc` over it to get a `seed` compiler. That compiler builds `self_host/`
+The script picks the seed that matches your host and assembles and
+links it to get a `seed` compiler. That compiler builds `self_host/`
 into `stage1`. Then the usual ladder runs, `stage1 -> stage2 ->
 stage3`, and `stage2` and `stage3` must be byte-identical.
 
-With `--install DIR`, the script copies `stage3` to `DIR/axiom`, which
-is where every other gate looks for a compiler. That is the compiler
-that came out of the fixpoint, not the seed or `stage1`.
+With `--install DIR`, the script copies the verified `stage3` to
+`DIR/axiom`, or `DIR/axiom.exe` on Windows.
+
+Windows links use the reviewed import allowlist and an 8 MiB stack.
+The script checks each PE's architecture and imports before running
+it, and uses deterministic headers for the fixpoint comparison.
+
+Not yet: committed Windows seeds. See the [roadmap](../docs/roadmap.md).
 
 ## What's here
 

@@ -48,7 +48,7 @@ one the same way, so you can also just run a gate. That logic is
 The compiler is written in Axiom, so building it needs a compiler.
 `bootstrap/` holds the compiler's own LLVM IR, one committed file per
 target. The script turns the file for your host into a *seed* with
-`llc` and `cc`, compiles `self_host/` with the seed, and repeats until
+the native LLVM toolchain, compiles `self_host/` with the seed, and repeats until
 two successive compilers are byte-identical.
 [bootstrap/README.md](bootstrap/README.md) explains why the seed may lag
 the source, and what stops it drifting.
@@ -56,13 +56,16 @@ the source, and what stops it drifting.
 You don't need Rust to build the compiler. `rust/` is a cargo workspace
 for the FFI's Rust side, and nothing in the compiler's build reads it.
 
-After the clone, the build needs only the checkout and your host's
-`llc` and `cc`. It uses no network, no artifact a maintainer publishes,
-and no CI. The bootstrap has run to a verified compiler in a container
-with networking disabled. `scripts/check-offline-bootstrap.sh` keeps it
-that way: the bootstrap may source only `scripts/lib/seed-sums.sh` and
-may invoke no network tool, so a new dependency fails CI on every
-operating system.
+After the clone, the build needs the checkout and your host's toolchain:
+`llc` and `cc` on POSIX; Git Bash, `llc`, `llvm-dlltool`, `lld-link` and
+`llvm-readobj` for the Windows link path. Windows installs as
+`.axiom-bin/axiom.exe`. The seed directory lists the available inputs.
+
+The build uses no network or published binary. The POSIX bootstrap has
+reached a verified compiler in a container with networking disabled.
+`scripts/check-offline-bootstrap.sh` audits the bootstrap and its three
+helpers: `seed-sums.sh`, `imports.sh` and `seed-toolchain.sh` in
+`scripts/lib/`. A new source dependency or network tool fails that check.
 
 `scripts/install.sh` is the other way to get a compiler. It downloads a
 prebuilt release archive, so it depends on a maintainer having
@@ -438,7 +441,7 @@ shows the check can fail at all.
 | `check-bootstrap.sh` | The self-hosting fixpoint: `stage2 == stage3`, byte for byte |
 | `check-poisoned-alloc.sh` | Poisoned allocator generations emit identical compiler IR, and allocation remains zeroed |
 | `check-reproducible.sh` | Compiling the same source twice produces identical bytes |
-| `bootstrap-from-seed.sh` | A clean checkout builds a working compiler from `bootstrap/` with nothing but `llc` and `cc` |
+| `bootstrap-from-seed.sh` | A clean checkout builds a working compiler from `bootstrap/` with the native LLVM toolchain; the Windows link path uses Git Bash and checks PE architecture and imports |
 | `build-shared-axc.sh` | Not an assertion, but the step the others rest on. It builds the compiler under test once and stamps it, and the ninety-seven gates that call `gate_build_axc` reuse it while the stamp matches the tree. It builds a second time and compares the IR both compilers emit, because those gates rely on the artifact being exactly what you would have built |
 | `check-gate-lib.sh` | The shared artifact can't hide a source change. This is the probe that makes the reuse above safe to rely on |
 | `check-install.sh` | The script `README.md` tells new users to pipe into bash. A release built from this tree is served over the loopback and installed. A tampered archive, one with no checksum and one with no `stdlib/` must each be refused. The gate's own probe deletes `install.sh`'s checksum comparison in a copy and requires the tampered case to stop being refused |

@@ -46,6 +46,7 @@ command -v git >/dev/null || { echo "FAIL: git is not on PATH"; exit 1; }
 source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-sums.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-emit.sh"
 targets="$(seed_targets | tr '\n' ' ')"
+target_count="$(seed_targets | wc -l | tr -d ' ')"
 
 # --------------------------------------------------------------------
 echo "== STAMP states a source stamp, and it is well formed =="
@@ -126,7 +127,7 @@ if [[ -z "$commit" ]]; then
   echo "      A shallow clone cannot answer this - the job needs fetch-depth: 0."
   exit 1
 fi
-echo "ok   the six seeds were last written by ${commit:0:7}"
+echo "ok   the $target_count seeds were last written by ${commit:0:7}"
 
 extract() {
   local sha="$1" dest="$2"
@@ -171,7 +172,7 @@ fi
 
 # --------------------------------------------------------------------
 echo
-echo "== regenerating all six seeds from those sources =="
+echo "== regenerating all $target_count seeds from those sources =="
 # --------------------------------------------------------------------
 # `reseed.sh`'s procedure, reproduced rather than invoked because that
 # script writes into `bootstrap/` and this one must not touch the tree.
@@ -239,7 +240,7 @@ else
       { diff "$gen/axiom-$t.ll" "$repo_root/bootstrap/axiom-$t.ll" || true; } | head -8 | sed 's/^/       /'
     fi
   done
-  (( same == 6 )) && echo "     all six targets, $(wc -l <"$repo_root/bootstrap/axiom-darwin-aarch64.ll" | tr -d ' ') lines each"
+  (( same == target_count )) && echo "     all $target_count target emissions match their committed seeds"
 fi
 
 # --------------------------------------------------------------------
@@ -257,15 +258,10 @@ probe="$work/probe"
 cp -R "$tree" "$probe"
 victim="$probe/stdlib/Path.ax"
 [[ -f "$victim" ]] || { echo "FAIL: the probe's victim file is missing"; exit 1; }
-# `pathIsAbsolute` asks whether byte 0 is `/` (47). Ask about `\` (92)
-# instead: one literal, one instruction, and the function is exported,
-# so it cannot be optimised away.
-if ! grep -q '(== (strByte p 0) 47)' "$victim"; then
-  echo "FAIL: the probe's anchor is gone from stdlib/Path.ax - re-derive it"
-  exit 1
-fi
-sed -i.bak 's/(== (strByte p 0) 47)/(== (strByte p 0) 92)/' "$victim"
-rm -f "$victim.bak"
+# Mutate the historical or current separator predicate in this private
+# source tree. The helper changes exactly one byte and refuses an
+# unrecognised layout instead of passing an unchanged probe through.
+seed_probe_path "$victim" || { echo "FAIL: the Path provenance probe could not be applied"; exit 1; }
 probe_out="$work/probe-out"
 if ! AXIOM_STDLIB="$probe/stdlib" "$seedc" build \
        --input "$probe/self_host/main.ax" --output "$work/probe-gen" >"$work/probe.log" 2>&1; then
@@ -344,5 +340,5 @@ if (( failed > 0 )); then
   echo "check-seed-provenance: $failed check(s) failed"
   exit 1
 fi
-echo "check-seed-provenance: the seed is ${commit:0:7}'s emission, on all six targets,"
+echo "check-seed-provenance: the seed is ${commit:0:7}'s emission, on all $target_count targets,"
 echo "                       and a one-byte source change is enough to say so"
