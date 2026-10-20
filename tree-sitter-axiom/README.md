@@ -89,10 +89,11 @@ does. Tree-sitter's own highlighter and Helix read it for colour; Neovim
 reads it for navigation only, so there a parameter's uses are variables.
 
 A top-level signature gives later uses of its function the function
+colour. A preceding macro declaration gives uses of its name the macro
 colour. Macro templates keep their syntactic colours until expansion.
 
-Not yet: forward references, unsigned functions, macros and imported
-names are coloured by syntax where VS Code's server resolves them.
+Not yet: forward references, unsigned functions and imported names are
+coloured by syntax where VS Code's server resolves them.
 See the [roadmap](../docs/roadmap.md).
 
 Tested by `scripts/check-highlight-parity.sh`, which compares the two,

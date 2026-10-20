@@ -47,6 +47,13 @@ command -v node > /dev/null || { echo "FAIL: node is not on PATH"; exit 1; }
 [[ -d "$lib/node_modules/vscode-textmate" && -d "$lib/node_modules/vscode-oniguruma" ]] \
   || { echo "FAIL: the TextMate engine is not installed; run npm ci --prefix scripts/lib/highlight-parity --ignore-scripts"; exit 1; }
 
+echo "== local macro bindings and isolated templates =="
+if python3 "$lib/local-macros.py" --tree-sitter "$ts"; then
+  ok "local macro controls and query ablations"
+else
+  fail "local macro controls or query ablations"
+fi
+
 # The pairs only resolution can settle: tree-sitter's role, VS Code's,
 # the ceiling, and why.
 allowed=(

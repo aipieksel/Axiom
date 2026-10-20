@@ -5,11 +5,10 @@
 ; editors and VS Code alike on the uses of a name, not only on its
 ; binding. Neovim reads this file for navigation, not for colour.
 ;
-; A top-level signature binds its function name in the module scope.
-; Forward references and imported names keep their syntactic colour
-; where VS Code's server resolves them. A macro parameter is not bound
-; here: the server
-; colours its uses in a template by position, as the highlights do.
+; Top-level signatures and macro declarations bind their names in the
+; module scope. Forward references and imported names keep their
+; syntactic colour where VS Code's server resolves them. Macro parameters
+; are not bound here: template uses keep their positional colours.
 
 ; ---------------------------------------------------------------
 ; Scopes
@@ -23,9 +22,12 @@
 (for_expression) @local.scope
 (parallel_expression) @local.scope
 (syntax_for_declaration) @local.scope
-; Templates are resolved after expansion. Do not inherit a module
-; function's colour for a raw identifier inside a template.
-((macro_declaration) @local.scope
+; Keep the declaration name in module scope, while raw templates do
+; not inherit the colours of module functions or macros. Rule names
+; already have their syntactic macro capture inside the isolated rule.
+((macro_declaration body: (_) @local.scope)
+  (#set! local.scope-inherits false))
+((macro_rule) @local.scope
   (#set! local.scope-inherits false))
 
 ; ---------------------------------------------------------------
@@ -35,6 +37,7 @@
 ; A function's own name, for its recursive uses.
 (source_file (function_definition name: (identifier) @local.definition))
 (source_file (type_signature subject: (identifier) @local.definition))
+(source_file (macro_declaration name: (identifier) @local.definition))
 
 (source_file (function_definition parameter: (identifier) @local.definition))
 (lambda parameter: (identifier) @local.definition)
