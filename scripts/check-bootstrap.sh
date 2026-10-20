@@ -925,10 +925,14 @@ ceiling=942080   # 920 MiB, over a measured 819
 if (( peak < floor )); then
   fail "the self-compile peaked at $peak KiB, under the $((floor / 1024)) MiB floor - that is not a measurement of compiling 117,922 source lines"
 fi
-if (( peak > ceiling )); then
-  fail "one self-compile peaked at $((peak / 1024)) MiB, over the $((ceiling / 1024)) MiB ceiling - suspect an accumulator that copies, or a walk that repeats itself (bisect it, then run the split above)"
+# Keep the absolute limit, but collect the independent shape measurement
+# before refusing an oversized self-compile. Otherwise the CI failure
+# hides the evidence that distinguishes source growth from repeated walks.
+if (( peak <= ceiling )); then
+  echo "ok   one self-compile peaks at $((peak / 1024)) MiB, under the $((ceiling / 1024)) MiB ceiling ($(( (ceiling - peak) * 100 / ceiling ))% headroom)"
+else
+  echo "measured self-compile: $((peak / 1024)) MiB, over the $((ceiling / 1024)) MiB ceiling; checking nesting before refusing"
 fi
-echo "ok   one self-compile peaks at $((peak / 1024)) MiB, under the $((ceiling / 1024)) MiB ceiling ($(( (ceiling - peak) * 100 / ceiling ))% headroom)"
 
 # And the walk the 760 -> 704 entry found, held directly: one function
 # whose loop rotates `d` nested `mut` slots, at d = 6 and d = 14. Each
@@ -962,6 +966,10 @@ if (( deep - shallow > 16384 )); then
   fail "a 14-deep mut nest peaked $(( (deep - shallow) / 1024 )) MiB above a 6-deep one, over 16 MiB - the flow walk is repeating itself per enclosing \`mut\` again (see \`mutFlag\`, self_host/codegen.ax)"
 fi
 echo "ok   a 14-deep mut nest peaks $(( deep - shallow )) KiB above a 6-deep one (under 16 MiB: the flow walk is not exponential in nesting)"
+
+if (( peak > ceiling )); then
+  fail "one self-compile peaked at $((peak / 1024)) MiB, over the $((ceiling / 1024)) MiB ceiling - suspect an accumulator that copies, or a walk that repeats itself (bisect it, then run the split above)"
+fi
 
 echo
 echo "fixpoint reached from $seed_ll: the Axiom compiler reproduces itself, builds itself, and answers $swept cases correctly"
