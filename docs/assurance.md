@@ -211,6 +211,10 @@ timing or bus faults.
 | — | The seed is its source's emission, and its lineage replays to the original anchor | `scripts/check-seed-provenance.sh`, `scripts/check-seed-lineage.sh` |
 | — | A gate never reuses a compiler built from another tree | `scripts/check-gate-lib.sh` |
 
+The rule-by-rule tables are checked claims: `scripts/check-assurance-controls.sh`
+checks every refusal and acceptance they name, and builds the compiler
+with an enforcement removed to show that the refusal fixtures reach it.
+
 Each method has limits. Bootstrap convergence doesn't prove the
 compiler correct, a model proves only the model, and fuzzing explores
 the neighbourhood of the corpus.
