@@ -16,6 +16,10 @@ its changelog too.
 
 ## Unreleased
 
+- `IO.nullDevice` is the path of the null device, `/dev/null` or `NUL`
+  on Windows, for a program that needs a file it can always open and
+  that keeps nothing.
+
 - CI's Windows arm64 leg builds the compiler for its own architecture
   and runs the standard-library battery with it, as the x86_64 leg
   does. A line in `tests/stdlib/windows-skip.txt` can name one

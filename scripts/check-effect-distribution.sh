@@ -196,6 +196,8 @@ have() { # have <got> <want> <what>
 # sentinels on the host, in both views; the pager's `dbOpen` is IO.
 # The Windows stack-overflow trap adds three Alloc,Mut emitters:
 # `emitWinFaultRuntime`, `emitWinFaultCaptured`, `emitWinFaultChain`.
+# The null device's name adds two pure functions in both views:
+# `platformNullPath` and `IO.nullDevice`.
 # The full stdlib view also charges the closure factories fallibleCounting
 # (Mut to Alloc,Mut) and fallibleDefault (pure to Alloc).
 # Typed AST migration compared against 63883c3d with the same compiler:
@@ -258,7 +260,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2264 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2266 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 34 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 49 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 39 "effect-params rows"
@@ -331,7 +333,7 @@ have "$(bucket "$work/lib.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut,Spawn')" 2 "Alloc,IO,Mut,Spawn"
 have "$(bucket "$work/lib.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/lib.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1137 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1139 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/lib.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 37 "distinct stdlib effect rows"
 have "$(grep -c '#effects-incomplete' "$work/lib.axsym" || true)" 17 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/lib.axsym" || true)" 59 "effect-params rows"

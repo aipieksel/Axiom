@@ -1589,7 +1589,7 @@ Fmt - number formatting, in Axiom.
 
 ## `IO`
 
-`stdlib/IO.ax` — 72 public names
+`stdlib/IO.ax` — 73 public names
 
 IO - files, standard streams, terminals, readiness and sockets.
 
@@ -1599,6 +1599,7 @@ IO - files, standard streams, terminals, readiness and sockets.
 | `stdin` | value | `File` | `Alloc,IO,Unsafe` |  | The process's standard input as a `File`. Like `stdout` and `stderr`, it never closes its descriptor: `fileClose stdin` retires that one value and leaves the process's stream open. |
 | `stdout` | value | `File` | `Alloc,IO,Unsafe` |  | The process's standard output as a `File`, for `fileWrite` and friends. One shared owner: it is never closed by scope. |
 | `stderr` | value | `File` | `Alloc,IO,Unsafe` |  | The process's standard error as a `File`. One shared owner: it is never closed by scope. |
+| `nullDevice` | value | `String` |  |  | The path of the null device, for `openPath`: `/dev/null`, or `NUL` on Windows. A read from it is at the end of the file at once, a write to it keeps nothing, and it is never a terminal. |
 | `fileClose` | value | `(-> File (Result Int Error))` | `Alloc,IO,Unsafe` |  | Close early, once: `(Ok 0)`, or `(Err e)` carrying the errno of the close - on a written file, where a deferred write error surfaces. Aliases observe the close, and any later use of one traps 85. The descriptor is retired before the close and the close is never retried. Closing a standard stream retires that value only. |
 | `ErrorKind` | data |  |  |  | What went wrong, in words that mean the same on every target. An `Error`'s code is the kernel's errno, and those numbers differ: EAGAIN is 11 on Linux and 35 on Darwin. Match on `(errorKind e)` instead of a number. The names are `std::io::ErrorKind`'s. |
 | `errorKind` | value | `(-> Error ErrorKind)` |  |  | The kind of failure `e` reports. Errno numbers that are the same on every target are written here; the rest come from `Sys.Platform`. The library's own `errUnexpectedEof` and `errInvalidData` have kinds too, and any other code, including a program's own, is `Other`. |
@@ -2059,7 +2060,7 @@ Sys - portable syscall wrappers.
 
 ## `Sys.Platform`
 
-`stdlib/Sys/Platform.darwin.ax` — 220 public names
+`stdlib/Sys/Platform.darwin.ax` — 221 public names
 
 Sys.Platform - the numbers this target's kernel uses: syscall
 numbers, open and socket flags, errno values, poll and signal
@@ -2179,6 +2180,7 @@ target being compiled for (this one is `darwin`).
 | `platformFsync` | value | `(-> Int Int)` |  |  | The platform's own way to flush a descriptor where raw `fsync` is not available; -78 where the raw syscall is used instead. |
 | `platformFtruncate` | value | `(-> Int Int Int)` |  |  | The platform's own way to cut a file where raw `ftruncate` is not available; -78 where the raw syscall is used instead. |
 | `platformFlock` | value | `(-> Int Int Int)` |  |  | The platform's own way to lock a file where raw `flock` is not available; -78 where the raw syscall is used instead. |
+| `platformNullPath` | value | `String` |  |  | The path of the null device: `/dev/null` here. |
 | `platformUnlink` | value | `(-> Int Int)` |  |  | The platform's own way to remove a file where raw `unlink` is not available; -78 where the raw syscall is used instead. |
 | `platformRename` | value | `(-> Int Int Int)` |  |  | The platform's own way to rename a path where raw `rename` is not available; -78 where the raw syscall is used instead. |
 | `platformMkdir` | value | `(-> Int Int Int)` |  |  | The platform's own way to make a directory where raw `mkdir` is not available; -78 where the raw syscall is used instead. |
