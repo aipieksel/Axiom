@@ -20,13 +20,18 @@ set -euo pipefail
 REPO="${AXIOM_REPO:-chrispaig3/axiom}"
 PREFIX="${AXIOM_PREFIX:-$HOME/.axiom}"
 VERSION="${AXIOM_VERSION:-latest}"
+ARCHIVE=""
+CHECKSUM=""
 
 usage() {
   cat <<'USAGE'
 usage: install.sh [--version X.Y.Z] [--prefix DIR]
+       install.sh --archive FILE.zip [--checksum FILE] [--prefix DIR]
 
   --version   release to install (default: latest)
   --prefix    where to install    (default: ~/.axiom)
+  --archive   Windows CI preview ZIP to install locally
+  --checksum  preview ZIP's checksum (default: FILE.zip.sha256)
 
 Environment: AXIOM_VERSION, AXIOM_PREFIX, AXIOM_REPO, AXIOM_BASE_URL.
 Piping this script into bash gives it no arguments, so over
@@ -53,6 +58,12 @@ while [[ $# -gt 0 ]]; do
     --prefix)
       [[ $# -ge 2 ]] || die "--prefix needs a directory, e.g. --prefix ~/.axiom"
       PREFIX="$2"; shift 2 ;;
+    --archive)
+      [[ $# -ge 2 ]] || die "--archive needs a Windows preview ZIP"
+      ARCHIVE="$2"; shift 2 ;;
+    --checksum)
+      [[ $# -ge 2 ]] || die "--checksum needs a file"
+      CHECKSUM="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "install.sh: unknown option '$1'" >&2; usage >&2; exit 2 ;;
   esac
@@ -67,9 +78,23 @@ case "$os" in
   Linux)   os_name=linux ;;
   FreeBSD) os_name=freebsd ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    die "Windows release binaries are not published, and this installer does not support Windows yet. See README's Targets section and docs/roadmap.md" ;;
+    [[ -n "$ARCHIVE" ]] || die "Windows release binaries are not published. Supply a validated CI preview with --archive FILE.zip, or use scripts/install.ps1 -Archive FILE.zip."
+    [[ "$VERSION" == "latest" ]] || die "--version does not select a local Windows preview; its package records the version"
+    installer_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd)" \
+      || die "save install.sh beside install.ps1 before using --archive"
+    [[ -f "$installer_dir/install.ps1" ]] || die "save install.sh beside install.ps1 before using --archive"
+    powershell=""
+    for tool in pwsh powershell.exe powershell; do
+      if command -v "$tool" >/dev/null 2>&1; then powershell="$tool"; break; fi
+    done
+    [[ -n "$powershell" ]] || die "PowerShell 5.1 or newer is required for the Windows preview installer"
+    native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+    args=(-NoLogo -NoProfile -ExecutionPolicy Bypass -File "$(native_path "$installer_dir/install.ps1")" -Archive "$(native_path "$ARCHIVE")" -Prefix "$(native_path "$PREFIX")")
+    [[ -z "$CHECKSUM" ]] || args+=(-ChecksumPath "$(native_path "$CHECKSUM")")
+    exec "$powershell" "${args[@]}" ;;
   *) die "unsupported OS '$os'. Axiom targets darwin, linux and freebsd; build from source with scripts/bootstrap-from-seed.sh" ;;
 esac
+[[ -z "$ARCHIVE$CHECKSUM" ]] || die "--archive and --checksum are for Windows preview installations"
 case "$arch" in
   arm64|aarch64) arch_name=aarch64 ;;
   x86_64|amd64)  arch_name=x86_64 ;;

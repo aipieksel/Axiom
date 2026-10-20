@@ -48,6 +48,15 @@ gate_build_axc axc
 command -v curl >/dev/null || { echo "FAIL: curl is not on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "FAIL: python3 is not on PATH"; exit 1; }
 
+# The Windows package/dispatch contracts run on POSIX too. Native
+# Windows CI additionally runs the PowerShell transaction tests and
+# executes the packaged compiler through scripts/check-windows-install.ps1.
+python3 "$repo_root/tests/platform/windows-package.py"
+python3 "$repo_root/tests/platform/windows-shell-install.py"
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoLogo -NoProfile -File "$repo_root/tests/platform/windows-install.ps1" -Root "$repo_root"
+fi
+
 failed=0
 checks=0
 ok()  { echo "ok   $*"; checks=$((checks + 1)); }

@@ -16,6 +16,14 @@ its changelog too.
 
 ## Unreleased
 
+- Windows CI can package its executed compiler as a preview ZIP with
+  its standard library, docs, source commit and SHA-256 inventory.
+  `scripts/install.ps1` verifies a local preview, probes its compiler
+  before and after replacement, and restores the earlier installation
+  after a failed switch. Published releases and their supported-target
+  policy are unchanged. Tested by `tests/platform/windows-package.py`
+  and `tests/platform/windows-install.ps1`.
+
 - Windows links collect every consecutive `extern` block for a DLL.
   A later block no longer loses its generated import library and draws
   a false AX4004. Tested by `scripts/check-driver.sh`.

@@ -444,7 +444,7 @@ shows the check can fail at all.
 | `bootstrap-from-seed.sh` | A clean checkout builds a working compiler from `bootstrap/` with the native LLVM toolchain; the Windows link path uses Git Bash and checks PE architecture and imports |
 | `build-shared-axc.sh` | Not an assertion, but the step the others rest on. It builds the compiler under test once and stamps it, and the ninety-seven gates that call `gate_build_axc` reuse it while the stamp matches the tree. It builds a second time and compares the IR both compilers emit, because those gates rely on the artifact being exactly what you would have built |
 | `check-gate-lib.sh` | The shared artifact can't hide a source change. This is the probe that makes the reuse above safe to rely on |
-| `check-install.sh` | The script `README.md` tells new users to pipe into bash. A release built from this tree is served over the loopback and installed. A tampered archive, one with no checksum and one with no `stdlib/` must each be refused. The gate's own probe deletes `install.sh`'s checksum comparison in a copy and requires the tampered case to stop being refused |
+| `check-install.sh` | The script `README.md` tells new users to pipe into bash. A release built from this tree is served over the loopback and installed. A tampered archive, one with no checksum and one with no `stdlib/` must each be refused. The gate's own probe deletes `install.sh`'s checksum comparison in a copy and requires the tampered case to stop being refused. Host tests check Windows preview inventories and shell dispatch; native Windows jobs run PowerShell rollback contracts and install the packaged compiler |
 | `check-release-targets.sh` | What a release builds and what `install.sh` refuses are one fact split across two files. A target in both uploads an archive the installer won't fetch, and a target in neither gives the user a bare `curl` 404. It also keeps the two axes apart: nothing ships that README doesn't call supported, and nothing is supported but unshipped without a CI leg or a README paragraph saying why (`darwin-x86_64`) |
 | `check-version.sh` | Every place the project states its own version agrees with `VERSION`, counted per site, and the built compiler prints it too |
 | `check-build-id.sh` | A shipped binary names the tree it was built from, as well as its version. An unstamped build says `unstamped` rather than a plausible value, the id is a function of the source (one changed byte moves it), and the id `build-stamped.sh` computes is the one `axiom version` reports |
@@ -647,8 +647,18 @@ Every source-only target (`darwin-x86_64`, `freebsd-aarch64`,
 `freebsd-x86_64`, `linux-x86_64`) gets the same message from the
 installer: no archive is published for it, and it points to the seed.
 A binary for one of them would imply support that doesn't exist.
-The Windows targets never reach that message, because the installer
-refuses a Windows host first.
+
+The Windows targets have CI preview ZIPs rather than published release
+archives. `scripts/package-windows.py` packages the compiler that its
+native job has executed, with its library, docs, source commit and
+checksums. `scripts/check-windows-install.ps1` installs it from a path
+containing spaces and checks an upgrade before the job uploads it.
+
+`scripts/install.ps1` accepts a local ZIP, verifies its sidecar and exact
+file inventory, and stages it under an owned prefix. Both the staged and
+installed compiler build and run an `IO` program through bare `PATH`.
+Failed switches restore the earlier installation. This preview path
+does not change the release matrix or the supported-target list.
 
 ---
 

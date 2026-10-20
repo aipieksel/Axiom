@@ -30,7 +30,7 @@
 #                    this arm, a gate that never calls `gate_build_axc`
 #                    (such as `check-fmt.sh`) would silently test the
 #                    installed binary instead.
-#                 3. otherwise `.axiom-bin/axiom`, bootstrapped from
+#                 3. otherwise `.axiom-bin/axiom` (`axiom.exe` on Windows), bootstrapped from
 #                    `bootstrap/` when it is not there yet.
 #   link_entry  see `gate_link_entry`
 #   work        a fresh temporary directory, removed on exit
@@ -74,6 +74,9 @@ gate_init() {
     [[ -n "${AXIOM_AXC:-}" ]] \
       && echo "gate: \$AXIOM_AXC = $AXIOM_AXC is not an executable file - ignoring it" >&2
     axiom="$repo_root/.axiom-bin/axiom"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*|Windows_NT) axiom="$axiom.exe" ;;
+    esac
     echo "gate: compiler is the installed $axiom (neither \$AXIOM nor \$AXIOM_AXC names one)" >&2
   fi
 

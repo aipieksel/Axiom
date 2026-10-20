@@ -77,6 +77,29 @@ export PATH="$PWD/.axiom-bin:$PATH"
 [CONTRIBUTING](CONTRIBUTING.md#quick-start) explains what the bootstrap
 does.
 
+### Windows CI previews
+
+Windows packages are CI preview artifacts, separate from published
+releases. Each ZIP carries `bin/axiom.exe`, its standard library and
+docs, a source commit in `package.json`, and per-file SHA-256 digests.
+Keep the ZIP's `.sha256` sidecar beside it.
+
+Install LLVM 18 or newer with `llc`, `lld-link` and `llvm-dlltool` on
+`PATH`. From the matching checkout, set `$archive` to the downloaded ZIP
+and run PowerShell 5.1 or newer:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Archive $archive -Prefix "$HOME\.axiom-preview"
+$env:PATH = "$HOME\.axiom-preview\bin;" + $env:PATH
+```
+
+Pass `-ExpectedCommit` to check the recorded source commit against the
+CI run's full hash. The installer verifies the archive and file inventory,
+then builds and runs a small program before replacing an installation.
+It refuses unrelated files, git checkouts and linked installation paths.
+An unsuccessful upgrade restores the earlier files. Git Bash can use
+`scripts/install.sh --archive FILE.zip --prefix DIR` instead.
+
 ### Targets
 
 `--target` picks the platform to generate code for. That sets the

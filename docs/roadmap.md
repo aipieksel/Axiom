@@ -230,7 +230,7 @@ work; they do not claim full feature parity.
 | Windows path roots, closed-poller checks and exclusive listener addresses | Done; `tests/stdlib/980-path-roots.ax`, `tests/stdlib/981-poller-closed.ax` and `tests/stdlib/843-net-stream.ax` |
 | Every standard-library case runs on Windows: `Task` still needs a Windows implementation of its isolated worker lifecycle; `tests/stdlib/windows-skip.txt` names the remaining process and POSIX cases | In progress |
 | Windows pollers watch terminal input, pipes, Ctrl-C and Ctrl-Break without losing buffered bytes or retaining closed files | Implemented; native Windows validation pending for `tests/platform/windows-console.ax` and `tests/platform/windows-controls.ax` |
-| A Windows seed and installer bootstrap the compiler locally | Not started |
+| A Windows seed and installer bootstrap the compiler locally | Preview package and transactional installer implemented; native installation validation and the Windows seed remain |
 | The embedded checks run on a named board | Not started |
 | Compatibility rules enforced at 1.0 (`COMPAT-6`) | Planned |
 
