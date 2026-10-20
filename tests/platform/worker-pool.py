@@ -250,19 +250,23 @@ def main():
     parser.add_argument("--axiom")
     parser.add_argument("--keep", type=Path)
     parser.add_argument("--stdlib", type=Path, help="validation-only dependency overlay")
-    parser.add_argument("--emit-windows", type=Path)
-    parser.add_argument("--run-windows", type=Path)
+    windows = parser.add_mutually_exclusive_group()
+    windows.add_argument("--emit-windows", type=Path)
+    windows.add_argument("--run-windows", type=Path)
+    windows.add_argument("--link-windows", type=Path, help="link both Windows architectures without executing PE files")
     parser.add_argument("--target", choices=TARGETS)
     parser.add_argument("--skip-windows", action="store_true")
     args = parser.parse_args()
     global STDLIB
     STDLIB = (args.stdlib or ROOT / "stdlib").resolve()
-    if args.run_windows:
-        assert args.target, "native Windows execution needs the runner target"
+    if args.run_windows or args.link_windows:
+        if args.run_windows and not args.target:
+            parser.error("--run-windows needs the native runner --target")
+        artifacts = args.run_windows or args.link_windows
         for target in TARGETS:
             for level in (0, 2):
-                output = link_windows(args.run_windows / target, target, level)
-                if target == args.target:
+                output = link_windows(artifacts / target, target, level)
+                if args.run_windows and target == args.target:
                     assert_pool(output / (FIXTURES[1] + ".exe"), output / (FIXTURES[0] + ".exe"), output)
                     assert_cancel(output / (FIXTURES[2] + ".exe"), output / (FIXTURES[0] + ".exe"), output)
                     print(f"ok   encoded workers {target} O{level}: EXECUTED 28 cases and token cancellation")

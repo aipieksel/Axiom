@@ -210,13 +210,21 @@ echo "--- 1. user-level cast count does not grow ---"
 # live marker handles to the library-only Windows liveness layer; they
 # decay references to words without forging a reference or changing its
 # share. These are compiler-boundary or MM-VAL-23 ownership probes.
+# Baseline 1073 adds 25 reviewed conversions: four private process/transport
+# handles cross typed runtime word boundaries, one owned Windows command
+# slot is passed as a word, and the command-scratch mock restores its live
+# vector type. CheckedNested passes a CUnit2 through the compiler word
+# vector. The other eighteen are numeric Int/Float conversions in the
+# checked-function-type tests, including their emitted source strings.
+# The handle conversions use live owners and change no share; the numeric
+# conversions create no reference (MM-VAL-23).
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1048 ]; then
-  ok "user-level (cast count $cast_count <= 1048)"
+elif [ "$cast_count" -le 1073 ]; then
+  ok "user-level (cast count $cast_count <= 1073)"
 else
-  bad "user-level (cast count $cast_count > 1048): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1073): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"

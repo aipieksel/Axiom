@@ -460,6 +460,14 @@ echo "== completeness: no effect row is only a lower bound =="
 # `<name> <file>  <reason>` - one line each, the reason being everything
 # after the second field, so it has room to say something.
 cat > "$work/incomplete.exempt" <<'INCOMPLETE'
+mapOk Err.ax calls the caller's transform on an unconstrained payload, which may itself be callable; parameter transparency remains recorded but the row is a lower bound
+mapErr Err.ax calls the caller's error transform on an unconstrained payload for the same reason
+andThen Err.ax calls the caller's fallible transform on an unconstrained payload for the same reason
+optMap Err.ax calls the caller's transform on an unconstrained optional payload for the same reason
+optAndThen Err.ax calls the caller's optional transform on an unconstrained payload for the same reason
+checkChain Btree.ax inherits the incomplete generic andThen payload flow; its fixed pager callback is walked and its IO claim remains required
+checkTree Btree.ax reaches checkChain and inherits that labelled lower bound; its explicit pager IO is still enumerated
+btreeCheck Btree.ax reaches checkTree and checkChain and inherits their labelled lower bound; its explicit pager IO is still enumerated
 vecSortBy     Vec.ax  calls the comparator the CALLER supplies, so its row is a lower bound by construction; the first higher-order function in this library and the first entry here
 vecSiftDownBy Vec.ax  the same call one frame down, `vecSortBy`'s own helper
 taskFoldOne   Task.ax applies the step the CALLER supplies - to the accumulator and index first, then to the answer alone through a local, the one-argument call the region check can accept (MM-PAR-13) - so its row is a lower bound by construction

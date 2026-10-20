@@ -759,6 +759,74 @@ unrelated inheritable handles stay in the parent. Launch buffers are
 reused between commands. Tested by `tests/stdlib/987-command-pools.ax`
 and the host WinAPI mocks in `tests/platform/windows-command-pools.py`.
 
+### Executable workers
+
+Use `Task.Worker` when a worker can receive and return encoded bytes.
+Build a separate executable with an entry point like this:
+
+```scheme
+(import Task.Worker)
+(import Str)
+
+(:: answer (-> WorkerContext String String))
+(fn (answer context input) (concat input "!"))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main) (workerServe (lambda (context input) (answer context input))))
+```
+
+The caller supplies its argument vector and input strings:
+
+```scheme
+(import Task.Worker)
+(import Vec)
+(import IO)
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  {
+    (let argv vecNew)
+    (vecPush argv "./worker-endpoint")
+    (let inputs vecNew)
+    (vecPush inputs "hello")
+    (let results (workerMap argv inputs (workerOpts 2 1024 1024)))
+    (match (vecGet results 0)
+      ((Ok text) (println text))
+      ((Err error) (println error.code)))
+    0
+  })
+```
+
+Each input starts a fresh executable. The caller's heap and closures
+are never copied into it. Results keep input order; stdout and stderr
+remain ordinary side effects. Run the endpoint through `workerMap`:
+`workerServe` expects the launcher's transport arguments.
+
+`workerOpts width inputLimit resultLimit` bounds concurrent children
+and each message's byte length. Input or result overflow answers error
+1003. `workerWithKeep` bounds successful result bytes retained by one
+call; exceeding it answers 1012 and cancels remaining work.
+`workerWithMemory` bounds additional child arena mappings after its
+input is installed. It does not bound the parent's total memory.
+
+Deadlines, cancellation tokens, grace and fail-fast have separate
+`workerWith*` setters. A handler polls `workerCancelled context` to
+cooperate. Children are joined before the call returns, including after
+forced termination. POSIX raw kernel exit or SIGKILL can bypass parent
+cleanup; Windows job ownership also handles parent process exit.
+
+The default `NativeStack` uses the executable's ordinary stack.
+`StackBytes` requests a guarded usable-byte budget where supported;
+Windows refuses it with error 78 before launching a child. A working
+monotonic clock is also required. Parent allocator bookkeeping can
+remain retained across repeated calls; these options do not establish
+flat total parent memory. Tested by `tests/platform/worker-pool.py`
+and `tests/platform/worker-lifecycle.py`.
+
 `Chan` passes words
 through a bounded channel; `Sync` provides mutexes with timeout and
 owner-death reporting. A lock call answers a guard, and the lock is
@@ -768,7 +836,8 @@ shared handles through their module's public operations. These APIs do not trans
 processes or make unsynchronised payload mutation safe.
 
 Read [concurrency](reference.md#concurrency) for capture and result rules.
-API: [Task](stdlib-api.md#task), [Chan](stdlib-api.md#chan), [Sync](stdlib-api.md#sync).
+API: [Task](stdlib-api.md#task), [Task.Worker](stdlib-api.md#taskworker),
+[Chan](stdlib-api.md#chan), [Sync](stdlib-api.md#sync).
 
 ## Terminals, tests and tools
 

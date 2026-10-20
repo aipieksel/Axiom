@@ -2093,12 +2093,18 @@ vector; `taskRunCommands` runs a bounded command pool. The
 [library reference](stdlib.md#task-chan-and-sync) gives the entry points, and the [memory model](memory-model.md) defines publication,
 atomic ordering and lifecycle rules.
 
-Not yet: `Task`'s isolated worker lifecycle has no Windows lowering.
-`taskRunCommand`, `taskRunCommands` and command spawning through `Sys`
-work there. Windows command pools require Windows 10 or later and keep
-their processes in a cleanup job; see the [library reference](stdlib.md#task-chan-and-sync).
-See the
-[platform roadmap](roadmap.md#platforms-and-release).
+`Task.Worker.workerMap argv inputs opts` starts a fresh executable per
+encoded input and returns bounded byte results in input order. The
+endpoint's `main` calls `workerServe handler`; the caller's captured
+state never crosses the boundary. `workerOpts` takes a width, input
+limit and result limit. It defaults to `NativeStack`; a guarded
+`StackBytes` budget is refused on Windows before launch. See
+[executable workers](stdlib.md#executable-workers) for examples and
+the precise memory and cleanup limits.
+
+Windows command and executable-worker pools require Windows 10 or
+later. Not yet: arbitrary captured-closure `Task` calls on Windows;
+see the [platform roadmap](roadmap.md#platforms-and-release).
 
 ## Calling Rust
 
@@ -2215,7 +2221,7 @@ Tested by `tests/stdlib/841-net-ip.ax` and `tests/stdlib/843-net-stream.ax`.
 
 ### Modules at a Glance
 
-Sixty-two modules, all of them Axiom source under `stdlib/`, plus the six
+Sixty-three modules, all of them Axiom source under `stdlib/`, plus the six
 `Sys.Platform.*` target files covered by `Sys`. Only names marked `pub`
 are exported.
 
@@ -2242,6 +2248,7 @@ are exported.
 | `Chan` | [API](stdlib-api.md#chan) |
 | `Sync` | [API](stdlib-api.md#sync) |
 | `Task` | [API](stdlib-api.md#task) |
+| `Task.Worker` | [API](stdlib-api.md#taskworker) |
 | `Net` | [API](stdlib-api.md#net) |
 | `Chrono` | [API](stdlib-api.md#chrono) |
 | `Axqlite` | [API](stdlib-api.md#axqlite) |

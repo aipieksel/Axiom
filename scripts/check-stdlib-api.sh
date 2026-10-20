@@ -115,6 +115,7 @@ stdlib/Sync.ax
 stdlib/Sys.ax
 stdlib/Sys/Platform.darwin.ax
 stdlib/Task.ax
+stdlib/Task/Worker.ax
 stdlib/Test.ax
 stdlib/Tui/Edit.ax
 stdlib/Tui/Keys.ax

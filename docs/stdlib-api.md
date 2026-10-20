@@ -428,7 +428,7 @@ Axqlite.Btree - the one B+tree AXQLite stores tables and indices in.
 | `btreeLastKey` | value | `(-> Pager Int (Result (Option String) Error))` | `Alloc,IO,Mut` |  | The largest key in the tree, or `None` when it is empty: a table's largest rowid. |
 | `btreeCount` | value | `(-> Pager Int (Result Int Error))` | `Alloc,IO,Mut` |  | How many entries the tree holds, counted leaf by leaf. |
 | `btreeHeight` | value | `(-> Pager Int (Result Int Error))` | `Alloc,IO,Mut` |  | The tree's height: 1 when the root is a leaf. |
-| `btreeCheck` | value | `(-> Pager (Vec Int) (Result Int Error))` | `Alloc,IO,Mut,Unsafe` |  | Check the whole file, given the root of every tree in it (the schema root included): every page is reached exactly once, from a tree, an overflow chain or the free list; every tree's pages pass their checksums and structure checks, hold their keys in order within their parents' bounds, and have their leaves at one depth; every overflow chain holds exactly its value's bytes; and the free list is as long as the header says. Answers the pages checked, or `axqCorrupt` naming the first problem. Needs a lock. |
+| `btreeCheck` | value | `(-> Pager (Vec Int) (Result Int Error))` | `Alloc,IO,Mut,Unsafe (incomplete)` |  | Check the whole file, given the root of every tree in it (the schema root included): every page is reached exactly once, from a tree, an overflow chain or the free list; every tree's pages pass their checksums and structure checks, hold their keys in order within their parents' bounds, and have their leaves at one depth; every overflow chain holds exactly its value's bytes; and the free list is as long as the header says. Answers the pages checked, or `axqCorrupt` naming the first problem. Needs a lock. |
 
 ## `Axqlite.Pager`
 
@@ -1476,9 +1476,9 @@ work on them, and checked integer arithmetic.
 | `isOk` | value | `(-> (Result a e) Bool)` |  |  | Whether the result is `Ok`. |
 | `isErr` | value | `(-> (Result a e) Bool)` |  |  | Whether the result is `Err`. |
 | `unwrapOr` | value | `(-> (Result a e) a a)` |  |  | The `Ok` value, or `fallback` when the result is `Err`. |
-| `mapOk` | value | `(-> (Result a e) (-> a b) (Result b e))` | `Alloc` |  | Apply `f` to the `Ok` value; an `Err` passes through unchanged. |
-| `mapErr` | value | `(-> (Result a e) (-> e f) (Result a f))` | `Alloc` |  | Apply `f` to the `Err` value; an `Ok` passes through unchanged. |
-| `andThen` | value | `(-> (Result a e) (-> a (Result b e)) (Result b e))` | `Alloc` |  | Chain a fallible step: apply `f` to the `Ok` value and answer its result; an `Err` passes through unchanged. |
+| `mapOk` | value | `(-> (Result a e) (-> a b) (Result b e))` | `Alloc (incomplete)` |  | Apply `f` to the `Ok` value; an `Err` passes through unchanged. |
+| `mapErr` | value | `(-> (Result a e) (-> e f) (Result a f))` | `Alloc (incomplete)` |  | Apply `f` to the `Err` value; an `Ok` passes through unchanged. |
+| `andThen` | value | `(-> (Result a e) (-> a (Result b e)) (Result b e))` | `Alloc (incomplete)` |  | Chain a fallible step: apply `f` to the `Ok` value and answer its result; an `Err` passes through unchanged. |
 | `errContextOf` | value | `(-> Error String Error)` | `Alloc` |  | `e` with its context set to `ctx`, so a caller up the stack can say what it was doing when the error arrived: `(errContextOf e "axqOpen")`. `withContext` does the same to the error inside a `Result`. |
 | `withContext` | value | `(-> (Result a Error) String (Result a Error))` | `Alloc` |  | Set the context of the error inside `r` to `ctx`, so a caller up the stack can say what it was doing. An `Ok` passes through unchanged. |
 | `okOr` | value | `(-> (Option a) e (Result a e))` | `Alloc` |  | Turn an `Option` into a `Result`: `Some` becomes `Ok`, and `None` becomes `Err e`. |
@@ -1486,8 +1486,8 @@ work on them, and checked integer arithmetic.
 | `isSome` | value | `(-> (Option a) Bool)` |  |  | Whether the `Option` holds a value. The `Option` half of `isOk`. |
 | `isNone` | value | `(-> (Option a) Bool)` |  |  | Whether the `Option` is empty: `isSome` negated. |
 | `optUnwrapOr` | value | `(-> (Option a) a a)` |  |  | The value, or `fallback` when there is none. |
-| `optMap` | value | `(-> (Option a) (-> a b) (Option b))` | `Alloc` |  | Apply `f` to the value if there is one, leaving an absence alone. The result type is `f`'s, so this is how an `(Option Int)` becomes an `(Option String)`. |
-| `optAndThen` | value | `(-> (Option a) (-> a (Option b)) (Option b))` |  |  | Chain a step that may itself be absent, without nesting two `Option`s. `optMap` with a function answering `(Option b)` would give `(Option (Option b))`; this is that flattened. |
+| `optMap` | value | `(-> (Option a) (-> a b) (Option b))` | `Alloc (incomplete)` |  | Apply `f` to the value if there is one, leaving an absence alone. The result type is `f`'s, so this is how an `(Option Int)` becomes an `(Option String)`. |
+| `optAndThen` | value | `(-> (Option a) (-> a (Option b)) (Option b))` | `incomplete` |  | Chain a step that may itself be absent, without nesting two `Option`s. `optMap` with a function answering `(Option b)` would give `(Option (Option b))`; this is that flattened. |
 | `optOr` | value | `(-> (Option a) (Option a) (Option a))` | `Alloc` |  | The first of two that is present. `alt` is evaluated at the call, even when `o` holds a value, so a caller whose alternative is expensive should write the `match`. |
 | `intMin` | value | `Int` |  |  | The smallest `Int`, -9223372036854775808. |
 | `addChecked` | value | `(-> Int Int (Result Int Error))` | `Alloc` |  | `a + b`, or `Err` with `errOverflow` when the sum does not fit an `Int`. |
@@ -2337,6 +2337,38 @@ Structured tasks with typed results across the process boundary
 | `taskRunCommand` | value | `(-> (Vec String) (Result Int Error))` | `Alloc,Block,IO,Mut,Spawn` |  | Run one argument vector. Element 0 is the program, looked up on `PATH`. An empty vector answers `Err` 2 without starting a process. |
 | `taskRunCommands` | value | `(-> (Vec (Vec String)) Int (Vec Int))` | `Alloc,Block,IO,Mut,Spawn` |  | Run argument vectors at up to `width` at once, in submit order. Each slot contains its exit code, 128 plus its terminating signal, or a negative errno when the program could not start. |
 | `taskMapCompute` | value | `(-> (-> Int Int) Int TaskOpts (Vec (Result Int Error)))` | `Alloc,Block,IO,Mut,Spawn` |  | Map an Int-to-Int numeric computation with the ordinary Task budgets. Results are submit-ordered. Each word crosses as exactly eight bytes; the byte limit and keep budget apply to those bytes. Numeric conversion is explicit. `compute(worker)` checks primitive captures and the entire reachable numeric program, including local accumulators and helpers. |
+
+## `Task.Worker`
+
+`stdlib/Task/Worker.ax` — 18 public names
+
+Task.Worker - isolated executable workers with bounded byte messages.
+
+Build a separate executable whose main calls `workerServe handler`.
+`workerMap` starts that executable afresh for every input. Strings are
+binary messages: no closure or managed reference crosses the process.
+Standard output and standard error remain ordinary side effects.
+
+| Name | Kind | Type | Effects | Contracts | Summary |
+|---|---|---|---|---|---|
+| `WorkerStack` | data |  |  |  | NativeStack uses the executable's ordinary stack. StackBytes requests a guarded usable stack budget; unsupported targets refuse it before launch. |
+| `WorkerCancelToken` | struct |  |  |  | One process-local token shared by pools and cancellation callers. |
+| `WorkerOpts` | struct |  |  |  | Width, per-message byte bounds, time in nanoseconds, cumulative kept result bytes, and additional arena bytes after the child installs input. Zero deadline, keep or memory means no bound. NativeStack is explicit. |
+| `workerOpts` | value | `(-> Int Int Int WorkerOpts)` | `Alloc` |  | Defaults: no deadline, 100 ms cancellation grace, no fail-fast or cumulative memory bound, a private token and the executable's native stack. |
+| `workerWithDeadline` | value | `(-> WorkerOpts Int WorkerOpts)` | `Alloc` |  | A per-invocation deadline, measured from its spawn. |
+| `workerWithGrace` | value | `(-> WorkerOpts Int WorkerOpts)` | `Alloc` |  | Grace after cancellation or deadline before forced termination and join. |
+| `workerWithFailFast` | value | `(-> WorkerOpts Bool WorkerOpts)` | `Alloc` |  | Cancel the remaining pool when an invocation fails. |
+| `workerWithToken` | value | `(-> WorkerOpts WorkerCancelToken WorkerOpts)` | `Alloc` |  | Share cancellation with another pool or caller in this process. |
+| `workerWithKeep` | value | `(-> WorkerOpts Int WorkerOpts)` | `Alloc` |  | Bound the sum of retained successful result bytes; zero is unbounded. |
+| `workerWithMemory` | value | `(-> WorkerOpts Int WorkerOpts)` | `Alloc` |  | Bound arena mappings added after the endpoint has copied its input. |
+| `workerWithStack` | value | `(-> WorkerOpts WorkerStack WorkerOpts)` | `Alloc` |  | Choose the executable's native stack or a supported guarded byte budget. |
+| `workerTokenNew` | value | `(Result WorkerCancelToken Error)` | `Alloc,IO,Unsafe` |  | Allocate a cancellation token; it starts unset and cannot be reset. |
+| `workerCancel` | value | `(-> WorkerCancelToken Int)` | `Mut,Unsafe` |  | Cancel every pool using this token. Running children observe it through their own WorkerContext when the parent next scans its running children. |
+| `workerTokenCancelled` | value | `(-> WorkerCancelToken Bool)` | `Unsafe` |  | Whether this process-local token has been set. |
+| `WorkerContext` | struct |  |  |  | A live endpoint invocation. Retaining it beyond workerServe does not extend the invocation: querying an expired context raises resource trap85. |
+| `workerCancelled` | value | `(-> WorkerContext Bool)` |  |  | Poll a cooperative cancellation request without allocating. |
+| `workerServe` | value | `(-> (-> WorkerContext String String) Int)` | `Alloc,IO,Mut` |  | The main of a dedicated worker executable calls this once with its handler. The launcher supplies a reserved three-argument transport suffix. Invalid invocation answers64; malformed transport answers22. |
+| `workerMap` | value | `(-> (Vec String) (Vec String) WorkerOpts (Vec (Result String Error)))` | `Alloc,Block,IO,Mut,Spawn` |  | Start a fresh executable for every input, with at most width children. Answers preserve input order. Every child is joined before this returns; result publication alone never releases its slot. Cancellation is checked between launches and running-child scans, with a 1 ms sleep between scans. Grace expires before forced termination and join. |
 
 ## `Test`
 

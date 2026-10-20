@@ -230,7 +230,10 @@ work; they do not claim full feature parity.
 | The compiler hosts itself on Windows, and crypto runs there | In progress |
 | Windows clock conversions check overflow, finite sleeps retain their duration, and large stack frames link with page probing | Done; `tests/platform/windows-time.py` and `scripts/check-recover.sh` |
 | Windows path roots, closed-poller checks and exclusive listener addresses | Done; `tests/stdlib/980-path-roots.ax`, `tests/stdlib/981-poller-closed.ax` and `tests/stdlib/843-net-stream.ax` |
-| Every standard-library case runs on Windows: `Task` still needs a Windows implementation of its isolated worker lifecycle; `tests/stdlib/windows-skip.txt` names the remaining process and POSIX cases | In progress |
+| Every standard-library case runs on Windows; arbitrary captured-closure `Task` calls and the POSIX cases in `tests/stdlib/windows-skip.txt` remain unsupported | In progress |
+| Explicit encoded executable workers preserve process isolation, bounded messages, deadlines and cancellation | Implemented; native Windows validation pending for `tests/platform/worker-pool.py` |
+| Guarded usable-byte stack budgets for Windows executable workers | Not yet; `NativeStack` is explicit and `StackBytes` is refused before launch |
+| Parent allocator bookkeeping stays flat across repeated executable-worker calls | Not yet; repeated calls can retain bookkeeping despite retired native resources |
 | Windows command pools launch native processes at a bounded width, preserve submit order and own their cleanup | Implemented; native Windows validation pending for `tests/stdlib/987-command-pools.ax` |
 | Windows pollers watch terminal input, pipes, Ctrl-C and Ctrl-Break without losing buffered bytes or retaining closed files | Implemented; native Windows validation pending for `tests/platform/windows-console.ax` and `tests/platform/windows-controls.ax` |
 | A Windows seed and installer bootstrap the compiler locally | Preview package and transactional installer implemented; native installation validation and the Windows seed remain |

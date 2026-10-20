@@ -6229,6 +6229,31 @@ into an accumulator instead of keeping them. A task always uses
 `__proc_spawn`, whatever `--threads` says, because `MM-PAR-3`'s
 isolation is what makes a task's captures its own.
 
+`Task.Worker` transfers explicit input and result bytes to a fresh
+executable instead of copying a closure's captures. At most `width`
+invocations own transport mappings at once. Each mapping holds a
+96-byte header, the input bound rounded up to eight bytes, and the
+result bound. The parent MUST compare the returned capacities with its
+original limits, validate the header and result length, and join the
+child before copying the result. A self-consistent rewritten header
+does not authorise a larger result.
+
+`WorkerOpts.memory` bounds additional child arena mappings after its
+input is copied; `keep` counts successful result bytes retained by one
+call. Neither bounds total parent memory. Conservative ownership
+parking can retain parent bookkeeping across repeated calls.
+`NativeStack` uses the executable's stack. A target without guarded
+usable-byte stacks MUST refuse `StackBytes` before starting user work.
+Windows currently answers 78 for that request.
+
+Windows workers inherit only their standard streams and explicit
+transport handles, and join a private cleanup job during creation.
+POSIX workers register their exec-only fork with the runtime's child
+sweep. Normal return, recovery and language traps retire their children;
+raw kernel exit and SIGKILL can bypass the POSIX parent sweep. No child
+may remain unjoined when `workerMap` returns. Evidence:
+`tests/platform/worker-pool.py` and `tests/platform/worker-lifecycle.py`.
+
 `taskMapRanges worker count grain opts` runs one task for each contiguous
 half-open range covering `0 .. count`. The grain is at least one. Each
 range runs in a fresh child and answers one `String`; captures are

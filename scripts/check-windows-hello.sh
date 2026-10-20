@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Windows targets, windows-x86_64 and windows-aarch64: emitted on any
 # host, then linked on Windows runners and executed on each runner's
-# own architecture. Five things run:
+# own architecture. Six things run:
 #
 #   1. A hello world for each target. Its output must match the golden
 #      byte for byte, and its imports must stay within
@@ -17,6 +17,8 @@
 #      followed by the standard-library battery.
 #   5. Console input and control-event probes in their own consoles,
 #      with synthetic input and no interactive desktop requirement.
+#   6. Encoded workers at O0 and O2: process isolation, bounded results,
+#      deadlines and live cancellation through an executable endpoint.
 #
 # README's Targets section calls a target supported when "a CI job
 # executes what the compiler emits there". For Windows, this gate is
@@ -27,7 +29,9 @@
 #                  case, leaky probe and large-frame fixture for each Windows target into
 #                  DIR/<target>/, beside the golden they must match, and
 #                  the compiler and the tree audit's report into
-#                  DIR/selfhost/. The `cross` CI job runs this half.
+#                  DIR/selfhost/. Encoded-worker modules and their
+#                  allowlist go into DIR/encoded-workers/. The `cross`
+#                  CI job runs this half.
 #
 #   --run DIR [TARGET]
 #                  on a Windows runner with LLVM, for each target in DIR:
@@ -81,6 +85,7 @@ source "$here/lib/imports.sh"
 win_allow="$repo_root/scripts/platform-allow.windows.txt"
 
 win_targets=(windows-x86_64 windows-aarch64)
+worker_fixtures=(encoded-worker-endpoint encoded-worker-pool encoded-worker-cancel)
 
 # How each tool spells a target's machine: llvm-dlltool's `-m`,
 # lld-link's `-machine:` and the COFF header `llvm-readobj
@@ -193,6 +198,18 @@ AX
       done
       echo "ok   emitted hello.ll and leaky.ll for $t into $d ($(grep -c '^define' "$d/hello.ll") defines in hello, triple $(triple_of "$t"))"
     done
+    python3 "$repo_root/tests/platform/worker-pool.py" --axiom "$axc" --emit-windows "$dir/encoded-workers"
+    [[ -s "$dir/encoded-workers/platform-allow.windows.txt" ]] || { echo "FAIL --emit: the encoded-worker allowlist is missing or empty"; exit 1; }
+    for t in "${win_targets[@]}"; do
+      for fixture in "${worker_fixtures[@]}"; do
+        f="$dir/encoded-workers/$t/$fixture.ll"
+        if [[ ! -s "$f" || "$(head -1 "$f")" != "target triple = \"$(triple_of "$t")\"" ]]; then
+          echo "FAIL --emit [$t]: $f is missing, empty or has the wrong target triple"
+          exit 1
+        fi
+      done
+      echo "ok   emitted the encoded-worker endpoint, pool and cancellation fixtures for $t"
+    done
     # 2. The compiler, for each Windows target a runner executes. The
     #    runner's own build of it must emit this again, byte for byte.
     sh="$dir/selfhost"
@@ -219,14 +236,18 @@ AX
     ;;
 
   --run|--link)
-    for tool in llc lld-link llvm-dlltool llvm-readobj; do
-      command -v "$tool" > /dev/null 2>&1 || { echo "FAIL: $tool is not on PATH; the Windows link needs LLVM's llc, lld-link, llvm-dlltool and llvm-readobj"; exit 1; }
+    for tool in llc opt lld-link llvm-dlltool llvm-readobj python3; do
+      command -v "$tool" > /dev/null 2>&1 || { echo "FAIL: $tool is not on PATH; the Windows link needs Python 3 and LLVM's llc, opt, lld-link, llvm-dlltool and llvm-readobj"; exit 1; }
     done
     for t in "${win_targets[@]}"; do
       for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out windows-console.ll windows-console.out windows-controls.ll windows-controls.out platform-allow.windows.txt console-probe-allow.txt; do
         [[ -s "$dir/$t/$f" ]] || { echo "FAIL: $dir/$t/$f is missing or empty; run --emit first"; exit 1; }
       done
+      for fixture in "${worker_fixtures[@]}"; do
+        [[ -s "$dir/encoded-workers/$t/$fixture.ll" ]] || { echo "FAIL: $dir/encoded-workers/$t/$fixture.ll is missing or empty; run --emit first"; exit 1; }
+      done
     done
+    [[ -s "$dir/encoded-workers/platform-allow.windows.txt" ]] || { echo "FAIL: the encoded-worker allowlist is missing or empty; run --emit first"; exit 1; }
     # Which target this runner executes: named on the command line, or
     # read from `uname -m`. An unknown machine is a usage error, since a
     # wrong guess would execute nothing.
@@ -411,6 +432,16 @@ AX
         fi
       done
     done
+
+    if [[ "$mode" == "--run" ]]; then
+      if ! python3 "$repo_root/tests/platform/worker-pool.py" --run-windows "$dir/encoded-workers" --target "$run_target"; then
+        echo "FAIL encoded workers on $run_target"
+        status=1
+      fi
+    elif ! python3 "$repo_root/tests/platform/worker-pool.py" --link-windows "$dir/encoded-workers"; then
+      echo "FAIL encoded-worker cross-links"
+      status=1
+    fi
 
     # 2 and 3. The compiler, linked the way the driver links a Windows
     # executable: for both targets under --link, and under --run for the
