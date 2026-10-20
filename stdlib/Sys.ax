@@ -27,10 +27,12 @@
 ; (`platformWriteFd`, `platformReadFd`, `platformExitWith`) instead.
 ; The asymmetry - three modules of constants, one of functions - is
 ; accepted rather than levelled, because levelling it would move every
-; syscall in this file into four copies of the platform layer. What is
-; NOT yet routed that way (files, processes, sockets, the clock,
-; entropy, signals) reaches its `__syscallN` arm on Windows, which the
-; compiler lowers there to a trap that says so (`emitPrimSyscall`).
+; syscall in this file into four copies of the platform layer. The
+; clocks, sleep and entropy go the same way (`platformMonotonicNanos`,
+; `platformRealtimeNanos`, `platformSleepNanos`, `platformRandomBytes`).
+; What is NOT yet routed that way (sockets, shared memory, signals)
+; reaches its `__syscallN` arm on Windows, which the compiler lowers
+; there to a trap that says so (`emitPrimSyscall`).
 ;
 ; Return values are raw kernel results, not exceptions: a successful
 ; result as-is, or `-errno` on failure. That convention holds on every
@@ -892,9 +894,10 @@
 ;; id is not portable: 1 on Linux, and on FreeBSD 4, where 1 is
 ;; CLOCK_VIRTUAL, the process's CPU time. That one was a literal here
 ;; until 2026-08-29, and a clock that measures CPU time never runs
-;; backwards either, so nothing would have caught it. A target with no
-;; clock call (`sysClockNum` 0: Windows and bare metal) answers `Err`
-;; 78, as `sysNowRealtimeNanos` and `sysNowMonotonic` do.
+;; backwards either, so nothing would have caught it. Windows answers
+;; its wall clock through the platform module. A target with no clock
+;; call (bare metal) answers `Err` 78, as `sysNowRealtimeNanos` and
+;; `sysNowMonotonic` do.
 ;
 ; SO ITS CLOCK CLASS DIFFERS BY PLATFORM, and that is a hazard rather
 ; than a detail. A duration computed from two of these is monotonic on
@@ -915,21 +918,25 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysNowMicros buf)
-  (if (== sysClockNum 0)
-    (Err (mkError 78 "sysNowMicros"))
-    (if (== clockIsGettimeofday 1)
-      {
-        (let r (__syscall3 sysClockNum buf 0 0))
-        (if (< r 0)
-          (Err (mkError (- 0 r) "sysNowMicros"))
-          (Ok (+ (* (rawGetWord buf 0) 1000000) (& (rawGetWord buf 1) 4294967295))))
-      }
-      {
-        (let r (__syscall3 sysClockNum clockMonotonicId buf 0))
-        (if (< r 0)
-          (Err (mkError (- 0 r) "sysNowMicros"))
-          (Ok (+ (* (rawGetWord buf 0) 1000000) (/ (rawGetWord buf 1) 1000))))
-      })))
+  (if (== usesSyscallAbi 0)
+    (match platformRealtimeNanos
+      ((Ok ns) (Ok (/ ns 1000)))
+      ((Err e) (Err e)))
+    (if (== sysClockNum 0)
+      (Err (mkError 78 "sysNowMicros"))
+      (if (== clockIsGettimeofday 1)
+        {
+          (let r (__syscall3 sysClockNum buf 0 0))
+          (if (< r 0)
+            (Err (mkError (- 0 r) "sysNowMicros"))
+            (Ok (+ (* (rawGetWord buf 0) 1000000) (& (rawGetWord buf 1) 4294967295))))
+        }
+        {
+          (let r (__syscall3 sysClockNum clockMonotonicId buf 0))
+          (if (< r 0)
+            (Err (mkError (- 0 r) "sysNowMicros"))
+            (Ok (+ (* (rawGetWord buf 0) 1000000) (/ (rawGetWord buf 1) 1000))))
+        }))))
 
 ; The arm64 virtual counter and its frequency in hertz, which the
 ; system sets at boot (24 MHz on Apple silicon). `isb` keeps the read
@@ -952,18 +959,23 @@
 
 ; Which monotonic clock this target reads: 1 `clock_gettime`'s, 2 the
 ; arm64 counter (Darwin, whose syscall table has no `clock_gettime`),
-; 0 none (Windows, bare metal and darwin-x86_64).
+; 3 the platform module's own call (Windows, the performance counter),
+; 0 none (bare metal and darwin-x86_64).
 (:: sysMonotonicKind Int)
 (fn (sysMonotonicKind)
-  (if (&& (== clockHasMonotonic 1) (!= sysClockNum 0))
-    1
-    (if (&& (== clockHasCounter 1) (> sysCounterHz 0))
-      2
-      0)))
+  (if (== usesSyscallAbi 0)
+    (if (== platformHasClock 1)
+      3
+      0)
+    (if (&& (== clockHasMonotonic 1) (!= sysClockNum 0))
+      1
+      (if (&& (== clockHasCounter 1) (> sysCounterHz 0))
+        2
+        0))))
 
 ;; Whether this target has a monotonic clock, so that `sysNowMonotonic`,
-;; `sysNowMonotonicNanos` and `sysSleepNanos` answer `Ok`. Linux, FreeBSD
-;; and darwin-aarch64 have one; Windows, bare metal and darwin-x86_64
+;; `sysNowMonotonicNanos` and `sysSleepNanos` answer `Ok`. Linux, FreeBSD,
+;; darwin-aarch64 and Windows have one; bare metal and darwin-x86_64
 ;; don't.
 (pub :: sysHasMonotonic Bool)
 (pub fn (sysHasMonotonic)
@@ -988,16 +1000,18 @@
 (pub fn (sysNowMonotonicNanos buf)
   {
     (let k sysMonotonicKind)
-    (if (== k 2)
-      (Ok (sysCounterNanos sysCounterTicks sysCounterHz))
-      (if (== k 0)
-        (Err (mkError 78 "sysNowMonotonicNanos"))
-        {
-          (let r (__syscall3 sysClockNum clockMonotonicId buf 0))
-          (if (< r 0)
-            (Err (mkError (- 0 r) "sysNowMonotonicNanos"))
-            (Ok (+ (* (rawGetWord buf 0) 1000000000) (rawGetWord buf 1))))
-        }))
+    (if (== k 3)
+      platformMonotonicNanos
+      (if (== k 2)
+        (Ok (sysCounterNanos sysCounterTicks sysCounterHz))
+        (if (== k 0)
+          (Err (mkError 78 "sysNowMonotonicNanos"))
+          {
+            (let r (__syscall3 sysClockNum clockMonotonicId buf 0))
+            (if (< r 0)
+              (Err (mkError (- 0 r) "sysNowMonotonicNanos"))
+              (Ok (+ (* (rawGetWord buf 0) 1000000000) (rawGetWord buf 1))))
+          })))
   })
 
 ;; Microseconds from a clock that NEVER steps backwards, or `Err` when
@@ -1026,37 +1040,39 @@
 ;; wall clock `Chrono.datetimeNowUtc` reads. The system may step it, so
 ;; two readings do not measure a duration: that is `sysNowMonotonic`'s
 ;; job. Darwin answers gettimeofday's microseconds times 1000; Linux and
-;; FreeBSD answer clock_gettime(CLOCK_REALTIME). A target with no clock
-;; call (`sysClockNum` 0: Windows and bare metal) answers `Err` 78, as
-;; `sysNowMonotonic` does. An Int of nanoseconds reaches 2262-04-11, and
+;; FreeBSD answer clock_gettime(CLOCK_REALTIME), and Windows
+;; `GetSystemTimePreciseAsFileTime`. A target with no clock call (bare
+;; metal) answers `Err` 78, as `sysNowMonotonic` does. An Int of nanoseconds reaches 2262-04-11, and
 ;; a reading beyond that answers `Err` `errOverflow` rather than wrap.
 ;; The 16-byte buffer is the caller's, as above.
 (pub :: sysNowRealtimeNanos (-> Int (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (sysNowRealtimeNanos buf)
-  (if (== sysClockNum 0)
-    (Err (mkError 78 "sysNowRealtimeNanos"))
-    ; CLOCK_REALTIME is 0 on Linux and on FreeBSD alike, unlike
-    ; the monotonic clock's id.
-    {
-      (let r
-        (if (== clockIsGettimeofday 1)
-          (__syscall3 sysClockNum buf 0 0)
-          (__syscall3 sysClockNum 0 buf 0)))
-      (if (< r 0)
-        (Err (mkError (- 0 r) "sysNowRealtimeNanos"))
-        {
-          (let secs (rawGetWord buf 0))
-          (let ns
-            (if (== clockIsGettimeofday 1)
-              (* (& (rawGetWord buf 1) 4294967295) 1000)
-              (rawGetWord buf 1)))
-          (if (|| (>= secs 9223372036) (<= secs -9223372036))
-            (Err (mkError errOverflow "sysNowRealtimeNanos"))
-            (Ok (+ (* secs 1000000000) ns)))
-        })
-    }))
+  (if (== usesSyscallAbi 0)
+    platformRealtimeNanos
+    (if (== sysClockNum 0)
+      (Err (mkError 78 "sysNowRealtimeNanos"))
+      ; CLOCK_REALTIME is 0 on Linux and on FreeBSD alike, unlike
+      ; the monotonic clock's id.
+      {
+        (let r
+          (if (== clockIsGettimeofday 1)
+            (__syscall3 sysClockNum buf 0 0)
+            (__syscall3 sysClockNum 0 buf 0)))
+        (if (< r 0)
+          (Err (mkError (- 0 r) "sysNowRealtimeNanos"))
+          {
+            (let secs (rawGetWord buf 0))
+            (let ns
+              (if (== clockIsGettimeofday 1)
+                (* (& (rawGetWord buf 1) 4294967295) 1000)
+                (rawGetWord buf 1)))
+            (if (|| (>= secs 9223372036) (<= secs -9223372036))
+              (Err (mkError errOverflow "sysNowRealtimeNanos"))
+              (Ok (+ (* secs 1000000000) ns)))
+          })
+      })))
 
 ; ------------------------------------------------------------------
 ; Socket addresses
@@ -1421,46 +1437,53 @@
 ;@axiom:effect(unsafe)
 ;@axiom:effect(entropy)
 (pub fn (sysRandomBytes buf n)
-  (sysResult
-    "sysRandomBytes"
-    {
-      (let mut off 0)
+  (if (== usesSyscallAbi 0)
+    (if (== platformHasEntropy 1)
+      (platformRandomBytes buf n)
+      (sysResult "sysRandomBytes"
+        (if (> n 0)
+          sysNoCall
+          0)))
+    (sysResult
+      "sysRandomBytes"
       {
-        (let mut rc
-          (if (|| (== usesSyscallAbi 0) (== sysRandomNum 0))
-            (if (> n 0)
-              sysNoCall
-              0)
-            0))
+        (let mut off 0)
         {
-          (while (&& (< off n) (== rc 0))
-            {
-              (let want
-                (if (> (- n off) randomMaxChunk)
-                  randomMaxChunk
-                  (- n off)))
+          (let mut rc
+            (if (|| (== usesSyscallAbi 0) (== sysRandomNum 0))
+              (if (> n 0)
+                sysNoCall
+                0)
+              0))
+          {
+            (while (&& (< off n) (== rc 0))
               {
-                (let r (__syscall3 sysRandomNum (+ buf off) want 0))
-                (if (< r 0)
-                  (set rc r)
-                  (if (== randomIsGetentropy 1)
-                    ; getentropy filled `want` or it failed; there is no
-                    ; partial answer to advance by.
-                    (set off (+ off want))
-                    ; getrandom answers a count. A zero would be neither a
-                    ; failure nor progress, and looping on it would spin,
-                    ; so it is treated as a failure the caller can see.
-                    (if (== r 0)
-                      (set rc (- 0 1))
-                      (set off (+ off r)))))
-              }
-            })
-          (if (< rc 0)
-            rc
-            0)
+                (let want
+                  (if (> (- n off) randomMaxChunk)
+                    randomMaxChunk
+                    (- n off)))
+                {
+                  (let r (__syscall3 sysRandomNum (+ buf off) want 0))
+                  (if (< r 0)
+                    (set rc r)
+                    (if (== randomIsGetentropy 1)
+                      ; getentropy filled `want` or it failed; there is no
+                      ; partial answer to advance by.
+                      (set off (+ off want))
+                      ; getrandom answers a count. A zero would be neither a
+                      ; failure nor progress, and looping on it would spin,
+                      ; so it is treated as a failure the caller can see.
+                      (if (== r 0)
+                        (set rc (- 0 1))
+                        (set off (+ off r)))))
+                }
+              })
+            (if (< rc 0)
+              rc
+              0)
+          }
         }
-      }
-    }))
+      })))
 
 ; ------------------------------------------------------------------
 ; Signals
@@ -1936,6 +1959,20 @@
 ; every wait ends at its timeout, a signal or a spurious wake, and the
 ; loop reads the clock again.
 (:: sysSleepLoop (-> Int Int (Result Int Error)))
+
+; One wait of the sleep loop: `nanos` on the kernel's futex-style wait
+; over a word nothing wakes, or the platform's own sleep where there is
+; no syscall ABI. Answers 0 either way; the loop reads the clock again.
+(:: sysSleepSlice (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (sysSleepSlice buf nanos)
+  (if (== usesSyscallAbi 0)
+    (match (platformSleepNanos nanos)
+      ((Ok z) 0)
+      ((Err e) 0))
+    (sysWaitWordTimeout (+ buf 16) 0 nanos)))
+
 ;@axiom:effect(io)
 ;@axiom:effect(block)
 (fn (sysSleepLoop buf deadline)
@@ -1949,7 +1986,7 @@
           ((Ok now)
             (if (>= now deadline)
               (set state 1)
-              (sysWaitWordTimeout (+ buf 16) 0 (- deadline now)))
+              (sysSleepSlice buf (- deadline now)))
           )
           ((Err e)
             {

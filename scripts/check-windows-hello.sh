@@ -43,12 +43,14 @@
 #                  executed", so it is never mistaken for the gate.
 #
 # No C compiler and no Windows SDK: the path is llc, llvm-dlltool and
-# lld-link (design Q2). `kernel32.lib` is generated from a `.def` listing
-# exactly the allowlisted names, so an unpermitted kernel32 import fails
-# to link before the import reader sees it. The script prints lld-link's
+# lld-link (design Q2). One import library per DLL the allowlist names
+# is generated from a `.def` listing exactly that DLL's allowlisted
+# names (kernel32's, and `name@dll` entries for any other, such as
+# bcryptprimitives' `ProcessPrng`), so an unpermitted import fails to
+# link before the import reader sees it. The script prints lld-link's
 # undefined symbols, so that failure still names the import. One
 # allowlist serves both architectures, because the runtime and
-# `Sys/Platform.windows.ax` reach the same kernel32 names on each.
+# `Sys/Platform.windows.ax` reach the same names on each.
 #
 # Negative probes, per target:
 #   1. (--run, executed target only) the golden with one byte appended
@@ -237,12 +239,17 @@ AX
       mkdir -p "$w"
       allow="$src/platform-allow.windows.txt"
 
-      # Import libraries for this target's machine. kernel32's `.def` is
-      # the allowlist, so the link resolves exactly what the list
-      # permits. user32's exists only for the leaky probe.
-      { printf 'LIBRARY kernel32.dll\nEXPORTS\n'; permitted_windows "$allow"; } > "$w/kernel32.def"
+      # Import libraries for this target's machine, one per DLL the
+      # allowlist names: each `.def` is that DLL's permitted names, so
+      # the link resolves exactly what the list permits. user32's
+      # exists only for the leaky probe.
+      implibs=()
+      for dll in $(permitted_windows_dlls "$allow"); do
+        { printf 'LIBRARY %s.dll\nEXPORTS\n' "$dll"; permitted_windows_for_dll "$allow" "$dll"; } > "$w/$dll.def"
+        llvm-dlltool -m "$(dlltool_machine "$t")" -d "$w/$dll.def" -l "$w/$dll.lib"
+        implibs+=("$w/$dll.lib")
+      done
       printf 'LIBRARY user32.dll\nEXPORTS\nMessageBoxA\n' > "$w/user32.def"
-      llvm-dlltool -m "$(dlltool_machine "$t")" -d "$w/kernel32.def" -l "$w/kernel32.lib"
       llvm-dlltool -m "$(dlltool_machine "$t")" -d "$w/user32.def" -l "$w/user32.lib"
 
       # Assemble and link one module. Silent on success; a failed link
@@ -255,7 +262,7 @@ AX
         # an argument starting with `/` into a Windows path, so `/out:x.exe`
         # reaches lld-link as `C:\Program Files\Git\out;...\x.exe`.
         # lld-link accepts both spellings.
-        if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine "$t")" "-out:$w/$name.exe" "$w/$name.obj" "$w/kernel32.lib" "$@" >"$w/$name.link.log" 2>&1; then
+        if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine "$t")" "-out:$w/$name.exe" "$w/$name.obj" "${implibs[@]}" "$@" >"$w/$name.link.log" 2>&1; then
           echo "FAIL $name [$t]: lld-link failed"
           { grep -o 'undefined symbol: [A-Za-z_][A-Za-z0-9_]*' "$w/$name.link.log" || true; } | sed 's/^/    /' | sort -u
           sed 's/^/    /' "$w/$name.link.log" | head -5
@@ -345,8 +352,12 @@ AX
     done
     w="$work/selfhost"
     mkdir -p "$w"
-    { printf 'LIBRARY kernel32.dll\nEXPORTS\n'; permitted_windows "$allow"; } > "$w/kernel32.def"
-    llvm-dlltool -m "$(dlltool_machine windows-x86_64)" -d "$w/kernel32.def" -l "$w/kernel32.lib"
+    implibs=()
+    for dll in $(permitted_windows_dlls "$allow"); do
+      { printf 'LIBRARY %s.dll\nEXPORTS\n' "$dll"; permitted_windows_for_dll "$allow" "$dll"; } > "$w/$dll.def"
+      llvm-dlltool -m "$(dlltool_machine windows-x86_64)" -d "$w/$dll.def" -l "$w/$dll.lib"
+      implibs+=("$w/$dll.lib")
+    done
     if ! llc -filetype=obj -O1 -relocation-model=pic "$sh/axiom.ll" -o "$w/axiom.obj" 2>"$w/axiom.llc.err"; then
       echo "FAIL axiom.exe: llc refused the compiler's IR"
       sed 's/^/    /' "$w/axiom.llc.err" | head -5
@@ -354,7 +365,7 @@ AX
     fi
     # The 8 MB stack the driver gives every Windows executable. The
     # compiler overflows Windows' 1 MB default compiling itself.
-    if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine windows-x86_64)" -stack:8388608 "-out:$w/axiom.exe" "$w/axiom.obj" "$w/kernel32.lib" >"$w/axiom.link.log" 2>&1; then
+    if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine windows-x86_64)" -stack:8388608 "-out:$w/axiom.exe" "$w/axiom.obj" "${implibs[@]}" >"$w/axiom.link.log" 2>&1; then
       echo "FAIL axiom.exe: lld-link failed"
       { grep -o 'undefined symbol: [A-Za-z_][A-Za-z0-9_]*' "$w/axiom.link.log" || true; } | sed 's/^/    /' | sort -u
       sed 's/^/    /' "$w/axiom.link.log" | head -5
@@ -414,6 +425,30 @@ AX
       else
         echo "ok   axiom.exe built the hello case, and it runs to the golden"
       fi
+
+      # The clock, sleep and entropy, which the platform module binds
+      # rather than a syscall. Each case prints its own verdicts, and the
+      # golden is the one every POSIX target answers.
+      for case in 306-monotonic-clock 309-entropy 851-instant-sleep; do
+        set +e
+        ( cd "$repo_root" && "$ax" build "tests/stdlib/$case.ax" -o "$w/$case.exe" ) > "$w/$case.build.log" 2>&1
+        rc=$?
+        [[ "$rc" -eq 0 ]] && "$w/$case.exe" > "$w/$case.stdout" 2> "$w/$case.stderr"
+        rc2=$?
+        set -e
+        if [[ "$rc" -ne 0 ]]; then
+          echo "FAIL axiom.exe build of $case exited $rc"
+          sed 's/^/    /' "$w/$case.build.log" | head -5
+          status=1
+        elif [[ "$rc2" -ne 0 ]] || ! cmp -s "$w/$case.stdout" "tests/stdlib/$case.out"; then
+          echo "FAIL $case on Windows exited $rc2, or its output is not the golden's"
+          { diff "tests/stdlib/$case.out" "$w/$case.stdout" || true; } | head -10 | sed 's/^/    /'
+          sed 's/^/    /' "$w/$case.stderr" | head -3
+          status=1
+        else
+          echo "ok   $case runs on Windows to its golden"
+        fi
+      done
 
       # 3. The tree audit, built and run by this compiler, reports the
       #    fixture exactly as the emitting host did.

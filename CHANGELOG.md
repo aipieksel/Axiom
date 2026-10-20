@@ -16,6 +16,20 @@ its changelog too.
 
 ## Unreleased
 
+- Windows programs have a clock, a sleep and entropy. `Sys.Platform`'s
+  Windows module binds `QueryPerformanceCounter` and
+  `GetSystemTimePreciseAsFileTime` for the monotonic and wall clocks,
+  `Sleep` for the sleep loop and `ProcessPrng` for entropy, so `Chrono`,
+  `Crypto.Random` and `Uuid` answer there instead of
+  `chronoClockUnavailable` and `cryptoEntropyUnavailable`. The driver
+  writes one import library per DLL a program's `extern` blocks name,
+  since `ProcessPrng` lives in bcryptprimitives.dll; a build that brings
+  its own import libraries on `--link-search` now needs a
+  `bcryptprimitives.lib` beside `kernel32.lib`. The Windows
+  runner builds and runs `tests/stdlib/306-monotonic-clock.ax`,
+  `tests/stdlib/309-entropy.ax` and `tests/stdlib/851-instant-sleep.ax`
+  to their goldens. Tested by `scripts/check-windows-hello.sh`.
+
 - **Breaking.** The standard library's raw memory layer is internal.
   `Mem`'s word and byte access, raw allocation, copying and marking,
   `Str`'s `strWrap`, `strWrapOwned`, `strFromLit` and `cstrLen`, and

@@ -1047,9 +1047,9 @@
                           "arm64"
                           "x64")
                         " on a `--link-search` directory")))
-                  (match (windowsImportLib ir objPath winTarget linkArgs)
-                    ((Err msg) (toolFailDiag "could not make kernel32.lib" msg))
-                    ((Ok implib)
+                  (match (windowsImportLibs ir objPath winTarget linkArgs)
+                    ((Err msg) (toolFailDiag "could not make an import library" msg))
+                    ((Ok implibs)
                       {
                         (let linkArgsW
                           {
@@ -1067,16 +1067,14 @@
                                 v)
                               (vecPush v (concat "/out:" outPath))
                               (vecPush v objPath)
-                              (if (> (strLen implib) 0)
-                                (vecPush v implib))
+                              (windowsPushLibs v implibs 0)
                               (appendLinkArgsWindows v linkArgs 0)
                               v
                             }
                           })
                         {
                           (let rcw (runTool "lld-link" linkArgsW))
-                          (if (> (strLen implib) 0)
-                            (unwrapOr (removeFile implib) 0))
+                          (windowsRemoveLibs implibs 0)
                           (if (!= rcw 0)
                             (toolFailDiag
                               (if (< rcw 0)
@@ -2050,18 +2048,53 @@
   (sizedTyIn n
     "llvm.fptosi.sat.i8.f64 llvm.fptoui.sat.i8.f64 llvm.fptosi.sat.i16.f64 llvm.fptoui.sat.i16.f64 llvm.fptosi.sat.i32.f64 llvm.fptoui.sat.i32.f64 llvm.fptosi.sat.i64.f64 llvm.fptoui.sat.i64.f64 llvm.trap"))
 
-; Every kernel32 name a Windows module imports: the runtime's own
-; `declare dllimport` lines, and each `declare` in the run that follows
-; a `; axiom-extern-lib kernel32` line, which codegen writes above the
-; declares of an `extern "kernel32"` block. These are the names an
-; import library for this module has to carry.
-(pub :: windowsImportNamesOf (-> String Ints))
-(pub fn (windowsImportNamesOf ir)
+; Every name a Windows module imports from `dll`. For kernel32 that is
+; the runtime's own `declare dllimport` lines and each `declare` in the
+; run that follows a `; axiom-extern-lib kernel32` line, which codegen
+; writes above the declares of an `extern "kernel32"` block; for any
+; other DLL it is the runs after that DLL's own marker. These are the
+; names an import library for the DLL has to carry.
+(pub :: windowsImportNamesOf (-> String String Ints))
+(pub fn (windowsImportNamesOf ir dll)
   {
     (let out vecNew)
-    (windowsDllimportFrom ir 0 out)
-    (windowsKernel32RunsFrom ir 0 out)
+    (if (strEq dll "kernel32")
+      (windowsDllimportFrom ir 0 out)
+      0)
+    (windowsLibRunsFrom ir 0 (concat (concat "\n; axiom-extern-lib " dll) "\n") out)
     out
+  })
+
+; The DLLs a Windows module imports from: kernel32, which the runtime
+; always needs, then each `extern` block's library in order of first
+; appearance, read from the markers codegen writes.
+(pub :: windowsExternLibsOf (-> String Ints))
+(pub fn (windowsExternLibsOf ir)
+  {
+    (let out vecNew)
+    (pushNameOnce out "kernel32")
+    (windowsExternLibsFrom ir 0 out)
+    out
+  })
+
+(pub :: windowsExternLibsFrom (-> String Int Ints Int))
+(pub fn (windowsExternLibsFrom ir at out)
+  {
+    (let marker "\n; axiom-extern-lib ")
+    (let m (strFindSub ir marker at))
+    (if (< m 0)
+      0
+      {
+        (let start (+ m (strLen marker)))
+        (match (strFindByte ir 10 start)
+          ((None) 0)
+          ((Some nl)
+            {
+              (pushNameOnce out (strDup (strSlice ir start (- nl start))))
+              (windowsExternLibsFrom ir nl out)
+            }
+          ))
+      })
   })
 
 ; The name in the `declare` line starting at `d`, or "".
@@ -2096,15 +2129,15 @@
       })
   })
 
-(pub :: windowsKernel32RunsFrom (-> String Int Ints Int))
-(pub fn (windowsKernel32RunsFrom ir at out)
+(pub :: windowsLibRunsFrom (-> String Int String Ints Int))
+(pub fn (windowsLibRunsFrom ir at marker out)
   {
-    (let m (strFindSub ir "\n; axiom-extern-lib kernel32\n" at))
+    (let m (strFindSub ir marker at))
     (if (< m 0)
       0
       {
-        (let next (windowsDeclareRun ir (+ m 29) out))
-        (windowsKernel32RunsFrom ir next out)
+        (let next (windowsDeclareRun ir (+ m (strLen marker)) out))
+        (windowsLibRunsFrom ir next marker out)
       })
   })
 
@@ -2121,60 +2154,117 @@
     }
     at))
 
-; The import library a Windows link uses for kernel32: "" when the
-; link arguments already name a `kernel32.lib` that exists, which
-; keeps a hand-made one in charge, and otherwise one this writes
-; beside the object with `llvm-dlltool` from the module's own imports
-; (`windowsImportNamesOf`), the way `scripts/check-windows-hello.sh`
-; makes one from the allowlist. `(Err msg)` when `llvm-dlltool` can't
-; make it.
-(pub :: windowsImportLib (-> String String String Ints (Result String String)))
+; The import libraries a Windows link uses, one per DLL the module
+; imports (`windowsExternLibsOf`). A DLL whose `<dll>.lib` the link
+; arguments already name, and which exists, keeps that hand-made one in
+; charge; every other one is written beside the object with
+; `llvm-dlltool` from the module's own imports of that DLL, the way
+; `scripts/check-windows-hello.sh` makes them from the allowlist.
+; `(Err msg)` when `llvm-dlltool` can't make one.
+(pub :: windowsImportLibs (-> String String String Ints (Result Ints String)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
-(pub fn (windowsImportLib ir objPath winTarget linkArgs)
-  (if (windowsHasKernel32Lib (windowsArchivePathsOf linkArgs) 0)
-    (Ok "")
+(pub fn (windowsImportLibs ir objPath winTarget linkArgs)
+  (windowsImportLibsFrom ir objPath winTarget linkArgs (windowsExternLibsOf ir) 0 vecNew))
+
+(pub :: windowsImportLibsFrom (-> String String String Ints Ints Int Ints (Result Ints String)))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+;@axiom:effect(unsafe)
+(pub fn (windowsImportLibsFrom ir objPath winTarget linkArgs dlls i out)
+  (if (>= i (vecLen dlls))
+    (Ok out)
     {
-      (let defPath (concat objPath ".kernel32.def"))
-      (let libPath (concat objPath ".kernel32.lib"))
-      (let names (windowsImportNamesOf ir))
-      (let def (concat "LIBRARY kernel32.dll\nEXPORTS\n" (joinLines names 0 "")))
-      (if (isErr (writeFile defPath def))
-        (Err "could not write the kernel32 import definitions beside the object")
-        {
-          (let args vecNew)
-          (vecPush args "-m")
-          (vecPush args
-            (if (strEq winTarget "windows-aarch64")
-              "arm64"
-              "i386:x86-64"))
-          (vecPush args "-d")
-          (vecPush args defPath)
-          (vecPush args "-l")
-          (vecPush args libPath)
-          (let rc (runTool "llvm-dlltool" args))
-          (unwrapOr (removeFile defPath) 0)
-          (if (== rc 0)
-            (Ok libPath)
-            (Err
-              (if (< rc 0)
-                "could not run `llvm-dlltool`, which makes the kernel32 import library; it ships with LLVM - put it on PATH, or put a `kernel32.lib` on a `--link-search` directory"
-                "llvm-dlltool failed to make the kernel32 import library")))
-        })
+      (let dll (as (vecGet dlls i) String))
+      (let names (windowsImportNamesOf ir dll))
+      ; A block the module calls nothing from leaves no declare, and
+      ; needs no library: a program that never draws entropy links
+      ; with a hand-made kernel32.lib and no llvm-dlltool, as before.
+      (if (|| (== (vecLen names) 0) (windowsHasLib (windowsArchivePathsOf linkArgs) dll 0))
+        (windowsImportLibsFrom ir objPath winTarget linkArgs dlls (+ i 1) out)
+        (match (windowsImportLibFor objPath winTarget dll names)
+          ((Err msg) (Err msg))
+          ((Ok lib)
+            {
+              (vecPush out (as lib Int))
+              (windowsImportLibsFrom ir objPath winTarget linkArgs dlls (+ i 1) out)
+            }
+          )))
     }))
 
-(pub :: windowsHasKernel32Lib (-> Ints Int Bool))
+; One DLL's import library for `names`, written beside the object:
+; `<obj>.<dll>.lib`.
+(pub :: windowsImportLibFor (-> String String String Ints (Result String String)))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (windowsImportLibFor objPath winTarget dll names)
+  {
+    (let defPath (concat objPath (concat "." (concat dll ".def"))))
+    (let libPath (concat objPath (concat "." (concat dll ".lib"))))
+    (let def (concat (concat "LIBRARY " dll) (concat ".dll\nEXPORTS\n" (joinLines names 0 ""))))
+    (if (isErr (writeFile defPath def))
+      (Err (concat (concat "could not write the " dll) " import definitions beside the object"))
+      {
+        (let args vecNew)
+        (vecPush args "-m")
+        (vecPush args
+          (if (strEq winTarget "windows-aarch64")
+            "arm64"
+            "i386:x86-64"))
+        (vecPush args "-d")
+        (vecPush args defPath)
+        (vecPush args "-l")
+        (vecPush args libPath)
+        (let rc (runTool "llvm-dlltool" args))
+        (unwrapOr (removeFile defPath) 0)
+        (if (== rc 0)
+          (Ok libPath)
+          (Err
+            (if (< rc 0)
+              (concat
+                "could not run `llvm-dlltool`, which makes the import libraries; it ships with LLVM - put it on PATH, or put a `"
+                (concat dll ".lib` on a `--link-search` directory"))
+              (concat (concat "llvm-dlltool failed to make the " dll) " import library"))))
+      })
+  })
+
+(pub :: windowsHasLib (-> Ints String Int Bool))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
-(pub fn (windowsHasKernel32Lib paths i)
+(pub fn (windowsHasLib paths dll i)
   (if (>= i (vecLen paths))
     false
     {
       (let p (as (vecGet paths i) String))
-      (if (&& (strEq (pathBase p) "kernel32.lib") (fileExists p))
+      (if (&& (strEq (pathBase p) (concat dll ".lib")) (fileExists p))
         true
-        (windowsHasKernel32Lib paths (+ i 1)))
+        (windowsHasLib paths dll (+ i 1)))
+    }))
+
+; The import libraries, pushed onto the link line; and removed again
+; after it, so a build leaves only its output behind.
+(pub :: windowsPushLibs (-> Strings Ints Int Int))
+;@axiom:effect(unsafe)
+(pub fn (windowsPushLibs v libs i)
+  (if (>= i (vecLen libs))
+    0
+    {
+      (vecPush v (as (vecGet libs i) String))
+      (windowsPushLibs v libs (+ i 1))
+    }))
+
+(pub :: windowsRemoveLibs (-> Ints Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsRemoveLibs libs i)
+  (if (>= i (vecLen libs))
+    0
+    {
+      (unwrapOr (removeFile (as (vecGet libs i) String)) 0)
+      (windowsRemoveLibs libs (+ i 1))
     }))
 
 (pub :: joinLines (-> Ints Int String String))
@@ -2184,10 +2274,32 @@
     acc
     (joinLines v (+ i 1) (concat acc (concat (as (vecGet v i) String) "\n")))))
 
+; Every name a Windows module imports, from every DLL
+; (`windowsExternLibsOf`): what the link grounds with import libraries.
+(pub :: windowsAllImportNamesOf (-> String Ints))
+(pub fn (windowsAllImportNamesOf ir)
+  (windowsAllImportNamesFrom ir (windowsExternLibsOf ir) 0 vecNew))
+
+(pub :: windowsAllImportNamesFrom (-> String Ints Int Ints Ints))
+;@axiom:effect(unsafe)
+(pub fn (windowsAllImportNamesFrom ir dlls i out)
+  (if (>= i (vecLen dlls))
+    out
+    {
+      (let names (windowsImportNamesOf ir (as (vecGet dlls i) String)))
+      (let mut k 0)
+      (while (< k (vecLen names))
+        {
+          (pushNameOnce out (as (vecGet names k) String))
+          (set k (+ k 1))
+        })
+      (windowsAllImportNamesFrom ir dlls (+ i 1) out)
+    }))
+
 ; The name in each `declare i64 @NAME(` line of the IR - less the two
 ; the platform grounds (`platformGroundedSym`), and on a Windows target
-; less the kernel32 imports (`windowsImportNamesOf`), which the link
-; grounds with an import library (`windowsImportLib`).
+; less the DLL imports (`windowsAllImportNamesOf`), which the link
+; grounds with import libraries (`windowsImportLibs`).
 (pub :: declareNamesOf (-> String Ints))
 (pub fn (declareNamesOf ir)
   {
@@ -2195,7 +2307,7 @@
     (let mut at 0)
     (let k32
       (if (irTargetIsWindows ir)
-        (windowsImportNamesOf ir)
+        (windowsAllImportNamesOf ir)
         vecNew))
     {
       (while (>= at 0)

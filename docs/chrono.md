@@ -419,13 +419,13 @@ subtracted.
 - No time zones, no daylight saving and no zone database.
 - ISO 8601 extended format only: no week dates, ordinal dates or basic
   format such as `20240229`.
-- `datetimeNowUtc` answers `chronoClockUnavailable` on Windows
-  (`windows-x86_64`, `windows-aarch64`) and bare metal, and after
-  2262-04-11, where the clock's nanoseconds no longer fit an `Int`.
-- `instantNow` and the sleeps answer `chronoClockUnavailable` on
-  Windows, bare metal and darwin-x86_64, which have no monotonic clock
-  a program can read without the C library. On FreeBSD a sleep spins
-  on the clock instead of blocking in the kernel.
+- `datetimeNowUtc` answers `chronoClockUnavailable` on bare metal, and
+  after 2262-04-11, where the clock's nanoseconds no longer fit an `Int`.
+- `instantNow` and the sleeps answer `chronoClockUnavailable` on bare
+  metal and darwin-x86_64, which have no monotonic clock a program can
+  read without the C library. On FreeBSD a sleep spins on the clock
+  instead of blocking in the kernel; on Windows it waits in `Sleep`, a
+  millisecond at a time.
 
 ## See also
 

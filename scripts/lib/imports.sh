@@ -48,11 +48,27 @@ imports_of() {
 }
 
 # The Windows import allowlist, `scripts/platform-allow.windows.txt`, as
-# names: comments and blanks dropped, sorted in C collation for `comm`.
-# `|| true` because a list of only comments makes `grep` exit 1, which
-# under `set -e` ends the gate before its verdict.
+# names: comments and blanks dropped, a `@dll` suffix dropped, sorted in
+# C collation for `comm`. `|| true` because a list of only comments
+# makes `grep` exit 1, which under `set -e` ends the gate before its
+# verdict.
 permitted_windows() {
-  grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep . | LC_ALL=C sort -u || true
+  grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep . | sed 's/@.*//' | LC_ALL=C sort -u || true
+}
+
+# The DLLs the allowlist names: kernel32, which every entry without a
+# suffix is imported from, then each `@dll` suffix.
+permitted_windows_dlls() {
+  { echo kernel32; grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep '@' | sed 's/^.*@//'; } | LC_ALL=C sort -u || true
+}
+
+# The names the allowlist permits from one DLL, for that DLL's `.def`.
+permitted_windows_for_dll() {  # <allow-file> <dll>
+  if [[ "$2" == kernel32 ]]; then
+    grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep . | grep -v '@' | LC_ALL=C sort -u || true
+  else
+    grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep "@$2\$" | sed 's/@.*//' | LC_ALL=C sort -u || true
+  fi
 }
 
 # The names in `<imports>` (a file, one per line) that `<allow-file>`

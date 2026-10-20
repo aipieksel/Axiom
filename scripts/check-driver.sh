@@ -1258,9 +1258,16 @@ for tool in lld-link llvm-dlltool; do
   fi
 done
 if command -v lld-link > /dev/null 2>&1 && command -v llvm-dlltool > /dev/null 2>&1; then
+  # A hand-made import library per DLL the hello module declares a name
+  # from: kernel32's, and bcryptprimitives' for `ProcessPrng`, which the
+  # library's entropy shim calls and the linker's section GC later
+  # drops. With both on the search path the driver makes neither, so
+  # the probes below reach lld-link with no llvm-dlltool at all.
   mkdir -p "$work/winlib"
   printf 'LIBRARY kernel32.dll\nEXPORTS\nVirtualAlloc\nGetStdHandle\nWriteFile\nExitProcess\nGetCommandLineW\nGetEnvironmentStringsW\nReadFile\nGetLastError\n' > "$work/winlib/kernel32.def"
   llvm-dlltool -m i386:x86-64 -d "$work/winlib/kernel32.def" -l "$work/winlib/kernel32.lib"
+  printf 'LIBRARY bcryptprimitives.dll\nEXPORTS\nProcessPrng\n' > "$work/winlib/bcryptprimitives.def"
+  llvm-dlltool -m i386:x86-64 -d "$work/winlib/bcryptprimitives.def" -l "$work/winlib/bcryptprimitives.lib"
 
   "$s1" build --target=windows-x86_64 --input hello.ax --output whello --link-search "$work/winlib" >whello.log 2>&1; rc=$?
   if [[ $rc == 0 && -f whello.exe && ! -e whello ]] && [[ "$(head -c 2 whello.exe)" == "MZ" ]]; then
@@ -1349,6 +1356,7 @@ if command -v lld-link > /dev/null 2>&1 && command -v llvm-dlltool > /dev/null 2
   # linked cannot pass for it.
   mkdir -p "$work/winlib-arm64"
   llvm-dlltool -m arm64 -d "$work/winlib/kernel32.def" -l "$work/winlib-arm64/kernel32.lib"
+  llvm-dlltool -m arm64 -d "$work/winlib/bcryptprimitives.def" -l "$work/winlib-arm64/bcryptprimitives.lib"
   pe_machine_of() {
     local off
     off="$(od -An -tu4 -j60 -N4 "$1" | tr -d ' ')"

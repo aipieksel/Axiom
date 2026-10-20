@@ -25,8 +25,10 @@
 ;
 ; WHAT IS BOUND TODAY: the console (`WriteFile`, `ReadFile`,
 ; `GetStdHandle`, `ExitProcess`, `GetLastError`), files and directories
-; (the `platformOpen` group), and child processes (the `platformSpawn`
-; group). The clock, sockets, entropy, shared memory and signals are
+; (the `platformOpen` group), child processes (the `platformSpawn`
+; group), the clocks and sleep (`platformMonotonicNanos`,
+; `platformRealtimeNanos`, `platformSleepNanos`) and entropy
+; (`platformRandomBytes`). Sockets, shared memory and signals are
 ; not yet; a `Sys.ax` function that needs one of them
 ; reaches a `__syscallN` arm, which on this target the compiler lowers
 ; to a trap (`axiom: no syscall ABI on this target`, status 74) rather
@@ -645,7 +647,17 @@
   (winTerminateProcess :: (-> Int Int Int) (symbol "TerminateProcess"))
   (winGetCurrentProcessId :: Int (symbol "GetCurrentProcessId"))
   (winSetHandleInformation :: (-> Int Int Int Int) (symbol "SetHandleInformation"))
-  (winSetStdHandle :: (-> Int Int Int) (symbol "SetStdHandle")))
+  (winSetStdHandle :: (-> Int Int Int) (symbol "SetStdHandle"))
+  (winQueryPerformanceCounter :: (-> Int Int) (symbol "QueryPerformanceCounter"))
+  (winQueryPerformanceFrequency :: (-> Int Int) (symbol "QueryPerformanceFrequency"))
+  (winGetSystemTimePreciseAsFileTime :: (-> Int Int) (symbol "GetSystemTimePreciseAsFileTime"))
+  (winSleep :: (-> Int Int) (symbol "Sleep")))
+
+; `ProcessPrng` lives in its own DLL. The driver writes one import
+; library per `extern` block a module names, so this block links the
+; way the kernel32 one does.
+(extern "bcryptprimitives"
+  (winProcessPrng :: (-> Int Int Int) (symbol "ProcessPrng")))
 
 ; HANDLE GetStdHandle(DWORD) - a HANDLE: not masked.
 ; BOOL WriteFile(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED) - BOOL: masked.
@@ -1742,10 +1754,9 @@
 ;
 ; WHY NOT BIND THE FOUR FUNCTIONS NOW, since this module already binds
 ; kernel32 and the constants are documented rather than derived. Two
-; reasons, and the second is the real one. Files, directories,
-; processes, the clock, sockets, entropy and signals are all still a
-; later phase here, so a console layer would be the only fully-built
-; floor in a module whose header calls itself half-done. And nothing in
+; reasons, and the second is the real one. Sockets, shared memory and
+; signals are still a later phase here, so a console layer would be
+; one more floor in a module whose header calls itself unfinished. And nothing in
 ; this tree can RUN it: `check-cross-targets.sh` assembles Windows
 ; objects on this host but executes none, so a binding written today
 ; would be exactly the plausible-looking unverified code this section's
@@ -2133,3 +2144,103 @@
 (pub :: oCloexec Int)
 (pub fn (oCloexec)
   524288)
+
+; ------------------------------------------------------------------
+; The clock, sleep and entropy, over kernel32 and bcryptprimitives.
+;
+; The performance counter is the monotonic clock: it never goes
+; backwards, its frequency is fixed at boot, and both calls always
+; succeed on every supported Windows. Ticks become nanoseconds by
+; splitting the division, so a counter that has run for years still
+; converts without overflowing a word. The wall clock is
+; `GetSystemTimePreciseAsFileTime`, 100-nanosecond ticks since 1601,
+; moved to the Unix epoch by the 11,644,473,600 seconds between them.
+; `Sleep` takes milliseconds, so a nanosecond request rounds up and
+; the caller's deadline loop reads the clock again. Entropy is
+; `ProcessPrng`, the user-mode generator the kernel seeds, which the
+; Go and Rust runtimes also draw from; it is documented to always
+; succeed.
+; ------------------------------------------------------------------
+;; Whether `Sys.ax` reads this platform's clocks through
+;; `platformMonotonicNanos` and `platformRealtimeNanos`: 1 here.
+(pub :: platformHasClock Int)
+;@axiom:effect(pure)
+(pub fn (platformHasClock)
+  1)
+
+;; The performance counter in nanoseconds: `Ok` nanoseconds since boot,
+;; never decreasing, or `Err` carrying the errno `winErrnoOf` maps the
+;; last error to.
+;; The platform's own monotonic clock in nanoseconds, where raw
+;; `clock_gettime` is not available; `Err` 78 where the syscall serves.
+(pub :: platformMonotonicNanos (Result Int Error))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformMonotonicNanos)
+  {
+    (let ticks winCell)
+    (let hz winCell)
+    (if (|| (== (& (winQueryPerformanceCounter ticks) 4294967295) 0)
+          (== (& (winQueryPerformanceFrequency hz) 4294967295) 0))
+      (Err (mkError (- 0 (winErrnoOf (& winGetLastError 4294967295))) "platformMonotonicNanos"))
+      {
+        (let t (__load64 ticks 0))
+        (let f (__load64 hz 0))
+        (if (<= f 0)
+          (Err (mkError 5 "platformMonotonicNanos"))
+          (Ok (+ (* (/ t f) 1000000000) (/ (* (% t f) 1000000000) f))))
+      })
+  })
+
+;; The wall clock in nanoseconds since 1970-01-01 UTC, from
+;; `GetSystemTimePreciseAsFileTime`.
+;; The platform's own wall clock in nanoseconds since the Unix epoch,
+;; where raw `clock_gettime` is not available; `Err` 78 where the
+;; syscall serves.
+(pub :: platformRealtimeNanos (Result Int Error))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformRealtimeNanos)
+  {
+    (let ft winCell)
+    {
+      (winGetSystemTimePreciseAsFileTime ft)
+      (Ok (* (- (__load64 ft 0) 116444736000000000) 100))
+    }
+  })
+
+;; Sleep for at least `nanos` nanoseconds, rounded up to the
+;; millisecond `Sleep` takes. Answers `Ok 0`.
+;; The platform's own sleep for at least `nanos` nanoseconds, where the
+;; raw wait is not available; `Err` 78 where the syscall serves.
+(pub :: platformSleepNanos (-> Int (Result Int Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformSleepNanos nanos)
+  {
+    (if (> nanos 0)
+      (winSleep (/ (+ nanos 999999) 1000000))
+      0)
+    (Ok 0)
+  })
+
+;; Whether `Sys.ax` draws entropy through `platformRandomBytes`: 1 here.
+(pub :: platformHasEntropy Int)
+;@axiom:effect(pure)
+(pub fn (platformHasEntropy)
+  1)
+
+;; Fill `n` bytes at `buf` from `ProcessPrng`, answering `Ok n`. The
+;; call is documented to always succeed; a zero answer is reported as
+;; EIO rather than trusted.
+;; The platform's own entropy source, filling `n` bytes at `buf`, where
+;; the raw entropy call is not available; `Err` 78 where it serves.
+(pub :: platformRandomBytes (-> Int Int (Result Int Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformRandomBytes buf n)
+  (if (<= n 0)
+    (Ok 0)
+    (if (== (& (winProcessPrng buf n) 4294967295) 0)
+      (Err (mkError 5 "platformRandomBytes"))
+      (Ok n))))
