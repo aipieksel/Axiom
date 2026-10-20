@@ -83,8 +83,11 @@ fi
 # is covered at once. It lives in its own directory because module
 # resolution searches the entry file's own directory first.
 : > "$work/modules"
+# The library's `Internal` modules are left out: a program cannot import
+# them (AX5002), and the modules built on them reach every function.
 for f in stdlib/*.ax stdlib/*/*.ax; do
   [[ -e "$f" ]] || continue
+  [[ "$f" == stdlib/Internal/* ]] && continue
   rel="${f#stdlib/}"; dir="$(dirname "$rel")"
   base="$(basename "$rel" .ax)"; base="${base%%.*}"
   if [[ "$dir" == "." ]]; then printf '%s\n' "$base" >> "$work/modules"

@@ -215,6 +215,38 @@ cat > "$work/probe.ax" <<'AX'
     }
   }
 )
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memCmp (-> Int Int Int Int))
+(fn (memCmp a b count)
+  (memCmpFrom a b count 0))
+
+(:: memCmpFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memCmpFrom a b count start)
+  {
+    (let mut i start)
+    (let mut diff 0)
+    {
+      (while (&& (< i count) (== diff 0))
+        {
+          (set diff (- (__load8 a i) (__load8 b i)))
+          (set i (+ i 1))
+        })
+      diff
+    }
+  })
+
+(:: memGetByte (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetByte addr index)
+  (__load8 addr index))
 AX
 
 # The negative half: the same calls against things that are not

@@ -39,3 +39,56 @@
       }
     }
   })
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memCopy (-> Int Int Int Int))
+(fn (memCopy dst src count)
+  (memCopyFrom dst src count 0))
+
+(:: memSet (-> Int Int Int Int))
+(fn (memSet addr value count)
+  (memSetFrom addr value count 0))
+
+(:: memCmp (-> Int Int Int Int))
+(fn (memCmp a b count)
+  (memCmpFrom a b count 0))
+
+(:: memCopyFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memCopyFrom dst src count start)
+  {
+    (for i in start..count
+      (__store8 dst i (__load8 src i)))
+    dst
+  })
+
+(:: memSetFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memSetFrom addr value count start)
+  {
+    (for i in start..count
+      (__store8 addr i value))
+    addr
+  })
+
+(:: memCmpFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memCmpFrom a b count start)
+  {
+    (let mut i start)
+    (let mut diff 0)
+    {
+      (while (&& (< i count) (== diff 0))
+        {
+          (set diff (- (__load8 a i) (__load8 b i)))
+          (set i (+ i 1))
+        })
+      diff
+    }
+  })

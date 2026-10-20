@@ -255,6 +255,13 @@ cat > "$work/us/ref.ax" <<'AX'
     }
   }
 )
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord addr index)
+  (__load64 addr index))
 AX
 if ! "$axc" emit-llvm --input "$work/us/ref.ax" -o "$work/us/ref.ll" > "$work/us/ref.log" 2>&1; then
   bad "the reference/Result fixture did not compile"

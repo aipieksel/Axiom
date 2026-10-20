@@ -8,12 +8,15 @@
 # split in three arms, each catching a different breakage:
 #
 #   1. Closure. The transitive imports of every subset module stay inside
-#      the subset, found by a fixed-point walk over the `(import ...)`
-#      lines. A `Str` that imported `Sys` would still build and pass every
-#      golden; only this arm notices. A dotted name counts as its top
-#      level (`Sys.Platform` is `Sys`). Only subset files are read, so an
-#      outside name is reported rather than followed.
-#   2. No extern. No subset module declares an `extern` block, the other
+#      the subset and the library's internal modules (`Internal.Raw`,
+#      `Internal.RawVec`), which a program cannot import but the subset
+#      is built on. The walk is a fixed point over the `(import ...)`
+#      lines, and it reads the internal modules too. A `Str` that
+#      imported `Sys` would still build and pass every golden; only this
+#      arm notices. A dotted name is its whole path, so `Sys.Platform` is
+#      outside. Only subset files are read, so an outside name is
+#      reported rather than followed.
+#   2. No extern. No subset or internal module declares an `extern` block, the other
 #      way out of a freestanding program: it names a symbol no bare-metal
 #      target provides, and the import walk can't see it. The pattern
 #      `^\((pub )?extern "` matches a block header with its library
@@ -42,6 +45,7 @@ gate_build_axc axc
 source "$(dirname "${BASH_SOURCE[0]}")/lib/imports.sh"
 
 SUBSET="Pre Mem Str Vec Map Fmt Float Utf8 Err"
+INTERNAL="Internal.Raw Internal.RawVec"
 
 failed=0
 checks=0
@@ -52,8 +56,12 @@ bad() { echo "FAIL $*"; failed=$((failed + 1)); }
 # elsewhere.
 LIBROOT="$repo_root/stdlib"
 
-for m in $SUBSET; do
-  if [[ ! -f "$LIBROOT/$m.ax" ]]; then
+modfile() { # <dotted name> -> its file under the library
+  printf '%s/%s.ax' "$LIBROOT" "${1//.//}"
+}
+
+for m in $SUBSET $INTERNAL; do
+  if [[ ! -f "$(modfile "$m")" ]]; then
     echo "FAIL the subset names $m, but $m.ax is gone - the list proves nothing about it"
     exit 1
   fi
@@ -63,10 +71,10 @@ done
 # top-level only.
 direct_imports() { # <file> -> names, one per line
   grep -oE '^\(import [A-Za-z_][A-Za-z0-9_.'"'"']*' "$1" 2>/dev/null \
-    | sed -E 's/^\(import //; s/\..*//' | LC_ALL=C sort -u || true
+    | sed -E 's/^\(import //' | LC_ALL=C sort -u || true
 }
 in_subset() { # <name> -> 0 when member
-  case " $SUBSET " in *" $1 "*) return 0;; *) return 1;; esac
+  case " $SUBSET $INTERNAL " in *" $1 "*) return 0;; *) return 1;; esac
 }
 
 # Arm 1 over $LIBROOT. Prints offending lines; quiet and 0 when clean.
@@ -81,7 +89,7 @@ arm_closure() {
       cur="${todo%% *}"
       if [[ "$todo" == *" "* ]]; then todo="${todo#* }"; else todo=""; fi
       [[ -z "$cur" ]] && continue
-      f="$LIBROOT/$cur.ax"
+      f="$(modfile "$cur")"
       if [[ ! -f "$f" ]]; then
         badlines="$badlines$m reaches $cur, which has no file to read
 "
@@ -111,8 +119,8 @@ arm_closure() {
 # Arm 2 over $LIBROOT. Prints offending lines; quiet when clean.
 arm_extern() {
   local m
-  for m in $SUBSET; do
-    grep -HnE '^\((pub )?extern "' "$LIBROOT/$m.ax" 2>/dev/null || true
+  for m in $SUBSET $INTERNAL; do
+    grep -HnE '^\((pub )?extern "' "$(modfile "$m")" 2>/dev/null || true
   done
 }
 
@@ -123,7 +131,7 @@ if out="$(arm_closure)"; [[ -n "$out" ]]; then
   bad "imports leave the freestanding subset:"
   printf '%s\n' "$out" | sed 's/^/     /' | head -8
 else
-  ok "nine modules, every transitive import inside the subset"
+  ok "nine modules and two internal ones, every transitive import inside the subset"
 fi
 
 # --------------------------------------------------------------------
@@ -164,7 +172,7 @@ cat > "$work/nostd-probe.ax" <<'AX'
     {
       (if (eqBit Lo Hi) (vecPush v 8))
       (floatToBits 1.0)
-      (+ (vecLen v) (+ (mapLen mapNew) (+ (strLen (fmtInt 42)) (+ (utf8SeqLen 65) (+ (memAlloc 16) (+ errDivideByZero (if (isOk (divChecked 10 2)) 1 0)))))))
+      (+ (vecLen v) (+ (mapLen mapNew) (+ (strLen (fmtInt 42)) (+ (utf8SeqLen 65) (+ (addrHash (addrOf 16)) (+ errDivideByZero (if (isOk (divChecked 10 2)) 1 0)))))))
     }})
 AX
 printf '(:: main Int)\n\n(fn (main) 0)\n' > "$work/nostd-hello.ax"
@@ -178,7 +186,7 @@ if ! "$axc" emit-llvm --input "$work/nostd-probe.ax" --output "$work/nostd-probe
   sed 's/^/     /' "$work/nostd.emit" | head -6
 else
   prob=0
-  for sym in 'Vec$vecLen' 'Map$mapLen' 'Str$strLen' 'Mem$memAlloc' 'Fmt$fmtInt' 'Float$floatToBits' 'Utf8$utf8SeqLen' 'Err$divChecked'; do
+  for sym in 'Vec$vecLen' 'Map$mapLen' 'Str$strLen' 'Mem$addrHash' 'Fmt$fmtInt' 'Float$floatToBits' 'Utf8$utf8SeqLen' 'Err$divChecked'; do
     grep -qF "$sym" "$work/nostd-probe.ll" || { bad "the probe never reaches $sym - a use was deleted while its import stayed"; prob=1; }
   done
   (( prob )) || ok "the probe reaches all eight code modules (Pre resolves by building)"

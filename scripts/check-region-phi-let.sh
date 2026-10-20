@@ -350,6 +350,26 @@ cat > "$work/evil.ax" <<'AX'
           0
         }}
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memSet (-> Int Int Int Int))
+(fn (memSet addr value count)
+  (memSetFrom addr value count 0))
+
+(:: memSetFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memSetFrom addr value count start)
+  {
+    (for i in start..count
+      (__store8 addr i value))
+    addr
+  })
 AX
 built_new=0; built_abl=0
 if "$axc" build --input "$work/evil.ax" --output "$work/evil" >"$work/evil.log" 2>&1; then built_new=1; fi

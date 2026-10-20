@@ -926,7 +926,7 @@ shares.
 | `st64be` | value | `(-> Int Int Int Int)` | `Mut` |  | Store `v` big-endian at byte `off` of the block at `p`, in constant time. Answers 0. |
 | `ctEqAddr` | value | `(-> Int Int Int Bool)` | `Mut,Unsafe` |  | Whether `n` bytes at `a` and at `b` are equal, taking the same time whichever bytes differ. `n` is public; the contents are not. The running difference passes through the barrier once per byte, so the loop cannot be rewritten to stop at the first difference. |
 | `ctWipe` | value | `(-> Int Int Int)` | `Mut,Unsafe` |  | Overwrite `n` bytes at `p` with zeros, in a way the optimiser may not delete. Answers 0. |
-| `ctCopy` | value | `(-> Int Int Int Int)` | `Mut,Unsafe` |  | Copy `n` bytes from `src` to `dst`, which must not overlap. The same loop as `memCopy`; here so a Crypto module needs one import for its memory work. |
+| `ctCopy` | value | `(-> Int Int Int Int)` | `Mut,Unsafe` |  | Copy `n` bytes from `src` to `dst`, which must not overlap. The same loop as `rawCopy`; here so a Crypto module needs one import for its memory work. |
 | `ctSwapWords` | value | `(-> Int Int Int Int Int)` | `Mut,Unsafe` |  | Conditionally swap `n` words at `a` and `b`: swapped where `m` is -1, left alone where `m` is 0. The Montgomery ladder's step, and any other choice between two buffers a secret makes. |
 
 ## `Crypto.Curve25519`
@@ -938,7 +938,7 @@ curve -x^2 + y^2 = 1 + d x^2 y^2 over GF(2^255 - 19), their
 arithmetic and their 32-byte encoding.
 
     {
-      (let h (memAlloc ge25519P3Bytes))
+      (let h (rawAlloc ge25519P3Bytes))
       (let enc (strAlloc 32))
       {
         (ge25519ScalarMultBase h (strData scalar))  ; h = [scalar]B
@@ -1047,8 +1047,8 @@ Crypto.Field25519 - arithmetic modulo p = 2^255 - 19, the field
 under X25519 and Ed25519.
 
     {
-      (let a (memAlloc fe25519Bytes))
-      (let b (memAlloc fe25519Bytes))
+      (let a (rawAlloc fe25519Bytes))
+      (let b (rawAlloc fe25519Bytes))
       {
         (fe25519FromBytes a (strData u))  ; 32 little-endian bytes in
         (fe25519Sq b a)  ; b = a^2
@@ -1523,7 +1523,7 @@ Ffi - the Axiom half of the Rust boundary, in Axiom.
 | `ffiStatusOk` | value | `Int` |  |  | The status word a Rust shim answers for success, 0. |
 | `ffiStatusErr` | value | `Int` |  |  | The status word a Rust shim answers for failure, 1. |
 | `ffiStatusNone` | value | `Int` |  |  | The status word a Rust shim answers for an absent value, 2. |
-| `ffiHandleNew` | value | `(-> Int Int Handle)` | `Alloc,Mut,Unsafe` |  | A fresh Handle over `ptr`, to be destroyed by the C function at `dropFn` (`i64 (i64)`). The block is born free-floating and adopted by this function's own answer (event 2), exactly as `strWrapOwned` adopts a header - so the caller holds one share. `dropFn` must be the address of a destructor that takes `ptr` and frees it exactly once. |
+| `ffiHandleNew` | value | `(-> Int Int Handle)` | `Alloc,Mut,Unsafe` |  | A fresh Handle over `ptr`, to be destroyed by the C function at `dropFn` (`i64 (i64)`). The block is born free-floating and adopted by this function's own answer (event 2), exactly as `rawStrWrapOwned` adopts a header - so the caller holds one share. `dropFn` must be the address of a destructor that takes `ptr` and frees it exactly once. |
 | `ffiHandlePtr` | value | `(-> Handle Int)` | `Unsafe` |  | The Rust pointer, 0 once the handle is closed. |
 | `ffiHandleLive` | value | `(-> Handle Bool)` |  |  | Whether the handle still owns a Rust object, that is, it has not been closed. |
 | `ffiHandleClose` | value | `(-> Handle Int)` | `Mut,Unsafe` |  | Destroy the Rust value NOW, once: the destructor runs and the pointer is zeroed, so a second close and the handle's own death do nothing. |
@@ -1782,26 +1782,13 @@ type: a `(Map String)` maps keys to strings, a `(Map Int)` to numbers.
 
 ## `Mem`
 
-`stdlib/Mem.ax` — 19 public names
+`stdlib/Mem.ax` — 6 public names
 
-Mem - raw memory: allocation, byte and word access, copying, and
-the typed `Addr` for comparing values by identity.
+Mem - the allocator's counts, and the typed `Addr` for comparing
+values by identity.
 
 | Name | Kind | Type | Effects | Contracts | Summary |
 |---|---|---|---|---|---|
-| `memAlloc` | value | `(-> Int Int)` | `Alloc,Unsafe` |  | Allocate `bytes` bytes of zeroed memory and return its address. |
-| `memAllocMapped` | value | `(-> Int Int Int)` | `Alloc,Mut,Unsafe` |  | Allocate `bytes` bytes as `memAlloc` does, declaring which words hold references: bit i of `map` says payload word i is a handle to another counted block, so releasing this block releases that one too (docs/memory-model.md MM-LIFE-2d, the record form). |
-| `memMarkArray` | value | `(-> Int Int Int)` | `Mut,Unsafe` |  | Mark the block at `h` as an array of `n` handles: payload words 0..n-1 are handles to other counted blocks, so releasing it releases all of them (docs/memory-model.md MM-LIFE-2d, the array form). Answers `h`. |
-| `memMarkLeaf` | value | `(-> Int Int)` | `Mut,Unsafe` |  | Mark the block at `h` as a leaf, holding no handles, so releasing it releases nothing it used to point at. Answers `h`. |
-| `memCopy` | value | `(-> Int Int Int Int)` | `Mut` |  | Copy `count` bytes from `src` to `dst`. Returns `dst`. |
-| `memSet` | value | `(-> Int Int Int Int)` | `Mut` |  | Set `count` bytes at `addr` to `value` (low 8 bits). Returns `addr`. `addr` must name `count` live writable bytes. |
-| `memCmp` | value | `(-> Int Int Int Int)` |  |  | Compare `count` bytes. 0 if equal, otherwise the signed difference of the first differing byte pair (so the result orders like `memcmp`). `a` and `b` must each name `count` live bytes. |
-| `memGetWord` | value | `(-> Int Int Int)` | `Unsafe` |  | The 8-byte word at word offset `index` from `addr`. `addr` must name a live block of at least `index` + 1 words. |
-| `memGetWordStr` | value | `(-> Int Int String)` | `Unsafe` |  | The word at `index` read as a `String`. `addr` must name a live block of at least `index` + 1 words, and that word must hold a live `String`. |
-| `memGetWordVec` | value | `(-> Int Int (Vec a))` | `Unsafe` |  | The word at `index` read as a `Vec`. `addr` must name a live block of at least `index` + 1 words, and that word must hold a live `Vec` of the element type the caller names. |
-| `memSetWord` | value | `(-> Int Int a Int)` | `Mut,Unsafe` |  | Store `value` as the 8-byte word at word offset `index` from `addr`, taking a share of it when it is a reference. Answers `addr`. `addr` must name a live block of at least `index` + 1 words, and the word must be read back only at a type `value` has. |
-| `memGetByte` | value | `(-> Int Int Int)` | `Unsafe` |  | The byte at offset `index` from `addr`, 0 to 255. `addr` must name at least `index` + 1 live bytes. |
-| `memPutByte` | value | `(-> Int Int Int Int)` | `Mut,Unsafe` |  | Store the low 8 bits of `value` at offset `index` from `addr`. Answers `addr`, which must name at least `index` + 1 live writable bytes. |
 | `MemoryStats` | struct |  |  |  | Allocator counts for the calling binding's arena, in bytes. `heldBytes` includes live values, reusable blocks, cycles and chunk overhead. `filedBytes` is reusable storage; `backlogBytes` is held less filed, not a live-object or leak count. `mappedBytes` includes active and cached chunks. Threads have separate arenas. |
 | `memStats` | value | `MemoryStats` | `Alloc` |  | The allocator's counts for the calling binding's arena. The counters are read before the record is allocated, so the snapshot leaves its own record out. |
 | `Addr` | struct |  |  |  | Where a value lives, as one sealed word. Make one with `addrOf`; compare with `addrEq`; hash with `addrHash`. An `Addr` takes no share and keeps nothing alive, and nothing turns it back into the value. Compare two only while both values are live, because a freed block's address is handed out again. An immediate value - an `Int`, a `Char`, a nullary constructor - is its own word, so its `Addr` is that word. |
@@ -1956,17 +1943,13 @@ Rpc.ax — the LSP base protocol's framing, over a file descriptor.
 
 ## `Str`
 
-`stdlib/Str.ax` — 31 public names
+`stdlib/Str.ax` — 27 public names
 
 Str - length-prefixed strings, in Axiom.
 
 | Name | Kind | Type | Effects | Contracts | Summary |
 |---|---|---|---|---|---|
-| `strWrap` | value | `(-> Int Int String)` | `Alloc,Mut` |  | Wrap `len` bytes at `bytes` as a `Str` without copying. |
-| `strWrapOwned` | value | `(-> Int Int Int String)` | `Alloc,Mut,Unsafe` |  | Wrap `len` bytes at `bytes` as `strWrap` does, naming `owner`, the block whose release frees them, or 0 when no block owns them. |
 | `strAlloc` | value | `(-> Int String)` | `Alloc,Mut,Unsafe` |  | A `Str` over freshly allocated, zeroed space for `len` bytes. A negative `len` stops the program with status 77, as a bad index does. |
-| `strFromLit` | value | `(-> Int String)` | `Alloc,Mut` |  | A `Str` sharing the bytes at a NUL-terminated address. |
-| `cstrLen` | value | `(-> Int Int Int)` | `Unsafe` |  | Length of NUL-terminated bytes at `addr`, scanning from `i`. |
 | `strLen` | value | `(-> String Int)` |  |  | The length of `s` in bytes. |
 | `strData` | value | `(-> String Int)` |  |  | The address of the first byte of `s`, for the raw-memory calls. It stays valid while `s` is alive. |
 | `strOwner` | value | `(-> String Int)` |  |  | The block owning this string's bytes, or 0 for bytes no block owns (a literal's, a syscall buffer's, an arena keep block's interior). |
@@ -2532,7 +2515,7 @@ Uuid - universally unique identifiers, RFC 9562 versions 4 and 7.
 
 ## `Vec`
 
-`stdlib/Vec.ax` — 20 public names
+`stdlib/Vec.ax` — 16 public names
 
 Vec - a growable array of machine words, in Axiom.
 
@@ -2545,10 +2528,6 @@ Vec - a growable array of machine words, in Axiom.
 | `vecCap` | value | `(-> (Vec a) Int)` |  |  | How many elements the vector can hold before it grows. |
 | `vecGet` | value | `(-> (Vec a) Int a)` | `Unsafe` |  | The element at `i`. REFUSES an index outside `0 .. (vecLen v) - 1`. |
 | `vecTry` | value | `(-> (Vec a) Int (Option a))` | `Alloc,Unsafe` |  | The element at `i`, or `None` when there is no element at `i`. |
-| `vecGetStr` | value | `(-> (Vec a) Int String)` | `Unsafe` |  | Element `i` as a `String`, for a vector that holds strings. Out of range traps, as `vecGet` does. |
-| `vecGetVec` | value | `(-> (Vec a) Int (Vec b))` | `Unsafe` |  | The element at `i` read back as a CONTAINER. |
-| `vecPushStr` | value | `(-> (Vec a) String (Vec a))` | `Alloc,Mut,Unsafe` |  | Append a `String` to a vector of words, taking a share of it. |
-| `vecPushVec` | value | `(-> (Vec a) (Vec b) (Vec a))` | `Alloc,Mut,Unsafe` |  | Append a `Vec` to a vector of words, taking a share of it. |
 | `vecSet` | value | `(-> (Vec a) Int a (Vec a))` | `Mut` |  | Overwrite the element at `i`. Returns the handle. |
 | `vecPush` | value | `(-> (Vec a) a (Vec a))` | `Alloc,Mut` |  | Append `x`, growing the vector if it is full. Answers `v`. |
 | `vecPop` | value | `(-> (Vec a) a)` | `Mut,Unsafe` |  | Remove and return the last element. REFUSES an empty vector. |

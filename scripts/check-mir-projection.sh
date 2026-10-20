@@ -118,8 +118,11 @@ fi
 # The corpus is derived from the tree, so a stdlib module is covered the
 # day it lands.
 : > "$work/modules"
+# The library's `Internal` modules are left out: a program cannot import
+# them (AX5002), and the modules built on them reach every function.
 for f in stdlib/*.ax stdlib/*/*.ax; do
   [[ -e "$f" ]] || continue
+  [[ "$f" == stdlib/Internal/* ]] && continue
   rel="${f#stdlib/}"; dir="$(dirname "$rel")"
   base="$(basename "$rel" .ax)"; base="${base%%.*}"
   if [[ "$dir" == "." ]]; then printf '%s\n' "$base" >> "$work/modules"
@@ -336,8 +339,7 @@ echo "== the sentinels: #mir-truncated tracks rgnRounds' round cap =="
 # propagation the old bare-40 cap cut off.
 mkchain() {
   local depth="$1" out="$2" i
-  { printf '(import Mem)\n\n'
-    for (( i = 0; i < depth; i++ )); do
+  { for (( i = 0; i < depth; i++ )); do
       printf '(:: f%d (-> Int Int))\n\n' "$i"
       if (( i == depth - 1 )); then
         printf '(fn (f%d p) { (memSetWord p 0 (memAlloc 8)) 0 })\n\n' "$i"
@@ -345,7 +347,24 @@ mkchain() {
         printf '(fn (f%d p) (f%d p))\n\n' "$i" "$(( i + 1 ))"
       fi
     done
-    printf '(:: main Int)\n\n(fn (main) 0)\n'
+    printf '(:: main Int)\n\n(fn (main) 0)\n\n'
+    cat <<'AX'
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
+AX
   } > "$out"
 }
 mkchain 5  "$work/d5.ax"

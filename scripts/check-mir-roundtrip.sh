@@ -86,8 +86,11 @@ echo "== the emitted corpus round-trips byte for byte =="
 # the tree and covers a module as soon as it lands, as in
 # `check-agent-calls.sh`.
 : > "$work/modules"
+# The library's `Internal` modules are left out: a program cannot import
+# them (AX5002), and the modules built on them reach every function.
 for f in stdlib/*.ax stdlib/*/*.ax; do
   [[ -e "$f" ]] || continue
+  [[ "$f" == stdlib/Internal/* ]] && continue
   rel="${f#stdlib/}"; dir="$(dirname "$rel")"
   base="$(basename "$rel" .ax)"; base="${base%%.*}"
   if [[ "$dir" == "." ]]; then printf '%s\n' "$base" >> "$work/modules"

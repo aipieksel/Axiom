@@ -60,8 +60,11 @@ done
 # scripts/check-agent-policy.sh does. A file-by-file sweep would resolve
 # each module alone and miss what only the merged namespace shows.
 : > "$work/modfiles"
+# The library's `Internal` modules are left out: a program cannot import
+# them (AX5002), and the modules built on them reach every function.
 for f in stdlib/*.ax stdlib/*/*.ax; do
   [[ -e "$f" ]] || continue
+  [[ "$f" == stdlib/Internal/* ]] && continue
   rel="${f#stdlib/}"; dir="$(dirname "$rel")"
   base="$(basename "$rel" .ax)"; base="${base%%.*}"
   if [[ "$dir" == "." ]]; then

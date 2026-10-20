@@ -489,7 +489,7 @@ done
 # The two ablations that make it go red from here were both RUN, not
 # modelled, on 2026-08-24:
 #
-#   `Mem.memMarkArray` made a no-op (`(| sw 32768)` -> `(| sw 0)`), so
+#   `Internal.Raw.rawMarkArray` made a no-op (`(| sw 32768)` -> `(| sw 0)`), so
 #   no block ever carries the array form and neither map hands back
 #   what it displaces:
 #

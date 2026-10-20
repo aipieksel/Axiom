@@ -126,7 +126,9 @@ stdlib/Vec.ax
 mod_list="$(printf '%s' "$modules" | grep -v '^$')"
 
 # Every module named here must be in the tree, and every stdlib module
-# except the three other `Platform` files must be named here. Both
+# except the other `Platform` files and the library's `Internal` modules
+# must be named here. A program cannot import an `Internal` module
+# (AX5002), so it is not part of the surface this reference documents. Both
 # directions, because a list that is checked in one direction rots in
 # the other - which is the lesson `gate_prose_docs` carries.
 checks=$((checks + 1))
@@ -138,6 +140,7 @@ tree_unlisted=""
 while IFS= read -r m; do
   case "$m" in
       stdlib/Sys/Platform.linux-*|stdlib/Sys/Platform.freebsd.ax|stdlib/Sys/Platform.windows.ax|stdlib/Sys/Platform.baremetal-aarch64.ax) continue ;;
+      stdlib/Internal/*) continue ;;
   esac
   printf '%s\n' "$mod_list" | grep -qx "$m" || tree_unlisted="$tree_unlisted $m"
 done < <(cd "$repo_root" && find stdlib -name '*.ax' -type f | LC_ALL=C sort)

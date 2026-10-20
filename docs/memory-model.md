@@ -574,7 +574,7 @@ own bookkeeping, invisible to the program's meaning. Giving them `Mut`
 would mark every function that touches a reference and lose the
 distinctions the rest of this table draws.
 
-The rows discriminate rather than blanket the library. `memAlloc`,
+The rows discriminate rather than blanket the library. `rawAlloc`,
 `vecPush` and `concat` carry `Alloc`, and the last two also carry
 `Mut` because they store. `vecGet` and `strEq` carry neither.
 `scripts/check-agent-policy.sh` pins the whole population against
@@ -740,20 +740,14 @@ needs no tag. `vecPush`, `concat` and `mapInsert` are trusted.
 a program is one `grep`.
 
 Functions that take a raw address or handle are trusted too, such as
-`memGetWord`, `vecGetStr` and `sysRandomBytes`. That is the
-trade-off: safe code can still crash by passing one of them a bad
+`sysRandomBytes` and `sysWaitWord`. That is the trade-off: safe code can still crash by passing one of them a bad
 address or handle, because an `Int` carries no proof of what it points
 at. State a condition the arguments can show as a `;@axiom:pre(...)`
 contract, which is checked on every call and traps 80, and describe
 the rest in a comment.
 
-`vecGetStr` and `vecGetVec` go further: they read any slot of any
-vector as a reference, so safe code can forge a `String` or a `Vec` out
-of a vector of numbers. A vector's kind word can't tell numbers from a
-record whose strings were pushed as words, which is how the compiler
-builds its records, so no check in the accessor can refuse one. Not
-yet: these accessors leave safe code with the raw layer
-([roadmap](roadmap.md)).
+The functions that read raw memory at any address, or read a word
+back as a reference, are not public at all (`MM-EXEC-9g`).
 
 `restrict(no-unsafe)` refuses a body that performs an unsafe operation
 or reaches one through a callee that is not a trusted encapsulation,
@@ -812,6 +806,37 @@ string is the index trap, status 77, before the kernel is called
 (`tests/stdlib/610-typed-io-bounds.ax`). `tests/stdlib/545-no-unsafe-practical.ax`
 does file, entropy and terminal work this way under
 `restrict(no-unsafe)`.
+
+**MM-EXEC-9g (H). Only the standard library reaches its raw memory
+layer.** The functions that allocate raw storage, read or write a word
+or a byte at an address, or read a word back as a `String` or a `Vec`
+live in `Internal.Raw` and `Internal.RawVec`. A module whose file lies
+outside the library's own directory **MUST NOT** import either one or
+name what they define. The compiler refuses both with `AX5002`,
+whichever module brought the name into scope.
+
+```scheme refused
+(import Internal.Raw)
+
+(:: peek (-> Int Int))
+(fn (peek addr)
+  (rawGetWord addr 0))
+```
+
+A program that needs raw memory writes its own function over the
+primitives under `;@axiom:effect(unsafe)`. The access then sits in the
+program's own trusted set, where review finds it. A program that copies
+the layer into its own tree owns that copy, tags included.
+
+The library is the directory `AXIOM_STDLIB` names, or the one installed
+beside the compiler. Both sides are compared as clean absolute paths,
+so a relative spelling of the library's directory is still the
+library. Tested by `tests/diagnostics/1470-internal-import.ax` and
+`tests/diagnostics/1471-internal-name.ax`.
+
+Not yet: some public functions still take a raw address, such as
+`sysRandomBytes`, `sysWaitWord` and the clock reads that fill a
+caller's buffer ([roadmap](roadmap.md)).
 
 **MM-EXEC-10 (H).** Handlers for a declared effect are installed by
 `handle` and dispatch through a per-effect evidence slot:
@@ -896,7 +921,7 @@ obligation**:
 
 | Escape hatch | What leaks |
 |---|---|
-| `(__alloc n)`, `memAlloc` | the address itself |
+| `(__alloc n)` | the address itself |
 | `(__addr "lit")`, `strData` | a literal's or a string's data address |
 | `(as v Int)` on any heap value | that value's address |
 | `Vec`/`Map`/`Str` handles | addresses, since a handle *is* an address |
@@ -1917,7 +1942,7 @@ NUL terminator and never writes one. The allocator delivers the promise
 by scrubbing at hand-out, below the high-water mark, rather than by
 relying on the kernel's zeroes. Without the scrub, bytes handed out a
 second time after a reset would keep their old contents, and a string
-from `strAlloc 3` could measure longer than 3 under `cstrLen`.
+from `strAlloc 3` could measure longer than 3 under `rawCstrLen`.
 
 **MM-ALLOC-7 (H).** Allocation failure writes
 `axiom: out of memory (mmap failed)` (35 bytes) to fd 2 and exits the
@@ -2106,7 +2131,7 @@ and their partial applications allocate closure records.
 | `(P ...)` for a struct | naturally aligned fields under `MM-VAL-10`, no tag |
 | `Str` construction, `strDup`, `concat`, `strAlloc` | 2-word header, plus bytes where not shared |
 | a `lambda` that is evaluated | closure record, `(1 + captures) * 8` bytes |
-| `Vec`, `Map`, `Intern` operations | library-level, over `memAlloc` |
+| `Vec`, `Map`, `Intern` operations | library-level, over `rawAlloc` |
 | a `match`'s result | one scratch `alloca` per function, shared by every merge. A cell lives from the store at an arm's end to the load at the merge, with nothing between, so one slot serves nested and tail shapes alike |
 | a mixed-representation tag read | the same shared scratch `alloca` (`emitCondTagRead`), with its fall-through zero stored explicitly |
 | `__axiom_arena_mark` | a three-word cell, four with the owner registry (`MM-EXEC-20`) |
@@ -2150,7 +2175,7 @@ Evidence is a gated workload. `scripts/check-net.sh` builds one
 pre-forked server (`tests/net/echo-server.ax`) and runs it twice under
 the same load. The only difference is whether a mark and a reset
 bracket the request handler. Each connection builds a response the way
-repeated `concat` does, from raw `memAlloc` blocks, and leaves about
+repeated `concat` does, from raw `rawAlloc` blocks, and leaves about
 16 KiB of them unreachable. Counting never frees a raw block, so only
 the reset reclaims them. The same loop over strings holds flat without
 the bracket, because counting reclaims `concat`'s intermediates. Peak
@@ -2655,9 +2680,9 @@ from it:
 (:: getStr (-> Int Int String))
 ;@axiom:effect(unsafe)
 (fn (getStr a i)
-  (as (memGetWord a i) String))
+  (as (rawGetWord a i) String))
 
-(memSetWord p 0 (getStr p 0))  ; evidence word 1, releases emitted
+(rawSetWord p 0 (getStr p 0))  ; evidence word 1, releases emitted
 ```
 
 The cast still forges a reference out of a word, so the accessor says
@@ -3039,7 +3064,7 @@ field that isn't is `AX3012`, reported at the field name in the write.
 This is the `let` rule applied to fields. Only the last segment of a
 path is governed: `(set a.b.c v)` needs `c` declared `mut` and says
 nothing about `b`, because the store changes the value `b` points at,
-not the `b` slot. `memSetWord` is outside the rule entirely. It takes a
+not the `b` slot. `rawSetWord` is outside the rule entirely. It takes a
 block and a word index, which is how `Vec` and `Map` write slots that
 aren't fields.
 
@@ -3329,7 +3354,7 @@ the same arithmetic). What emits:
 - Every block the compiler builds to create ownership is born at count
   1, the constructing expression's own share: constructor cells, struct
   blocks, closure records and evidence records. Raw `__alloc`,
-  `memAlloc` and `strWrap` stay born at 0, because a second birth would
+  `rawAlloc` and `rawStrWrap` stay born at 0, because a second birth would
   double-count every `String`.
 - Event 6's field retains happen at construction. They follow the shape
   word's classification exactly, and a directly built argument moves
@@ -3436,7 +3461,7 @@ jump.
 What made this event unsafe was the stashes, not its arithmetic, and
 `MM-LIFE-2g` closed that. The fixture asserts both halves, because
 either alone leads to the wrong conclusion. With the event but without
-`memSetWord`'s share, the loop is still flat, yet a `Vec` element
+`rawSetWord`'s share, the loop is still flat, yet a `Vec` element
 pushed 300 boundaries earlier reads a length of 2: freed, re-issued and
 read back as garbage.
 
@@ -3466,7 +3491,7 @@ place where an ownership event already guarantees a share:
 - Passing the binding to a function in statement or argument position
   is a borrow (event 1). Every store a callee can make takes a share: a
   field store by event 5, a constructor field by event 6, and a
-  container or any other word store through `memSetWord`, which retains
+  container or any other word store through `rawSetWord`, which retains
   by `MM-LIFE-2g`.
 - Sequencing, conditions and loops move no value out.
 - A read of a machine-scalar field answers a word.
@@ -3632,7 +3657,7 @@ The key is adoption. A string that `concat` builds is born through
 `__alloc` at count 0: free-floating, and owned by nobody until a store
 takes the first share. The `A1` comment on `storeCountOneAt` states the
 convention: constructors are born at 1, while raw allocation and
-`strWrap` stay at 0 and "the type-gated machinery supplies their +1
+`rawStrWrap` stay at 0 and "the type-gated machinery supplies their +1
 elsewhere". Retaining such a result to 1 is not a leak. It is the
 adoption the allocator leaves to the type layer.
 
@@ -3661,7 +3686,7 @@ from three fixpoints over the call graph (`inferOwnership` and
   borrowed tail leaf as it is emitted, not at `ret`, so a body owned on
   one branch and borrowed on another retains only the borrowed branch.
   Every reference-returning global therefore hands its caller exactly
-  one share. `strWrapOwned`'s `(as s String)` of a raw allocation is
+  one share. `rawStrWrapOwned`'s `(as s String)` of a raw allocation is
   where every string is adopted, once.
 - **Who releases it.** Event 3 releases a `let` bound to any owned
   reference value, unless the escape walk says it escapes. An owned
@@ -3686,7 +3711,7 @@ from three fixpoints over the call graph (`inferOwnership` and
 
 The stash mask names the parameters a function parks in one of those
 ways. A `__retainref` or `__retain` of the parameter makes the store
-counted and cancels the bit, as in `memSetWord`, `nodeStore` and
+counted and cancels the bit, as in `rawSetWord`, `nodeStore` and
 `strSlice`.
 
 The ret mask names the parameters whose reference may be part of a word
@@ -3721,10 +3746,10 @@ given there is parked, uncounted. An owner word is never what
 `__retainref` counted, so `(__store64 m 0 (strData s))` keeps a typed
 `s` alive at the call, at the loop's boundary and at its exit. The
 header bit is a *weak* park: it parks only when a header word arrives,
-because a typed arrival is counted. So `memSetWord` of a typed string
-is counted, and `memSetWord` of `(as s Int)` parks `s` however it
+because a typed arrival is counted. So `rawSetWord` of a typed string
+is counted, and `rawSetWord` of `(as s Int)` parks `s` however it
 arrived. A polymorphic `put` that forwards its parameter to
-`memSetWord` inherits the weak bit.
+`rawSetWord` inherits the weak bit.
 
 The flow analysis follows values through a few more places:
 
@@ -3939,7 +3964,7 @@ while this frees early, and the two are not symmetric.
 value's type **SHALL** take a share of it. Trusted polymorphic stores
 take that share before converting the value to an `Int` word. They include:
 
-- `Mem.memSetWord`, the typed wrapper for raw word stores;
+- `Internal.Raw.rawSetWord`, the typed wrapper for raw word stores;
 - the AST's typed payload setters, which maintain each slot's
   reference bit through `nodeStore`;
 - `Vec.vecPush` and `Vec.vecSet`, which retain an element before its
@@ -4139,7 +4164,7 @@ the same reference witness, so scalar answers keep their word form.
 
 Tested by `tests/stdlib/962-overapplied-result-ownership.ax`.
 
-A raw `memSetWord` store cannot return its retained share when the
+A `rawSetWord` store cannot return its retained share when the
 word is overwritten: the unsafe layer has no map describing that word.
 Its surrounding arena bounds the reference's lifetime.
 
@@ -4149,7 +4174,7 @@ their element class and release their elements (`MM-LIFE-2m`).
 
 The rule does not cover a program that casts a reference into an
 `Int`-declared field of its own struct. Keeping that value alive is the
-program's obligation, as for raw `memAlloc` storage in section 10.
+program's obligation, as for raw `__alloc` storage in section 10.
 
 Closure capture words are stored unretained, with the one exception
 event 4 requires: a capture that is a reference parameter of the
@@ -4169,8 +4194,8 @@ that the reset would otherwise leave dangling into re-issuable memory.
 
 **MM-LIFE-2h (H). The array form exists, and the three
 containers carry it.** `MM-LIFE-2d` specifies two forms: the record
-form, which `Str`'s header uses through `memAllocMapped`, and the array
-form. This rule moves the containers' data buffers from `memAlloc` to
+form, which `Str`'s header uses through `rawAllocMapped`, and the array
+form. This rule moves the containers' data buffers from `rawAlloc` to
 the array form. A buffer takes it when its container owns its elements
 (`MM-LIFE-2m`).
 
@@ -4183,10 +4208,10 @@ its storage for reuse.
 
 Bits 16..62 are the record form's reference bitmap, and the two forms
 are disjoint by construction, so the field can be a bitmap for one and
-a count for the other. `Mem.memMarkArray` therefore takes the element
-count, `(-> Int Int Int)`, a declared break in `compat/BREAKING`. No
+a count for the other. `Internal.Raw.rawMarkArray` therefore takes the
+element count, `(-> Int Int Int)`. No
 one-argument version could recover a number the allocator has already
-thrown away. `Mem.memMarkLeaf` clears bits 15..62 together. A leaf that
+thrown away. `Internal.Raw.rawMarkLeaf` clears bits 15..62 together. A leaf that
 kept the count would read back as a record whose bitmap names whichever
 payload words the count's set bits fall on, which is a wild write
 rather than a leak.
@@ -4253,7 +4278,7 @@ vacate for that reason.
 
 Second, a buffer that is copied, such as a `Vec` doubling or a `Map`
 rehashing, moves its elements' shares rather than duplicating them. So
-the abandoned block **MUST** be marked a leaf (`Mem.memMarkLeaf`)
+the abandoned block **MUST** be marked a leaf (`Internal.Raw.rawMarkLeaf`)
 before it is released, or every element it held is freed twice.
 
 **MM-LIFE-2i (H). A bounded live set has bounded memory.** This is
@@ -4315,12 +4340,12 @@ two forms, and both carry the block's word count:
   allocate, where a bitmap over the words would not fit and shouldn't
   need to.
 
-`memAlloc` itself **SHALL** answer a *leaf*: a shape word saying there
+`rawAlloc` itself **SHALL** answer a *leaf*: a shape word saying there
 are no reference words, whatever is stored there later. That keeps the
-unsafe layer unsafe (§10). A reference kept only in `memAlloc`'d memory
+unsafe layer unsafe (§10). A reference kept only in `rawAlloc`'d memory
 is invisible to counting. Under ARC that becomes a program obligation;
 today it is simply a fact. So the containers migrate their data
-buffers from `memAlloc` to an array-form allocation whose element bit
+buffers from `rawAlloc` to an array-form allocation whose element bit
 comes from the evidence word below. That migration is part of
 `MM-LIFE-2e`'s work, and it is what makes the container claim below
 true.
@@ -4466,7 +4491,7 @@ it as an ordinary capture, a self-tail-call recomputes it into a slot
 beside the parameters' slots, and construction sites read
 variable-field bits out of it at run time. A signature whose every
 variable is return-only takes no word, so the hottest accessors
-(`memGetWord`, `vecGet`, `nodeA/B/C`) are exempt outright. Thunks
+(`rawGetWord`, `vecGet`, `nodeA/B/C`) are exempt outright. Thunks
 forward the constant 0, as described above. `AX3030` holds the
 64-variable cliff (`tests/diagnostics/482-evidence-word-capacity.ax`).
 The widest signature in this repository declares 4.
@@ -4492,7 +4517,7 @@ either way.
 
 The stamping needs no new primitive. The shape word is an ordinary
 word at `h - 8` and the encoding is arithmetic, so
-`Mem.memAllocMapped` is six operations over `__load64` and
+`Internal.Raw.rawAllocMapped` is six operations over `__load64` and
 `__store64`. That matters because the committed seed compiles
 `stdlib/`. A standard library that spells a primitive the seed doesn't
 know can't be built until the seed moves. Staying inside the existing
@@ -4501,7 +4526,7 @@ for the same clamp.
 
 The clamp is real. The map is masked to the block's own recorded word
 count and to the 47-word capacity. A caller can mark the wrong word of
-its own block, which is its business, just as `memSetWord`'s index is.
+its own block, which is its business, just as `rawSetWord`'s index is.
 It can't mark a word outside the block, set the form bit, or disturb
 the count.
 
@@ -4759,10 +4784,17 @@ are not constructible". That is false as written, and the roadmap
 records the correction. There are two independent routes:
 
 ```scheme
-; 1. Through the standard library, with no unsafe form at all:
-{ (let v vecNew) { (vecPush v 7) (vecPushVec v v) ... }}   ; v contains v
+; 1. With no unsafe form at all, through a mutable field holding an Option:
+(struct Link
+  (v : Int)
+  (mut next : (Option Link)))
+{
+  (let a (Link :v 1 :next None))
+  (set a.next (Some a))                              ; a reaches a
+  ...
+}
 
-; 2. Through a struct's mutable field, using `as` to seed the knot:
+; 2. Through a field of the struct's own type, using `as` to seed the knot:
 (struct Node
   (v : Int)
   (mut next : Node))
@@ -4775,10 +4807,10 @@ records the correction. There are two independent routes:
 }
 ```
 
-The first needs nothing but `stdlib/Vec`: `vecPushVec` stores a vector
-in a heterogeneous record, and here the record is the vector itself.
-Its share of itself is never handed back, so the vector outlives its
-last outside reference.
+The first needs no unsafe form, and compiles under
+`restrict(no-unsafe)`. `a` holds a share of itself through its own
+field, that share is never handed back, and so `a` outlives its last
+outside reference.
 
 This now has a cost. Where the ownership events release, an
 unreachable tree is reclaimed and an unreachable cycle is not. The
@@ -4823,10 +4855,10 @@ Its standing cost is the counting and reset composition recorded in
 
 **MM-LIFE-6 (H, program obligation; counting half implemented).** A
 `strSlice` keeps the owning byte block live through its three-word
-header's mapped owner field. `strWrapOwned` allocates that header with
-`memAllocMapped 24 4`, and the header's death releases the owner. This
-is implemented today (source: [Str.ax](../stdlib/Str.ax), `strWrapOwned`,
-`strAlloc`, `strSlice`;
+header's mapped owner field. `rawStrWrapOwned` allocates that header with
+`rawAllocMapped 24 4`, and the header's death releases the owner. This
+is implemented today (source: [Raw.ax](../stdlib/Internal/Raw.ax), `rawStrWrapOwned`;
+[Str.ax](../stdlib/Str.ax), `strAlloc`, `strSlice`;
 [357-str-owner.ax](../tests/stdlib/357-str-owner.ax),
 [358-str-owner-shares.ax](../tests/stdlib/358-str-owner-shares.ax), and
 [container reclamation](../scripts/check-container-reclaim.sh)).
@@ -4834,7 +4866,7 @@ is implemented today (source: [Str.ax](../stdlib/Str.ax), `strWrapOwned`,
 Counting doesn't protect the byte block against an arena reset. A
 program using raw reset **MUST** stop reading every slice of reclaimed
 bytes. The typed-region checks discharge only `MM-RGN-3`'s covered
-paths. `strWrap` supplies no owner, so its caller must keep the
+paths. `rawStrWrap` supplies no owner, so its caller must keep the
 supplied bytes readable for the whole lifetime of every header or
 slice that uses them. Refusing the arena primitives is not a planned
 way to discharge this obligation (`MM-ALLOC-22`).
@@ -4958,7 +4990,7 @@ each container:
 - An owner given an uncounted word becomes plain, and its buffer a leaf
   again, so the release walk never releases a word no share was taken
   for. The elements it already holds keep their shares. A heterogeneous
-  record, such as a `(Vec Int)` holding a `String` through `vecPushStr`,
+  record, such as a `(Vec Int)` holding a `String` through `rawVecPushStr`,
   or a `Map` holding an `Int` beside a `String`, is therefore plain.
 - An owner hands back the share of an element that `vecSet` displaces,
   `vecClear` drops, `mapInsert` overwrites or `mapRemove` removes.
@@ -5605,9 +5637,10 @@ page's owner check traps 78 on a live handle another binding spawned.
 A copy of a live handle's word, in the binding that spawned it, still
 joins that child. The salt defends against a wrong word, not one read
 out of memory, and the unsafe layer can read the table. The raw layer
-reaches safe code too: `memSetWord` is trusted, so a program with no
-tag can write any word over a `Spawn` stored in a struct, and the join
-that reads it back traps 85 unless the word names a live slot.
+is internal to the library (`MM-EXEC-9g`), but a public function that
+writes through a caller's address, such as `sysRandomBytes`, can still
+overwrite a `Spawn` stored in a struct. The join that reads it back
+traps 85 unless the word names a live slot.
 
 *Evidence.* `tests/stdlib/571-handle-table.ax`,
 `tests/stdlib/572-spawn-joined-twice.ax` and
@@ -5711,7 +5744,7 @@ So a race needs one of two routes:
   requires `effect(unsafe)` at its declaration (`MM-EXEC-9d`).
   `restrict(no-unsafe)` refuses them directly and through untrusted
   callees. It admits a trusted encapsulation such as `vecPush` or
-  `memGetWord`, whose author takes responsibility for its raw
+  `strByte`, whose author takes responsibility for its raw
   operations. A cast from a
   word to a handle is one such operation (`MM-VAL-22`).
 - **An `extern` call**, whose side decides (`MM-FFI-7`).
@@ -6875,7 +6908,7 @@ Its two payload words are the address of a C destructor `i64 (i64)`
 (word 0) and the Rust pointer that destructor takes (word 1). Its count
 word is an ordinary count, retained and released by the same events as
 any block. The form has exactly one writer in the tree, `ffiHandleNew`
-in `stdlib/Ffi.ax`. `memAllocMapped` masks its map to bits 16..62 and
+in `stdlib/Ffi.ax`. `rawAllocMapped` masks its map to bits 16..62 and
 can't set bit 0, and a constructor site never does.
 
 A raw `extern` item **MUST NOT** answer `Handle` (`AX3036`,

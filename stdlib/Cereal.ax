@@ -2,7 +2,8 @@
 ;;! Codecs share CerealValue and return Result with explicit resource limits.
 ;;! The json* functions retain the raw-handle migration API for JSON-RPC.
 ;;! Raw consumers require live Cereal handles; new code uses typed values.
-(import Mem)
+(import Internal.Raw)
+(import Internal.RawVec)
 (import Str)
 (import Fmt)
 (import Vec)
@@ -48,11 +49,11 @@
 (:: jsonMake (-> Int a b Int))
 (fn (jsonMake tag a b)
   {
-    (let v (memAlloc 24))
+    (let v (rawAlloc 24))
     {
-      (memSetWord v 0 tag)
-      (memSetWord v 1 a)
-      (memSetWord v 2 b)
+      (rawSetWord v 0 tag)
+      (rawSetWord v 1 a)
+      (rawSetWord v 2 b)
       v
     }
   })
@@ -99,7 +100,7 @@
 (fn (jsonTag v)
   (if (== v 0)
     JNULL
-    (memGetWord v 0)))
+    (rawGetWord v 0)))
 
 ;; Whether the value is JSON `null`.
 (pub :: jsonIsNull (-> Int Bool))
@@ -110,7 +111,7 @@
 (pub :: jsonBoolVal (-> Int Int))
 (pub fn (jsonBoolVal v)
   (if (== (jsonTag v) JBOOL)
-    (memGetWord v 1)
+    (rawGetWord v 1)
     0))
 
 ;; The integer value of a number, and 0 for any other value. Test
@@ -118,7 +119,7 @@
 (pub :: jsonInt (-> Int Int))
 (pub fn (jsonInt v)
   (if (== (jsonTag v) JNUM)
-    (memGetWord v 1)
+    (rawGetWord v 1)
     0))
 
 ;; A JSON number as the text it was written with, and empty for any
@@ -126,21 +127,21 @@
 (pub :: jsonNumText (-> Int String))
 (pub fn (jsonNumText v)
   (if (== (jsonTag v) JNUM)
-    (memGetWordStr v 2)
+    (rawGetWordStr v 2)
     ""))
 
 ;; A JSON string's text, and empty for any other value.
 (pub :: jsonStrVal (-> Int String))
 (pub fn (jsonStrVal v)
   (if (== (jsonTag v) JSTR)
-    (memGetWordStr v 1)
+    (rawGetWordStr v 1)
     ""))
 
 ;; How many elements a JSON array holds, and 0 for any other value.
 (pub :: jsonArrLen (-> Int Int))
 (pub fn (jsonArrLen v)
   (if (== (jsonTag v) JARR)
-    (vecLen (memGetWordVec v 1))
+    (vecLen (rawGetWordVec v 1))
     0))
 
 ;; Element `i` of a JSON array, or JSON `null` when `v` is not an array
@@ -148,9 +149,9 @@
 (pub :: jsonArrGet (-> Int Int Int))
 (pub fn (jsonArrGet v i)
   (if (== (jsonTag v) JARR)
-    (if (|| (< i 0) (>= i (vecLen (memGetWordVec v 1))))
+    (if (|| (< i 0) (>= i (vecLen (rawGetWordVec v 1))))
       0
-      (vecGet (memGetWordVec v 1) i))
+      (vecGet (rawGetWordVec v 1) i))
     0))
 
 ;; Append `x` to a JSON array. Any other value is left alone. Answers
@@ -159,7 +160,7 @@
 (pub fn (jsonArrPush v x)
   {
     (if (== (jsonTag v) JARR)
-      (memSetWord v 1 (vecPush (memGetWordVec v 1) x)))
+      (rawSetWord v 1 (vecPush (rawGetWordVec v 1) x)))
     v
   })
 
@@ -167,20 +168,20 @@
 (pub :: jsonObjLen (-> Int Int))
 (pub fn (jsonObjLen v)
   (if (== (jsonTag v) JOBJ)
-    (vecLen (memGetWordVec v 1))
+    (vecLen (rawGetWordVec v 1))
     0))
 
 (:: jsonObjKeyAt (-> Int Int String))
 (fn (jsonObjKeyAt v i)
   (if (|| (< i 0) (>= i (jsonObjLen v)))
     ""
-    (vecGetStr (memGetWordVec v 1) i)))
+    (rawVecGetStr (rawGetWordVec v 1) i)))
 
 (:: jsonObjValAt (-> Int Int Int))
 (fn (jsonObjValAt v i)
   (if (|| (< i 0) (>= i (jsonObjLen v)))
     0
-    (vecGet (memGetWordVec v 2) i)))
+    (vecGet (rawGetWordVec v 2) i)))
 
 ;; Add the member `key` with value `x` to a JSON object. A repeated key
 ;; is appended, not replaced, and `jsonGet` answers the first.
@@ -192,8 +193,8 @@
   {
     (if (== (jsonTag v) JOBJ)
       {
-        (memSetWord v 1 (vecPush (memGetWordVec v 1) k))
-        (memSetWord v 2 (vecPush (memGetWordVec v 2) x))
+        (rawSetWord v 1 (vecPush (rawGetWordVec v 1) k))
+        (rawSetWord v 2 (vecPush (rawGetWordVec v 2) x))
       })
     v
   })
@@ -272,7 +273,7 @@
     {
       (while (< k (vecLen pieces))
         {
-          (set n (+ n (strLen (vecGetStr pieces k))))
+          (set n (+ n (strLen (rawVecGetStr pieces k))))
           (set k (+ k 1))
         })
       n
@@ -286,9 +287,9 @@
     {
       (for k in 0..(vecLen pieces)
         {
-          (let p (vecGetStr pieces k))
+          (let p (rawVecGetStr pieces k))
           {
-            (memCopy (+ (strData out) off) (strData p) (strLen p))
+            (rawCopy (+ (strData out) off) (strData p) (strLen p))
             (set off (+ off (strLen p)))
           }
         })
@@ -522,15 +523,15 @@
       (vecPush pieces "null")
       (if (== t JBOOL)
         (vecPush pieces
-          (if (== (memGetWord v 1) 0)
+          (if (== (rawGetWord v 1) 0)
             "false"
             "true"))
         (if (== t JNUM)
-          (vecPush pieces (memGetWordStr v 2))
+          (vecPush pieces (rawGetWordStr v 2))
           (if (== t JSTR)
             {
               (vecPush pieces "\"")
-              (vecPush pieces (jsonEscape (memGetWordStr v 1)))
+              (vecPush pieces (jsonEscape (rawGetWordStr v 1)))
               (vecPush pieces "\"")
             }
             (if (== t JARR)
@@ -542,7 +543,7 @@
 ;@axiom:effect(unsafe)
 (fn (jsonWriteArr v pieces)
   {
-    (let items (memGetWordVec v 1))
+    (let items (rawGetWordVec v 1))
     {
       (vecPush pieces "[")
       (for i in 0..(vecLen items)
@@ -560,8 +561,8 @@
 ;@axiom:effect(unsafe)
 (fn (jsonWriteObj v pieces)
   {
-    (let keys (memGetWordVec v 1))
-    (let vals (memGetWordVec v 2))
+    (let keys (rawGetWordVec v 1))
+    (let vals (rawGetWordVec v 2))
     {
       (vecPush pieces "{")
       (for i in 0..(vecLen keys)
@@ -570,7 +571,7 @@
             (vecPush pieces ",")
             (as 0 (Vec String)))
           (vecPush pieces "\"")
-          (vecPush pieces (jsonEscape (vecGetStr keys i)))
+          (vecPush pieces (jsonEscape (rawVecGetStr keys i)))
           (vecPush pieces "\":")
           (jsonWriteInto (vecGet vals i) pieces)
         })

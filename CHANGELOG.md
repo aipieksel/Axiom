@@ -16,6 +16,22 @@ its changelog too.
 
 ## Unreleased
 
+- **Breaking.** The standard library's raw memory layer is internal.
+  `Mem`'s word and byte access, raw allocation, copying and marking,
+  `Str`'s `strWrap`, `strWrapOwned`, `strFromLit` and `cstrLen`, and
+  `Vec`'s `vecGetStr`, `vecGetVec`, `vecPushStr` and `vecPushVec` moved
+  into `Internal.Raw` and `Internal.RawVec`, which only the library may
+  import or name (AX5002). Safe code can no longer read memory at an
+  address or turn a word back into a `String` or a `Vec`. A program that
+  needs raw memory writes its own function over the primitives under
+  `;@axiom:effect(unsafe)`; the test corpus does exactly that. `Mem`
+  keeps `memStats` and the `Addr` functions. `compat/BREAKING` lists
+  every name. Tested by `tests/diagnostics/1470-internal-import.ax` and
+  `tests/diagnostics/1471-internal-name.ax`.
+
+- The REPL prints a `Char` result as UTF-8. It wrote the low byte
+  alone, so `'é'` came back as one invalid byte.
+
 - `main` may answer `(Result () Error)`: `(Ok ())` exits 0, and an
   `Err` prints its sentence and exits 70, as the `Int` form does. A
   `main` answering any other type than `Int`, `()` or those two is

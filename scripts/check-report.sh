@@ -196,7 +196,7 @@ build A.......T.
 tick .......... isr
 main AI....S.TB
 peek AIU.....TB
-Mem$memAlloc A.U.....T.
+Internal.Raw$rawAlloc A.U.....T.
 IO$ioWriteFd AIU....KTB
 roots main,tick
 ROWS

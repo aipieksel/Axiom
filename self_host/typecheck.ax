@@ -72,6 +72,7 @@
 (import Vec)
 (import parser)
 (import diag)
+(import raw)
 
 ; ------------------------------------------------------------------
 ; Type rendering: stage0's `Display for TypeId`, byte for byte, since
@@ -3894,6 +3895,142 @@
 ; of 8,000 private declarations. The Vec is still what this answers,
 ; because word 19 is read as a Vec; the set is scaffolding and is
 ; dropped when the walk ends.
+; The private set, extended for the standard library's `Internal`
+; modules (AX5002). A public name of an internal module is private to
+; the library: its key joins the set beside an `internal ` marker, and
+; each library module's name joins as a `library ` marker, so
+; `privBlocks` can let another library module through. The entry file
+; has no name, so a library entry file, such as a module checked on its
+; own, is the bare `library ` marker. A marker holds a space, which no
+; key or module name can. A program that reaches no internal module
+; keeps the set it had.
+(pub :: withInternalVisibility (-> (Vec ASTNode) Units Int Int))
+;@axiom:effect(unsafe)
+(pub fn (withInternalVisibility decls units privs)
+  {
+    (let internals (internalUnitNames units 0 vecNew))
+    (if (== (vecLen internals) 0)
+      privs
+      {
+        (let out
+          (if (== privs 0)
+            vecNew
+            (as privs Strings)))
+        (internalKeysInto decls internals out 0)
+        (libraryMarksInto units out 0)
+        (as out Int)
+      })
+  })
+
+; Whether a unit is one of the standard library's `Internal` modules: it
+; was found through the library's own search directories, and its name
+; lies under `Internal`.
+(pub :: unitIsInternal (-> CUnit2 Bool))
+(pub fn (unitIsInternal unit)
+  (&& unit.library (&& (!= (as unit.name Int) 0) (strStartsWith unit.name "Internal."))))
+
+(pub :: internalUnitNames (-> Units Int Strings Strings))
+;@axiom:effect(unsafe)
+(pub fn (internalUnitNames units i out)
+  (if (>= i (vecLen units))
+    out
+    {
+      (let unit (as (vecGet units i) CUnit2))
+      (if (unitIsInternal unit)
+        (vecPush out unit.name))
+      (internalUnitNames units (+ i 1) out)
+    }))
+
+(pub :: internalKeysInto (-> (Vec ASTNode) Strings Strings Int Int))
+(pub fn (internalKeysInto decls internals out i)
+  (if (>= i (vecLen decls))
+    0
+    {
+      (let d (vecGet decls i))
+      (if (&& (!= (nodeModule d) 0)
+            (&& (== (nodeVis d) 1) (== (strInVec internals (nodeModuleName d) 0) 1)))
+        {
+          (let k
+            (if (|| (== (nodeTag d) TAG_D_FN) (== (nodeTag d) TAG_D_SIG))
+              (nodeAName d)
+              (privKey (nodeModule d) (nodeAName d))))
+          (vecPush out k)
+          (vecPush out (concat "internal " k))
+        })
+      (internalKeysInto decls internals out (+ i 1))
+    }))
+
+(pub :: libraryMarksInto (-> Units Strings Int Int))
+;@axiom:effect(unsafe)
+(pub fn (libraryMarksInto units out i)
+  (if (>= i (vecLen units))
+    0
+    {
+      (let unit (as (vecGet units i) CUnit2))
+      (if unit.library
+        (vecPush out
+          (if (== (as unit.name Int) 0)
+            "library "
+            (concat "library " unit.name))))
+      (libraryMarksInto units out (+ i 1))
+    }))
+
+; AX5002 at an import: a file outside the standard library importing
+; one of the library's `Internal` modules. The entry file's imports are
+; its own declarations; every other unit's were recorded on it as the
+; resolver read them.
+(pub :: checkInternalImports (-> Units (Vec ASTNode) Ints Int))
+;@axiom:effect(unsafe)
+(pub fn (checkInternalImports units entryDecls out)
+  (if (== (vecLen (internalUnitNames units 0 vecNew)) 0)
+    0
+    {
+      (let entry (as (vecGet units 0) CUnit2))
+      (if (! entry.library)
+        (internalImportsIn units entryDecls out 0 0))
+      (let mut i 1)
+      (while (< i (vecLen units))
+        {
+          (let unit (as (vecGet units i) CUnit2))
+          (if (! unit.library)
+            (internalImportsIn units unit.imports out i 0))
+          (set i (+ i 1))
+        })
+      0
+    }))
+
+(pub :: internalImportsIn (-> Units (Vec ASTNode) Ints Int Int Int))
+(pub fn (internalImportsIn units sites out unit i)
+  (if (>= i (vecLen sites))
+    0
+    {
+      (let d (vecGet sites i))
+      (if (&& (== (nodeTag d) TAG_D_IMPORT) (unitNamedInternal units (nodeAName d) 0))
+        (vecPush out
+          (diagSetUnit
+            (diagSetLabel
+              (mkDiag SEV_ERROR "AX5002" "internal-module" (nodeSpan d)
+                (concat (concat "module `" (nodeAName d))
+                  "` is internal to the standard library, and only the library may import it")
+                0 0
+                "use the library's typed interface instead; raw memory access belongs in your own function, written with the primitives under `;@axiom:effect(unsafe)`")
+              "internal to the standard library")
+            unit)))
+      (internalImportsIn units sites out unit (+ i 1))
+    }))
+
+(pub :: unitNamedInternal (-> Units String Int Bool))
+;@axiom:effect(unsafe)
+(pub fn (unitNamedInternal units name i)
+  (if (>= i (vecLen units))
+    false
+    {
+      (let unit (as (vecGet units i) CUnit2))
+      (if (&& (!= (as unit.name Int) 0) (strEq unit.name name))
+        (unitIsInternal unit)
+        (unitNamedInternal units name (+ i 1)))
+    }))
+
 (pub :: collectPrivates (-> (Vec ASTNode) Strings Int Int))
 (pub fn (collectPrivates decls out i)
   {
@@ -4455,7 +4592,8 @@
                 :curModule 0
                 :aliases vecNew
                 :pairFns vecNew
-                :privates (collectPrivates allDecls vecNew 0)
+                :privates
+                  (withInternalVisibility allDecls units (collectPrivates allDecls vecNew 0))
                 :fnIdx 0
                 :ambIdx 0
                 :lamBase 0
@@ -5433,10 +5571,23 @@
   (if (== (privIdxHas privs key) 0)
     0
     (if (== (as curMod Int) 0)
-      1
+      (if (privLibraryReach privs key "")
+        0
+        1)
       (if (== (privOwnedBy key (as curMod String)) 1)
         0
-        1))))
+        (if (privLibraryReach privs key (as curMod String))
+          0
+          1)))))
+
+; A public name of an `Internal` module, reached from another module of
+; the standard library: the library shares it (AX5002). Asked only once
+; a key is known to be private and not owned, so the two lookups below
+; never run on an ordinary reference.
+(pub :: privLibraryReach (-> StringRows String String Bool))
+(pub fn (privLibraryReach privs key curMod)
+  (&& (== (privIdxHas privs (concat "internal " key)) 1)
+    (== (privIdxHas privs (concat "library " curMod)) 1)))
 
 ; Is `key` spelled `m$...`? Answered in place, without building `m$`.
 (pub :: privOwnedBy (-> String String Int))
@@ -11765,17 +11916,28 @@
 (pub :: emitPrivateVar (-> Int String Int String ASTNode))
 (pub fn (emitPrivateVar tc name span declName)
   {
-    (if (!= span 0)
+    (if (&& (!= span 0) (== (privIdxHas (memGetWordVec tc 27) (concat "internal " declName)) 1))
       (emitDiag tc
         (diagSetLabel
-          (mkDiag SEV_ERROR "AX3023" "private-name" span
+          (mkDiag SEV_ERROR "AX5002" "internal-module" span
             (concat
-              (concat (concat (concat "`" (srcSpelling name)) "` is private to module `")
+              (concat (concat (concat "`" (srcSpelling name)) "` belongs to `")
                 (modOfName declName))
-              "`")
+              "`, which is internal to the standard library")
             0 0
-            "a name leaves its module when its declaration is written `pub`; if the import that brought the module in carries a name list, the name has to appear there too")
-          (concat (concat "`" (bareOf declName)) "` is not exported by its module"))))
+            "use the library's typed interface instead, such as `vecGet` or `strSlice`; raw memory access belongs in your own function, written with the primitives under `;@axiom:effect(unsafe)`")
+          "internal to the standard library"))
+      (if (!= span 0)
+        (emitDiag tc
+          (diagSetLabel
+            (mkDiag SEV_ERROR "AX3023" "private-name" span
+              (concat
+                (concat (concat (concat "`" (srcSpelling name)) "` is private to module `")
+                  (modOfName declName))
+                "`")
+              0 0
+              "a name leaves its module when its declaration is written `pub`; if the import that brought the module in carries a name list, the name has to appear there too")
+            (concat (concat "`" (bareOf declName)) "` is not exported by its module")))))
     (nodeBuildTErrPlain 0 0 0)
   })
 
@@ -12919,7 +13081,7 @@
             (concat (concat "storing a `" (tyRender oty))
               "` with a bare `__store64` takes no share: the owner's release frees a block this word still names")
             0 0
-            "store through `memSetWord`, which retains first - or `Ffi.ax`'s handle paths for handles"
+            "take a share first with `(__retainref v)` and then store, or keep the value in a struct field or a `Vec`, which count their own shares"
             "a raw `__store64` writes the word and nothing else; the release walk never counted a share it cannot see")
           (concat (concat "storing `" (tyRender oty)) "`"))))
   })
@@ -31380,6 +31542,7 @@
         (checkReservedNames entryDecls out 0)
         (checkImportNames entryDecls allDecls out 0 0)
         (checkImportedImportNames units allDecls out 1)
+        (checkInternalImports units entryDecls out)
         ; An import leaves the list before `allDecls` is built, so its
         ; tags are asked here, over the entry file's own.
         (checkStrayImportAxtags tc entryDecls 0)

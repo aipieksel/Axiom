@@ -204,7 +204,7 @@ F("sysWakeWord", ["addr"], [], (SYS, "sysWakeWord"), [
     ("ret", "0"),
 ])
 F("sysWaitWordTimeout", ["addr", "expected", "nanos"], ["cur", "code"], (SYS, "sysWaitWordTimeout"), [
-    ("uload", "cur", "addr", "(memGetWord addr 0)"),
+    ("uload", "cur", "addr", "(rawGetWord addr 0)"),
     ("if", "cur != expected", "same"),
     ("ret", "2"),
     ("L", "same"),

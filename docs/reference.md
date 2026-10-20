@@ -668,7 +668,7 @@ parameter requires the explicit low-level contract described in
 operate on values; reference conversions preserve the existing lifetime.
 A conversion cannot make a raw address valid or extend its lifetime. Raw memory and foreign
 operations belong behind an `effect(unsafe)` declaration. Library
-functions that take a raw address, such as `memGetWord`, trust it, so
+functions that take a raw address, such as `sysRandomBytes`, trust it, so
 passing one a bad address crashes the program.
 
 A function's result is checked like an argument. A record, closure,
@@ -1178,6 +1178,22 @@ The working directory supplies no implicit compiler or library root.
 
 Private names remain inaccessible through transitive imports. See
 [compiler inspection](compiler-guide.md) for search and linking details.
+
+The standard library keeps its raw memory layer in `Internal.Raw` and
+`Internal.RawVec`. Only the library's own modules may import them or
+name what they define, so your program reaches memory through typed
+interfaces such as `Vec`, `Str` and `Map`:
+
+```scheme refused
+(import Internal.Raw)   ; AX5002: internal to the standard library
+```
+
+When a program does need raw memory, write that access in your own
+function with the primitives, such as `__load64`, under
+`;@axiom:effect(unsafe)`. The function is then a trusted encapsulation
+you vouch for, and `axiom symbols` lists it as `#unsafe=trusted`. A file
+of the same name in your project is your own module, and the rule
+doesn't touch it. Tested by `tests/diagnostics/1470-internal-import.ax`.
 
 ## Packages
 

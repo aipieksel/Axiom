@@ -72,7 +72,7 @@ result. That's why several numbers below are reported modulo 256, and
 why `ERR-PROP-3`'s probe checks that the program finishes rather than
 what it returns.
 
-**A `memAlloc` address delta measures allocation only below the
+**An `__alloc` address delta measures allocation only below the
 allocator's chunk size.** The same loop reads 32.0 bytes per iteration
 at 10,000 and at 50,000 iterations, but 795.7 at 100,000. At about
 3.2 MB the allocator moves into a chunk that isn't next to the last
@@ -1250,8 +1250,8 @@ questions under one code:
 They share one code because they share a remedy: correct the
 expression, or delete the tag to withdraw the claim. `AX3010` and
 `AX3049` group their arms for the same reason. Question 4 isn't a
-blanket refusal. `vecLen`, `vecGet`, `strLen`, `strEq`, `strByte` and
-`memGetWord` carry an empty effect row, while `concat`, `fmtInt` and
+blanket refusal. `vecLen`, `vecGet`, `strLen`, `strEq` and `strByte`
+carry an empty effect row, while `concat`, `fmtInt` and
 `vecNew` carry `Alloc,Mut`. A contract may compare, index, measure and
 test, but it may not build. The [reference](reference.md#contracts-pre-and-post) describes the contract syntax, and
 `scripts/check-contracts.sh` is the gate.
@@ -1948,7 +1948,7 @@ measurement: "it answers a `String` and its failure is `""` rather
 than an errno". Every other exclusion in the module rests on
 `#effects=IO` widening to `Alloc,IO` under `writeStr` and `println`.
 `sysGetCwd`'s row is `Alloc,IO,Mut` before and after the port, because
-it already `memAlloc`s its buffer and `strDup`s its answer. It and
+it already allocates its buffer and `strDup`s its answer. It and
 `IO.cwd` are the only ERR-ADOPT-1 rows in `compat/BREAKING` marked
 `CHANGED` rather than `WIDENED`, so they cost a caller nothing. The
 sentinel had a cost: `ERANGE`, `ENOENT` and `EACCES` all arrived as the same

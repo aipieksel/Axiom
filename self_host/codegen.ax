@@ -7,7 +7,7 @@
 (import Vec)
 (import Sys)
 (import Sys.Platform (sysForkNum sysCloseNum pathListSep exeSuffixTried))
-(import IO (fileExists readFile stderr writeStr))
+(import IO (cwd fileExists readFile stderr writeStr))
 (import Err)
 (import Path)
 (import parser)
@@ -30,6 +30,7 @@
 ; below: the subset of functions whose whole body is one basic block of
 ; arithmetic is emitted FROM the IR rather than by the AST walk.
 (import mir)
+(import raw)
 
 ; ------------------------------------------------------------------
 ; Type registry: constructor/struct name -> arity, kind, tag.
@@ -2456,6 +2457,12 @@
                           0))))))))))
     }))
 
+; A 64-bit load by name: the primitive, the compiler's own `memGetWord`
+; and the standard library's `rawGetWord`, each one word at an address.
+(pub :: isWordLoadName (-> String Bool))
+(pub fn (isWordLoadName n)
+  (|| (strEq n "__load64") (|| (strEq n "memGetWord") (strEq n "rawGetWord"))))
+
 ; What a raw store of `v` at `(addr, idx)` parks: `v`'s flow, except
 ; the words `v` reads back from that same slot. A word loaded from a
 ; slot and stored back into it, through any arithmetic, aliases nothing
@@ -2477,7 +2484,7 @@
           (flowMask cg v params env)
           {
             (let n (nodeAName hd))
-            (if (&& (|| (strEq n "__load64") (strEq n "memGetWord"))
+            (if (&& (isWordLoadName n)
                   (&& (== (spineArity v) 2)
                     (&& (== (sameExpr (spineArgAt v 0) addr) 1)
                       (== (sameExpr (spineArgAt v 1) idx) 1))))
@@ -2596,7 +2603,7 @@
                 (toWord (flowMaskAll cg e n_ params env 0))
                 (if (|| (isCmpOp n) (isAndOr n))
                   0
-                  (if (|| (strEq n "memGetWord") (strEq n "__load64"))
+                  (if (isWordLoadName n)
                     ; a header word: word 0 of a String is its length, a
                     ; scalar; words past it are pointers into what the
                     ; address aliases - `strData` and `strOwner` hand-rolled.
@@ -3026,7 +3033,7 @@
                     ; `(strOwner buf)` through a `let`
                     (if (&& (|| (strEq n "strData") (strEq n "strOwner")) (== (spineArity e) 1))
                       (toOwner (mustFlow cg (spineArgAt e 0) params env))
-                      (if (&& (|| (strEq n "memGetWord") (strEq n "__load64"))
+                      (if (&& (isWordLoadName n)
                             (&& (== (spineArity e) 2)
                               (&& (== (nodeTag (spineArgAt e 1)) TAG_E_INT)
                                 (!= (nodeA (spineArgAt e 1)) 0))))
@@ -5564,7 +5571,12 @@
     {
       (vecPush ds d)
       (vecPush units
-        (as (CUnit2 :file "<codegen>" :src "" :name (as 0 String) :imports vecNew) Int))
+        (as (CUnit2
+              :file "<codegen>"
+              :src ""
+              :name (as 0 String)
+              :imports vecNew
+              :library false) Int))
       {
         (let out (as (renderDiagsFormat diagFormatFromArgv ds units) String))
         (writeStr stderr out)
@@ -8481,7 +8493,12 @@
         {
           (let parsed module.parsed)
           (vecPush units
-            (as (CUnit2 :file module.path :src parsed.source :name name :imports vecNew) Int))
+            (as (CUnit2
+                  :file module.path
+                  :src parsed.source
+                  :name name
+                  :imports vecNew
+                  :library (pathInStdlib module.path)) Int))
           parsed.decls
         })
     )))
@@ -8514,6 +8531,37 @@
 ;@axiom:effect(io)
 (pub fn (unitInStdlib unit)
   (unitInDirs (memGetWordStr unit 0) stdlibSearchDirs 0))
+
+; Whether `path` names a file inside the standard library's own
+; directories, which is what makes a unit part of the library for the
+; checker (AX5002). Both sides are compared as clean absolute paths, so
+; `stdlib/IO.ax` named from the repository and a search directory
+; spelled `.axiom-bin/../stdlib/` agree. A symlink is an ordinary name
+; here, as it is to `pathClean`.
+(pub :: pathInStdlib (-> String Bool))
+;@axiom:effect(io)
+(pub fn (pathInStdlib path)
+  (dirsHoldPath (pathAbsClean path) stdlibSearchDirs 0))
+
+(pub :: dirsHoldPath (-> String Ints Int Bool))
+;@axiom:effect(io)
+(pub fn (dirsHoldPath file dirs i)
+  (if (>= i (vecLen dirs))
+    false
+    (if (strStartsWith file (pathWithSlash (pathAbsClean (vecGetStr dirs i))))
+      true
+      (dirsHoldPath file dirs (+ i 1)))))
+
+; `p` made absolute against the working directory, then cleaned.
+(pub :: pathAbsClean (-> String String))
+;@axiom:effect(io)
+(pub fn (pathAbsClean p)
+  (pathClean
+    (if (pathIsAbsolute p)
+      p
+      (match cwd
+        ((Ok dir) (concat (pathWithSlash dir) p))
+        ((Err _) p)))))
 
 (pub :: unitInDirs (-> String Ints Int Int))
 (pub fn (unitInDirs file dirs i)
@@ -8567,7 +8615,12 @@
             (dieImportDiag name tcode entryDir parent (nodeSpan site))
             {
               (let unit
-                (CUnit2 :file path :src (unwrapOr (readFile path) "") :name name :imports vecNew))
+                (CUnit2
+                  :file path
+                  :src (unwrapOr (readFile path) "")
+                  :name name
+                  :imports vecNew
+                  :library (pathInStdlib path)))
               {
                 (vecPush units (as unit Int))
                 0
@@ -8724,7 +8777,8 @@
           lexD))
       ; The unit carries the RESOLVED path, not the module name, so the
       ; `-->` line names a file the reader can open.
-      (vecPush units (as (CUnit2 :file path :src src :name (as 0 String) :imports vecNew) Int))
+      (vecPush units
+        (as (CUnit2 :file path :src src :name (as 0 String) :imports vecNew :library false) Int))
       {
         (let out (as (renderDiagsFormat diagFormatFromArgv ds units) String))
         (writeStr stderr out)
@@ -16202,7 +16256,12 @@
         (let v vecNew)
         {
           (vecPush v
-            (as (CUnit2 :file "<emitModule>" :src "" :name (as 0 String) :imports vecNew) Int))
+            (as (CUnit2
+                  :file "<emitModule>"
+                  :src ""
+                  :name (as 0 String)
+                  :imports vecNew
+                  :library false) Int))
           v
         }
       })
@@ -28523,7 +28582,7 @@
     0
     (if (|| (isBinop (nodeAName h))
           (|| (isAndOr (nodeAName h))
-            (|| (strEq (nodeAName h) "__load64") (strEq (nodeAName h) "memGetWord"))))
+            (isWordLoadName (nodeAName h))))
       ; a 64-bit load answers a word of what its address aliases
       1
       0)))

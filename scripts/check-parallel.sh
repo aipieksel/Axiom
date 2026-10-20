@@ -861,6 +861,18 @@ cat > "$work/nrpar.ax" <<'NRPAR'
           (println (as ans Int))
           (println (as (memGetWord cell 0) Int))
         }}}})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord addr index)
+  (__load64 addr index))
 NRPAR
 cat > "$work/nrtrap.ax" <<'NRTRAP'
 (import IO)
@@ -880,6 +892,18 @@ cat > "$work/nrtrap.ax" <<'NRTRAP'
           (println (as ans Int))
           (println (as (memGetWord cell 0) Int))
         }}}})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord addr index)
+  (__load64 addr index))
 NRTRAP
 if run_case "$work/nrpar.ax" "" nrpar-p && run_case "$work/nrpar.ax" "--threads" nrpar-t; then
   if [[ "$(cat "$work/nrpar-p.out")" == "$(printf '42\n0')" && "$(cat "$work/nrpar-t.out")" == "$(cat "$work/nrpar-p.out")" \
@@ -1607,6 +1631,13 @@ cat > "$work/orphan.ax" <<'ORPHAN'
             { (println "main returns") 0 }
             99)
         }))})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 ORPHAN
 if "$axc" build --input "$work/orphan.ax" --output "$work/orphan" > "$work/orphan.build" 2>&1; then
   for mode in abort trap main; do
@@ -1682,6 +1713,27 @@ for kind in proc thread; do
       (println "foreign {foreign} status {status} answer {answer}")
       0
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord addr index)
+  (__load64 addr index))
+
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
 OWNER
     if "$axc" build --input "$work/$tag.ax" --output "$work/$tag" > "$work/$tag.build" 2>&1; then
       gate_timeout 20 "$work/$tag" > "$work/$tag.out" 2> "$work/$tag.err"

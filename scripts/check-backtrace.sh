@@ -335,6 +335,13 @@ cat > "$work/oom.ax" <<'PROBE'
 (pub :: main Int)
 
 (pub fn (main) outer)
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 PROBE
 
 cat > "$work/ue.ax" <<'PROBE'

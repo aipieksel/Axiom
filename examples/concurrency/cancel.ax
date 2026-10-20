@@ -36,11 +36,40 @@
 (import IO)
 (import Sys)
 (import Str)
-(import Mem)
 (import Vec)
 (import Fmt)
 (import Err)
 (import Task)
+(import Chrono)
+
+; Word `i` of the shared map at `base`. `sysMapShared` answers an
+; address, so reading and writing its words is this program's own
+; trusted code.
+(:: sharedGet (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (sharedGet base i)
+  (__load64 base i))
+
+(:: sharedSet (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (sharedSet base i v)
+  {
+    (__store64 base i v)
+    0
+  })
+
+; Milliseconds since `t0` on the monotonic clock, or 0 where the target
+; has none.
+(:: millisSince (-> (Result Instant Error) Int))
+;@axiom:effect(io)
+(fn (millisSince t0)
+  (match t0
+    ((Ok i)
+      (match (instantElapsed i)
+        ((Ok d) (/ (durationNanos d) 1000000))
+        ((Err e) 0))
+    )
+    ((Err e) 0)))
 
 (:: needle Int)
 (fn (needle)
@@ -61,7 +90,7 @@
 ;@axiom:effect(block)
 (fn (shard pids idle tok s)
   {
-    (memSetWord pids s sysPid)
+    (sharedSet pids s sysPid)
     (if (== s 3)
       (fmtInt (/ s (- s 3)))
       (if (== s 8)
@@ -131,7 +160,7 @@
     {
       (for s in 0..n
         {
-          (let p (memGetWord pids s))
+          (let p (sharedGet pids s))
           (if (> p 0)
             (match (sysKill p 0)
               ((Ok z)
@@ -155,14 +184,13 @@
           (match taskTokenNew
             ((Ok tok)
               {
-                (let clk (memAlloc 16))
                 (let mut good 1)
                 {
-                  (let t0 (sysTimeoutMicros clk))
+                  (let t0 instantNow)
                   {
                     (let rs (search pids idle tok))
                     {
-                      (let ms (/ (- (sysTimeoutMicros clk) t0) 1000))
+                      (let ms (millisSince t0))
                       (let alive (stillAlive pids 16))
                       {
                         (for s in 0..16

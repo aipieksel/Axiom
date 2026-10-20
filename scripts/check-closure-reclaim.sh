@@ -283,6 +283,13 @@ cat > "$generic_surplus" <<'EOF'
     (+ (if (== (parkedByte 0) 97) 2 0)
       (+ (if (== (parkedByte 1) 97) 4 0)
         (if (== (parkedByte 2) 97) 8 0)))))
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: vecGetStr (-> (Vec a) Int String))
+;@axiom:effect(unsafe)
+(fn (vecGetStr v i)
+  (as (vecGet v i) String))
 EOF
 run_generic_surplus() {  # <compiler> -> exit status
   ( "$1" run "$generic_surplus" ) >"$work/generic-surplus.$$" 2>&1

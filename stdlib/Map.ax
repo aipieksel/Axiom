@@ -3,7 +3,7 @@
 ;
 ; A `Map` is the address of a seven-word header, declared below as a
 ; struct of that exact shape - the fields ARE these words, so `m.len`
-; and `(memGetWord m 0)` are the same load:
+; and `(rawGetWord m 0)` are the same load:
 ;
 ;     word 0 : len    - live entries
 ;     word 1 : cap    - slots, always a power of two
@@ -50,7 +50,7 @@
 ; happen only when the state byte has already said the slot matters.
 ;
 ; The state tags are 0 = empty, 1 = live, 2 = tombstone, with empty as 0
-; deliberately: `memAlloc` zeroes, so a fresh table is correctly "all
+; deliberately: `rawAlloc` zeroes, so a fresh table is correctly "all
 ; empty" with no initialisation pass.
 ;
 ; DELETE IS SUPPORTED, via tombstones. `used` counts live entries *plus*
@@ -66,7 +66,7 @@
 ; Growth allocates new key, value and state arrays. Once live entries
 ; have moved, rehashing releases all three old arrays to the free list.
 ; Owning maps transfer their value shares without releasing those values.
-(import Mem)
+(import Internal.Raw)
 (import Vec)
 
 ; THE HANDLE. `Map` names the seven-word header `mapAllocTable` builds,
@@ -87,10 +87,10 @@
 ; all any caller needs (tests/stdlib/080-map.ax names `Map` in its own
 ; helpers).
 ;
-; THE FIELDS ARE THE WORDS `memSetWord` ALREADY WROTE - struct fields
+; THE FIELDS ARE THE WORDS `rawSetWord` ALREADY WROTE - struct fields
 ; are words 0..n-1 with no header of their own, so `m.len` and
-; `(memGetWord m 0)` are the same load. Construction therefore stays
-; `memAllocMapped 56 28`: a struct LITERAL would compute its own shape
+; `(rawGetWord m 0)` are the same load. Construction therefore stays
+; `rawAllocMapped 56 28`: a struct LITERAL would compute its own shape
 ; word from the field types, all seven `Int`, and emit bitmap 0.
 ; tests/stdlib/404-container-reference-maps.ax pins the real one, 1835024.
 ;
@@ -230,7 +230,7 @@
 ; ------------------------------------------------------------------
 ; Slot states
 ; ------------------------------------------------------------------
-; Empty is 0 so that `memAlloc`'s zeroing initialises the table.
+; Empty is 0 so that `rawAlloc`'s zeroing initialises the table.
 (:: mapStateEmpty Int)
 (fn (mapStateEmpty)
   0)
@@ -340,27 +340,27 @@
   ; container-reclaim fixture separates the two at 83.1 MiB against
   ; 1.30 MiB max RSS.
   {
-    (let m (memAllocMapped 56 28))
-    (let keys (memAlloc (* cap 8)))
-    (let vals (memAlloc (* cap 8)))
-    (let states (memAlloc cap))
+    (let m (rawAllocMapped 56 28))
+    (let keys (rawAlloc (* cap 8)))
+    (let vals (rawAlloc (* cap 8)))
+    (let states (rawAlloc cap))
     {
       (__retain keys)
       (__retain vals)
       (__retain states)
-      (memSetWord m 0 0)
-      (memSetWord m 1 cap)
-      (memSetWord m 2 keys)
-      (memSetWord m 3 vals)
-      (memSetWord m 4 states)
-      (memSetWord m 5 0)
+      (rawSetWord m 0 0)
+      (rawSetWord m 1 cap)
+      (rawSetWord m 2 keys)
+      (rawSetWord m 3 vals)
+      (rawSetWord m 4 states)
+      (rawSetWord m 5 0)
       ; WORD 6, for the reason `Vec.vecBuild` gives at its word 3: the
       ; data block's shape bit answers the RUNTIME's question and is
       ; ambiguous against any allocator with a different clamp - it was
       ; a SIGSEGV under the committed seed, on a table big enough for
       ; its value array to pass 16,384 words. The map says what it is
       ; itself. Seven words in an eight-word block; word 7 is spare.
-      (memSetWord m 6 0)
+      (rawSetWord m 6 0)
       (as m (Map v))
     }
   })
@@ -392,9 +392,9 @@
   (if (mapOwnsVals m)
     {
       (let vals m.vals)
-      (let old (memGetWord m.vals i))
+      (let old (rawGetWord m.vals i))
       {
-        (memSetWord vals i 0)
+        (rawSetWord vals i 0)
         (__release old)
         0
       }
@@ -433,7 +433,7 @@
     __indexTrap
     (if (>= i m.cap)
       __indexTrap
-      (memGetWord m.keys i))))
+      (rawGetWord m.keys i))))
 
 ;; The value in slot `i`, for a slot `mapLiveFrom` answered. A slot
 ;; outside `0 .. (mapCap m) - 1` stops the program with status 77.
@@ -444,11 +444,11 @@
     __indexTrap
     (if (>= i m.cap)
       __indexTrap
-      (as (memGetWord m.vals i) v))))
+      (as (rawGetWord m.vals i) v))))
 
 (:: mapStateAt (-> (Map v) Int Int))
 (fn (mapStateAt m i)
-  (memGetByte m.states i))
+  (rawGetByte m.states i))
 
 ; ------------------------------------------------------------------
 ; Probing
@@ -538,11 +538,11 @@
     {
       (let h (mapSlotOf key cap))
       {
-        (let st (memGetByte states h))
+        (let st (rawGetByte states h))
         (if (== st mapStateEmpty)
           (- 0 1)
           (if (== st mapStateLive)
-            (if (== (memGetWord keys h) key)
+            (if (== (rawGetWord keys h) key)
               h
               (mapFindLoop states keys cap key (mapNextSlot h cap) (- cap 1)))
             (mapFindLoop states keys cap key (mapNextSlot h cap) (- cap 1))))
@@ -555,11 +555,11 @@
   (if (<= left 0)
     (- 0 1)
     {
-      (let st (memGetByte states i))
+      (let st (rawGetByte states i))
       (if (== st mapStateEmpty)
         (- 0 1)
         (if (== st mapStateLive)
-          (if (== (memGetWord keys i) key)
+          (if (== (rawGetWord keys i) key)
             i
             (mapFindLoop states keys cap key (mapNextSlot i cap) (- left 1)))
           ; A tombstone: keep going. Treating it as empty here
@@ -668,13 +668,13 @@
       (if (== m.refs 0)
         (if (== counted 1)
           {
-            (memMarkArray m.vals m.cap)
+            (rawMarkArray m.vals m.cap)
             (set m.refs 1)
           }
           (set m.refs 2))
         (if (&& (== m.refs 1) (== counted 0))
           {
-            (memMarkLeaf m.vals)
+            (rawMarkLeaf m.vals)
             (set m.refs 2)
           }))
       (mapInsertNoGrow m key (as value Int))
@@ -706,14 +706,14 @@
     {
       (let h (mapSlotOf key cap))
       {
-        (let st (memGetByte states h))
+        (let st (rawGetByte states h))
         (if (== st mapStateEmpty)
           (mapFillAt m keys vals states h key value 1)
           (if (== st mapStateLive)
-            (if (== (memGetWord keys h) key)
+            (if (== (rawGetWord keys h) key)
               {
                 (mapDropVal m h)
-                (memSetWord vals h value)
+                (rawSetWord vals h value)
                 0
               }
               (mapInsertLoop m keys vals states cap key value (mapNextSlot h cap) (- 0 1)
@@ -728,7 +728,7 @@
   (if (<= left 0)
     0
     {
-      (let state (memGetByte states i))
+      (let state (rawGetByte states i))
       (if (== state mapStateEmpty)
         ; End of the run. Prefer the remembered tombstone, so that
         ; insert/remove churn reuses slots instead of consuming a
@@ -737,7 +737,7 @@
           (mapFillAt m keys vals states i key value 1)
           (mapFillAt m keys vals states firstTomb key value 0))
         (if (== state mapStateLive)
-          (if (== (memGetWord keys i) key)
+          (if (== (rawGetWord keys i) key)
             ; Overwrite: `len` and `used` are both unchanged,
             ; which is the property the golden test pins down - a
             ; map that counted an overwrite as an insertion would
@@ -745,7 +745,7 @@
             ; key.
             {
               (mapDropVal m i)
-              (memSetWord vals i value)
+              (rawSetWord vals i value)
               0
             }
             (mapInsertLoop m keys vals states cap key value (mapNextSlot i cap) firstTomb
@@ -780,9 +780,9 @@
 (:: mapFillAt (-> (Map v) Int Int Int Int Int Int Int Int))
 (fn (mapFillAt m keys vals states i key value consumesEmpty)
   {
-    (memSetWord keys i key)
-    (memSetWord vals i value)
-    (memPutByte states i mapStateLive)
+    (rawSetWord keys i key)
+    (rawSetWord vals i value)
+    (rawPutByte states i mapStateLive)
     (set m.len (+ (mapLen m) 1))
     (if (== consumesEmpty 1)
       {
@@ -812,7 +812,7 @@
       ; ever rehashes.
       {
         (mapDropVal m i)
-        (memPutByte m.states i mapStateTomb)
+        (rawPutByte m.states i mapStateTomb)
         (set m.len (- (mapLen m) 1))
         0
       })
@@ -847,15 +847,15 @@
     (let oldVals m.vals)
     (let oldStates m.states)
     {
-      (let newKeys (memAlloc (* newCap 8)))
-      (let newVals (memAlloc (* newCap 8)))
-      (let newStates (memAlloc newCap))
+      (let newKeys (rawAlloc (* newCap 8)))
+      (let newVals (rawAlloc (* newCap 8)))
+      (let newStates (rawAlloc newCap))
       {
         (__retain newKeys)
         (__retain newVals)
         (__retain newStates)
         (if (mapOwnsVals m)
-          (memMarkArray newVals newCap)
+          (rawMarkArray newVals newCap)
           newVals)
         (set m.cap newCap)
         (set m.keys newKeys)
@@ -872,7 +872,7 @@
             ; may not be released as an array - it would spend the
             ; moved shares a second time. `mapRemove` has already
             ; handed back what it removed, so nothing is owed here.
-            (memMarkLeaf oldVals)
+            (rawMarkLeaf oldVals)
             (__release oldKeys)
             (__release oldVals)
             (__release oldStates)
@@ -889,10 +889,10 @@
 (fn (mapReinsertLoop newKeys newVals newStates newCap oldKeys oldVals oldStates oldCap i cnt)
   (if (>= i oldCap)
     cnt
-    (if (== (memGetByte oldStates i) mapStateLive)
+    (if (== (rawGetByte oldStates i) mapStateLive)
       {
-        (mapPlaceLoop newKeys newVals newStates newCap (memGetWord oldKeys i)
-          (memGetWord oldVals i) (mapSlotOf (memGetWord oldKeys i) newCap) newCap)
+        (mapPlaceLoop newKeys newVals newStates newCap (rawGetWord oldKeys i)
+          (rawGetWord oldVals i) (mapSlotOf (rawGetWord oldKeys i) newCap) newCap)
         (mapReinsertLoop newKeys newVals newStates newCap oldKeys oldVals oldStates oldCap (+ i 1)
           (+ cnt 1))
       }
@@ -911,11 +911,11 @@
 (fn (mapPlaceLoop keys vals states cap key value i left)
   (if (<= left 0)
     0
-    (if (== (memGetByte states i) mapStateEmpty)
+    (if (== (rawGetByte states i) mapStateEmpty)
       {
-        (memSetWord keys i key)
-        (memSetWord vals i value)
-        (memPutByte states i mapStateLive)
+        (rawSetWord keys i key)
+        (rawSetWord vals i value)
+        (rawPutByte states i mapStateLive)
         0
       }
       (mapPlaceLoop keys vals states cap key value (mapNextSlot i cap) (- left 1)))))

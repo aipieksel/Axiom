@@ -123,6 +123,7 @@
   [93mAX4008[0m  a device primitive or vector binding the target cannot run  (target-device-unsupported)
   [93mAX4009[0m  a handler bound to a vector reaches an operation that waits  (isr-waits)
   [93mAX5001[0m  cannot resolve import  (module-not-found)
+  [93mAX5002[0m  an internal module of the standard library, reached from outside it  (internal-module)
 ### explain AX1001
 AX1001 - unexpected character
 
@@ -885,7 +886,7 @@ binding is: `(set p.x 9)` needs `(mut x : Int)` on the struct, and
 `mut` on the binding that holds `p` has nothing to do with it. Only
 the last segment of a path is governed - `(set a.b.c v)` needs `c`
 declared `mut` and says nothing about `b`, because the store mutates
-the value `b` points at rather than the `b` slot. `memSetWord` writes
+the value `b` points at rather than the `b` slot. `__store64` writes
 a block by word index and is outside the rule.
 
 A name that is no binding at all is refused with the same code: a
@@ -1642,7 +1643,7 @@ spelling.
 It reaches memory unsafety, measured rather than argued:
 
     (fn (conjure n) (as n a))
-    (strWrap (conjure 42) 8)
+    (strLen (conjure 42))
 
 `check` answers OK and the binary exits 139 - 42 dereferenced as a
 String pointer. The same shape through `vecGet` is how a `Vec` holding
@@ -2079,8 +2080,8 @@ static:
     being stated.
 
 THE LAST ONE IS NOT A BLANKET REFUSAL, and that is measurable rather
-than asserted: `vecLen`, `vecGet`, `strLen`, `strEq`, `strByte` and
-`memGetWord` all carry no effect but `Unsafe` (a read, which contracts
+than asserted: `vecLen`, `vecGet`, `strLen`, `strEq` and `strByte`
+all carry no effect but `Unsafe` (a read, which contracts
 do not refuse), while `concat`,
 `fmtInt` and `vecNew` carry `Alloc,Mut`. A contract may compare,
 index, measure and test; it may not build. Only a DEFINITE effect is
@@ -2397,7 +2398,7 @@ reclaimed extent. `(set i (+ i 1))` on an outer counter is fine, which
 
 What this does NOT see, stated rather than implied: a CALL that stores
 a region-allocated reference for you - `vecPush` onto an outer vector,
-`memSetWord` into an outer block - and a raw `Int` that is an address.
+`__store64` into an outer block - and a raw `Int` that is an address.
 Those are the program's obligation under docs/memory-model.md
 MM-ALLOC-16, exactly as they are for a hand-written
 `__axiom_arena_mark`, and typed regions (docs/memory-model.md
@@ -2544,7 +2545,7 @@ AX3071 - a bare `__store64` of a reference that takes no share
 
 `__store64` writes the word and nothing else: it takes no share of the stored value. Storing a reference - a `String`, a `data` or `struct` value, a closure - without retaining it leaves a share the release walk never counted, and the owner's release frees a block the stored word still names.
 
-Store through `memSetWord`, which retains first (`stdlib/Mem.ax`), or `Ffi.ax`'s handle paths for handles. Only what the checker can see is refused: a variable it resolves, or a literal, whose class is a reference. A call result, a field, or any shape whose type is not in hand at the store is skipped, as is anything poisoned already - missing those is the status quo, and an `Int` smuggled through a word-sized channel stays invisible the way it always has.
+Take a share first with `(__retainref v)` and then store, as the standard library's own word store does, or keep the value in a struct field or a `Vec`, which count their own shares. A handle has `Ffi.ax`'s handle paths. Only what the checker can see is refused: a variable it resolves, or a literal, whose class is a reference. A call result, a field, or any shape whose type is not in hand at the store is skipped, as is anything poisoned already - missing those is the status quo, and an `Int` smuggled through a word-sized channel stays invisible the way it always has.
 
 ### explain AX3072
 AX3072 - `__addr` of anything but a string literal
@@ -3296,6 +3297,18 @@ the entry file's own directory (the file passed to `check`/`build`/
 `(import ...)`: `Mod.Sub` looks for `Mod/Sub.ax` next to (or below)
 the entry file, from every file in the program alike.
 
+### explain AX5002
+AX5002 - an internal module of the standard library, reached from outside it
+
+The standard library keeps its raw-memory layer in modules under `Internal`, such as `Internal.Raw`. They read and write words at an address, and turn a word back into a `String` or a `Vec`, which a safe program must never be able to do. Only the library's own modules may import them or name what they define:
+
+    (import Internal.Raw)            ; AX5002 in your program
+    (fn (peek a) (rawGetWord a 0))   ; AX5002 too, wherever it is visible
+
+Use the library's typed interface instead: `vecGet` reads an element at its own type, `strSlice` and `strByte` read a string, and `addrOf` gives an identity. When a program really needs raw memory, write that access in your own function with the primitives, such as `__load64`, under `;@axiom:effect(unsafe)`, which makes the function a trusted encapsulation you vouch for.
+
+A module counts as part of the library when its file lies inside the library's own directory, the one `AXIOM_STDLIB` names or the one installed beside the compiler. A file of the same name in your project is your own module, and this rule does not touch it.
+
 ### explain ax3001 (exit 0)
 AX3001 - undefined variable
 
@@ -3534,5 +3547,6 @@ run `axiom explain --list` to see all known codes, or name a keyword, type, effe
   [93mAX4008[0m  a device primitive or vector binding the target cannot run  (target-device-unsupported)
   [93mAX4009[0m  a handler bound to a vector reaches an operation that waits  (isr-waits)
   [93mAX5001[0m  cannot resolve import  (module-not-found)
+  [93mAX5002[0m  an internal module of the standard library, reached from outside it  (internal-module)
 
 Usage: axiom explain <CODE>

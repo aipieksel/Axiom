@@ -230,6 +230,13 @@ cat > "$work/ct/leaks.ax" <<'AX'
   {
     (println (+ (leakBranch 3) (+ (leakIndex (memAlloc 256) 7) (leakDivide 9))))
   })
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 AX
 if ( cd "$work/ct" && AXIOM_STDLIB="$repo_root/stdlib" "$axc" emit-llvm leaks.ax -o leaks.ll ) >/dev/null 2>&1; then
   for lvl in $ct_opts; do

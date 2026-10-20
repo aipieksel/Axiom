@@ -379,7 +379,7 @@ cut(sync, "                        (let code (sysWaitWordTimeout m w slice))\n  
 # through a reader the copy exports rather than from the page itself.
 with open(sync, "a", encoding="utf-8") as f:
     f.write("\n(pub :: syncSliceCount (-> Mutex Int Int))\n"
-            "(pub fn (syncSliceCount mx i)\n  (memGetWord (syncAt mx) i))\n")
+            "(pub fn (syncSliceCount mx i)\n  (rawGetWord (syncAt mx) i))\n")
 prog = os.path.join(d, "liveness.ax")
 # Printed before `(shares res)`, which stays the run's answer.
 cut(prog, "            (shares res)\n",

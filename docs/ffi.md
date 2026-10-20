@@ -572,7 +572,7 @@ On the Axiom side, the builtin type `Handle` is a counted heap block of
 the *foreign form*: shape-word bit 0 is set, and there are two payload
 words. Word 0 is the destructor's address and word 1 is the Rust
 pointer (`stdlib/Ffi.ax`, `MM-FFI-6`). `ffiHandleNew` is the only way
-to write one. `memAllocMapped` masks its map to bits 16..62 and can't
+to write one. The library's `rawAllocMapped` masks its map to bits 16..62 and can't
 set the form bit, and no constructor site does.
 
 ```scheme

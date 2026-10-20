@@ -702,6 +702,13 @@ else
     {
       (println (fmtInt (peek p k)))
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 AX
   abin="$work/overread"
   if (cd "$work" && "$axc" emit-llvm overread.ax -o "$abin.ll") > "$abin.log" 2>&1 \

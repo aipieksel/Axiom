@@ -213,8 +213,11 @@ axsym_name_file() {
 # cut at its FIRST dot: `stdlib/Sys/Platform.darwin.ax` is `Sys.Platform`,
 # which is what `stdlib/Sys.ax:20` imports.
 : > "$work/modfiles"
+# The library's `Internal` modules are left out: a program cannot import
+# them (AX5002), and the modules built on them reach every function.
 for f in stdlib/*.ax stdlib/*/*.ax; do
   [[ -e "$f" ]] || continue
+  [[ "$f" == stdlib/Internal/* ]] && continue
   rel="${f#stdlib/}"
   dir="$(dirname "$rel")"
   base="$(basename "$rel" .ax)"

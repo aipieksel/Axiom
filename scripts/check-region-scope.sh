@@ -177,6 +177,26 @@ probe() {  # <open> <close> -> a program on stdout
 (:: main Int)
 
 (fn (main) (burn 4000))
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memSet (-> Int Int Int Int))
+(fn (memSet addr value count)
+  (memSetFrom addr value count 0))
+
+(:: memSetFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memSetFrom addr value count start)
+  {
+    (for i in start..count
+      (__store8 addr i value))
+    addr
+  })
 EOF
 }
 probe "(region r" ")" > "$work/with.ax"

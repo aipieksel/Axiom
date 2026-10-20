@@ -1,0 +1,527 @@
+;;! Internal.Raw - the standard library's raw memory layer: allocation,
+;;! byte and word access at an address, copying, and the constructors
+;;! that build a `String` over bytes at an address.
+;
+; Internal to the standard library. Only a module whose file lies
+; inside the library's own directory may import this module or name
+; what it defines (AX5002), so a program never holds an
+; address it could misuse: it reaches memory through the typed
+; interfaces built on this layer, such as `Vec`, `Str`, `Map` and `IO`.
+;
+; These are ordinary Axiom loops over the `__alloc`/`__load8`/`__store8`
+; primitives, so they are type-checked and steppable like any other
+; Axiom code, and a compiled program needs no libc.
+;
+; Addresses are plain `Int`s. That is unsafe at this layer -
+; it is the layer where Axiom's type system stops and the machine
+; begins - and every safe abstraction above it (`Str`, `Buf`) is
+; responsible for never handing out an address a caller could misuse.
+;
+; Raw access requires live storage covering the entire requested range;
+; indices and address arithmetic must stay in that allocation. Word
+; access also requires 8-byte alignment. Reads require initialized
+; bytes, and writes require exclusive access or external synchronization.
+; Neither Int addresses nor effect(unsafe) establish these preconditions.
+; Typed views additionally require the stored word to be a live value of
+; the requested type. Ownership metadata may be changed only on a live
+; allocator block: each marked word must be zero or an owned managed
+; reference, and its share must be released or transferred before its
+; mark is removed. Arena reset invalidates all reclaimed addresses.
+;; Allocate `bytes` bytes of zeroed memory and return its address.
+;
+; Memory comes from the arena the compiler emits (a bump allocator over
+; `mmap`), with size-class reuse after a counted block is released and
+; bulk reclamation through explicit arena marks/resets. This module exposes
+; no general-purpose free: callers must uphold the ownership and region
+; obligations before reclaiming storage. (This comment
+; used to add "the allocator is replaceable: define `axiom_alloc` and
+; the backend defers to it". It does not defer - the backend emits its
+; definition unconditionally, and a program defining `axiom_alloc` is
+; refused outright, AX3026; it used to pass `check` and die in `opt`
+; as a duplicate symbol. docs/memory-model.md MM-ALLOC-8; the explicit
+; arena primitives ARE the reclamation, MM-ALLOC-22 - reference
+; counting, MM-LIFE-2a, was withdrawn, and this line used to promise it.)
+;
+; ZEROED IS A PROMISE, not an artefact of where the memory came from,
+; and this comment used to be describing the artefact. Fresh pages
+; arrive zeroed from the kernel, so the promise held for free until
+; `__axiom_arena_reset` began handing the same bytes out a second
+; time - after which `strAlloc` produced strings with no terminator
+; (`rawCstrLen` of a 3-byte string measured 17) and a `Map`'s state array
+; came back full of a previous table's occupancy. The allocator now
+; tracks how far into each chunk it has ever handed out, and scrubs
+; below that line as it allocates. Callers may rely on the promise;
+; `Map`, `Intern`, `Str` and `Vec` all do.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: rawAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawAlloc bytes)
+  (__alloc bytes))
+
+;; Allocate `bytes` bytes as `rawAlloc` does, declaring which words hold
+;; references: bit i of `map` says payload word i is a handle to another
+;; counted block, so releasing this block releases that one too
+;; (docs/memory-model.md MM-LIFE-2d, the record form).
+;
+; `rawAlloc` cannot answer this and never will - it sees a byte count
+; and nothing else, so it stamps every block a LEAF, which is the
+; unsafe layer staying the unsafe layer. A module that builds a header
+; with a handle in it - `Str`'s owner word is the first - has to say
+; so, once, at the allocation.
+;
+; The map is CLAMPED here to the block just allocated and to the
+; 47-word capacity of the encoding, so this can name the wrong word of
+; your own block and cannot name a word outside it. Getting the bit
+; wrong is the same class of mistake as getting a `rawSetWord` index
+; wrong, with one difference worth stating plainly: a word wrongly
+; marked as a reference is released at this block's death, and a
+; release of something that is not a counted block is a wild write,
+; not a wrong answer. Mark only words you allocated and own.
+;
+; NO NEW PRIMITIVE. The shape word is an ordinary word at `h - 8` and
+; the encoding is arithmetic, so this is six operations over
+; `__load64`/`__store64` rather than a fifth entry in the backend's
+; primitive table - which matters because `stdlib/` is compiled by the
+; SEED, and a standard library that spells a primitive the committed
+; seed does not know cannot be built at all until the seed moves. The
+; clamp is the same clamp either way; what changes is who has to be
+; reseeded to get it.
+;
+; A zero-byte request keeps MM-ALLOC-8b's behaviour exactly: no block,
+; no header, nothing stamped.
+; Every word `map` marks must hold zero or an owned reference whenever
+; the block can be released.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: rawAllocMapped (-> Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawAllocMapped bytes map)
+  {
+    (let h (__alloc bytes))
+    (if (== bytes 0)
+      h
+      {
+        (let sw (__load64 (- h 8) 0))
+        {
+          (let encoded (& (>> sw 1) 16383))
+          (let cnt
+            (if (== encoded 1)
+              (>> (__load64 (- h 32) 0) 3)
+              encoded))
+          {
+            (let lim
+              (if (> cnt 47)
+                47
+                cnt))
+            {
+              (__store64 (- h 8) 0 (| sw (<< (& map (- (<< 1 lim) 1)) 16)))
+              h
+            }
+          }
+        }
+      })
+  })
+
+;; Mark the block at `h` as an array of `n` handles: payload words
+;; 0..n-1 are handles to other counted blocks, so releasing it releases
+;; all of them (docs/memory-model.md MM-LIFE-2d, the array form).
+;; Answers `h`.
+;
+; It is one bit - bit 15 of the shape word - and no second header word.
+; The LENGTH goes in bits 16..62, which the record form uses for its
+; reference bitmap and this form therefore has to itself: the two forms
+; are disjoint by construction, so the field can be a bitmap for one
+; and a count for the other.
+;
+; THE LENGTH IS THE CALLER'S, AND IT HAS TO BE. Until 2026-09-03 this
+; function took only the handle and the walk read the length out of the
+; ALLOCATOR's word count in bits 1..14 - a field the allocator clamps
+; to 0 past 16,383 words, because it is a size class and a size class
+; it cannot represent is one it refuses to pool. A container's element
+; buffer of 131,072 bytes or more therefore announced itself as an
+; array of ZERO handles, and `vecFree` released the block and none of
+; the elements. Measured: a 16,384-element vector that owned its
+; elements and the same program with a leaf block had the same peak RSS
+; to the kilobyte.
+;
+; No spelling of this function could recover a number the allocator had
+; already thrown away, so the count comes in as an argument - every
+; caller has it, because every caller just asked for a buffer of that
+; many elements. `tests/stdlib/406-array-form-large-block.ax` is the
+; fixture; it answers 22 against the one-argument version and 31
+; against this one.
+;
+; `h` must be a live leaf allocation with room for at least `n` words,
+; and `n` must be nonnegative. This mask encodes the caller's assertion;
+; it does not prove that count fits the allocation. Do not mark an
+; already mapped block without accounting for its owned shares.
+;
+; PASS THE ELEMENT COUNT, NOT THE BLOCK'S WORDS. `rawAlloc` rounds up
+; to 16 bytes, so a block of an odd number of words carries a pad word
+; the caller never names; walking 0..n-1 covers exactly the elements
+; and steps over the pad, which is strictly safer than the padded count
+; the walk used to read.
+;
+; WHY A CONTAINER CANNOT USE `rawAllocMapped` INSTEAD. The record form's
+; bitmap holds 47 words. `Intern`'s string vector is **64 words at
+; construction**, before anything is interned, so the standard library
+; builds a structure past that capacity by default - and a `Vec` that
+; grows twice is past it four times over. A count is the only encoding
+; that describes a buffer.
+;
+; THE ELEMENTS PAST `len` MUST BE ZERO. The walk releases words
+; 0..count-1 of the whole BLOCK, not 0..len-1: the block knows its size
+; and nothing else. `rawAlloc` zeroes, which covers a fresh block and a
+; recycled one, and a container that vacates a slot - `vecPop`,
+; `mapRemove` - has to zero it, or the walk spends a share of a handle
+; the caller still holds. That is a use-after-free rather than a leak,
+; and it is the one obligation this form puts on its user.
+; `h` must be a live leaf block of at least `n` words, each zero or an
+; owned reference.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawMarkArray (-> Int Int Int))
+; `n` is masked to 47 bits before it is shifted, so a count nobody can
+; hold cannot push a 1 into bit 63 and make the shape word negative -
+; `codegen.ax`'s `shapeBits` rests on that word being non-negative.
+;@axiom:effect(unsafe)
+(pub fn (rawMarkArray h n)
+  {
+    (__store64 (- h 8) 0 (| (| (__load64 (- h 8) 0) 32768) (<< (& n 140737488355327) 16)))
+    h
+  })
+
+;; Mark the block at `h` as a leaf, holding no handles, so releasing it
+;; releases nothing it used to point at. Answers `h`.
+;;
+;; A container that grows needs this. Doubling a buffer moves the
+;; elements' shares to a new block without retaining them, so the old
+;; block must stop reading as an array before it is released, or every
+;; share would be spent twice.
+;
+; IT CLEARS THE LENGTH TOO, and that half is load-bearing rather than
+; tidy. Bits 16..62 are the record form's REFERENCE BITMAP, so a block
+; that dropped bit 15 and kept its length would not read as a leaf at
+; all - it would read as a record whose map names whichever payload
+; words the length's set bits happen to fall on, and release would
+; spend a share of each. A buffer of 8,192 elements would name word 13.
+; That is a wild write rather than a leak, and it is why the mask here
+; and the count in `rawMarkArray` are one change and not two.
+;
+; WHICH MEANS THIS IS NOT A NO-OP ON A RECORD. The mask used to clear
+; bit 15 alone, so calling it on a record-mapped block left the map
+; standing; it now clears the map too. Both callers in this tree hand
+; it an ARRAY-FORM buffer - `vecReserveExactly`'s abandoned data block
+; and `mapRehashCap`'s abandoned value array, neither of which ever
+; carried a record map - and the name says what it does: it makes the
+; block a leaf, and a leaf has no map.
+; `h` must be a live block whose map's shares were already released or
+; handed on.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawMarkLeaf (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawMarkLeaf h)
+  {
+    (__store64 (- h 8) 0 (& (__load64 (- h 8) 0) 32767))
+    h
+  })
+
+; THERE IS NO `memIsArray`, AND THE REASON IS A MEASURED CRASH.
+;
+; The obvious companion to the two above is a reader - "does this block
+; carry the array form" - and the first version of this work had one.
+; It is not sound, because bit 15 is only unambiguous against an
+; allocator that clamps at 16,383 words, and this file is compiled by
+; whichever compiler is building it. The seed that made this a crash
+; clamped at 32,767, which is where the bit used to be the top of the
+; count field, so under THAT seed's runtime every block of 16,384 words
+; or more had bit 15 set and read back as an array of handles.
+;
+; `tests/stdlib/200-scale.ax` interns 100,000 strings, so its `Map`
+; reaches 262,144 slots, so its value array passes 16,384 words - and
+; `mapRemove` read the bit, believed it, and released a raw integer.
+; SIGSEGV, in a program that is correct under the compiler this tree
+; builds and wrong under the one that builds this tree. `stage1` runs
+; on the seed's runtime, so the bootstrap ladder is exactly where this
+; lands.
+;
+; THAT PARTICULAR SEED IS GONE, AND THE RULE IS NOT. Checked
+; 2026-09-03: the committed seeds (09f3eb4) all carry
+; `icmp ugt i64 %wcnt, 16383` and `%aform = and i64 %shw, 32768`, so
+; today's seed agrees with today's compiler and a reader would not
+; crash on this tree. It would crash on the NEXT tree whose allocator
+; moves, which is the same hazard with a different date on it - a
+; reader here is sound only by accident of what happens to be in
+; `bootstrap/`, and this file cannot see what that is. The flag word
+; stays.
+;
+; A container therefore carries its own flag in its own header - one
+; word it wrote itself, with no encoding to be ambiguous about - and
+; the shape bit stays what it is for: the RUNTIME's instruction for
+; walking a dead block, written by the same compiler that emits the
+; walk that reads it.
+;; Copy `count` bytes from `src` to `dst`. Returns `dst`.
+;;
+;; It copies forwards, so overlapping ranges are safe only when
+;; `dst <= src`. `dst` and `src` must each name `count` live bytes.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawCopy (-> Int Int Int Int))
+(pub fn (rawCopy dst src count)
+  (rawCopyFrom dst src count 0))
+
+; ------------------------------------------------------------------
+; WHY THESE THREE ARE LOOPS AND NOT RECURSIONS
+;
+; Each walks one byte per step, so its depth is the SIZE OF THE DATA -
+; a 100 KB copy is 100,000 frames. When this block was written the
+; recursive form was a real call chain ("stage1 emits no tail-call
+; optimisation at all") that overflowed the stack once the compiler's
+; own output grew past a few hundred kilobytes, surfacing as a SIGSEGV
+; inside `rawCopyFrom` that looked like a codegen bug in whatever was
+; being compiled. That REASON is stale: the compiler now turns a direct
+; self tail call into a loop at every --opt level, in its own codegen
+; (docs/memory-model.md MM-EXEC-6b).
+;
+; The SPELLING stays, for the rule that outlives the reason: the
+; standard library must not owe its stack safety to an optimisation or
+; to a call's exact shape. A mutual or let-bound tail call is still a
+; real call chain without `opt` (MM-EXEC-6c), and one refactor away is
+; all it takes to turn the former into the latter. A `while` loop is
+; flat by construction (`tests/selfhost/500-while-mut.ax`).
+; ------------------------------------------------------------------
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: rawCopyFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (rawCopyFrom dst src count start)
+  {
+    (for i in start..count
+      (__store8 dst i (__load8 src i)))
+    dst
+  })
+
+;; Set `count` bytes at `addr` to `value` (low 8 bits). Returns `addr`.
+;; `addr` must name `count` live writable bytes.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawSet (-> Int Int Int Int))
+(pub fn (rawSet addr value count)
+  (rawSetFrom addr value count 0))
+
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: rawSetFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (rawSetFrom addr value count start)
+  {
+    (for i in start..count
+      (__store8 addr i value))
+    addr
+  })
+
+;; Compare `count` bytes. 0 if equal, otherwise the signed difference of
+;; the first differing byte pair (so the result orders like `memcmp`).
+;; `a` and `b` must each name `count` live bytes.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawCmp (-> Int Int Int Int))
+(pub fn (rawCmp a b count)
+  (rawCmpFrom a b count 0))
+
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: rawCmpFrom (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (rawCmpFrom a b count start)
+  {
+    (let mut i start)
+    (let mut diff 0)
+    {
+      (while (&& (< i count) (== diff 0))
+        {
+          (set diff (- (__load8 a i) (__load8 b i)))
+          (set i (+ i 1))
+        })
+      diff
+    }
+  })
+
+; ------------------------------------------------------------------
+; Word-granular access
+;
+; Offsets here are in *words* (8 bytes), not bytes, because the things
+; built on them - the `Str` header, `Buf`, and every `data` value the
+; compiler boxes - are arrays of machine words.
+; ------------------------------------------------------------------
+;; The 8-byte word at word offset `index` from `addr`. `addr` must name
+;; a live block of at least `index` + 1 words.
+;
+; A word is an integer, a handle, or a reference whose type this layer
+; does not know, so it answers `Int`. Answering a type variable would
+; let the caller name any type and get it, a reference included
+; (`AX3040`).
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawGetWord addr index)
+  (__load64 addr index))
+
+;; The word at `index` read as a `String`. `addr` must name a live block
+;; of at least `index` + 1 words, and that word must hold a live
+;; `String`.
+;
+; The cast is HERE, at a return inside a signature that carries the
+; type, and deliberately not at those call sites: a cast at an argument
+; root classifies the value's evidence 0 and drops its retain or its
+; release (docs/memory-model.md MM-LIFE-2e, measured).
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawGetWordStr (-> Int Int String))
+;@axiom:effect(unsafe)
+(pub fn (rawGetWordStr addr index)
+  (as (rawGetWord addr index) String))
+
+;; The word at `index` read as a `Vec`. `addr` must name a live block of
+;; at least `index` + 1 words, and that word must hold a live `Vec` of
+;; the element type the caller names.
+;
+; A `Vec` is a handle, one word, so this reinterprets and converts
+; nothing. The cast is here, at a return inside a signature that
+; carries the type, for the reason `rawGetWordStr` gives: a cast at an
+; argument root classifies that value's evidence 0 and drops its retain
+; or its release (docs/memory-model.md MM-VAL-22).
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawGetWordVec (-> Int Int (Vec a)))
+;@axiom:effect(unsafe)
+(pub fn (rawGetWordVec addr index)
+  (as (rawGetWord addr index) (Vec a)))
+
+;; Store `value` as the 8-byte word at word offset `index` from `addr`,
+;; taking a share of it when it is a reference. Answers `addr`. `addr`
+;; must name a live block of at least `index` + 1 words, and the word
+;; must be read back only at a type `value` has.
+;
+; Storing a word here is the moment a value can leave the type
+; system's sight: `(cast Int value)` erases whatever `value` was, and
+; the machine word that lands in `addr` is indistinguishable from an
+; integer forever after. That is MM-LIFE-2c's co-ownership blocker,
+; and the store answers it by taking a share of what it hides.
+;
+; `__retainref` is type-directed, so this is free where it should be:
+; the overwhelming majority of word stores put an integer somewhere,
+; the call's evidence witness is 0, and NOTHING is emitted. A
+; reference costs one retain, and a type variable - `vecPush`'s
+; element, `mapInsert`'s value - costs a test of one bit of the
+; caller's evidence word.
+;
+; The share is deliberately NOT balanced by a release, and cannot be:
+; nothing tells this layer when the word is overwritten or the block
+; dies, which is exactly why the layer is unsafe. So a reference
+; stored through here is immortal, and that is a LEAK - the safe
+; direction, and no worse than before, since a value only reachable
+; from `rawAlloc`'d memory was never reclaimed anyway. What it buys
+; is that the value is no longer INVISIBLE: an owner elsewhere may
+; now hand back its own share without freeing a block this word still
+; points at, which is the precondition every remaining ownership
+; event was waiting on.
+;
+; The `__retainref` above is the whole point of this wrapper: a raw
+; `__store64` of a reference-typed value creates a share the release
+; walk never counted, so the owner's release frees a block this word
+; still names. Store references through here (or `Ffi.ax`'s handle
+; close path), never with a bare `__store64`.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(pub fn (rawSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
+
+;; The byte at offset `index` from `addr`, 0 to 255. `addr` must name
+;; at least `index` + 1 live bytes.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawGetByte (-> Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawGetByte addr index)
+  (__load8 addr index))
+
+;; Store the low 8 bits of `value` at offset `index` from `addr`.
+;; Answers `addr`, which must name at least `index` + 1 live writable
+;; bytes.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawPutByte (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawPutByte addr index value)
+  {
+    (__store8 addr index value)
+    addr
+  })
+
+; ------------------------------------------------------------------
+; Construction
+; ------------------------------------------------------------------
+;; Wrap `len` bytes at `bytes` as a `Str` without copying.
+;
+; The caller keeps responsibility for `bytes` outliving the `Str` and
+; for the NUL terminator at `bytes[len]`. Every other constructor in
+; this module goes through here.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: rawStrWrap (-> Int Int String))
+(pub fn (rawStrWrap bytes len)
+  (rawStrWrapOwned bytes len 0))
+;; Wrap `len` bytes at `bytes` as `rawStrWrap` does, naming `owner`, the
+;; block whose release frees them, or 0 when no block owns them.
+;
+; This is MM-LIFE-2d's `Str` half. A literal's bytes are
+; loader-resident, a syscall's are the kernel's, and an interior wrap
+; over an arena keep block belongs to the arena, so each of those has
+; owner 0. A slice inherits its parent's owner rather than naming the
+; parent, so the chain is one hop deep however many times a slice is
+; sliced, and the address counted is never interior.
+;
+; The header is allocated MAPPED, with bit 2 set: word 2 is the only
+; word of a `Str` that holds a handle to a counted block, so a header
+; whose count reaches zero releases its owner and the owner's count
+; reaches zero in turn. That is what turns the share this function
+; records into reclamation instead of bookkeeping - before it, a dead
+; `Str` was header-deep and its bytes' count simply stood
+; (docs/memory-model.md MM-LIFE-2d). Word 1 is deliberately NOT
+; mapped: for a slice it is an INTERIOR address, and no count
+; reachable from a slice may free an interior pointer.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: rawStrWrapOwned (-> Int Int Int String))
+;@axiom:effect(unsafe)
+(pub fn (rawStrWrapOwned bytes len owner)
+  {
+    (let s (rawAllocMapped 24 4))
+    {
+      (rawSetWord s 0 len)
+      (rawSetWord s 1 bytes)
+      (rawSetWord s 2 owner)
+      ; The one place in the standard library a `String` is BUILT from
+      ; raw words rather than received as one, so the one place the
+      ; cast is the truth: `s` is an `Int` from the allocator until
+      ; the three stores above make it a header. The checker refuses
+      ; an `Int` body under a `String` signature since 2026-08-21
+      ; (`tyIsReprScalar`), and this is the explicit escape it asks
+      ; for rather than an exemption.
+      (as s String)
+    }
+  })
+;; A `Str` sharing the bytes at a NUL-terminated address.
+;
+; For a literal this is no longer needed - `"hello"` is already a `Str`
+; with a compile-time length, and `(rawStrFromLit (__addr "hello"))` is the
+; same value arrived at by scanning for a length that was known. It
+; remains the bridge for NUL-terminated bytes that come from somewhere
+; else: a syscall's output buffer.
+;
+; Cost is one scan for the length; the bytes are never copied.
+; The bytes must outlive the string.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: rawStrFromLit (-> Int String))
+(pub fn (rawStrFromLit cstr)
+  (rawStrWrap cstr (rawCstrLen cstr 0)))
+;; Length of NUL-terminated bytes at `addr`, scanning from `i`.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: rawCstrLen (-> Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rawCstrLen addr i)
+  (if (== (__load8 addr i) 0)
+    i
+    (rawCstrLen addr (+ i 1))))

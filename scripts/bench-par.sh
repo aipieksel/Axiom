@@ -115,6 +115,24 @@ cat > "$work/b_runall.ax" <<'AX'
               (println "{n} {s}")
             }}}}
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: vecPushStr (-> (Vec a) String (Vec a)))
+;@axiom:effect(unsafe)
+(fn (vecPushStr v s)
+  {
+    (__retainref s)
+    (vecPush v (as s a))
+  })
+
+(:: vecPushVec (-> (Vec a) (Vec b) (Vec a)))
+;@axiom:effect(unsafe)
+(fn (vecPushVec v x)
+  {
+    (__retainref x)
+    (vecPush v (as x a))
+  })
 AX
 
 echo "building..."

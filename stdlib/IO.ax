@@ -16,7 +16,7 @@
 ; `io`-tagged function that stopped doing I/O is refused (`AX3010`).
 (import Sys)
 (import Err)
-(import Mem)
+(import Internal.Raw)
 (import Str)
 (import Vec)
 (import Fmt)
@@ -458,7 +458,7 @@
             (let own (strOwner buf))
             {
               (__retain own)
-              (Ok (strWrapOwned (strData buf) used own))
+              (Ok (rawStrWrapOwned (strData buf) used own))
             }
           })
         {
@@ -468,7 +468,7 @@
             {
               (let big (strAlloc (* cap 2)))
               {
-                (memCopy (strData big) (strData buf) used2)
+                (rawCopy (strData big) (strData buf) used2)
                 (ioReadAll fd big used2 (* cap 2))
               }
             })
@@ -500,9 +500,9 @@
           (set n (ioReadFd fd (+ (strData buf) used) 1))
           (if (<= n 0)
             (set done 1)
-            (if (== (memGetByte (strData buf) used) 10)
+            (if (== (rawGetByte (strData buf) used) 10)
               {
-                (memPutByte (strData buf) used 0)
+                (rawPutByte (strData buf) used 0)
                 (set done 1)
               }
               {
@@ -513,7 +513,7 @@
                   {
                     (let big (strAlloc (* cap 2)))
                     {
-                      (memCopy (strData big) (strData buf) used)
+                      (rawCopy (strData big) (strData buf) used)
                       (set buf big)
                       (set cap (* cap 2))
                     }
@@ -854,10 +854,10 @@
       ; on the descriptor and never reads it.
       {
         (let out vecNew)
-        (let buf (memAlloc ioDirBufBytes))
-        (let pos (memAlloc 8))
+        (let buf (rawAlloc ioDirBufBytes))
+        (let pos (rawAlloc 8))
         {
-          (memSetWord pos 0 0)
+          (rawSetWord pos 0 0)
           {
             (let n (ioReadDirLoop fd buf pos out))
             {
@@ -908,11 +908,11 @@
     {
       (let p (+ buf off))
       {
-        (let reclen (+ (memGetByte p 16) (* (memGetByte p 17) 256)))
+        (let reclen (+ (rawGetByte p 16) (* (rawGetByte p 17) 256)))
         (if (|| (<= reclen direntNameOffset) (> (+ off reclen) n))
           0
           {
-            (vecPush out (strDup (strFromLit (+ p direntNameOffset))))
+            (vecPush out (strDup (rawStrFromLit (+ p direntNameOffset))))
             (ioReadDirDecode buf (+ off reclen) n out)
           })
       }
@@ -1010,13 +1010,13 @@
   ; buffer at the larger figure serves all, and a path too long for it
   ; comes back as ERANGE rather than truncated.
   {
-    (let buf (memAlloc 4097))
+    (let buf (rawAlloc 4097))
     (if (== usesSyscallAbi 0)
         {
           (let rc (platformGetCwd buf 4097))
           (if (< rc 0)
             (Err (mkError (- 0 rc) "getcwd"))
-            (Ok (strDup (strFromLit buf))))
+            (Ok (strDup (rawStrFromLit buf))))
         }
       (== cwdUsesFcntlPath 1)
         {
@@ -1029,7 +1029,7 @@
                 (ioCloseQuiet fd)
                 (if (< rc 0)
                   (Err (mkError (- 0 rc) "getcwd"))
-                  (Ok (strDup (strFromLit buf))))
+                  (Ok (strDup (rawStrFromLit buf))))
               }
             })
         }
@@ -1037,7 +1037,7 @@
         (let rc (__syscall2 sysCwdNum buf 4096))
         (if (< rc 0)
           (Err (mkError (- 0 rc) "getcwd"))
-          (Ok (strDup (strFromLit buf))))
+          (Ok (strDup (rawStrFromLit buf))))
       })
   })
 
@@ -1190,7 +1190,7 @@
     (if (ioOutside buf.bytes at n)
       __indexTrap
       {
-        (memCopy (+ (strData buf.bytes) at) (strData text) n)
+        (rawCopy (+ (strData buf.bytes) at) (strData text) n)
         n
       })
   })
@@ -1252,21 +1252,21 @@
 (:: ioPutInt32 (-> Int Int Int Int))
 (fn (ioPutInt32 buf off v)
   {
-    (memPutByte buf off (& v 255))
-    (memPutByte buf (+ off 1) (& (>> v 8) 255))
-    (memPutByte buf (+ off 2) (& (>> v 16) 255))
-    (memPutByte buf (+ off 3) (& (>> v 24) 255))
+    (rawPutByte buf off (& v 255))
+    (rawPutByte buf (+ off 1) (& (>> v 8) 255))
+    (rawPutByte buf (+ off 2) (& (>> v 16) 255))
+    (rawPutByte buf (+ off 3) (& (>> v 24) 255))
     buf
   })
 
 (:: ioGetInt32 (-> Int Int Int))
 (fn (ioGetInt32 buf off)
-  (+ (memGetByte buf off)
-    (+ (<< (memGetByte buf (+ off 1)) 8)
-      (+ (<< (memGetByte buf (+ off 2)) 16) (<< (memGetByte buf (+ off 3)) 24)))))
+  (+ (rawGetByte buf off)
+    (+ (<< (rawGetByte buf (+ off 1)) 8)
+      (+ (<< (rawGetByte buf (+ off 2)) 16) (<< (rawGetByte buf (+ off 3)) 24)))))
 
 ; Eight bytes, little-endian, at byte `off` of `buf`: an ABI record is
-; raw bytes, and `memSetWord` would take a share of whatever word the
+; raw bytes, and `rawSetWord` would take a share of whatever word the
 ; kernel or the caller put there.
 (:: ioPutWord (-> Int Int Int Int))
 (fn (ioPutWord buf off v)
@@ -1312,8 +1312,8 @@
         (Err (mkError (- 0 rc) "termSize"))
         (Ok
           (TermSize
-            :rows (+ (memGetByte ws 0) (<< (memGetByte ws 1) 8))
-            :cols (+ (memGetByte ws 2) (<< (memGetByte ws 3) 8)))))
+            :rows (+ (rawGetByte ws 0) (<< (rawGetByte ws 1) 8))
+            :cols (+ (rawGetByte ws 2) (<< (rawGetByte ws 3) 8)))))
     }
   })
 
@@ -1354,15 +1354,15 @@
     (let workBuf (strAlloc ioTermStateCap))
     (let work (strData workBuf))
     {
-      (memCopy work (strData save) termiosBytes)
+      (rawCopy work (strData save) termiosBytes)
       (ioTermFlagClear work 0 (| tiosBrkint (| tiosIcrnl (| tiosIstrip tiosIxon))))
       (ioTermFlagClear work 1 tiosOpost)
       (ioTermFlagClear work 3
         (if keepSignals
           (| tiosEcho (| tiosIcanon tiosIexten))
           (| tiosEcho (| tiosIcanon (| tiosIexten tiosIsig)))))
-      (memPutByte work (+ termiosCcOff termiosVminIdx) 1)
-      (memPutByte work (+ termiosCcOff termiosVtimeIdx) 0)
+      (rawPutByte work (+ termiosCcOff termiosVminIdx) 1)
+      (rawPutByte work (+ termiosCcOff termiosVtimeIdx) 0)
       (ioIoctl fd tcSetAttrReq work)
     }
   })
@@ -1529,10 +1529,10 @@
           ; and udata at 24.
           {
             (ioPutWord p 0 ident)
-            (memPutByte p 8 (& filter 255))
-            (memPutByte p 9 (& (>> filter 8) 255))
-            (memPutByte p 10 (& op 255))
-            (memPutByte p 11 (& (>> op 8) 255))
+            (rawPutByte p 8 (& filter 255))
+            (rawPutByte p 9 (& (>> filter 8) 255))
+            (rawPutByte p 10 (& op 255))
+            (rawPutByte p 11 (& (>> op 8) 255))
             (ioPutWord p 24 token)
           }
           ; struct epoll_event: the interest mask, then the data word.
@@ -1703,8 +1703,8 @@
       {
         (let b (strData p.events))
         (let off (* i pollEventSize))
-        (if (&& (== (memGetByte b (+ off 8)) (& pollSignalFilter 255))
-              (== (memGetByte b (+ off 9)) (& (>> pollSignalFilter 8) 255)))
+        (if (&& (== (rawGetByte b (+ off 8)) (& pollSignalFilter 255))
+              (== (rawGetByte b (+ off 9)) (& (>> pollSignalFilter 8) 255)))
           (Some (ioGetWord b off))
           None)
       })))

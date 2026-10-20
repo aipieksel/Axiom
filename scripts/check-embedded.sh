@@ -361,6 +361,27 @@ cat > "$work/fit.ax" <<'AX'
     (println (chain 100 0))
   }
 )
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord addr index)
+  (__load64 addr index))
+
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
 AX
 # The same program asking for 2,000 blocks: 1,056,000 bytes, which does
 # not fit in a 256 KiB region and does fit in `mmap`'s megabytes. The
@@ -1193,6 +1214,13 @@ cat > "$work/vol.ax" <<'AX'
     {
       (println (twice p))
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 AX
 # The control: the same double write, through the ordinary primitives.
 cat > "$work/plain.ax" <<'AX'
@@ -1217,6 +1245,13 @@ cat > "$work/plain.ax" <<'AX'
     {
       (println (twice p))
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 AX
 # Every `__arm_*`, each once, in one function `main` calls.
 cat > "$work/arm.ax" <<'AX'
@@ -1245,6 +1280,13 @@ cat > "$work/arm.ax" <<'AX'
 ;@axiom:effect(io)
 (fn (main)
   (sys (memAlloc 64)))
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 AX
 # The EL0 tier alone (what an aarch64 host may run), and an EL1
 # primitive in a function nothing calls.

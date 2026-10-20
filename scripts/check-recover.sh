@@ -179,6 +179,13 @@ cat > "$work/nest.ax" <<'PROBE'
     }
   }
 )
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 PROBE
 nest_want='inner caught 72
 outer saw 0
@@ -285,6 +292,13 @@ emit_abort_loop() {
     }    (Console Alloc IO Mut Unsafe)    (lambda (s) 0)
   )
 )
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
 PROBE
 }
 

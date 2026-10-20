@@ -34,7 +34,7 @@
 ; import would collide: it defines `die`, and so does the compiler's
 ; own `main.ax`, and Axiom's namespace is flat, so a program holding
 ; both has an ambiguous `die` at every call site.
-(import Mem)
+(import Internal.Raw)
 (import Str)
 (import Fmt)
 (import Sys)
@@ -65,7 +65,7 @@
 ;     straight back to the peer - and left `consumed` at
 ;     -9223372036854775777, after which `filled - consumed` was
 ;     negative for the life of the process. Driven through the server
-;     it died at the next `memAlloc` with exit 70 and never answered
+;     it died at the next `rawAlloc` with exit 70 and never answered
 ;     the `shutdown` queued behind it.
 ;
 ;   Content-Length: 18446744073709551621  followed by a 5-byte body
@@ -93,29 +93,29 @@
 (pub :: rdNew (-> File Int))
 (pub fn (rdNew f)
   {
-    (let r (memAlloc 32))
+    (let r (rawAlloc 32))
     {
-      (memSetWord r 0 f)
-      (memSetWord r 1 (readBufferNew rdCap))
-      (memSetWord r 2 0)
-      (memSetWord r 3 0)
+      (rawSetWord r 0 f)
+      (rawSetWord r 1 (readBufferNew rdCap))
+      (rawSetWord r 2 0)
+      (rawSetWord r 3 0)
       r
     }
   })
 
 ; The reader's file. The cast is at a return inside a signature that
-; carries the type, for the reason `Mem.memGetWordStr` gives.
+; carries the type, for the reason `Internal.Raw.rawGetWordStr` gives.
 (:: rdFile (-> Int File))
 ;@axiom:effect(unsafe)
 (fn (rdFile r)
-  (as (memGetWord r 0) File))
+  (as (rawGetWord r 0) File))
 
 ; The reader's buffer. The cast is at a return inside a signature that
 ; carries the type, as `rdFile`'s is.
 (:: rdBuf (-> Int ReadBuffer))
 ;@axiom:effect(unsafe)
 (fn (rdBuf r)
-  (as (memGetWord r 1) ReadBuffer))
+  (as (rawGetWord r 1) ReadBuffer))
 
 ;; A copy of the bytes the reader holds but has not handed out: the
 ;; start of the next message, which a caller that moves the reader to
@@ -127,12 +127,12 @@
 ;; How many bytes of the reader's buffer hold data.
 (pub :: rdFilled (-> Int Int))
 (pub fn (rdFilled r)
-  (memGetWord r 2))
+  (rawGetWord r 2))
 
 ;; How many bytes of the reader's buffer have been handed out.
 (pub :: rdConsumed (-> Int Int))
 (pub fn (rdConsumed r)
-  (memGetWord r 3))
+  (rawGetWord r 3))
 
 ;; Re-seat a reader on freshly allocated storage, carrying `u` bytes of
 ;; not-yet-consumed input from `addr`.
@@ -152,10 +152,10 @@
           u
           rdCap)))
     {
-      (readBufferPut buf 0 (strWrap addr u))
-      (memSetWord r 1 buf)
-      (memSetWord r 2 u)
-      (memSetWord r 3 0)
+      (readBufferPut buf 0 (rawStrWrap addr u))
+      (rawSetWord r 1 buf)
+      (rawSetWord r 2 u)
+      (rawSetWord r 3 0)
       r
     }
   })
@@ -172,8 +172,8 @@
       (if (> c 0)
         {
           (readBufferPut buf 0 (readBufferText buf c (- f c)))
-          (memSetWord r 2 (- f c))
-          (memSetWord r 3 0)
+          (rawSetWord r 2 (- f c))
+          (rawSetWord r 3 0)
         })
       ; Still no room? Grow. The buffer's length is its capacity.
       (if (>= (rdFilled r) (readBufferLen (rdBuf r)))
@@ -181,7 +181,7 @@
           (let bigger (readBufferNew (* (readBufferLen (rdBuf r)) 2)))
           {
             (readBufferPut bigger 0 (readBufferText (rdBuf r) 0 (rdFilled r)))
-            (memSetWord r 1 bigger)
+            (rawSetWord r 1 bigger)
           }
         })
       0
@@ -204,7 +204,7 @@
           ((Err e) (- 0 (errCode e)))))
       {
         (if (> n 0)
-          (memSetWord r 2 (+ (rdFilled r) n)))
+          (rawSetWord r 2 (+ (rdFilled r) n)))
         n
       }
     }
@@ -412,7 +412,7 @@
                   {
                     (let body (readBufferText (rdBuf r) (+ (rdConsumed r) bodyRel) n))
                     {
-                      (memSetWord r 3 (+ (+ (rdConsumed r) bodyRel) n))
+                      (rawSetWord r 3 (+ (+ (rdConsumed r) bodyRel) n))
                       (Some body)
                     }
                   })

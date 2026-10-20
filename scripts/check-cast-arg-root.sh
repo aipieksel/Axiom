@@ -188,13 +188,22 @@ echo "--- 1. user-level cast count does not grow ---"
 # Baseline 983 adds the Float-to-Int conversion of the mutable field
 # in 396-macro-struct-field-types.ax. It checks the generated field's
 # numeric type under MM-VAL-23; it creates no reference or ownership.
+# Baseline 1041 adds fifty-nine occurrences. The raw memory layer is internal
+# to the library (MM-EXEC-9g), so the tests that store a reference into
+# a raw block, or read one back, carry their own trusted helpers copied
+# from the classic layer, each with the one conversion the library's
+# had: `(as value Int)` in a word store, `(as (vecGet v i) String)` in a
+# slot read, `(as s String)` where a header is built. They are MM-VAL-23
+# test subjects over blocks the test allocates itself. The library adds
+# no conversion, the compiler's own copy is not counted, and the one
+# example conversion narrows an `Int` to a `Byte`.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 983 ]; then
-  ok "user-level (cast count $cast_count <= 983)"
+elif [ "$cast_count" -le 1041 ]; then
+  ok "user-level (cast count $cast_count <= 1041)"
 else
-  bad "user-level (cast count $cast_count > 983): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1041): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -207,6 +216,22 @@ cat > "$work/cast3.ax" <<'EOF'
     {
       (memSetWord p 0 (strDup "hi"))
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
 EOF
 cat > "$work/cast4.ax" <<'EOF'
 (import Mem)
@@ -217,6 +242,22 @@ cat > "$work/cast4.ax" <<'EOF'
     {
       (memSetWord p 0 (as (strDup "hi") String))
     }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
 EOF
 if "$axc" --diagnostic-format=ai check "$work/cast3.ax" >/dev/null 2>&1 \
   && "$axc" --diagnostic-format=ai check "$work/cast4.ax" >/dev/null 2>&1; then
@@ -251,6 +292,22 @@ cat > "$work/scalar.ax" <<'EOF'
 (fn (main)
   { (let p (memAlloc 8))
     { (memSetWord p 0 (as 7 Int)) }})
+
+; This program reaches raw memory through its own trusted helpers over
+; the primitives, as any program outside the standard library does.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes)
+  (__alloc bytes))
+
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  {
+    (__retainref value)
+    (__store64 addr index (as value Int))
+    addr
+  })
 EOF
 if "$axc" --diagnostic-format=ai emit-llvm "$work/scalar.ax" -o "$work/scalar.ll" \
      > /dev/null 2> "$work/scalar.err"; then

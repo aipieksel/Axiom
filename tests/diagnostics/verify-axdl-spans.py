@@ -117,7 +117,11 @@ NOLOC = re.compile(r'-:')
 # TYPE - AX3004 carries eleven of those in this corpus and not one
 # call chain.
 CHAIN_CODES = ('AX3049', 'AX3051', 'AX3057')
-CHAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_$']*(?: -> [A-Za-z_][A-Za-z0-9_$']*)+")
+# A hop is a mangled name, and a dotted module's carries its dots:
+# `Internal.Raw$rawAlloc`. A dot joins two segments only, so a full
+# stop after the last hop is never part of it.
+HOP = r"[A-Za-z_][A-Za-z0-9_$']*(?:\.[A-Za-z_][A-Za-z0-9_$']*)*"
+CHAIN = re.compile(HOP + r"(?: -> " + HOP + r")+")
 BACKTICKED = re.compile(r'`([^`]*)`')
 # Per AX1001's own help text: letters, digits, `_`, and `'`.
 IDENT_CH = re.compile(r"[^\W]|'", re.UNICODE)

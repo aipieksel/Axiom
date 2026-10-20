@@ -532,8 +532,8 @@ cuts = {
     "              (if (== (syncCas m 0 (+ me 1)) 0)",
     "              (if (== 0 0)")],
   "timed": [("Sys.ax", "(/ (+ nanos 999) 1000)", "(/ (+ nanos 999) 10000)"),
-            ("Sys.ax", "(memSetWord ts 0 (/ nanos 1000000000))", "(memSetWord ts 0 (/ (/ nanos 10) 1000000000))"),
-            ("Sys.ax", "(memSetWord ts 1 (% nanos 1000000000))", "(memSetWord ts 1 (% (/ nanos 10) 1000000000))")],
+            ("Sys.ax", "(rawSetWord ts 0 (/ nanos 1000000000))", "(rawSetWord ts 0 (/ (/ nanos 10) 1000000000))"),
+            ("Sys.ax", "(rawSetWord ts 1 (% nanos 1000000000))", "(rawSetWord ts 1 (% (/ nanos 10) 1000000000))")],
   "holder": [("Sync.ax", "(if (== (errCode e) 3)", "(if (== (errCode e) 99999)")],
   # The mutex never asks `waitid` about its own child: a zombie holder
   # looks alive to its parent too (AN-56 as it was).
@@ -547,7 +547,7 @@ cuts = {
   # nothing to hit. (Another word would be worse: an address whose low
   # 32 bits `kill` could read as 0 or negative, a process GROUP.)
   "layout": [("Task.ax", "(fn (taskHandlePid h)\n  (__spawn_pid h))", "(fn (taskHandlePid h)\n  (+ (__spawn_pid h) 1073741824))")],
-  "look": [("Sys.ax", "(Ok (&& (!= (& (memGetWord buf 0) 4294967295) 0) (&& (>= code 1) (<= code 3))))", "(Ok false)")],
+  "look": [("Sys.ax", "(Ok (&& (!= (& (rawGetWord buf 0) 4294967295) 0) (&& (>= code 1) (<= code 3))))", "(Ok false)")],
   "slot": [("Task.ax", "(let slot (+ slab (* (% arg w) slotBytes)))", "(let slot (+ slab (* (% (+ arg 1) w) slotBytes)))")],
   "limit": [("Task.ax", "        (if (> len limit)", "        (if (> len (* limit 1000))")],
   "grace": [("Task.ax", "(if (&& (== cancelling 1) (>= now graceEnd))", "(if (&& (== cancelling 2) (>= now graceEnd))")],

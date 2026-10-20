@@ -154,16 +154,11 @@ the neighbourhood of the corpus.
 ## Known defects
 
 - Safe code can still turn a reference into a word with `(as v Int)`,
-  or by storing it in an `Int` container slot or through `memSetWord`.
-  A value that leaves this way stops being tracked. A function result
-  can't do it (`MM-VAL-24`).
-- The same word can come back as a reference in safe code, through a
-  trusted accessor such as `vecGetVec` or `memGetWordVec`. So a
-  `parallel` binding can reach a container its parent holds without
-  capturing it, which is the only route R-C1 refuses.
-- `vecGetStr` and `vecGetVec` read any slot of any vector as a
-  reference, so safe code can forge a `String` or a `Vec` out of a
-  vector of numbers (`MM-EXEC-9d`).
+  or by storing it in an `Int` container slot. A value that leaves this
+  way stops being tracked. A function result can't do it (`MM-VAL-24`).
+- Some public functions still take a raw address, such as
+  `sysRandomBytes` and `sysWaitWord`, so safe code can crash by passing
+  a bad one (`MM-EXEC-9d`, [roadmap](roadmap.md)).
 - An element or a field handed to a closure that overwrites the slot it
   came from can be freed while the closure reads it. A named function
   is safe only when the container is passed beside the element.

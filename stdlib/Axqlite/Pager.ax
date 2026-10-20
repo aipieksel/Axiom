@@ -80,7 +80,7 @@
 ; LIMITS. Pages are 4096 bytes and a file holds at most 2^31 of them.
 ; An I/O error or a corrupt page inside a write transaction leaves the
 ; transaction needing `pagerRollback`; `pagerCommit` rolls it back.
-(import Mem)
+(import Internal.Raw)
 (import Str)
 (import Vec)
 (import Err)
@@ -971,7 +971,7 @@
           ((Ok a)
             {
               (if (> used 0)
-                (memCopy a (st m wUndo) used))
+                (rawCopy a (st m wUndo) used))
               (if (> cap 0)
                 {
                   (let _ (sysUnmapPrivate (st m wUndo) cap))
@@ -1062,7 +1062,7 @@
               (if (!= (__load64 e 0) fd)
                 {
                   (if (!= r w)
-                    (memCopy (+ base w) e size))
+                    (rawCopy (+ base w) e size))
                   (__store64 (+ base (+ w (- size 8))) 0 w)
                   (set w (+ w size))
                 })
@@ -1280,7 +1280,7 @@
 ;@axiom:effect(unsafe)
 (fn (cacheDrop m)
   {
-    (memSet (hashTab m) 0 (* 8 (st m wHashSize)))
+    (rawSet (hashTab m) 0 (* 8 (st m wHashSize)))
     (for f in 0..(st m wUsed)
       {
         (__store64 (fMeta m f) 0 -1)
@@ -1645,8 +1645,8 @@
       (let h (hdrBuf m))
       (let salt (makeSalt m))
       {
-        (memSet h 0 512)
-        (memCopy h (strData jMagic) 15)
+        (rawSet h 0 512)
+        (rawCopy h (strData jMagic) 15)
         (pagerPutBe h 16 4 1)
         (pagerPutBe h 20 4 4096)
         (pagerPutBe h 24 4 (st m wOrigCount))
@@ -1680,7 +1680,7 @@
       (let k (st m wJRecords))
       {
         (pagerPutBe b 0 4 pgno)
-        (memCopy (+ b 4) a 4096)
+        (rawCopy (+ b 4) a 4096)
         (pagerPutBe b 4100 8 (pagerChecksum b 4100 (st m wSalt)))
         {
           (let _ (ioWrite m (st m wJFd) b 4108 (+ 512 (* k 4108)))?)
@@ -1701,7 +1701,7 @@
 (:: journalHeaderCount (-> Int Int))
 ;@axiom:effect(unsafe)
 (fn (journalHeaderCount h)
-  (if (!= (memCmp h (strData jMagic) 15) 0)
+  (if (!= (rawCmp h (strData jMagic) 15) 0)
     -1
     (if (|| (!= (__load8 h 15) 0) (|| (!= (pagerGetBe h 16 4) 1) (!= (pagerGetBe h 20 4) 4096)))
       -1
@@ -1747,7 +1747,7 @@
   {
     (let h (hdrBuf m))
     {
-      (memSet h 0 512)
+      (rawSet h 0 512)
       {
         (let _ (ioWrite m (st m wJFd) h 512 0)?)
         (if sync
@@ -1868,7 +1868,7 @@
     (let a (pageBuf m))
     {
       (let n (ioRead m (st m wDbFd) a 4096 0)?)
-      (if (|| (< n 17) (|| (!= (memCmp a (strData dbMagic) 16) 0) (!= (__load8 a 16) 0)))
+      (if (|| (< n 17) (|| (!= (rawCmp a (strData dbMagic) 16) 0) (!= (__load8 a 16) 0)))
         (axqErr axqNotADatabase "the file isn't an AXQLite database" "pagerOpen")
         (if (< n 4096)
           (corrupt "the file is shorter than its header page" "pagerOpen")
@@ -1931,8 +1931,8 @@
 (:: storeHeader (-> Int Int Int))
 (fn (storeHeader m a)
   {
-    (memSet a 0 4096)
-    (memCopy a (strData dbMagic) 16)
+    (rawSet a 0 4096)
+    (rawCopy a (strData dbMagic) 16)
     (pagerPutBe a 20 4 1)
     (pagerPutBe a 24 4 4096)
     (pagerPutBe a 28 4 (st m wPageCount))
@@ -2111,7 +2111,7 @@
     {
       (stSet m wOrigCount 0)
       (stSet m wCounter 0)
-      (memSet a 0 4096)
+      (rawSet a 0 4096)
       {
         (let _ (journalStart m)?)
         (let _ (journalAppend m 0 a)?)
@@ -2281,9 +2281,9 @@
                             (stSet m wJPathOff 5120)
                             (stSet m wScratchOff 12288)
                             (stSet m wCachedCounter -1)
-                            (memCopy (+ m 1024) (strData path) (strLen path))
-                            (memCopy (+ m 5120) (strData path) (strLen path))
-                            (memCopy (+ m (+ 5120 (strLen path))) (strData "-journal") 8)
+                            (rawCopy (+ m 1024) (strData path) (strLen path))
+                            (rawCopy (+ m 5120) (strData path) (strLen path))
+                            (rawCopy (+ m (+ 5120 (strLen path))) (strData "-journal") 8)
                             (stSet m wFaultKind kind)
                             (stSet m wFaultAt at)
                             (stSet m wFaultArg arg)
@@ -2806,7 +2806,7 @@
                   {
                     (stSet m wFreeHead next)
                     (stSet m wFreeCount (- (st m wFreeCount) 1))
-                    (memSet a 0 4096)
+                    (rawSet a 0 4096)
                     (__store64 (fMeta m (frameOf m a)) 4 0)
                     (Ok head)
                   })
@@ -2826,7 +2826,7 @@
                         (Ok f)
                         (frameFor m pgno false))?)
                     {
-                      (memSet (fAddr m g) 0 4096)
+                      (rawSet (fAddr m g) 0 4096)
                       (fSetDirty m g 1)
                       (__store64 (fMeta m g) 4 0)
                       (stAdd m wWriteSeq 1)
@@ -2866,7 +2866,7 @@
           {
             (let a (writablePage m pgno false)?)
             {
-              (memSet a 0 4096)
+              (rawSet a 0 4096)
               (__store64 (fMeta m (frameOf m a)) 4 0)
               (__store8 a 0 6)
               (pagerPutBe a 4 4 (st m wFreeHead))

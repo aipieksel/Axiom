@@ -465,7 +465,7 @@ fi
 # costs a compiler build, so they are recorded here rather than run,
 # and these are the actual runs.
 #
-# (a) THE ARRAY FORM ALONE: `Mem.memMarkArray` made a no-op (its 32768
+# (a) THE ARRAY FORM ALONE: `Internal.Raw.rawMarkArray` made a no-op (its 32768
 #     and its count both 0), so no element buffer is ever walked. The
 #     vectors and the table still die; only their elements leak.
 #

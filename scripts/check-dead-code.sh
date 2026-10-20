@@ -513,6 +513,7 @@ echo
 echo "--- 6. global initializer boundaries and observable roots ---"
 cat > "$work/graph.ax" <<'PROBE'
 (import codegen)
+(import raw)
 (import IO)
 (import Mem)
 (import Vec)

@@ -49,7 +49,7 @@
 ; run other SELECTs on the same connection. Outside a transaction it may
 ; not write, and it may never run DDL, BEGIN, COMMIT or ROLLBACK, or
 ; close the connection: those answer `axqMisuse`.
-(import Mem)
+(import Internal.Raw)
 (import Str)
 (import Vec)
 (import Err)
@@ -280,8 +280,8 @@
           (__store64 base 0 e.code)
           (__store64 base 1 ml)
           (__store64 base 2 cl)
-          (memCopy (+ base 24) (strData msg) ml)
-          (memCopy (+ (+ base 24) ml) (strData ctx) cl)
+          (rawCopy (+ base 24) (strData msg) ml)
+          (rawCopy (+ (+ base 24) ml) (strData ctx) cl)
           -1
         }
       }
@@ -313,8 +313,8 @@
       (let msg (strAlloc ml))
       (let ctx (strAlloc cl))
       {
-        (memCopy (strData msg) (+ base 24) ml)
-        (memCopy (strData ctx) (+ (+ base 24) ml) cl)
+        (rawCopy (strData msg) (+ base 24) ml)
+        (rawCopy (strData ctx) (+ (+ base 24) ml) cl)
         (Err (Error :code (__load64 base 0) :message msg :context ctx))
       }
     }))
@@ -447,17 +447,17 @@
     (let d (strData out))
     (let digits "0123456789abcdef")
     {
-      (memPutByte d 0 120)
-      (memPutByte d 1 39)
+      (rawPutByte d 0 120)
+      (rawPutByte d 1 39)
       (for i in 0..n
         {
           (let c (strByte b i))
           {
-            (memPutByte d (+ 2 (* 2 i)) (strByte digits (>> c 4)))
-            (memPutByte d (+ 3 (* 2 i)) (strByte digits (& c 15)))
+            (rawPutByte d (+ 2 (* 2 i)) (strByte digits (>> c 4)))
+            (rawPutByte d (+ 3 (* 2 i)) (strByte digits (& c 15)))
           }
         })
-      (memPutByte d (+ 2 (* 2 n)) 39)
+      (rawPutByte d (+ 2 (* 2 n)) 39)
       out
     }
   })
@@ -477,21 +477,21 @@
         (let d (strData out))
         (let mut k 1)
         {
-          (memPutByte d 0 39)
+          (rawPutByte d 0 39)
           (for i in 0..n
             {
               (let c (strByte s i))
               {
-                (memPutByte d k c)
+                (rawPutByte d k c)
                 (set k (+ k 1))
                 (if (== c 39)
                   {
-                    (memPutByte d k 39)
+                    (rawPutByte d k 39)
                     (set k (+ k 1))
                   })
               }
             })
-          (memPutByte d k 39)
+          (rawPutByte d k 39)
           out
         }
       }
@@ -1293,7 +1293,7 @@
     (let n (__load64 m 2))
     (let out (strAlloc n))
     {
-      (memCopy (strData out) (+ m stmtHeader) n)
+      (rawCopy (strData out) (+ m stmtHeader) n)
       out
     }
   })
@@ -1337,7 +1337,7 @@
                   (if (stmtIsQuery parsed.stmt)
                     1
                     0))
-                (memCopy (+ m stmtHeader) (strData text) n)
+                (rawCopy (+ m stmtHeader) (strData text) n)
                 (Ok (Statement :slot h :owner (__resource_new stmtDrop h) :connection c))
               })
           }
@@ -1810,7 +1810,7 @@
         {
           (for x in parts
             {
-              (memCopy (+ d at) (strData x) (strLen x))
+              (rawCopy (+ d at) (strData x) (strLen x))
               (set at (+ at (strLen x)))
             })
           out

@@ -27,64 +27,13 @@
 ;
 ; Its length is computed at compile time, which is why nothing here
 ; scans a literal. `(__addr "hello")` still yields the raw bytes for the
-; cases that want NUL-terminated ones - see `strFromLit` and `strCStr`.
-(import Mem)
+; cases that want NUL-terminated ones - see `rawStrFromLit` and `strCStr`.
+(import Internal.Raw)
 ; For `strSplit`, which is the only thing here that answers a Vec.
 ; `Vec` imports `Mem` and nothing else, so this adds no cycle.
 (import Vec)
 
-; ------------------------------------------------------------------
-; Construction
-; ------------------------------------------------------------------
-;; Wrap `len` bytes at `bytes` as a `Str` without copying.
-;
-; The caller keeps responsibility for `bytes` outliving the `Str` and
-; for the NUL terminator at `bytes[len]`. Every other constructor in
-; this module goes through here.
-;@axiom:restrict(no-io,no-foreign)
-(pub :: strWrap (-> Int Int String))
-(pub fn (strWrap bytes len)
-  (strWrapOwned bytes len 0))
 
-;; Wrap `len` bytes at `bytes` as `strWrap` does, naming `owner`, the
-;; block whose release frees them, or 0 when no block owns them.
-;
-; This is MM-LIFE-2d's `Str` half. A literal's bytes are
-; loader-resident, a syscall's are the kernel's, and an interior wrap
-; over an arena keep block belongs to the arena, so each of those has
-; owner 0. A slice inherits its parent's owner rather than naming the
-; parent, so the chain is one hop deep however many times a slice is
-; sliced, and the address counted is never interior.
-;
-; The header is allocated MAPPED, with bit 2 set: word 2 is the only
-; word of a `Str` that holds a handle to a counted block, so a header
-; whose count reaches zero releases its owner and the owner's count
-; reaches zero in turn. That is what turns the share this function
-; records into reclamation instead of bookkeeping - before it, a dead
-; `Str` was header-deep and its bytes' count simply stood
-; (docs/memory-model.md MM-LIFE-2d). Word 1 is deliberately NOT
-; mapped: for a slice it is an INTERIOR address, and no count
-; reachable from a slice may free an interior pointer.
-;@axiom:restrict(no-io,no-foreign)
-(pub :: strWrapOwned (-> Int Int Int String))
-;@axiom:effect(unsafe)
-(pub fn (strWrapOwned bytes len owner)
-  {
-    (let s (memAllocMapped 24 4))
-    {
-      (memSetWord s 0 len)
-      (memSetWord s 1 bytes)
-      (memSetWord s 2 owner)
-      ; The one place in the standard library a `String` is BUILT from
-      ; raw words rather than received as one, so the one place the
-      ; cast is the truth: `s` is an `Int` from the allocator until
-      ; the three stores above make it a header. The checker refuses
-      ; an `Int` body under a `String` signature since 2026-08-21
-      ; (`tyIsReprScalar`), and this is the explicit escape it asks
-      ; for rather than an exemption.
-      (as s String)
-    }
-  })
 
 ;; A `Str` over freshly allocated, zeroed space for `len` bytes. A
 ;; negative `len` stops the program with status 77, as a bad index does.
@@ -107,36 +56,14 @@
     ; once"), which is what lets a slice outlive the header it was
     ; cut from without the buffer going early or staying forever
     {
-      (let bytes (memAlloc (+ len 1)))
+      (let bytes (rawAlloc (+ len 1)))
       {
         (__retain bytes)
-        (strWrapOwned bytes len bytes)
+        (rawStrWrapOwned bytes len bytes)
       }
     }))
 
-;; A `Str` sharing the bytes at a NUL-terminated address.
-;
-; For a literal this is no longer needed - `"hello"` is already a `Str`
-; with a compile-time length, and `(strFromLit (__addr "hello"))` is the
-; same value arrived at by scanning for a length that was known. It
-; remains the bridge for NUL-terminated bytes that come from somewhere
-; else: a syscall's output buffer.
-;
-; Cost is one scan for the length; the bytes are never copied.
-; The bytes must outlive the string.
-;@axiom:restrict(no-io,no-foreign)
-(pub :: strFromLit (-> Int String))
-(pub fn (strFromLit cstr)
-  (strWrap cstr (cstrLen cstr 0)))
 
-;; Length of NUL-terminated bytes at `addr`, scanning from `i`.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: cstrLen (-> Int Int Int))
-;@axiom:effect(unsafe)
-(pub fn (cstrLen addr i)
-  (if (== (__load8 addr i) 0)
-    i
-    (cstrLen addr (+ i 1))))
 
 ; ------------------------------------------------------------------
 ; Accessors
@@ -149,21 +76,21 @@
   ; crossing into the Mem boundary is spelled with the cast, so the
   ; checker sees every other use of `s` as the string it is
   ; (memory-model.md MM-ALLOC-20).
-  (memGetWord (as s Int) 0))
+  (rawGetWord (as s Int) 0))
 
 ;; The address of the first byte of `s`, for the raw-memory calls. It
 ;; stays valid while `s` is alive.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: strData (-> String Int))
 (pub fn (strData s)
-  (memGetWord (as s Int) 1))
+  (rawGetWord (as s Int) 1))
 
 ;; The block owning this string's bytes, or 0 for bytes no block owns
 ;; (a literal's, a syscall buffer's, an arena keep block's interior).
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: strOwner (-> String Int))
 (pub fn (strOwner s)
-  (memGetWord (as s Int) 2))
+  (rawGetWord (as s Int) 2))
 
 ;; The byte at `i`, or 0 when `i` is out of range.
 ;
@@ -213,7 +140,7 @@
           la
           lb))
       {
-        (let diff (memCmp (strData a) (strData b) shared))
+        (let diff (rawCmp (strData a) (strData b) shared))
         (if (!= diff 0)
           diff
           (- la lb))
@@ -246,7 +173,7 @@
     (let la (strLen a))
     (if (!= la (strLen b))
       false
-      (== (memCmp (strData a) (strData b) la) 0))
+      (== (rawCmp (strData a) (strData b) la) 0))
   })
 
 ; ------------------------------------------------------------------
@@ -289,7 +216,7 @@
             (let owner (strOwner s))
             {
               (__retain owner)
-              (strWrapOwned (+ (strData s) from) n owner)
+              (rawStrWrapOwned (+ (strData s) from) n owner)
             }
           }
         }
@@ -306,7 +233,7 @@
     {
       (let out (strAlloc len))
       {
-        (memCopy (strData out) (strData s) len)
+        (rawCopy (strData out) (strData s) len)
         out
       }
     }
@@ -322,8 +249,8 @@
     {
       (let out (strAlloc (+ la lb)))
       {
-        (memCopy (strData out) (strData a) la)
-        (memCopy (+ (strData out) la) (strData b) lb)
+        (rawCopy (strData out) (strData a) la)
+        (rawCopy (+ (strData out) la) (strData b) lb)
         out
       }
     }
@@ -345,9 +272,9 @@
 (fn (strCStrCopy s)
   {
     (let n (strLen s))
-    (let p (memAlloc (+ (strLen s) 1)))
+    (let p (rawAlloc (+ (strLen s) 1)))
     {
-      (memCopy p (strData s) n)
+      (rawCopy p (strData s) n)
       p
     }
   })
@@ -409,7 +336,7 @@
     (let lp (strLen prefix))
     (if (> lp (strLen s))
       false
-      (== (memCmp (strData s) (strData prefix) lp) 0))
+      (== (rawCmp (strData s) (strData prefix) lp) 0))
   })
 
 ; ------------------------------------------------------------------
@@ -631,7 +558,7 @@
     (let mut found (- 0 1))
     {
       (while (&& (< found 0) (<= (+ i ln) len))
-        (if (== (memCmp (+ (strData s) i) (strData needle) ln) 0)
+        (if (== (rawCmp (+ (strData s) i) (strData needle) ln) 0)
           (set found i)
           (set i (+ i 1))))
       (if (< found 0)
