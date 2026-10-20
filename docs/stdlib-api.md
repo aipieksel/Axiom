@@ -2059,7 +2059,7 @@ Sys - portable syscall wrappers.
 
 ## `Sys.Platform`
 
-`stdlib/Sys/Platform.darwin.ax` — 211 public names
+`stdlib/Sys/Platform.darwin.ax` — 215 public names
 
 Sys.Platform - the numbers this target's kernel uses: syscall
 numbers, open and socket flags, errno values, poll and signal
@@ -2280,6 +2280,10 @@ target being compiled for (this one is `darwin`).
 | `platformSetNonBlocking` | value | `(-> Int Bool Int)` |  |  | Make `s` non-blocking (`on`) or blocking: 0, or `-errno`. -78 here. |
 | `platformSocketAddr` | value | `(-> Int Bool Int Int Int)` |  |  | getsockname or (`peer`) getpeername into `addr`, whose length cell is `lenCell`: 0, or `-errno`. -78 here. |
 | `platformPoll` | value | `(-> Int Int Int Int)` |  |  | poll over `n` records at `fds`, each a descriptor word, an interest word and a readiness word, for `ms` milliseconds (negative: no limit): the count of ready records, or `-errno`. -78 here. |
+| `platformIsConsole` | value | `(-> Int Int)` |  |  | Whether `fd` is a console: 1 or 0. Unreached here. |
+| `platformConsoleMode` | value | `(-> Int Int)` |  |  | The console's mode word, or `-errno`. -78 here. |
+| `platformConsoleSetMode` | value | `(-> Int Int Int)` |  |  | Set the console's mode word: 0, or `-errno`. -78 here. |
+| `platformConsoleSize` | value | `(-> Int Int)` |  |  | The console's window in character cells, as `rows * 65536 + cols`, or `-errno`. -78 here. |
 
 ## `Task`
 

@@ -175,6 +175,14 @@ have() { # have <got> <want> <what>
 # `parSpawnUnsupported` now asks the target too (pure to Alloc,IO,Mut).
 # Comparing 7c4dc4e7 and this tree with the same compiler changes no
 # other row; the stdlib view is untouched.
+# The Windows console adds four platform functions to every platform
+# module, pure stubs in the POSIX view (`platformIsConsole` and its
+# group); no existing row changes.
+# The entry-symbol pass (`entryFnsOffExternSyms`, which moves an entry
+# function off a linker symbol an extern item claims) adds four compiler
+# functions that build name lists (Alloc,Mut) and `entryRecordRename`
+# (Mut); comparing 9c9fcb40 and this tree with the same compiler changes
+# no existing row.
 # The full stdlib view also charges the closure factories fallibleCounting
 # (Mut to Alloc,Mut) and fallibleDefault (pure to Alloc).
 # Typed AST migration compared against 63883c3d with the same compiler:
@@ -202,9 +210,9 @@ echo "== compiler view: symbols --calls self_host/main.ax =="
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3213 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3217 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 452 "Alloc,IO,Mut"
-have "$(bucket "$work/main.axsym" 'Mut')" 188 "exactly Mut"
+have "$(bucket "$work/main.axsym" 'Mut')" 189 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 114 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 20 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 12 "exactly IO"
@@ -237,7 +245,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2254 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2258 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 34 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 49 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 39 "effect-params rows"
@@ -310,7 +318,7 @@ have "$(bucket "$work/lib.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut,Spawn')" 2 "Alloc,IO,Mut,Spawn"
 have "$(bucket "$work/lib.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/lib.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1128 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1132 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/lib.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 37 "distinct stdlib effect rows"
 have "$(grep -c '#effects-incomplete' "$work/lib.axsym" || true)" 17 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/lib.axsym" || true)" 59 "effect-params rows"

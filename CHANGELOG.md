@@ -16,6 +16,27 @@ its changelog too.
 
 ## Unreleased
 
+- A function in the entry file whose name is the linker symbol of an
+  `extern` item the program binds, such as a `send` of your own beside
+  Winsock's `send` on Windows, is emitted as `axiom$entry$send`, and
+  every call reaches it as before. The two shared one symbol, and the
+  module would not assemble (`tests/stdlib/843-net-stream.ax` for
+  windows-x86_64). A program with no such name emits byte for byte what
+  it did. Tested by `scripts/check-cross-targets.sh`.
+
+- Windows programs know their console. `isTerminal` asks `GetFileType`
+  and `GetConsoleMode`, `termSize` reads the window rectangle of
+  `GetConsoleScreenBufferInfo`, and `termRaw` edits the console's mode
+  word, turning on virtual-terminal input and output so `Tui` reads and
+  writes the same escape sequences there; releasing the `TermGuard`
+  writes the saved words back. The Windows runner now runs the whole
+  standard-library battery, each case to its golden, exit status and
+  stderr, skipping only the cases `tests/stdlib/windows-skip.txt` names
+  with their reasons; the new `tests/stdlib/497-console-answers.ax`
+  pins the terminal answers where there is no terminal. A second
+  Windows leg, on GitHub's arm64 image, executes the hello case built
+  for windows-aarch64. Tested by `scripts/check-windows-hello.sh`.
+
 - `parallel` runs on Windows, on threads. Windows has no `fork`, so the
   thread lowering is the default there: `CreateThread` starts a binding,
   `WaitForSingleObject` joins it, and the module carries the TLS

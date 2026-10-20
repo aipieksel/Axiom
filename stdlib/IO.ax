@@ -1288,7 +1288,7 @@
 ;@axiom:effect(io)
 (pub fn (isTerminal f)
   (if (== ttyUsesTermios 0)
-    false
+    (== (platformIsConsole (ioFd f)) 1)
     {
       (let attrs (strAlloc ioTermStateCap))
       (>= (ioIoctl (ioFd f) tcGetAttrReq (strData attrs)) 0)
@@ -1306,14 +1306,17 @@
     {
       (let rc
         (if (== ttyUsesTermios 0)
-          ioTermUnsupported
+          (platformConsoleSize (ioFd f))
           (ioIoctl (ioFd f) tcWinSizeReq ws)))
       (if (< rc 0)
         (Err (mkError (- 0 rc) "termSize"))
-        (Ok
-          (TermSize
-            :rows (+ (rawGetByte ws 0) (<< (rawGetByte ws 1) 8))
-            :cols (+ (rawGetByte ws 2) (<< (rawGetByte ws 3) 8)))))
+        (if (== ttyUsesTermios 0)
+          ; the platform packs the window as rows * 65536 + cols
+          (Ok (TermSize :rows (/ rc 65536) :cols (% rc 65536)))
+          (Ok
+            (TermSize
+              :rows (+ (rawGetByte ws 0) (<< (rawGetByte ws 1) 8))
+              :cols (+ (rawGetByte ws 2) (<< (rawGetByte ws 3) 8))))))
     }
   })
 
@@ -1390,7 +1393,59 @@
 ;@axiom:effect(unsafe)
 (pub fn (termRaw f keepSignals)
   (if (== ttyUsesTermios 0)
-    (Err (mkError 78 "termRaw"))
+    ; A console's mode word is the saved state, and the guard's release
+    ; writes it back. Raw clears line input (2), echo (4) and, unless
+    ; the signals are kept, processed input (1, which turns Ctrl-C into
+    ; an event), and turns on virtual-terminal input (0x200) so keys
+    ; arrive as the escape sequences `Tui` reads; the output console is
+    ; given virtual-terminal processing (4) for the sequences it writes,
+    ; and that word is restored with the input's.
+    {
+      (let fd (ioFd f))
+      (let mode (platformConsoleMode fd))
+      (if (< mode 0)
+        (Err (mkError (- 0 mode) "termRaw"))
+        {
+          (let outMode (platformConsoleMode 1))
+          (let guard
+            (TermGuard
+              :owner
+                (__resource_new
+                  (lambda (d)
+                    {
+                      (let _
+                        (if (< outMode 0)
+                          0
+                          (platformConsoleSetMode 1 outMode)))
+                      (platformConsoleSetMode d mode)
+                    }
+                  )
+                  fd)))
+          (let raw
+            (|
+              (& mode
+                (^
+                  (| 6
+                    (if keepSignals
+                      0
+                      1))
+                  (- 0 1)))
+              512))
+          (let r (platformConsoleSetMode fd raw))
+          (if (< r 0)
+            {
+              (let _ (__resource_close guard.owner))
+              (Err (mkError (- 0 r) "termRaw"))
+            }
+            {
+              (let _
+                (if (< outMode 0)
+                  0
+                  (platformConsoleSetMode 1 (| outMode 4))))
+              (Ok guard)
+            })
+        })
+    }
     {
       (let dup (ioFcntl (ioFd f) fDupFdCloexec 0))
       (if (< dup 0)

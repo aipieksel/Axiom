@@ -8178,20 +8178,14 @@
     (emitLine cg "  %fn = load i64, ptr %p1")
     (emitLine cg "  %p2 = getelementptr i64, ptr %pg, i64 2")
     (emitLine cg "  %arg = load i64, ptr %p2")
-    (if (programStackOn cg)
-      {
-        (emitLine cg "  %budget = call i64 @__axiom_program_stack_bytes()")
-        (emitLine cg "  %code = ptrtoint ptr @__axiom_stack_call to i64")
-        (emitLine cg
-          "  %r = call i64 @__axiom_stack_run_code(i64 %budget, i64 %code, i64 %fn, i64 %arg)")
-      }
-      (emitLine cg "  %r = call i64 @__axiom_par_call(i64 %fn, i64 %arg)"))
+    ; The thunk runs on the thread's own stack: the guarded stack
+    ; runtime (`emitStackRunGuarded`) is the syscall targets', and
+    ; Windows has no `__axiom_stack_disarm` to call either.
+    (emitLine cg "  %r = call i64 @__axiom_par_call(i64 %fn, i64 %arg)")
     (emitLine cg "  %p3 = getelementptr i64, ptr %pg, i64 3")
     (emitLine cg "  store i64 %r, ptr %p3")
     (emitLine cg "  call void @__axiom_par_sweep(i64 -1)")
     (emitLine cg "  call void @__axiom_arena_unmap_thread()")
-    (if (stackRunOn cg)
-      (emitLine cg "  call void @__axiom_stack_disarm()"))
     (emitLine cg "  ret ptr null")
     (emitLine cg "}")
     (emitLine cg "")
@@ -9202,10 +9196,89 @@
     (let cache (FrontCache :width 1 :modules vecNew))
     {
       (recordEntryFns decls idx bares fulls 0)
-      (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods (as 0 (Vec String))
-        tcode entryDir units cache)
+      (let merged
+        (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods (as 0 (Vec String))
+          tcode entryDir units cache))
+      (entryFnsOffExternSyms decls merged bares fulls)
+      merged
     }
   })
+
+; An entry-file function is emitted under its own name, and an extern
+; item under the linker symbol its `(symbol ...)` clause names; the two
+; can coincide - a program's `send` beside Winsock's `send`, which
+; `Sys/Platform.windows.ax` binds - and the module would then define and
+; declare one symbol (`check-cross-targets.sh`, `843-net-stream` for
+; windows). Once every import is resolved the extern symbols are all
+; known, so such an entry function moves to `axiom$entry$name`, a
+; spelling no module produces (a module's name carries no `$`): its
+; declaration and signature are renamed as `mangleDecl` renames a
+; module's, and its bare record follows, so every call site reaches it
+; unchanged. A program with no such name is untouched, byte for byte.
+(pub :: entryFnsOffExternSyms (-> (Vec ASTNode) (Vec ASTNode) Names Names Int))
+(pub fn (entryFnsOffExternSyms decls merged bares fulls)
+  {
+    (let syms (externSymsOf merged (externSymsOf decls vecNew 0) 0))
+    (if (== (vecLen syms) 0)
+      0
+      (entryFnsOffExternSymsAt decls syms bares fulls 0))
+  })
+
+; The linker symbols of every extern item among `ds`, appended to `acc`.
+(pub :: externSymsOf (-> (Vec ASTNode) Names Int Names))
+(pub fn (externSymsOf ds acc i)
+  (if (>= i (vecLen ds))
+    acc
+    {
+      (let d (vecGet ds i))
+      (if (== (nodeTag d) TAG_D_EXTERN)
+        (externItemSyms (nodeCChildren d) acc 0)
+        0)
+      (externSymsOf ds acc (+ i 1))
+    }))
+
+(pub :: externItemSyms (-> (Vec ASTNode) Names Int Int))
+(pub fn (externItemSyms items acc i)
+  (if (|| (== (as items Int) 0) (>= i (vecLen items)))
+    0
+    {
+      (vecPush acc (nodeCName (vecGet items i)))
+      (externItemSyms items acc (+ i 1))
+    }))
+
+(pub :: entryFnsOffExternSymsAt (-> (Vec ASTNode) Names Names Names Int Int))
+(pub fn (entryFnsOffExternSymsAt decls syms bares fulls i)
+  (if (>= i (vecLen decls))
+    0
+    {
+      (let d (vecGet decls i))
+      (if (&& (|| (== (nodeTag d) TAG_D_FN) (== (nodeTag d) TAG_D_SIG))
+            (mangleHasIn syms (nodeAName d) 0))
+        {
+          (let name (strDup (nodeAName d)))
+          (let full (concat "axiom$entry$" name))
+          (writeNodeText d 1 full)
+          (if (== (nodeTag d) TAG_D_FN)
+            (entryRecordRename bares fulls name full 0)
+            0)
+        }
+        0)
+      (entryFnsOffExternSymsAt decls syms bares fulls (+ i 1))
+    }))
+
+; The entry's own record of `name` - bare and full both the name - now
+; answers `full`. One record: the entry file records first and the bare
+; slot holds one winner per name.
+(pub :: entryRecordRename (-> Names Names String String Int Int))
+(pub fn (entryRecordRename bares fulls name full i)
+  (if (>= i (vecLen bares))
+    0
+    (if (&& (strEq (vecGet bares i) name) (strEq (vecGet fulls i) name))
+      {
+        (vecSet fulls i full)
+        0
+      }
+      (entryRecordRename bares fulls name full (+ i 1)))))
 
 ; CLI opt-in: parse the discovered import graph in bounded frontiers,
 ; then use the same resolver. Namespace and diagnostic order stay serial.
@@ -9255,8 +9328,11 @@
             (set pending next)
           })
         (recordEntryFns decls idx bares fulls 0)
-        (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods (as 0 (Vec String))
-          tcode entryDir units cache)
+        (let merged
+          (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods
+            (as 0 (Vec String)) tcode entryDir units cache))
+        (entryFnsOffExternSyms decls merged bares fulls)
+        merged
       })
   })
 

@@ -440,7 +440,7 @@ AX
       # The clock, sleep, entropy, wait-words and memory, which the
       # platform module binds rather than a syscall. Each case prints its
       # own verdicts, and the golden is the one every POSIX target answers.
-      for case in 306-monotonic-clock 309-entropy 851-instant-sleep 495-wait-word 650-net-tcp 308-poll-readiness 470-parallel; do
+      for case in 306-monotonic-clock 309-entropy 851-instant-sleep 495-wait-word 650-net-tcp 308-poll-readiness 470-parallel 497-console-answers; do
         set +e
         ( cd "$repo_root" && "$ax" build "tests/stdlib/$case.ax" -o "$w/$case.exe" ) > "$w/$case.build.log" 2>&1
         rc=$?
@@ -489,6 +489,68 @@ AX
         echo "FAIL axiom.exe test on mixed-tests.ax exited $rc (want 1), or its report is not the golden"
         sed 's/^/    /' "$w/mixed.diff" | head -12
         status=1
+      fi
+
+      # 4. The standard-library battery, as `run-stdlib-tests.sh` runs it
+      #    on the POSIX legs: every case in tests/stdlib built by this
+      #    compiler and run to its golden, its exit status and, where a
+      #    `.err` exists, its stderr, each up to the backtrace marker,
+      #    with its `.in` on fd 0 or nothing. `tests/stdlib/windows-skip.txt`
+      #    names the cases this target cannot run yet, each with its
+      #    reason: a listed case that fails does not fail the leg, a
+      #    listed case that passes is reported so the list can shrink,
+      #    and an unlisted case that fails fails the leg. A floor on the
+      #    count that ran keeps an empty battery from passing.
+      skip_list="$repo_root/tests/stdlib/windows-skip.txt"
+      [[ -f "$skip_list" ]] || { echo "FAIL $skip_list is missing"; exit 1; }
+      ran=0; skipped=0; passing_skips=""
+      for case_file in "$repo_root"/tests/stdlib/[0-9]*.ax; do
+        name="$(basename "$case_file" .ax)"
+        listed=0
+        grep -qE "^$name( |\$)" "$skip_list" && listed=1
+        want_exit=0
+        [[ -f "$repo_root/tests/stdlib/$name.exit" ]] && want_exit="$(tr -d '[:space:]' < "$repo_root/tests/stdlib/$name.exit")"
+        stdin_src=/dev/null
+        [[ -f "$repo_root/tests/stdlib/$name.in" ]] && stdin_src="$repo_root/tests/stdlib/$name.in"
+        set +e
+        ( cd "$repo_root" && timeout 300 "$ax" build "tests/stdlib/$name.ax" -o "$w/bat-$name.exe" ) > "$w/bat-$name.build.log" 2>&1
+        brc=$?
+        rrc=-1
+        if [[ "$brc" -eq 0 ]]; then
+          ( cd "$repo_root" && timeout 300 "$w/bat-$name.exe" < "$stdin_src" > "$w/bat-$name.stdout" 2> "$w/bat-$name.stderr" )
+          rrc=$?
+        fi
+        set -e
+        good=0
+        if [[ "$brc" -eq 0 && "$rrc" == "$want_exit" ]] \
+           && cmp -s <(sed '/^axiom: backtrace/q' "$w/bat-$name.stdout") <(sed '/^axiom: backtrace/q' "$repo_root/tests/stdlib/$name.out"); then
+          good=1
+          if [[ -f "$repo_root/tests/stdlib/$name.err" ]] \
+             && ! cmp -s <(sed '/^axiom: backtrace/q' "$w/bat-$name.stderr") <(sed '/^axiom: backtrace/q' "$repo_root/tests/stdlib/$name.err"); then
+            good=0
+          fi
+        fi
+        if [[ "$listed" -eq 1 ]]; then
+          skipped=$((skipped + 1))
+          [[ "$good" -eq 1 ]] && passing_skips="$passing_skips $name"
+        elif [[ "$good" -eq 1 ]]; then
+          ran=$((ran + 1))
+        else
+          echo "FAIL $name on Windows: build exit $brc, run exit $rrc (want $want_exit), or its output is off the golden"
+          { diff "$repo_root/tests/stdlib/$name.out" "$w/bat-$name.stdout" 2>/dev/null || true; } | head -6 | sed 's/^/    /'
+          { cat "$w/bat-$name.build.log" "$w/bat-$name.stderr" 2>/dev/null || true; } | head -4 | sed 's/^/    /'
+          status=1
+        fi
+        rm -f "$w/bat-$name.exe" "$w/bat-$name.obj"
+      done
+      if (( ran < 150 )); then
+        echo "FAIL the battery ran only $ran case(s) to their goldens; the floor is 150"
+        status=1
+      else
+        echo "ok   the battery: $ran case(s) ran on Windows to their goldens, $skipped listed in tests/stdlib/windows-skip.txt"
+      fi
+      if [[ -n "$passing_skips" ]]; then
+        echo "note listed case(s) that pass on Windows and can leave the list:$passing_skips"
       fi
     elif [[ "$mode" == "--run" ]]; then
       echo "ok   axiom.exe NOT EXECUTED: this runner executes $run_target, and the compiler is built for windows-x86_64"

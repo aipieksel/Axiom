@@ -401,7 +401,7 @@ shows the check can fail at all.
 | `check-platform-constants.sh` | The syscall numbers the backend emits match the ones `stdlib/Sys/Platform.*.ax` declares on the six POSIX targets, and on windows-x86_64 and windows-aarch64 both halves reach the same kernel32 entry points. On every target, the two halves also agree on whether a syscall ABI exists at all |
 | `check-terminal-restore.sh` | A program that puts a terminal into raw mode restores it byte for byte, on a pty the gate allocates itself. Two independent witnesses check it: the probe's own `memCmp` over all 72, 36 or 44 bytes (Darwin, Linux, FreeBSD), and `tcgetattr` from outside the process. Raw mode must change something first, `ISIG` must follow the caller's argument both ways, and a pipe and a bad descriptor must answer `ENOTTY` and `EBADF`. Four ablations, all required: restore a mutated copy, make raw mode a no-op, invert the `ISIG` argument, swallow the errno |
 | `check-windows-entry.sh` | The Windows entry shim's command-line and environment parsers, cut out of the emitted Windows IR and run on the current host against known answers. Two rules are ablated, and each must make the harness disagree with the golden |
-| `check-windows-hello.sh` | A Windows hello world, for windows-x86_64 and windows-aarch64. `--emit` runs on any host. `--run` runs on a Windows runner: it assembles each program, links it with `lld-link` against import libraries `llvm-dlltool` generates for its machine, holds its imports to the allowlist and runs the one for the runner's own architecture against its golden. The leaky `MessageBoxA` probe must be refused. `--link` does everything except run it, for a host that can't |
+| `check-windows-hello.sh` | A Windows hello world, for windows-x86_64 and windows-aarch64. `--emit` runs on any host. `--run` runs on a Windows runner: it assembles each program, links it with `lld-link` against import libraries `llvm-dlltool` generates for its machine, holds its imports to the allowlist, by name and by DLL, and runs the one for the runner's own architecture against its golden; on x86_64 it then links the compiler and runs it over the hello case, the tree audit and the standard-library battery, skipping the cases `tests/stdlib/windows-skip.txt` names. The leaky `MessageBoxA` probe must be refused. `--link` does everything except run it, for a host that can't |
 | `check-self-host.sh` | Every case in `tests/selfhost` compiles, assembles, runs and exits with the status on its first line (`; expect N`). This drives the compiler end to end, so it catches IR that `llc` rejects and code that assembles but computes the wrong answer |
 | `check-driver.sh` | `axiom build`: the command-line surface, and that a failing `llc` fails the build while a missing `opt` doesn't |
 | `check-stdlib-selfhost.sh` | Both corpora compiled and run through the same `llc`/`cc` pipeline at `-O0` and `-O2`, each case fed its `.in` or `/dev/null` as `run-stdlib-tests.sh` does. A `.in` that can't be read, or one with no matching case, fails before any compiler is built |
@@ -538,8 +538,13 @@ jobs that need a compiler get it through the same composite action,
    workspace's own suites run (`cargo test`).
 4. **Cross-target codegen.** Every target's IR assembles from a single
    host at `--opt` 0, 1 and 2, and all six committed seeds assemble.
-   This job also emits the Windows hello world
-   (`scripts/check-windows-hello.sh --emit`). No job runs it.
+   This job also emits the Windows hello world, the compiler and the
+   tree audit for the Windows targets (`scripts/check-windows-hello.sh
+   --emit`), which two Windows legs then run: on `windows-2025`, the
+   x86_64 hello, the compiler and the tree audit, and the
+   standard-library battery against `tests/stdlib/windows-skip.txt`;
+   on `windows-11-arm`, the aarch64 hello. Both targets stay
+   source-only until that list is empty.
 5. **Self-hosting fixpoint.** `check-bootstrap.sh` checks that
    `stage2 == stage3`, byte for byte, with the ladder rooted at the
    committed seed.

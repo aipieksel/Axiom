@@ -582,7 +582,7 @@ cuts = {
   "stackcut": [("Task.ax", '      (__axiom_stack_run stack (lambda (i) (taskAnswer f slot limit tok i)) arg)\n', "      (taskAnswer f slot limit tok arg)\n")],
   # Section 12. The sleep stops after its first wait, which is asked
   # for a tenth of the time: a sleep that ends short.
-  "shortsleep": [("Sys.ax", "            (if (>= now deadline)\n              (set state 1)\n              (sysWaitWordTimeout (+ buf 16) 0 (- deadline now)))", "            {\n              (sysWaitWordTimeout (+ buf 16) 0 (/ (- deadline now) 10))\n              (set state 1)\n            }")],
+  "shortsleep": [("Sys.ax", "            (if (>= now deadline)\n              (set state 1)\n              (sysSleepSlice buf (- deadline now)))", "            {\n              (sysSleepSlice buf (/ (- deadline now) 10))\n              (set state 1)\n            }")],
   # Section 10. The raising pool's drain joins newest first.
   "drain": [("Task.ax", "      (while (< joined n)\n        {\n          (vecPush out (__proc_join (vecGet hs (% joined w))))", "      (while (< joined n)\n        {\n          (vecPush out (__proc_join (vecGet hs (% (- n (+ joined 1)) w))))")],
 }[kind]

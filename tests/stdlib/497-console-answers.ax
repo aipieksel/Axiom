@@ -1,0 +1,34 @@
+; The terminal questions, asked where there is no terminal: the battery
+; gives a case fd 0 from a file and captures fd 1, on every target. So
+; `isTerminal` answers false for both, `termSize` answers `Err` for a
+; pipe, and `termRaw` answers `Err` for an input that is not a console.
+; On Windows the same four answers come from `GetFileType`,
+; `GetConsoleMode` and `GetConsoleScreenBufferInfo` rather than from
+; `ioctl`, which is what this case pins there.
+(import IO)
+(import Err)
+
+(:: say (-> Bool String Int))
+;@axiom:effect(io)
+(fn (say good label)
+  (if good
+    (println (concat "ok   " label))
+    (println (concat "FAIL " label))))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say (! (isTerminal stdout)) "stdout is not a terminal here")
+    (say (! (isTerminal stdin)) "stdin is not a terminal here")
+    (say (isErr (termSize stdout)) "termSize of a captured stdout answers Err")
+    (match (termRaw stdin false)
+      ((Ok g)
+        {
+          (let _ (termRestore g))
+          (say false "termRaw of a non-terminal answers Err")
+        }
+      )
+      ((Err e) (say true "termRaw of a non-terminal answers Err")))
+    ()
+  })

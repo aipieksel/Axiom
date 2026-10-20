@@ -227,7 +227,9 @@ in `self_host/parser.ax`) accepts exactly this shape:
   skipped.
 - Without the clause, the linker symbol is the item's own name.
   `axiom-bindgen` always writes the clause, and so should you: a static
-  link is one flat namespace.
+  link is one flat namespace. A function of your own in the entry file
+  whose name is some item's symbol keeps working: it is emitted as
+  `axiom$entry$name`, and your calls reach it as before.
 - A type in the signature may only be `Int`, `Float`, `Bool`, `Char`,
   `String` or `Foreign` (§13, `AX3036`). `Handle` is refused here. A
   raw extern answers a `Foreign` word, and only `ffiHandleNew` turns

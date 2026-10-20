@@ -32,8 +32,9 @@
 ; `platformWakeWord`), memory (`platformMapPrivate` and its group), the
 ; signal mask, which has nothing to block (`platformSignalBlock`), and
 ; TCP sockets with their readiness (the `platformSocket` group and
-; `platformPoll`, over ws2_32). The console's control events are not
-; yet; a `Sys.ax` function that needs them
+; `platformPoll`, over ws2_32), and the console's modes and size
+; (`platformConsoleMode` and its group). The console's control events
+; are not yet; a `Sys.ax` function that needs them
 ; reaches a `__syscallN` arm, which on this target the compiler lowers
 ; to a trap (`axiom: no syscall ABI on this target`, status 74) rather
 ; than to a `syscall` instruction the OS gives no meaning to. Loud, and
@@ -657,7 +658,11 @@
   (winVirtualAlloc :: (-> Int Int Int Int Int) (symbol "VirtualAlloc"))
   (winVirtualFree :: (-> Int Int Int Int) (symbol "VirtualFree"))
   (winVirtualLock :: (-> Int Int Int) (symbol "VirtualLock"))
-  (winVirtualUnlock :: (-> Int Int Int) (symbol "VirtualUnlock")))
+  (winVirtualUnlock :: (-> Int Int Int) (symbol "VirtualUnlock"))
+  (winGetFileType :: (-> Int Int) (symbol "GetFileType"))
+  (winGetConsoleMode :: (-> Int Int Int) (symbol "GetConsoleMode"))
+  (winSetConsoleMode :: (-> Int Int Int) (symbol "SetConsoleMode"))
+  (winGetConsoleScreenBufferInfo :: (-> Int Int Int) (symbol "GetConsoleScreenBufferInfo")))
 
 ; `WaitOnAddress` and its wake live in an API set, the DLL
 ; `synchronization.lib` binds.
@@ -2778,3 +2783,68 @@
           (& r 4294967295)
         })
     }))
+
+; ------------------------------------------------------------------
+; The console, over kernel32. A console is a character device that
+; answers `GetConsoleMode`; its mode word is what raw mode edits and
+; what a `TermGuard`'s release writes back; its size is the window
+; rectangle of `GetConsoleScreenBufferInfo`.
+; ------------------------------------------------------------------
+;; Whether `fd` is a console: a character device (`GetFileType` 2)
+;; that answers `GetConsoleMode`. A pipe or a file is neither.
+(pub :: platformIsConsole (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformIsConsole fd)
+  {
+    (let h (winHandleOf fd))
+    (if (!= (& (winGetFileType h) 4294967295) 2)
+      0
+      {
+        (let cell winCell)
+        (if (== (& (winGetConsoleMode h cell) 4294967295) 0)
+          0
+          1)
+      })
+  })
+
+;; The console's mode word (`GetConsoleMode`), or `-errno`.
+(pub :: platformConsoleMode (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformConsoleMode fd)
+  {
+    (let cell winCell)
+    (if (== (& (winGetConsoleMode (winHandleOf fd) cell) 4294967295) 0)
+      (winErrnoOf (& winGetLastError 4294967295))
+      (& (__load64 cell 0) 4294967295))
+  })
+
+;; `SetConsoleMode(fd, mode)`: 0, or `-errno`.
+(pub :: platformConsoleSetMode (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformConsoleSetMode fd mode)
+  (if (== (& (winSetConsoleMode (winHandleOf fd) mode) 4294967295) 0)
+    (winErrnoOf (& winGetLastError 4294967295))
+    0))
+
+;; The console's window in character cells, `rows * 65536 + cols` from
+;; the window rectangle `GetConsoleScreenBufferInfo` reports (four
+;; SHORTs at bytes 10 to 17: left, top, right, bottom), or `-errno`.
+(pub :: platformConsoleSize (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (platformConsoleSize fd)
+  {
+    (let info (__alloc 24))
+    (if (== (& (winGetConsoleScreenBufferInfo (winHandleOf fd) info) 4294967295) 0)
+      (winErrnoOf (& winGetLastError 4294967295))
+      {
+        (let left (+ (__load8 info 10) (<< (__load8 info 11) 8)))
+        (let top (+ (__load8 info 12) (<< (__load8 info 13) 8)))
+        (let right (+ (__load8 info 14) (<< (__load8 info 15) 8)))
+        (let bottom (+ (__load8 info 16) (<< (__load8 info 17) 8)))
+        (+ (* (+ (- bottom top) 1) 65536) (+ (- right left) 1))
+      })
+  })
