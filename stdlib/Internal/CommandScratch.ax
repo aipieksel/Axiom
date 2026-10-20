@@ -1,0 +1,109 @@
+;;! Internal.CommandScratch - reusable, explicitly owned command buffers.
+;
+; Raw addresses stay inside the library. Each slot retains exactly one
+; leaf allocation. Growing a slot retires its previous block; closing
+; the owner retires every slot, including during a recovery unwind.
+(import Internal.Raw)
+(import Internal.RawVec)
+(import Str)
+(import Vec)
+
+(struct CommandScratchSlot
+  (mut address : Int)
+  (mut capacity : Int))
+
+(pub struct CommandScratch sealed
+  (owner : Handle)
+  (slots : (Vec CommandScratchSlot)))
+
+(:: commandScratchDrop (-> (Vec CommandScratchSlot) Int))
+;@axiom:effect(unsafe)
+(fn (commandScratchDrop slots)
+  {
+    (for i in 0..(vecLen slots)
+      {
+        (let slot (vecGet slots i))
+        (let address slot.address)
+        (set slot.address 0)
+        (set slot.capacity 0)
+        (__release address)
+      })
+    0
+  })
+
+; Allocate all ownership records before any buffer or native launch.
+(pub :: commandScratchNew (-> Int CommandScratch))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (commandScratchNew count)
+  (if (< count 1)
+    __indexTrap
+    {
+      (let slots (vecWithCapacity count))
+      (for i in 0..count
+        (vecPush slots (CommandScratchSlot :address 0 :capacity 0)))
+      (CommandScratch
+        :owner (__resource_new (lambda (unused) (commandScratchDrop slots)) 0)
+        :slots slots)
+    }))
+
+; The address remains live until this slot grows or the owner closes.
+; Clear every requested byte on reuse, including string terminators and
+; padding required by native records. Other slots remain unaffected.
+(pub :: commandScratchBuffer (-> CommandScratch Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (commandScratchBuffer scratch index bytes)
+  {
+    (let _ (__resource_get scratch.owner))
+    (if (< bytes 1)
+      __indexTrap
+      {
+        (let slot (vecGet scratch.slots index))
+        (if (> bytes slot.capacity)
+          {
+            (let buffer (rawAlloc bytes))
+            (__retain buffer)
+            (let old slot.address)
+            (set slot.address buffer)
+            (set slot.capacity bytes)
+            (__release old)
+          })
+        (rawSet slot.address 0 bytes)
+      })
+  })
+
+; One slot holds the pointer vector and copies of all NUL-terminated
+; arguments, so sliced input strings need no unowned C-string copies.
+(pub :: commandScratchArgv (-> CommandScratch Int (Vec String) Int))
+(pub fn (commandScratchArgv scratch index argv)
+  {
+    (let n (vecLen argv))
+    ; Match the allocator's maximum request, checking before either
+    ; pointer-vector multiplication or argument-length addition wraps.
+    (if (> n 576460752303423487)
+      __indexTrap)
+    (let mut bytes (* 8 (+ n 1)))
+    (for i in 0..n
+      {
+        (let length (strLen (rawVecGetStr argv i)))
+        (if (>= length (- 4611686018427387904 bytes))
+          __indexTrap)
+        (set bytes (+ bytes (+ length 1)))
+      })
+    (let ptr (commandScratchBuffer scratch index bytes))
+    (let mut offset (* 8 (+ n 1)))
+    (for i in 0..n
+      {
+        (let arg (rawVecGetStr argv i))
+        (rawSetWord ptr i (+ ptr offset))
+        (rawCopy (+ ptr offset) (strData arg) (strLen arg))
+        (set offset (+ offset (+ (strLen arg) 1)))
+      })
+    ptr
+  })
+
+(pub :: commandScratchClose (-> CommandScratch Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (commandScratchClose scratch)
+  (__resource_close scratch.owner))
