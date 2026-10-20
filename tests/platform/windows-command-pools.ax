@@ -2,6 +2,7 @@
 ; host against deterministic process/job boundaries. No child is run.
 (import WindowsTask)
 (import WindowsCommandTest)
+(import WindowsSpawnTest)
 (import Sys)
 (import Err)
 (import Str)
@@ -432,5 +433,84 @@
                      (&& (== (stat 18) 0)
                        (&& (== (stat 19) 1) (&& (== (stat 4) 2) (== (stat 14) 1))))))
                  "dispose close error is reported while the remaining child is still cleaned")))
+    (reset)
+    (let storage scratchStorage)
+    (set bad (+ bad (say (== (& storage 1) 1) "scratch capacity reuse clears requested bytes")))
+    (set bad (+ bad (say (== (& storage 2) 2) "scratch slots remain independent")))
+    (set bad (+ bad (say (== (& storage 4) 4) "growing scratch retires the previous allocation")))
+    (set bad (+ bad
+               (say (== (& storage 8) 8) "scratch close retires all buffers and is idempotent")))
+    (reset)
+    (let recoveredScratch scratchRecovery)
+    (set bad (+ bad
+               (say (&& (== recoveredScratch 72) (== (stat 32) 2))
+                 "recovery invokes scratch retirement for every owned buffer")))
+    (set bad (+ bad
+               (say
+                 (&& (== (scratchRefusal 0) 77)
+                   (&& (== (scratchRefusal 1) 77)
+                     (&& (== (scratchRefusal 2) 77) (== (scratchRefusal 3) 77))))
+                 "invalid scratch counts, indices and sizes are refused")))
+    (set bad (+ bad
+               (say (== (scratchOverflow false) 77) "argv pointer-vector overflow is refused")))
+    (set bad (+ bad
+               (say (== (scratchOverflow true) 77)
+                 "argv length overflow is refused before reading bytes")))
+    (reset)
+    (fault 17 0 3)
+    (let noStandards (WindowsTask::taskRunCommands (commands 91 1) 1))
+    (set bad (+ bad
+               (say
+                 (&& (ordered noStandards 91 1) (&& clean (&& (== (stat 5) 0) (== (stat 30) 0))))
+                 "missing standards use job-only attributes with inheritance disabled")))
+    (reset)
+    (let directSmall (scratchDirect 20))
+    (let directSmallClean clean)
+    (reset)
+    (let directLarge (scratchDirect 1000))
+    (set bad (+ bad
+               (say
+                 (&& (>= directSmall 0)
+                   (&& (>= directLarge 0)
+                     (&& (<= directLarge (+ directSmall 4096)) (&& directSmallClean clean))))
+                 "native Start/Join scratch remains bounded across 1000 commands")))
+    (reset)
+    (let publicSmall (scratchPublic 20))
+    (let publicSmallClean clean)
+    (reset)
+    (let publicLarge (scratchPublic 1000))
+    (set bad (+ bad
+               (say
+                 (&& (>= publicSmall 0)
+                   (&& (>= publicLarge 0)
+                     (&& (<= publicLarge (+ publicSmall 4096)) (&& publicSmallClean clean))))
+                 "public command-pool scratch is bounded apart from its result words")))
+    (reset)
+    (let ordinaryBytes (ordinaryScratch 1000))
+    (set bad (+ bad
+               (say
+                 (&& (>= ordinaryBytes 0)
+                   (&& (<= ordinaryBytes 4096)
+                     (&& clean (&& (== (stat 5) 0) (&& (== (stat 20) 0) (== (stat 30) 3))))))
+                 "ordinary spawn restricts standards and retires per-call startup storage")))
+    (reset)
+    (fault 17 0 3)
+    (let ordinaryNoStd
+      (WindowsSpawnTest::ordinarySpawn (strCStr "C:/ok.exe") inheritedArgv sysEnvp))
+    (let ordinaryNoStdStatus (nativeWait ordinaryNoStd))
+    (set bad (+ bad
+               (say
+                 (&& (== ordinaryNoStdStatus (* 81 256))
+                   (&& clean (&& (== (stat 5) 0) (&& (== (stat 24) 0) (== (stat 13) 0)))))
+                 "ordinary spawn with no standards disables inheritance and needs no attributes")))
+    (reset)
+    (fault 16 0 1)
+    (let ordinaryAttributeFailure
+      (WindowsSpawnTest::ordinarySpawn (strCStr "C:/ok.exe") inheritedArgv sysEnvp))
+    (set bad (+ bad
+               (say
+                 (&& (== ordinaryAttributeFailure -22)
+                   (&& clean (&& (== (stat 3) 0) (&& (== (stat 26) 1) (== (stat 5) 0)))))
+                 "ordinary attribute failure reports errno and deletes initialized native storage")))
     bad
   })

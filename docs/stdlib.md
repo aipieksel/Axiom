@@ -754,7 +754,10 @@ pool and gives its negative errno to the remaining commands. Closing the
 pool also terminates descendants still in its job. A host job policy
 that refuses containment returns a launch error. Argument quoting and
 PATH lookup follow `Sys`; `.bat` and `.cmd` files need an explicit
-`cmd.exe` invocation. Tested by `tests/stdlib/987-command-pools.ax`.
+`cmd.exe` invocation. Only valid standard-stream handles are inherited;
+unrelated inheritable handles stay in the parent. Launch buffers are
+reused between commands. Tested by `tests/stdlib/987-command-pools.ax`
+and the host WinAPI mocks in `tests/platform/windows-command-pools.py`.
 
 `Chan` passes words
 through a bounded channel; `Sync` provides mutexes with timeout and

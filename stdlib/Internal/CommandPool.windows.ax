@@ -1,6 +1,6 @@
 ;;! Internal.CommandPool - the Windows owned command-pool entry.
 (import Internal.WindowsCommands)
-(import Internal.Command)
+(import Internal.CommandScratch)
 (import Internal.RawVec)
 (import Sys)
 (import Str)
@@ -37,6 +37,7 @@
           ((Ok pool)
             {
               (let hs (vecWithCapacity w))
+              (let scratch (commandScratchNew 1))
               (let env sysEnvp)
               (let path (sysEnv "PATH"))
               (let mut next 0)
@@ -50,8 +51,11 @@
                       (let started
                         (if (== (vecLen argv) 0)
                           -2
-                          (windowsCommandsStart pool (% next w) (strDup (rawVecGetStr argv 0))
-                            (commandArgvVector argv) env path)))
+                          {
+                            (let encoded (commandScratchArgv scratch 0 argv))
+                            (windowsCommandsStart pool (% next w) (strDup (rawVecGetStr argv 0))
+                              encoded env path)
+                          }))
                       (if (< next w)
                         (vecPush hs started)
                         (vecSet hs (% next w) started))
@@ -82,6 +86,7 @@
                     (set joined (+ joined 1))
                   }))
               (let _ (windowsCommandsClose pool))
+              (let _ (commandScratchClose scratch))
               ()
             }
           ))

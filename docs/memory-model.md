@@ -5242,12 +5242,28 @@ program that asks for threads pays it:
 guarantee. `taskMapWords` runs an Axiom closure;
 `taskMapWordsChecked` answers a `Result` for each slot.
 `taskRunCommands` runs argument vectors and preserves the `sysRun`
-exit-code and negative-errno contract. The pools use `__proc_spawn`
-and `__proc_join`, the forked lowering of `parallel`.
+exit-code and negative-errno contract. On POSIX, the pools use
+`__proc_spawn` and `__proc_join`, the forked lowering of `parallel`.
 Evidence: `tests/stdlib/476-par-pool.ax` and
 `tests/stdlib/492-par-pool-checked.ax`.
 
-The pool uses `__proc_spawn` rather than `__par_spawn` for a reason.
+Windows command pools start native executables through
+`Internal.CommandPool.windows`. Every process slot and cleanup owner
+exists before the first command starts. A private job is assigned
+atomically during process creation, and the process handle is published
+before the child resumes. Closing the pool kills remaining job members
+and waits for its direct children. Argument, encoding and launch buffers
+are owned explicitly and reused; their addresses never escape to a
+returned result. Each child inherits only its valid standard streams
+through an explicit handle list. Microsoft's
+[process-attribute reference](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)
+defines the job and handle lists. Host mocks in
+`tests/platform/windows-command-pools.py` check ordering, bounded width,
+cleanup failures, ownership on recovery and retained allocation counts.
+Native Windows execution is checked separately by
+`tests/stdlib/987-command-pools.ax`.
+
+The word pool uses `__proc_spawn` rather than `__par_spawn` for a reason.
 `__par_spawn` follows `--threads`, so `AX3064` refuses a captured
 reference at it. `__proc_spawn` names the forked lowering, whose
 isolation is `MM-PAR-3` by construction, and `capSpawnHead` exempts it

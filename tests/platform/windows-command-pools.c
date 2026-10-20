@@ -25,8 +25,9 @@ struct attribute {
 static struct process processes[4096];
 static struct job jobs[512];
 static struct attribute attributes[4096];
-static int64_t counts[32], wait_order[8192], wait_count;
+static int64_t counts[33], wait_order[8192], wait_count;
 static int process_count, job_count, file_count, attribute_count;
+static int standard_mask;
 static int64_t last_error, fault_codes[32], fault_counts[32];
 static int64_t *watched_slot;
 
@@ -40,6 +41,10 @@ static int64_t *watched_slot;
  * close attempt, including one that reports a failure. */
 int64_t poolStat(int64_t index) { return counts[index]; }
 int64_t poolRecord(int64_t value) { counts[28] = value; return value; }
+int64_t poolScratchDrop(int64_t address) {
+    if (address) ++counts[32];
+    return 0;
+}
 int64_t poolWaitOrder(int64_t index) { return wait_order[index]; }
 int64_t poolReset(void) {
     memset(counts, 0, sizeof counts);
@@ -48,6 +53,7 @@ int64_t poolReset(void) {
     memset(attributes, 0, sizeof attributes);
     memset(wait_order, 0, sizeof wait_order);
     wait_count = process_count = job_count = file_count = attribute_count = 0;
+    standard_mask = 0;
     last_error = 0;
     memset(fault_codes, 0, sizeof fault_codes);
     memset(fault_counts, 0, sizeof fault_counts);
@@ -160,7 +166,14 @@ int64_t poolClose(int64_t handle) {
 }
 
 int64_t GetLastError(void) { return NOISE | last_error; }
-int64_t GetStdHandle(int64_t which) { return which == -10 ? 40 : which == -11 ? 44 : 48; }
+int64_t GetStdHandle(int64_t which) {
+    int index = (int)(-10 - which);
+    if (!index) standard_mask = 0;
+    if (index < 0 || index > 2) { ++counts[5]; return 0; }
+    if (fault(17, 0, 6)) return 0;
+    standard_mask |= 1 << index;
+    return 40 + index * 4;
+}
 int64_t SetHandleInformation(int64_t h, int64_t mask, int64_t flags) {
     if ((h != 40 && h != 44 && h != 48) || mask != 1 || flags != 1) ++counts[5];
     if (fault(15, h, 5)) return NOISE;
@@ -221,14 +234,19 @@ int64_t UpdateProcThreadAttribute(int64_t address, int64_t flags, int64_t kind,
         attributes[index].job = job;
     } else if (kind == 131074) {
         struct attribute *a = &attributes[index];
-        if (a->requested != 2 || !a->job || bytes < 24 || bytes > 128 || bytes % 8) {
+        if (a->requested != (a->job ? 2 : 1) || bytes < 8 || bytes > 128 || bytes % 8) {
             ++counts[20]; last_error = 87; return NOISE;
         }
         if (fault(16, 0, 87)) return NOISE;
         a->handle_count = (int)(bytes / 8);
         memcpy(a->handles, (void *)(intptr_t)value, (size_t)bytes);
         counts[30] = a->handle_count;
-        if (a->handles[0] != 40 || a->handles[1] != 44 || a->handles[2] != 48) ++counts[5];
+        int standard_count = 0;
+        for (int i = 0; i < 3; ++i)
+            if (standard_mask & (1 << i)) {
+                if (a->handles[standard_count] != 40 + i * 4) ++counts[5];
+                ++standard_count;
+            }
         for (int i = 0; i < a->handle_count; ++i) {
             int64_t h = a->handles[i];
             if (h != 40 && h != 44 && h != 48 && h != INT64_C(0x500000004) && h != INT64_C(0x500000008)) ++counts[5];
@@ -259,12 +277,25 @@ int64_t CreateProcessW(int64_t app, int64_t command, int64_t pa, int64_t ta, int
     if (!strstr(path, ".exe")) ++counts[22];
     const uint64_t *si = (const uint64_t *)(intptr_t)startup;
     int attribute = attribute_of((int64_t)si[13]);
-    if (pa || ta || inherit != 1 || flags != 525316 || directory ||
-        (uint32_t)si[0] != 112 || (uint32_t)(si[7] >> 32) != 256 ||
-        si[10] != 40 || si[11] != 44 || si[12] != 48) ++counts[5];
-    if (attribute < 0 || !attributes[attribute].initialized || !attributes[attribute].job)
-        ++counts[20];
-    if (attribute >= 0 && attributes[attribute].requested == 2 && attributes[attribute].handle_count < 3) ++counts[20];
+    int contained = (flags & 4) != 0;
+    int handle_count = attribute < 0 ? 0 : attributes[attribute].handle_count;
+    int attributes_expected = contained + (handle_count > 0);
+    int64_t expected_flags = (attributes_expected ? 525312 : 1024) | (contained ? 4 : 0);
+    if (pa || ta || flags != expected_flags || directory ||
+        (uint32_t)si[0] != (attributes_expected ? 112 : 104) || inherit != (handle_count > 0)) ++counts[5];
+    if (attributes_expected && (attribute < 0 || !attributes[attribute].initialized)) ++counts[20];
+    if ((uint32_t)(si[7] >> 32) != (standard_mask ? 256U : 0U)) ++counts[5];
+    int standard_count = 0;
+    for (int i = 0; i < 3; ++i) {
+        int valid = (standard_mask & (1 << i)) != 0;
+        if (si[10+i] != (uint64_t)(valid ? 40 + i * 4 : 0)) ++counts[5];
+        standard_count += valid;
+    }
+    if (handle_count < standard_count) ++counts[5];
+    if (attribute >= 0) {
+        const struct attribute *a = &attributes[attribute];
+        if (a->requested != attributes_expected || (a->job > 0) != contained) ++counts[5];
+    }
     int found = 0;
     if (environment) {
         const uint16_t *e = (const uint16_t *)(intptr_t)environment;
@@ -283,7 +314,7 @@ int64_t CreateProcessW(int64_t app, int64_t command, int64_t pa, int64_t ta, int
     struct process *p = &processes[process_count++];
     *p = (struct process){PROC_BASE + process_count, THREAD_BASE + process_count,
                          attribute < 0 ? 0 : attributes[attribute].job, code,
-                         1, 1, 1, 0, 0, attribute};
+                         1, 1, contained, !contained, 0, attribute};
     int64_t *pi = (int64_t *)(intptr_t)information;
     pi[0] = p->pid; pi[1] = p->thread; pi[2] = process_count;
     ++counts[0]; ++counts[2]; ++counts[19];

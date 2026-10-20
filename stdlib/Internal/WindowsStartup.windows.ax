@@ -1,0 +1,288 @@
+;;! Internal.WindowsStartup - reusable, owned native process launch storage.
+;
+; Only the resource owner is managed. Its retained raw table owns each
+; leaf buffer explicitly, so temporary encodings do not accumulate when
+; raw-pointer arguments conservatively park their managed callers.
+(import Internal.WindowsProcessEncoding)
+
+(extern "kernel32"
+  (startupInitialize :: (-> Int Int Int Int Int) (symbol "InitializeProcThreadAttributeList"))
+  (startupUpdate :: (-> Int Int Int Int Int Int Int Int) (symbol "UpdateProcThreadAttribute"))
+  (startupDelete :: (-> Int Int) (symbol "DeleteProcThreadAttributeList"))
+  (startupGetStd :: (-> Int Int) (symbol "GetStdHandle"))
+  (startupSetHandle :: (-> Int Int Int Int) (symbol "SetHandleInformation"))
+  (startupGetError :: Int (symbol "GetLastError")))
+
+(pub struct WindowsStartup sealed
+  (owner : Handle))
+
+(:: startupErrno (-> Int Int))
+(fn (startupErrno code)
+  (if (|| (== code 2) (== code 3))
+      -2
+    (== code 5)
+      -13
+    (== code 6)
+      -9
+    (== code 8)
+      -12
+    (|| (== code 32) (== code 33))
+      -16
+    (|| (== code 80) (== code 183))
+      -17
+    (|| (== code 87) (== code 123))
+      -22
+    (== code 112)
+      -28
+    (|| (== code 109) (== code 232))
+      -32
+    (== code 145)
+      -39
+    (== code 206)
+      -36
+    (== code 267)
+      -20
+    (== code 193)
+      -8
+    -5))
+
+(:: startupLastError Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (startupLastError)
+  (startupErrno (& startupGetError 4294967295)))
+
+; Table words 0..19 are ten (pointer, capacity) pairs. Word 32 marks
+; a live attribute list; 33/34 are flags/inheritance; 35 is env-or-null.
+(pub :: windowsStartupFinish (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsStartupFinish state)
+  {
+    (if (!= (__load64 state 32) 0)
+      {
+        (__store64 state 32 0)
+        (startupDelete (__load64 state 14))
+      })
+    0
+  })
+
+(:: startupDrop (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (startupDrop state)
+  {
+    (windowsStartupFinish state)
+    (for i in 0..10
+      {
+        (let ptr (__load64 state (* i 2)))
+        (__store64 state (* i 2) 0)
+        (__release ptr)
+      })
+    (__release state)
+    0
+  })
+
+(pub :: windowsStartupNew WindowsStartup)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsStartupNew)
+  {
+    (let state (__alloc 320))
+    (__retain state)
+    (WindowsStartup :owner (__resource_new startupDrop state))
+  })
+
+(pub :: windowsStartupClose (-> WindowsStartup Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsStartupClose startup)
+  (__resource_close startup.owner))
+
+(:: startupBuffer (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (startupBuffer state index bytes)
+  {
+    (let offset (* index 2))
+    (if (> bytes (__load64 state (+ offset 1)))
+      {
+        (let next (__alloc bytes))
+        (__retain next)
+        (let old (__load64 state offset))
+        (__store64 state offset next)
+        (__store64 state (+ offset 1) bytes)
+        (__release old)
+      })
+    (let ptr (__load64 state offset))
+    (for i in 0..bytes
+      (__store8 ptr i 0))
+    ptr
+  })
+
+(:: startupValidHandle (-> Int Bool))
+(fn (startupValidHandle h)
+  (&& (> h 0) (== (& h 3) 0)))
+
+(:: startupAppend (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (startupAppend list count h)
+  {
+    (let mut found false)
+    (for i in 0..count
+      (if (== (__load64 list i) h)
+        (set found true)))
+    (if found
+      count
+      {
+        (__store64 list count h)
+        (+ count 1)
+      })
+  })
+
+(:: startupHandles (-> Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (startupHandles si list supplied count)
+  {
+    (let mut used 0)
+    (let mut error 0)
+    (for i in 0..3
+      {
+        (let h (startupGetStd (- -10 i)))
+        (if (startupValidHandle h)
+          (if (== (& (startupSetHandle h 1 1) 4294967295) 0)
+            (if (== error 0)
+              (set error startupLastError))
+            {
+              (__store64 si 7 1099511627776)
+              (__store64 si (+ 10 i) h)
+              (set used (startupAppend list used h))
+            }))
+      })
+    (if (< error 0)
+      error
+      {
+        (for i in 0..count
+          (set used (startupAppend list used (__load64 supplied i))))
+        used
+      })
+  })
+
+; Prepare every buffer before initializing the native attribute list.
+; A persistent owner unwinds an initialized list on traps. No allocation
+; follows successful initialization, including the scalar return value.
+; JOB_LIST makes job association atomic with process creation. HANDLE_LIST
+; is always strict, including ordinary launches with no explicit transport.
+(pub :: windowsStartupPrepare (-> WindowsStartup Int Int Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsStartupPrepare startup path argv envp job handles count)
+  {
+    (let state (__resource_get startup.owner))
+    (windowsStartupFinish state)
+    (if (|| (< count 0) (> count 1152921504606846972))
+        -22
+      (&& (> count 0) (== handles 0))
+        -22
+      {
+        (let mut valid true)
+        (for i in 0..count
+          (if (! (startupValidHandle (__load64 handles i)))
+            (set valid false)))
+        (if (! valid)
+          -22
+          {
+            (let app (startupBuffer state 0 (* (+ (winCLen path 0) 1) 2)))
+            (let command8 (startupBuffer state 1 (+ (winArgvBound argv 0 0) 1)))
+            (let end (winArgvFrom argv 0 command8 0))
+            (__store8 command8 end 0)
+            (let command (startupBuffer state 2 (* (+ end 1) 2)))
+            (let env
+              (if (== envp 0)
+                0
+                (startupBuffer state 3 (* (+ (winEnvBytes envp 0 0) 2) 2))))
+            (let si (startupBuffer state 4 112))
+            (let pi (startupBuffer state 5 24))
+            (let size (startupBuffer state 6 8))
+            (let jobs (startupBuffer state 8 16))
+            (let inherited (startupBuffer state 9 (* (+ count 3) 8)))
+            (__store64 jobs 1 job)
+            (let used (startupHandles si inherited handles count))
+            (let envEnd
+              (if (== envp 0)
+                0
+                (winEnvFrom envp 0 env 0)))
+            (if (|| (|| (< (winWideFrom path 0 app 0) 0) (< (winWideFrom command8 0 command 0) 0))
+                  (< envEnd 0))
+                -22
+              (< used 0)
+                used
+              {
+                (if (!= envp 0)
+                  {
+                    (winPut16 env envEnd 0)
+                    (winPut16 env (+ envEnd 1) 0)
+                  })
+                (__store64 state 35 env)
+                (__store64 state 34
+                  (if (> used 0)
+                    1
+                    0))
+                (let attributesCount
+                  (+
+                    (if (> job 0)
+                      1
+                      0)
+                    (if (> used 0)
+                      1
+                      0)))
+                (if (== attributesCount 0)
+                  {
+                    (__store64 si 0 104)
+                    (__store64 state 33 1024)
+                    state
+                  }
+                  {
+                    (let query (& (startupInitialize 0 attributesCount 0 size) 4294967295))
+                    (let queryError (& startupGetError 4294967295))
+                    (if (|| (!= query 0) (!= queryError 122))
+                        (if (== queryError 0)
+                          -5
+                          (startupErrno queryError))
+                      (<= (__load64 size 0) 0)
+                        -5
+                      {
+                        (let attributes (startupBuffer state 7 (__load64 size 0)))
+                        (__store64 jobs 0 (__load64 size 0))
+                        (__store64 si 0 112)
+                        (__store64 si 13 attributes)
+                        (__store64 state 33 525312)
+                        (if (==
+                              (& (startupInitialize attributes attributesCount 0 jobs) 4294967295)
+                              0)
+                          startupLastError
+                          {
+                            (__store64 state 32 1)
+                            (let jobResult
+                              (if (> job 0)
+                                (& (startupUpdate attributes 0 131085 (+ jobs 8) 8 0 0) 4294967295)
+                                1))
+                            (let handleResult
+                              (if (&& (!= jobResult 0) (> used 0))
+                                (& (startupUpdate attributes 0 131074 inherited (* used 8) 0 0)
+                                  4294967295)
+                                1))
+                            (if (|| (== jobResult 0) (== handleResult 0))
+                              {
+                                (let error startupLastError)
+                                (windowsStartupFinish state)
+                                error
+                              }
+                              state)
+                          })
+                      })
+                  })
+              })
+          })
+      })
+  })

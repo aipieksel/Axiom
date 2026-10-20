@@ -12,6 +12,7 @@
 (import Internal.ProcessPath)
 (import Internal.Process)
 (import Internal.WindowsCommandsNative)
+(import Internal.WindowsStartup)
 
 (struct WindowsCommandSlot
   (mut pid : Int))
@@ -22,13 +23,14 @@
 (pub struct WindowsCommands sealed
   (owner : Handle)
   (slots : (Vec WindowsCommandSlot))
-  (job : WindowsCommandJob))
+  (job : WindowsCommandJob)
+  (startup : WindowsStartup))
 
 ; Kill the job first, then wait for and retire every handle it owned.
 ; Cleanup performs no allocations, so it also runs on an arena abort.
-(:: windowsCommandsDrop (-> WindowsCommandJob (Vec WindowsCommandSlot) Int))
+(:: windowsCommandsDrop (-> WindowsCommandJob (Vec WindowsCommandSlot) WindowsStartup Int))
 ;@axiom:effect(io)
-(fn (windowsCommandsDrop job slots)
+(fn (windowsCommandsDrop job slots startup)
   {
     (let mut error 0)
     (if (> job.handle 0)
@@ -53,7 +55,10 @@
             ()
           })
       })
-    error
+    (let scratchError (windowsStartupClose startup))
+    (if (&& (== error 0) (< scratchError 0))
+      scratchError
+      error)
   })
 
 ;; Allocate fixed slots and the owner before creating the cleanup job.
@@ -70,11 +75,13 @@
       (for i in 0..width
         (vecPush slots (WindowsCommandSlot :pid 0)))
       (let job (WindowsCommandJob :handle 0))
+      (let startup windowsStartupNew)
       (let pool
         (WindowsCommands
-          :owner (__resource_new (lambda (unused) (windowsCommandsDrop job slots)) 0)
+          :owner (__resource_new (lambda (unused) (windowsCommandsDrop job slots startup)) 0)
           :slots slots
-          :job job))
+          :job job
+          :startup startup))
       (let handle windowsCommandJobNew)
       (if (< handle 0)
         {
@@ -125,7 +132,7 @@
         (lambda (candidate)
           (processSpawnWith
             (lambda (p a e)
-              (windowsCommandSpawnInherited pool.job.handle p a e (as slot Int) handles count)
+              (windowsCommandSpawnPrepared pool.startup pool.job.handle p a e (as slot Int) handles count)
             )
             (strCStr candidate) argv envp)
         )

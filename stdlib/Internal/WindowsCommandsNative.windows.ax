@@ -4,7 +4,7 @@
 ; operations. Creation assigns each suspended child to a private
 ; kill-on-close job before its handle is published in the owner's slot.
 ; No operation after CreateProcessW allocates Axiom memory.
-(import Internal.WindowsProcessEncoding)
+(import Internal.WindowsStartup)
 
 (extern "kernel32"
   (cmdCreateJobObjectW :: (-> Int Int Int) (symbol "CreateJobObjectW"))
@@ -75,17 +75,21 @@
     ; Allocate before CreateJobObjectW: no new native handle is left
     ; outside its owner by an allocation trap.
     (let limits (__alloc 144))
+    (__retain limits)
     (__store64 limits 2 8192)
     (let job (cmdCreateJobObjectW 0 0))
-    (if (== job 0)
-      cmdLastError
-      (if (== (& (cmdSetInformationJobObject job 9 limits 144) 4294967295) 0)
-        {
-          (let error cmdLastError)
-          (cmdCloseHandle job)
-          error
-        }
-        job))
+    (let result
+      (if (== job 0)
+        cmdLastError
+        (if (== (& (cmdSetInformationJobObject job 9 limits 144) 4294967295) 0)
+          {
+            (let error cmdLastError)
+            (cmdCloseHandle job)
+            error
+          }
+          job)))
+    (__release limits)
+    result
   })
 
 ;; Closing the private job terminates all processes still in it.
@@ -96,21 +100,6 @@
   (if (== (& (cmdCloseHandle job) 4294967295) 0)
     cmdLastError
     0))
-
-; A standard stream inherited exactly as ordinary platformSpawn does.
-(:: cmdStdForChild (-> Int Int))
-;@axiom:effect(io)
-;@axiom:effect(unsafe)
-(fn (cmdStdForChild n)
-  {
-    (let h (cmdGetStdHandle (- -10 n)))
-    (if (|| (== h 0) (== h -1))
-      0
-      {
-        (cmdSetHandleInformation h 1 1)
-        h
-      })
-  })
 
 ;; Terminate a child, observe termination, and retire its handle. No
 ;; memory is allocated, so this also runs from an owner's trap cleanup.
@@ -148,229 +137,68 @@
     error
   })
 
-; Initialise the already allocated attribute buffer. JOB_LIST assigns
-; the job as part of CreateProcessW, closing the create-then-assign gap
-; in which a fatal trap in another thread could leave an orphan. This
-; attribute requires Windows 10 or Windows Server 2016 and later.
-(:: cmdAttributes (-> Int Int Int Int Int))
+; Reusable launch storage owns every encoding and native record. The
+; raw state is borrowed only across synchronous native calls. Publication
+; precedes attribute deletion, resume, or any managed owner cleanup.
+(pub :: windowsCommandSpawnPrepared (-> WindowsStartup Int Int Int Int Int Int Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
-(fn (cmdAttributes attributes jobs handles handleCount)
-  (if (==
-        (&
-          (cmdInitializeProcThreadAttributeList attributes
-            (if (> handleCount 0)
-              2
-              1)
-            0 jobs)
-          4294967295)
-        0)
-    cmdLastError
-    (if (== (& (cmdUpdateProcThreadAttribute attributes 0 131085 (+ jobs 8) 8 0 0) 4294967295) 0)
+(pub fn (windowsCommandSpawnPrepared startup job path argv envp slot handles count)
+  {
+    (let state (windowsStartupPrepare startup path argv envp job handles count))
+    (if (< state 0)
+      state
       {
-        (let error cmdLastError)
-        (cmdDeleteProcThreadAttributeList attributes)
-        error
-      }
-      (if (> handleCount 0)
-        ; PROC_THREAD_ATTRIBUTE_HANDLE_LIST: only these inheritable
-        ; handles cross, including this child's valid standard handles.
-        (if (==
-              (& (cmdUpdateProcThreadAttribute attributes 0 131074 handles (* handleCount 8) 0 0)
-                4294967295)
-              0)
+        (let app (__load64 state 0))
+        (let command (__load64 state 4))
+        (let env (__load64 state 35))
+        (let si (__load64 state 8))
+        (let pi (__load64 state 10))
+        (let flags (| (__load64 state 33) 4))
+        (let inherits (__load64 state 34))
+        (if (== (& (cmdCreateProcessW app command 0 0 inherits flags env 0 si pi) 4294967295) 0)
           {
             (let error cmdLastError)
-            (cmdDeleteProcThreadAttributeList attributes)
+            (windowsStartupFinish state)
             error
           }
-          0)
-        0))))
-
-; Pseudo-handles, null and descriptor numbers are not inheritable native
-; handles. Real object handles use the aligned positive form Sys accepts.
-(:: cmdInheritedHandle (-> Int Bool))
-(fn (cmdInheritedHandle handle)
-  (&& (> handle 0) (== (& handle 3) 0)))
-
-(:: cmdInheritedValid (-> Int Int Bool))
-;@axiom:effect(unsafe)
-(fn (cmdInheritedValid handles count)
-  {
-    (let mut valid true)
-    (for i in 0..count
-      (if valid
-        (set valid (cmdInheritedHandle (__load64 handles i)))))
-    valid
-  })
-
-; Append one distinct handle to storage sized for all input handles and
-; the three standard handles. Deduplication also handles a transport
-; endpoint that the caller already uses as a standard stream.
-(:: cmdInheritedAppend (-> Int Int Int Int Int))
-;@axiom:effect(unsafe)
-(fn (cmdInheritedAppend handles used handle from)
-  {
-    (let mut found false)
-    (for i in from..used
-      (if (== (__load64 handles i) handle)
-        (set found true)))
-    (if found
-      used
-      {
-        (__store64 handles used handle)
-        (+ used 1)
+          {
+            (let pid (__load64 pi 0))
+            (let thread (__load64 pi 1))
+            (__store64 slot 0 pid)
+            (windowsStartupFinish state)
+            (let previous (& (cmdResumeThread thread) 4294967295))
+            (if (== previous 4294967295)
+                (cmdSpawnRollback pid thread slot cmdLastError)
+              (> previous 1)
+                (cmdSpawnRollback pid thread slot -5)
+              {
+                (cmdCloseHandle thread)
+                pid
+              })
+          })
       })
   })
 
-; Prepare a strict inherited-handle list and the matching standard-handle
-; fields. Supplied transport handles are already inheritable; this call
-; changes inheritance only on the standard streams, as ordinary spawn
-; does. It does not take ownership of any supplied handle.
-(:: cmdInheritedList (-> Int Int Int Int Int))
-;@axiom:effect(io)
-;@axiom:effect(unsafe)
-(fn (cmdInheritedList si output supplied count)
-  {
-    (let mut used 0)
-    (let mut error 0)
-    (for i in 0..3
-      {
-        (let handle (cmdGetStdHandle (- -10 i)))
-        (if (cmdInheritedHandle handle)
-          (if (== (& (cmdSetHandleInformation handle 1 1) 4294967295) 0)
-            (if (== error 0)
-              (set error cmdLastError))
-            {
-              (__store64 si (+ 10 i) handle)
-              (set used (cmdInheritedAppend output used handle 0))
-            }))
-      })
-    (if (< error 0)
-      error
-      {
-        (for i in 0..count
-          (set used (cmdInheritedAppend output used (__load64 supplied i) 0)))
-        used
-      })
-  })
-
-; All buffers, including the attribute list, exist before this call.
-; No Axiom allocation occurs from native creation through publication,
-; resume or rollback. STARTUPINFOEXW is 112 bytes on both 64-bit targets.
-(:: cmdSpawnPrepared (-> Int Int Int Int Int Int Int Int))
-;@axiom:effect(io)
-;@axiom:effect(unsafe)
-(fn (cmdSpawnPrepared app cmd env slot attributes si pi)
-  ; EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT |
-  ; CREATE_SUSPENDED. JOB_LIST is present before the child can exist.
-  (if (== (& (cmdCreateProcessW app cmd 0 0 1 525316 env 0 si pi) 4294967295) 0)
-    {
-      (let error cmdLastError)
-      (cmdDeleteProcThreadAttributeList attributes)
-      error
-    }
-    {
-      (let pid (__load64 pi 0))
-      (let thread (__load64 pi 1))
-      (__store64 slot 0 pid)
-      (cmdDeleteProcThreadAttributeList attributes)
-      (let previous (& (cmdResumeThread thread) 4294967295))
-      (if (== previous 4294967295)
-          (cmdSpawnRollback pid thread slot cmdLastError)
-        (> previous 1)
-          (cmdSpawnRollback pid thread slot -5)
-        {
-          (cmdCloseHandle thread)
-          pid
-        })
-    }))
-
-;; Start a contained child. On success its handle is already in the
-;; preallocated slot at word 0. Job assignment is part of native process
-;; creation, before the suspended child can execute. A failed resume has
-;; been terminated and waited before its handles close, leaving no slot.
+;; Start a contained child. Its live handle is published before resume.
+;; Convenience callers own and close one launch-storage resource; pools
+;; call the Prepared sibling to reuse all native scratch between starts.
 (pub :: windowsCommandSpawn (-> Int Int Int Int Int Int))
 ;@axiom:effect(io)
 (pub fn (windowsCommandSpawn job path argv envp slot)
   (windowsCommandSpawnInherited job path argv envp slot 0 0))
 
-;; Start a contained child with explicit transport handles. `handles`
-;; owns `handleCount` live, already-inheritable native handle words until
-;; this call returns. The handles remain owned by the caller. Standard
-;; streams are included once; no other inheritable handle crosses.
+;; Only valid standard streams and the supplied inheritable transport
+;; handles cross into the child. Supplied handles stay caller-owned.
 (pub :: windowsCommandSpawnInherited (-> Int Int Int Int Int Int Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (windowsCommandSpawnInherited job path argv envp slot handles handleCount)
-  (if (|| (< handleCount 0) (> handleCount 1152921504606846972))
-      -22
-    (&& (> handleCount 0) (|| (== handles 0) (! (cmdInheritedValid handles handleCount))))
-      -22
-    {
-      (let app (winWidePath path))
-      (let cmd (winCommandLine argv))
-      (let env (winEnvBlock envp))
-      (if (|| (|| (== app 0) (== cmd 0)) (== env -1))
-        -22
-        {
-          ; The first call queries the attribute storage requirement and
-          ; fails with ERROR_INSUFFICIENT_BUFFER (122), as documented.
-          (let size (__alloc 8))
-          (let query
-            (&
-              (cmdInitializeProcThreadAttributeList 0
-                (if (> handleCount 0)
-                  2
-                  1)
-                0 size)
-              4294967295))
-          (let queryError (& cmdGetLastError 4294967295))
-          (if (|| (!= query 0) (!= queryError 122))
-            (if (== queryError 0)
-              -5
-              (cmdErrno queryError))
-            (if (<= (__load64 size 0) 0)
-              -5
-              {
-                ; Every allocation precedes attribute initialisation and
-                ; child creation, so a trap cannot skip native cleanup.
-                (let attributes (__alloc (__load64 size 0)))
-                ; First word is the size cell passed to Initialise;
-                ; second word is the JOB_LIST value, kept until Delete.
-                (let jobs (__alloc 16))
-                (__store64 jobs 0 (__load64 size 0))
-                (__store64 jobs 1 job)
-                (let si (__alloc 112))
-                (__store64 si 0 112)
-                (__store64 si 7 1099511627776)
-                (__store64 si 13 attributes)
-                (let pi (__alloc 24))
-                (if (> handleCount 0)
-                  {
-                    (let inherited (__alloc (* (+ handleCount 3) 8)))
-                    (let count (cmdInheritedList si inherited handles handleCount))
-                    (if (< count 0)
-                      count
-                      {
-                        (let setup (cmdAttributes attributes jobs inherited count))
-                        (if (< setup 0)
-                          setup
-                          (cmdSpawnPrepared app cmd env slot attributes si pi))
-                      })
-                  }
-                  {
-                    (__store64 si 10 (cmdStdForChild 0))
-                    (__store64 si 11 (cmdStdForChild 1))
-                    (__store64 si 12 (cmdStdForChild 2))
-                    (let setup (cmdAttributes attributes jobs 0 0))
-                    (if (< setup 0)
-                      setup
-                      (cmdSpawnPrepared app cmd env slot attributes si pi))
-                  })
-              }))
-        })
-    }))
+  {
+    (let startup windowsStartupNew)
+    (let result (windowsCommandSpawnPrepared startup job path argv envp slot handles handleCount))
+    (windowsStartupClose startup)
+    result
+  })
 
 ;; Observe completion without retiring the process handle: 1 when it
 ;; has ended, 0 while running, or a negative errno on failure.
@@ -437,23 +265,27 @@
   {
     ; Allocate the out-cell while the pool still owns the live handle.
     (let cell (__alloc 8))
-    (if (!= (& (cmdWaitForSingleObject pid 4294967295) 4294967295) 0)
-      {
-        (let error cmdLastError)
-        (windowsCommandDispose pid)
-        error
-      }
-      (if (== (& (cmdGetExitCodeProcess pid cell) 4294967295) 0)
+    (__retain cell)
+    (let result
+      (if (!= (& (cmdWaitForSingleObject pid 4294967295) 4294967295) 0)
         {
           (let error cmdLastError)
-          (cmdCloseHandle pid)
+          (windowsCommandDispose pid)
           error
         }
-        {
-          (let code (& (__load64 cell 0) 4294967295))
-          (let closed (& (cmdCloseHandle pid) 4294967295))
-          (if (== closed 0)
-            cmdLastError
-            (cmdWaitStatus code))
-        }))
+        (if (== (& (cmdGetExitCodeProcess pid cell) 4294967295) 0)
+          {
+            (let error cmdLastError)
+            (cmdCloseHandle pid)
+            error
+          }
+          {
+            (let code (& (__load64 cell 0) 4294967295))
+            (let closed (& (cmdCloseHandle pid) 4294967295))
+            (if (== closed 0)
+              cmdLastError
+              (cmdWaitStatus code))
+          })))
+    (__release cell)
+    result
   })

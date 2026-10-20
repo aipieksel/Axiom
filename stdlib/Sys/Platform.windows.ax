@@ -73,6 +73,7 @@
 ; since 2026-09-03; acyclic, as the four syscall-ABI files record.
 (import Err)
 (import Internal.WindowsProcessEncoding)
+(import Internal.WindowsStartup)
 
 ;; read(fd, buf, count): 0 and unused, like every syscall number in this
 ;; file. `platformReadFd` reads instead.
@@ -1401,30 +1402,12 @@
 ; The child gets this process's three standard handles, as a POSIX
 ; child inherits descriptors 0 to 2, and `platformSetStd` swaps one for
 ; the length of a spawn, as `Sys.sysRunPathErrTo` swaps descriptor 2.
-; Those handles are marked inheritable; every file this module opens is
-; not, so nothing else crosses.
+; A strict HANDLE_LIST contains only those valid standard handles, so
+; concurrent worker transports cannot cross into an unrelated child.
 ;
 ; Not yet: `.bat` and `.cmd` files, which run under `cmd.exe` with its
 ; own quoting rules.
 ; ------------------------------------------------------------------
-; Standard handle `n` (0, 1 or 2), marked inheritable so a child given
-; it can use it. A process with no such handle answers 0, and the
-; child then has none either.
-(:: winStdForChild (-> Int Int))
-;@axiom:effect(io)
-;@axiom:effect(unsafe)
-(fn (winStdForChild n)
-  {
-    (let h (winGetStdHandle (- (- 0 10) n)))
-    (if (|| (== h 0) (== h (- 0 1)))
-      0
-      {
-        ; HANDLE_FLAG_INHERIT
-        (winSetHandleInformation h 1 1)
-        h
-      })
-  })
-
 ;; Start `path` with `argv` and `envp`: the child's process handle, or
 ;; `-errno`. ENOENT when there is no such file, ENOEXEC when it is not a
 ;; Windows program.
@@ -1436,32 +1419,30 @@
 ;@axiom:effect(unsafe)
 (pub fn (platformSpawn path argv envp)
   {
-    (let app (winWidePath path))
-    (let cmd (winCommandLine argv))
-    (let env (winEnvBlock envp))
-    (if (|| (|| (== app 0) (== cmd 0)) (== env (- 0 1)))
-      (- 0 22)
-      {
-        ; STARTUPINFOW is 104 bytes on both 64-bit arches: `cb` at 0,
-        ; `dwFlags` at 60 (the upper half of word 7), and the three
-        ; standard handles at 80, 88 and 96.
-        (let si (__alloc 104))
-        (__store64 si 0 104)
-        ; STARTF_USESTDHANDLES (0x100), shifted into the upper half.
-        (__store64 si 7 1099511627776)
-        (__store64 si 10 (winStdForChild 0))
-        (__store64 si 11 (winStdForChild 1))
-        (__store64 si 12 (winStdForChild 2))
-        ; PROCESS_INFORMATION: hProcess, hThread, then the two ids.
-        (let pi (__alloc 24))
-        ; bInheritHandles, and CREATE_UNICODE_ENVIRONMENT (0x400).
-        (if (== (& (winCreateProcessW app cmd 0 0 1 1024 env 0 si pi) 4294967295) 0)
-          winLastErr
-          {
-            (winCloseHandle (__load64 pi 1))
-            (__load64 pi 0)
-          })
-      })
+    (let startup windowsStartupNew)
+    (let state (windowsStartupPrepare startup path argv envp 0 0 0))
+    (let result
+      (if (< state 0)
+        state
+        {
+          (let pi (__load64 state 10))
+          ; HANDLE_LIST restricts inheritance to the valid standard streams.
+          ; With no standards, bInheritHandles is FALSE and no list is needed.
+          (if (==
+                (&
+                  (winCreateProcessW (__load64 state 0) (__load64 state 4) 0 0 (__load64 state 34)
+                    (__load64 state 33) (__load64 state 35) 0 (__load64 state 8) pi)
+                  4294967295)
+                0)
+            winLastErr
+            {
+              (let pid (__load64 pi 0))
+              (winCloseHandle (__load64 pi 1))
+              pid
+            })
+        }))
+    (windowsStartupClose startup)
+    result
   })
 
 ; The signal a POSIX shell would report for a child that ended with
@@ -1513,14 +1494,22 @@
   (if (!= (& (winWaitForSingleObject pid 4294967295) 4294967295) 0)
     winLastErr
     {
-      (let cell winCell)
-      (if (== (& (winGetExitCodeProcess pid cell) 4294967295) 0)
-        winLastErr
-        {
-          (let code (& (__load64 cell 0) 4294967295))
-          (winCloseHandle pid)
-          (winWaitStatus code)
-        })
+      (let cell (__alloc 8))
+      (__retain cell)
+      (let result
+        (if (== (& (winGetExitCodeProcess pid cell) 4294967295) 0)
+          {
+            (let error winLastErr)
+            (winCloseHandle pid)
+            error
+          }
+          {
+            (let code (& (__load64 cell 0) 4294967295))
+            (winCloseHandle pid)
+            (winWaitStatus code)
+          }))
+      (__release cell)
+      result
     }))
 
 ;; Send `sig` to the child `pid`: 0, or `-errno`, ESRCH when it has
