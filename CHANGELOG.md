@@ -16,6 +16,15 @@ its changelog too.
 
 ## Unreleased
 
+- The assurance page's rule tables are checked claims.
+  `scripts/check-assurance-controls.sh` reads every table in
+  `docs/assurance.md` headed `Area`, `Refused as`, `A refusal` and
+  `An acceptance`, checks each refusal path for one of its row's codes
+  and each acceptance path for no error, and fails on a missing path
+  or an empty table. For `AX3042`, `AX3010` and `AX3005` it rebuilds
+  the compiler from a copy of `self_host/` with the enforcement
+  removed and requires the refusal fixtures that name the code to be
+  accepted by it, after counting each seam exactly once.
 - The assurance page maps each effect rule to the code that refuses it
   and a fixture on each side, and names the one limit: a value's drop
   runs with the effects declared where the value was made, not where it
@@ -73,7 +82,7 @@ its changelog too.
   ones, `build` refuses what `check` refuses with the same codes, and
   the REPL reports the same codes for every fixture small enough to
   type in (`tests/tools/surface-agreement.py`). With it there are
-  ninety-six gates that build the compiler under test from the tree.
+  ninety-seven gates that build the compiler under test from the tree.
   The assurance page maps each area of type soundness to the code that
   refuses it and a fixture on each side.
 

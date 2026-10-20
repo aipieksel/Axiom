@@ -136,7 +136,7 @@ an unverifiable claim cannot certify the claim above it.
 | A claim the body contradicts | `AX3010` an `effect(...)` or `effect(pure)` claim the body performs against | `tests/diagnostics/1201-field-dispatch.ax` | `tests/selfhost/1032-imported-signatures.ax` |
 | A required effect undeclared | `AX3042` IO, Spawn, Block or Entropy performed and not declared | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/stdlib/470-parallel.ax` |
 | Unsafe | `AX3073` a raw operation with no `effect(unsafe)`; `AX3010` an `effect(unsafe)` claim over a body with none | `tests/diagnostics/1004-undeclared-unsafe.ax` | `tests/selfhost/1010-trusted-wrapper.ax` |
-| A claim the walk cannot check | `AX3037`, a warning; the symbol row carries `#effects-overapprox`, `#effects-possible` or `#effect-params`, and a caller's purity or restriction is judged by what flows through the call | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/diagnostics/1463-callback-restrictions.ax` |
+| A claim the walk cannot check | `AX3037`, a warning; the symbol row carries `#effects-overapprox`, `#effects-possible` or `#effect-params`, and a caller's purity or restriction is judged by what flows through the call | `tests/diagnostics/1472-claim-does-not-launder.ax` | `tests/diagnostics/343-axtag-unverifiable.ax` |
 | Restrictions | `AX3049` a restriction the body or a callback violates; `AX3051`, a warning, one the walk cannot check; `AX3057` a `strict` one it cannot prove | `tests/diagnostics/393-restrict-strict.ax` | `tests/selfhost/132-contract.ax` |
 | Handlers and operations | `AX3011` a handle body that reaches an effect its list does not name; `AX3053` an operation with no handler; `AX3038`, a warning, a handle list the walk cannot check | `tests/diagnostics/320-unhandled-effect.ax` | `tests/stdlib/300-effect-handlers.ax` |
 | FFI | an `extern` call performs IO and is an unsafe operation, so its caller declares both | `tests/diagnostics/1041-trusted-call.ax` | `stdlib/Sys/Platform.windows.ax` |
@@ -233,6 +233,10 @@ timing or bus faults.
 | R-E2 | The compiler rebuilds itself byte for byte, two builds agree, and a diverse double compile agrees with an independent checker | `scripts/check-bootstrap.sh`, `scripts/check-reproducible.sh`, `scripts/check-ddc.sh` |
 | — | The seed is its source's emission, and its lineage replays to the original anchor | `scripts/check-seed-provenance.sh`, `scripts/check-seed-lineage.sh` |
 | — | A gate never reuses a compiler built from another tree | `scripts/check-gate-lib.sh` |
+
+The rule-by-rule tables are checked claims: `scripts/check-assurance-controls.sh`
+checks every refusal and acceptance they name, and builds the compiler
+with an enforcement removed to show that the refusal fixtures reach it.
 
 Each method has limits. Bootstrap convergence doesn't prove the
 compiler correct, a model proves only the model, and fuzzing explores
