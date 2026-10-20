@@ -2451,6 +2451,11 @@ forms run; incomplete forms continue onto another line. Start your session
 with imports, before defining functions or values. `:load` follows the
 same rule; use `:reset` to start a new module header.
 
+A declaration is checked as you type it, the way `check` checks the file
+your session would be: one the compiler refuses is reported with its
+code and not kept. A signature may wait for its definition on a later
+line. Redefining a name replaces the earlier declaration.
+
 The prompt, syntax and results use Axiom's lime and amber palette. Errors
 stand out in coral, with a code you can look up using `:explain AX3004`.
 `:explain let` explains a language form; `:explain @restrict` explains a tag.

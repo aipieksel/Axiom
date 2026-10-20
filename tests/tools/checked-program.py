@@ -88,7 +88,31 @@ def main():
         assert archive.read_bytes() == archive_before, 'refused archive replaced output'
         assert binding.read_bytes() == binding_before, 'refused binding replaced output'
         checks += 1
-    print(f'ok   checked compilation: {checks} refusal/output-preservation and native checks')
+
+        # The emitter has one way in. `emitResolvedMode` is called from
+        # `checked.ax` and nowhere else, and the entries that once went
+        # around the final check - `emitModule`, `emitResolved` - are
+        # gone. A new caller must take the sealed value, so it cannot
+        # emit what the check refused.
+        callers = {}
+        for source in sorted((root / 'self_host').glob('*.ax')):
+            for lineno, line in enumerate(source.read_text().split('\n'), 1):
+                code = line.split(';', 1)[0]
+                if '(emitResolvedMode ' in code:
+                    callers.setdefault(source.name, []).append(lineno)
+                for retired in ('(emitModule ', '(emitResolved ', 'emitModule (', 'emitResolved ('):
+                    assert retired not in code, (source.name, lineno, retired)
+        assert set(callers) == {'checked.ax', 'codegen.ax'}, callers
+        assert len(callers['checked.ax']) == 1, callers
+        # codegen's own occurrence is the declaration, not a call site
+        definition = (root / 'self_host' / 'codegen.ax').read_text()
+        assert definition.count('(pub fn (emitResolvedMode ') == 1
+        assert callers['codegen.ax'] == [
+            lineno for lineno, line in enumerate(definition.split('\n'), 1)
+            if '(pub fn (emitResolvedMode ' in line
+        ], callers
+        checks += 1
+    print(f'ok   checked compilation: {checks} refusal/output-preservation and native checks, and one way into the emitter')
 
 
 if __name__ == '__main__':

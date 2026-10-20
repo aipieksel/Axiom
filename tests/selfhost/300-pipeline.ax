@@ -10,6 +10,7 @@
 (import parser)
 (import typecheck)
 (import codegen)
+(import checked)
 (import raw)
 
 ; Emission consumes the resolved, expanded and checked tree.
@@ -38,9 +39,15 @@
         (expandProgram decls allDecls eds frames units bares fulls mods)
         (if (> (countErrorDiags eds) 0)
           ""
-          (if (> (countErrorDiags (checkModule decls allDecls units)) 0)
-            ""
-            (emitResolved allDecls bares fulls tcode)))
+          ; the final check's sealed value is the emitter's one way in
+          {
+            (let checked (checkExpandedProgram decls allDecls units))
+            (if (> (countErrorDiags checked.diagnostics) 0)
+              ""
+              (match checked.program
+                ((Some program) (emitCheckedProgram program bares fulls tcode false))
+                ((None) "")))
+          })
       }
     }
   })

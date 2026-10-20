@@ -1,23 +1,51 @@
 ; expect 42
+; Emission as a library caller reaches it: resolve, expand, hand the
+; final check's result to the emitter. There is no other way in -
+; `emitCheckedProgram` takes the sealed value the check constructs, so
+; a module that fails its check has nothing to emit.
 (import Str)
 (import Vec)
-(import Mem)
+(import core)
 (import lexer)
 (import parser)
 (import codegen)
+(import checked)
 (import raw)
 
 (:: main Int)
 ;@axiom:effect(io)
+;@axiom:effect(unsafe)
 (fn (main)
   {
-    (let pr (parseModule (lex "(fn (f) 1)")))
+    (let pr (parseModule (lex "(:: f Int) (fn (f) 1)")))
     (if (== (memGetWord pr 0) 0)
       7
       {
-        (let out (emitModule (readAstNodes pr 1) "darwin-aarch64"))
-        (if (> (strLen out) 10)
-          42
-          8)
+        (let decls (readAstNodes pr 1))
+        (let tcode (targetCode "darwin-aarch64"))
+        (let bares vecNew)
+        (let fulls vecNew)
+        (let eds vecNew)
+        (let units
+          (vecPush vecNew
+            (as (CUnit2
+                  :file "<290>"
+                  :src ""
+                  :name (as 0 String)
+                  :imports vecNew
+                  :library false) Int)))
+        {
+          (let allDecls (resolveImports decls bares fulls vecNew tcode "" units))
+          (expandProgram allDecls allDecls eds vecNew (as 0 (Vec Int)) (as 0 (Vec String))
+            (as 0 (Vec String)) (as 0 (Vec Int)))
+          (let checked (checkExpandedProgram decls allDecls units))
+          (match checked.program
+            ((Some program)
+              (if (> (strLen (emitCheckedProgram program bares fulls tcode false)) 10)
+                42
+                8)
+            )
+            ((None) 9))
+        }
       })
   })

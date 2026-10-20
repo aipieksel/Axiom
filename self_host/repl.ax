@@ -26,6 +26,7 @@
 (import typecheck)
 (import expand)
 (import codegen)
+(import checked)
 (import driver)
 (import style)
 (import explain)
@@ -845,7 +846,10 @@
                   (|| (strEq w "import")
                     (|| (strEq w "macro")
                       (|| (strEq w "effect")
-                        (|| (strEq w "type") (|| (strEq w "trait") (strEq w "impl")))))))))))
+                        (|| (strEq w "type")
+                          (|| (strEq w "trait")
+                            (|| (strEq w "impl")
+                              (|| (strEq w "subtype") (strEq w "extern")))))))))))))
       })))
 
 ; `impl` was missing while `trait` and `type` were
@@ -1111,6 +1115,13 @@
 ; PRE-2026-08-31 bytes exactly: the empty string this pushes in place
 ; of the tag line is the whole of the diff.
 ; ------------------------------------------------------------------
+; The imports every session starts with, ahead of the user's own
+; declarations: what the wrapper compiles against, and so what a
+; declaration is checked against as it is typed.
+(pub :: replPrelude String)
+(pub fn (replPrelude)
+  "(import IO)\n(import Str)\n(import Mem) (import Utf8 (utf8FromChar))\n")
+
 (pub :: replWrapper (-> String String String Int String))
 (pub fn (replWrapper declsSrc exprLine tyStr needsIo)
   {
@@ -1140,7 +1151,7 @@
       {
         (let v vecNew)
         {
-          (vecPush v "(import IO)\n(import Str)\n(import Mem) (import Utf8 (utf8FromChar))\n")
+          (vecPush v replPrelude)
           ; The TRAILING tags stripped: a `;@axiom:` line typed with no
           ; declaration under it yet would otherwise attach to the
           ; `(:: __repl_result ...)` spliced in three lines below, and
@@ -1243,10 +1254,13 @@
                 }
               })
             {
-              (let ds (expMergeInto eds (checkModule decls allDecls units)))
+              ; The same sealed handoff `build` uses: the emitter sees the
+              ; declarations the final check accepted, and only those.
+              (let checked (checkExpandedProgram decls allDecls units))
+              (let ds (expMergeInto eds checked.diagnostics))
               (if (> (countErrorDiags ds) 0)
                 (pErrWith ds)
-                (pOk (emitResolved allDecls bares fulls tcode) 0))
+                (pOk (emitCheckedProgram (checkedProgramOf checked) bares fulls tcode false) 0))
             }
           }
         }
@@ -1743,6 +1757,82 @@
 ; line is about to shadow, so the redefinition REPLACES rather than
 ; accumulates - exactly what typing the same name twice in one file
 ; would mean if the second definition simply overwrote the first.
+; The accumulated declarations, checked the way `check` checks the file
+; they will become: resolved, expanded, and handed to the final check.
+; Every error is printed as an expression's would be, and 1 answers
+; "refused". One code is deferred rather than refused: AX3015, a
+; signature with no definition behind it, because a session types the
+; signature on one line and the definition on the next, and the
+; expression path reports the gap when a call reaches it.
+(pub :: replCheckDecls (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (replCheckDecls src)
+  {
+    ; The program the wrapper would compile, less its result carrier:
+    ; the prelude's imports, then the declarations with their AXTAGs
+    ; attached as `check` attaches a file's, so a claim such as
+    ; `effect(pure)` is checked here and not read as a comment. A
+    ; trailing tag is left for the declaration typed next, as the
+    ; wrapper leaves it.
+    (let program (concat replPrelude (replStripTrailingTags src)))
+    (let dr (parseModuleWith (lex program) (scanAxtags program)))
+    (if (== (memGetWord dr 0) 0)
+      0
+      {
+        (let decls (readAstNodes dr 1))
+        (let units
+          {
+            (let v vecNew)
+            {
+              (vecPush v
+                (as (CUnit2
+                      :file "<repl>"
+                      :src program
+                      :name (as 0 String)
+                      :imports vecNew
+                      :library false) Int))
+              v
+            }
+          })
+        (let tbares vecNew)
+        (let tfulls vecNew)
+        (let tmods vecNew)
+        (let allDecls
+          (resolveImports decls tbares tfulls tmods (checkedTargetCode hostTarget) "." units))
+        (let exDiags vecNew)
+        (let _ex
+          (expandProgram decls allDecls exDiags vecNew (as 0 (Vec Int)) tbares tfulls tmods))
+        (if (> (countErrorDiags exDiags) 0)
+          {
+            (printTypeErrors exDiags 0)
+            1
+          }
+          {
+            (let checked (checkExpandedProgram decls allDecls units))
+            (let kept (replDiagsButDeferred checked.diagnostics vecNew 0))
+            (if (> (countErrorDiags kept) 0)
+              {
+                (printTypeErrors kept 0)
+                1
+              }
+              0)
+          })
+      })
+  })
+
+; `ds` without the deferred code, in order.
+(pub :: replDiagsButDeferred (-> Ints Ints Int Ints))
+(pub fn (replDiagsButDeferred ds acc i)
+  (if (>= i (vecLen ds))
+    acc
+    {
+      (if (! (strEq (diagCode (vecGet ds i)) "AX3015"))
+        (vecPush acc (vecGet ds i))
+        acc)
+      (replDiagsButDeferred ds acc (+ i 1))
+    }))
+
 (pub :: replDecl (-> String String String))
 ;@axiom:effect(io)
 (pub fn (replDecl declsSrc line)
@@ -1763,23 +1853,31 @@
                 "Parse error: imports must precede all definitions; use :reset before starting a new import header\n")
               declsSrc
             }
-            {
-              (if (== (vecLen decls) 0)
-                (replStyled REPL_ACCENT "OK\n")
-                {
-                  (let d (vecGet decls 0))
+            ; A declaration is checked as it is typed, as `check`
+            ; would check the file it will become: one the compiler
+            ; refuses is reported and not kept, so the session never
+            ; holds what a program could not.
+            (if (!= (replCheckDecls candidate) 0)
+              ; the tags typed above it would otherwise sit above
+              ; whatever is declared next (`replTagRunStart`)
+              (replStripTrailingTags declsSrc)
+              {
+                (if (== (vecLen decls) 0)
+                  (replStyled REPL_ACCENT "OK\n")
                   {
-                    (let tag (nodeTag d))
-                    (if (|| (== tag TAG_D_FN) (== tag TAG_D_SIG))
-                      (replStyled REPL_ACCENT (concat (concat "OK: " (nodeAName d)) " defined\n"))
-                      (if (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))
-                        (replStyled REPL_ACCENT
-                          (concat (concat "OK: data " (nodeAName d)) " defined\n"))
-                        (replStyled REPL_ACCENT "OK\n")))
-                  }
-                })
-              candidate
-            })
+                    (let d (vecGet decls 0))
+                    {
+                      (let tag (nodeTag d))
+                      (if (|| (== tag TAG_D_FN) (== tag TAG_D_SIG))
+                        (replStyled REPL_ACCENT (concat (concat "OK: " (nodeAName d)) " defined\n"))
+                        (if (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))
+                          (replStyled REPL_ACCENT
+                            (concat (concat "OK: data " (nodeAName d)) " defined\n"))
+                          (replStyled REPL_ACCENT "OK\n")))
+                    }
+                  })
+                candidate
+              }))
         }
       })
   })

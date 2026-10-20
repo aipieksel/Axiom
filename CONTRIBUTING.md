@@ -82,7 +82,7 @@ axiom/
 │   ├── namespace.ax      how a bare name reaches a declaration, and what `pub` lets out
 │   ├── expand.ax         macro expansion, hygiene, expansion diagnostics
 │   ├── typecheck.ax      name resolution, types, effects, AXTAG validation
-│   ├── checked.ax        sealed final-check handoff for synchronous CLI emission
+│   ├── checked.ax        sealed final-check handoff, the emitter's one way in
 │   ├── raw.ax            the compiler's own raw memory layer, since a program
 │   │                     cannot import the library's `Internal.Raw` (AX5002)
 │   ├── codegen.ax        import resolution, name mangling, LLVM text emission
@@ -142,8 +142,10 @@ The shape is a DAG rather than a chain:
 - `codegen` reads `parser`, `namespace` and `expand`, and never
   `typecheck`. Emission reads the AST and the mangled namespace, not
   the checker's judgements.
-- `checked` reads `typecheck` and `codegen`. The CLI hands its final
-  successful check to emission through a sealed `CheckedProgram`.
+- `checked` reads `typecheck` and `codegen`. The CLI and the REPL hand
+  their final successful check to emission through a sealed
+  `CheckedProgram`, and the emitter has no other way in
+  (`tests/tools/checked-program.py`).
 - `driver` reads `parser` and `codegen`. `main` imports what the
   command line needs, and reaches `namespace` through `expand` and
   `codegen`. `mireval` stays outside that set.
@@ -437,7 +439,7 @@ shows the check can fail at all.
 | `check-poisoned-alloc.sh` | Poisoned allocator generations emit identical compiler IR, and allocation remains zeroed |
 | `check-reproducible.sh` | Compiling the same source twice produces identical bytes |
 | `bootstrap-from-seed.sh` | A clean checkout builds a working compiler from `bootstrap/` with nothing but `llc` and `cc` |
-| `build-shared-axc.sh` | Not an assertion, but the step the others rest on. It builds the compiler under test once and stamps it, and the ninety-five gates that call `gate_build_axc` reuse it while the stamp matches the tree. It builds a second time and compares the IR both compilers emit, because those gates rely on the artifact being exactly what you would have built |
+| `build-shared-axc.sh` | Not an assertion, but the step the others rest on. It builds the compiler under test once and stamps it, and the ninety-six gates that call `gate_build_axc` reuse it while the stamp matches the tree. It builds a second time and compares the IR both compilers emit, because those gates rely on the artifact being exactly what you would have built |
 | `check-gate-lib.sh` | The shared artifact can't hide a source change. This is the probe that makes the reuse above safe to rely on |
 | `check-install.sh` | The script `README.md` tells new users to pipe into bash. A release built from this tree is served over the loopback and installed. A tampered archive, one with no checksum and one with no `stdlib/` must each be refused. The gate's own probe deletes `install.sh`'s checksum comparison in a copy and requires the tampered case to stop being refused |
 | `check-release-targets.sh` | What a release builds and what `install.sh` refuses are one fact split across two files. A target in both uploads an archive the installer won't fetch, and a target in neither gives the user a bare `curl` 404. It also keeps the two axes apart: nothing ships that README doesn't call supported, and nothing is supported but unshipped without a CI leg or a README paragraph saying why (`darwin-x86_64`) |
@@ -474,6 +476,7 @@ shows the check can fail at all.
 | `check-race.sh` | ThreadSanitizer finds the data races `--threads` programs can reach. Each program's IR is marked `sanitize_thread`, its `mmap` and `munmap` calls go through the C library so TSan sees the runtime's arenas, and it links with `clang -fsanitize=thread`. The unlocked control in `tests/litmus/sync-load.ax` must be reported. The mutex, a stale guard, the channel, `examples/concurrency/pipeline.ax` and the seq_cst rows of `tests/litmus/atomics.ax` must run clean at `--opt` 0 and 2. The one suppression in `tests/litmus/tsan-suppressions.txt` names MM-PAR-12's plain read in `sysWaitWordTimeout`: it must match, and runs without it must report that race and nothing else. Three ablations, all required: the mutex's compare-and-swap, the channel's lock, and an atomic add made plain. An ASan probe must report a read past a string literal. With no sanitizer runtime it skips, unless `AXIOM_TSAN_REQUIRED=1` |
 | `check-protocol-model.sh` | Explores the channel, mutex and Task pool protocols at bounded sizes: exclusion, ordered delivery, deadlines, cancellation and checked spawn-refusal cleanup must hold, with every started child reaped. Planted defects must be detected with schedules. Source citations are checked against `stdlib/`, and recorded channel operations replay through the model. `tests/litmus/liveness.ax` measures starvation and distinguishes timed calls from untimed deadlock |
 | `check-metamorphic.sh` | A declaration nothing uses changes nothing else. For every program the compiler accepts in `tests/stdlib`, `tests/selfhost` and `examples`, it appends unused functions named `a` to `z` and requires the same verdict, the same `symbols` row for every original declaration and the same IR for every original function (`scripts/lib/metamorphic.py`). Three compilers rebuilt with one name-resolution fix taken out must fail it. `--long` adds the compiler and the stdlib modules as entry files |
+| `check-surface-agreement.sh` | The compiler's four doors agree about every diagnostics fixture: `check`'s diagnostics equal the language server's published ones (lints set aside), `build` refuses what `check` refuses with the same codes, and the REPL reports the same codes for every fixture small enough to type in. |
 | `check-mir.sh` | The mid-level IR in `self_host/mir.ax`: SSA with block parameters instead of phis, a printer, and a verifier (one terminator per block, single assignment, branch arity, dominance). Goldens hold the printer, and a differential holds the meaning: each fixture, run by the real compiler and lowered and run by `self_host/mireval.ax`, must print the same bytes. `codegen.ax` emits a subset of functions from the IR, and `AXIOM_MIR_EMIT=0` must emit the same bytes as the default. Floors on how many functions take the IR path, and on how much of `self_host/` and `stdlib/` lowers, catch a subset that narrows itself. Each ablation must fire its own check; one breaks only dominance, so that rule is shown to fail |
 
 The rest of `scripts/` doesn't run in CI. `.github/workflows/ci.yml` is

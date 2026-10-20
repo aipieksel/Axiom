@@ -16,6 +16,26 @@ its changelog too.
 
 ## Unreleased
 
+- The REPL checks a declaration as it is typed, as `check` would check
+  the file it will become: a declaration the compiler refuses is
+  reported and not kept, so a session never holds what a program could
+  not. A signature whose definition has not been typed yet is the one
+  thing it waits for. The new `scripts/check-surface-agreement.sh`
+  holds the compiler's four doors to one answer over every diagnostics
+  fixture: `check`'s diagnostics equal the language server's published
+  ones, `build` refuses what `check` refuses with the same codes, and
+  the REPL reports the same codes for every fixture small enough to
+  type in (`tests/tools/surface-agreement.py`). With it there are
+  ninety-six gates that build the compiler under test from the tree.
+  The assurance page maps each area of type soundness to the code that
+  refuses it and a fixture on each side.
+
+- The REPL compiles what its final check accepted, through the same
+  sealed `CheckedProgram` the CLI hands to emission, and the emitter has
+  no other way in: the entries that went around the check are gone.
+  `tests/tools/checked-program.py` holds every caller of the emitter to
+  that one door. Tested by `scripts/check-driver.sh`.
+
 - A function in the entry file whose name is the linker symbol of an
   `extern` item the program binds, such as a `send` of your own beside
   Winsock's `send` on Windows, is emitted as `axiom$entry$send`, and
