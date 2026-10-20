@@ -1601,9 +1601,9 @@ IO - files, standard streams, terminals, readiness and sockets.
 | Name | Kind | Type | Effects | Contracts | Summary |
 |---|---|---|---|---|---|
 | `File` | struct |  |  |  | An open file, socket or standard stream. Aliases share it; the last share closes the descriptor, and `fileClose` closes it early for every alias. |
-| `stdin` | value | `File` | `Alloc,IO,Unsafe` |  | The process's standard input as a `File`. Like `stdout` and `stderr`, it never closes its descriptor: `fileClose stdin` retires that one value and leaves the process's stream open. |
-| `stdout` | value | `File` | `Alloc,IO,Unsafe` |  | The process's standard output as a `File`, for `fileWrite` and friends. One shared owner: it is never closed by scope. |
-| `stderr` | value | `File` | `Alloc,IO,Unsafe` |  | The process's standard error as a `File`. One shared owner: it is never closed by scope. |
+| `stdin` | value | `File` | `Alloc,IO` |  | The process's standard input as a `File`. Like `stdout` and `stderr`, it never closes its descriptor: `fileClose stdin` retires that one value and leaves the process's stream open. |
+| `stdout` | value | `File` | `Alloc,IO` |  | The process's standard output as a `File`, for `fileWrite` and friends. One shared owner: it is never closed by scope. |
+| `stderr` | value | `File` | `Alloc,IO` |  | The process's standard error as a `File`. One shared owner: it is never closed by scope. |
 | `nullDevice` | value | `String` |  |  | The path of the null device, for `openPath`: `/dev/null`, or `NUL` on Windows. A read from it is at the end of the file at once, a write to it keeps nothing, and it is never a terminal. |
 | `fileClose` | value | `(-> File (Result Int Error))` | `Alloc,IO,Unsafe` |  | Close early, once: `(Ok 0)`, or `(Err e)` carrying the errno of the close - on a written file, where a deferred write error surfaces. Aliases observe the close, and any later use of one traps 85. The descriptor is retired before the close and the close is never retried. Closing a standard stream retires that value only. |
 | `ErrorKind` | data |  |  |  | What went wrong, in words that mean the same on every target. An `Error`'s code is the kernel's errno, and those numbers differ: EAGAIN is 11 on Linux and 35 on Darwin. Match on `(errorKind e)` instead of a number. The names are `std::io::ErrorKind`'s. |
@@ -1653,10 +1653,10 @@ IO - files, standard streams, terminals, readiness and sockets.
 | `pollerNew` | value | `(-> Int (Result Poller Error))` | `Alloc,IO,Mut,Unsafe` | `;@axiom:pre((> cap 0))` | A poller that answers at most `cap` events per wait: `(Ok p)`, or `(Err e)` carrying the errno - EMFILE when the process has no descriptor left. |
 | `pollerAdd` | value | `(-> Poller File Int (Result Int Error))` | `Alloc,IO,Mut` |  | Watch `f` for readability under `token`: `(Ok 0)`, or `(Err e)`. The poller does not keep `f` alive; close it, or let it go, and its registration goes with it. |
 | `pollerRemove` | value | `(-> Poller File (Result Int Error))` | `Alloc,IO,Mut` |  | Stop watching `f`: `(Ok 0)`, or `(Err e)` - ENOENT when it was not being watched. |
-| `pollerAddSignals` | value | `(-> Poller Int Int (Result Int Error))` | `Alloc,IO,Mut,Unsafe` |  | Watch the signals in `mask` (bit N-1 for signal N, `Sys.sysSigBit`) under `token`: `(Ok 0)`, or `(Err e)`. Block them with `Sys.sysSignalBlock` first. `pollerSignal` reads which one arrived. |
+| `pollerAddSignals` | value | `(-> Poller Int Int (Result Int Error))` | `Alloc,IO,Mut,Unsafe` |  | Watch the signals in `mask` (bit N-1 for signal N, `Sys.sysSigBit`) under `token`: `(Ok 0)`, or `(Err e)`. Block them with `Sys.sysSignalBlock` first. `pollerSignal` reads which one arrived. Windows supports `Sys.Platform.sigInt` and `sigBreak`: other bits answer `Err` 78. One table row holds the mask; 0 removes it. The process mask persists after removal or close, and competing pollers consume each pending control once between them. |
 | `pollerWait` | value | `(-> Poller Int (Result Int Error))` | `Alloc,IO,Mut,Unsafe` |  | Wait for readiness: `(Ok n)` with `n` events to read with `pollerToken` and `pollerSignal`, `(Ok 0)` when `timeoutMs` passed first, or `(Err e)`. A negative `timeoutMs` waits for ever; 0 asks and answers at once. EINTR answers `(Ok 0)`: nothing was collected. |
 | `pollerToken` | value | `(-> Poller Int Int)` |  |  | The token event `i` of the last wait carries. An `i` outside the events that wait answered stops the program with status 77. |
-| `pollerSignal` | value | `(-> Poller Int (Option Int))` | `Alloc,IO` |  | The signal event `i` of the last wait delivered, or `None` when it is not a signal. On Linux this reads the signal descriptor, once per event. An `i` outside the last wait's events stops the program with status 77. |
+| `pollerSignal` | value | `(-> Poller Int (Option Int))` | `Alloc,IO` |  | The signal event `i` of the last wait delivered, or `None` when it is not a signal. On Linux this reads the signal descriptor, once per event. Windows records one console control in the event, so reading it again answers the same number. An `i` outside the last wait's events stops the program with status 77. |
 | `pollerClose` | value | `(-> Poller (Result Int Error))` | `Alloc,IO,Unsafe` |  | Close the poller now rather than at its last share: `(Ok 0)`, or `(Err e)`. Any later use traps 85. |
 | `socketOpen` | value | `(-> String (Result File Error))` | `Alloc,IO,Mut,Unsafe` |  | A blocking TCP socket for the family of `addr`, not yet bound or connected: `(Ok file)`, or `(Err e)`. |
 | `socketBind` | value | `(-> File String (Result Int Error))` | `Alloc,IO,Mut,Unsafe` |  | Bind `s` to `addr`. The length comes from the family in the address. |
@@ -2065,7 +2065,7 @@ Sys - portable syscall wrappers.
 
 ## `Sys.Platform`
 
-`stdlib/Sys/Platform.darwin.ax` — 221 public names
+`stdlib/Sys/Platform.darwin.ax` — 222 public names
 
 Sys.Platform - the numbers this target's kernel uses: syscall
 numbers, open and socket flags, errno values, poll and signal
@@ -2172,6 +2172,7 @@ target being compiled for (this one is `darwin`).
 | `sigTerm` | value | `Int` |  |  | SIGTERM and SIGINT AGREE on all four targets, which is worth naming rather than assuming because most of their neighbours do not - SIGUSR1 is 30 here and 10 on Linux. |
 | `sigChild` | value | `Int` |  |  | The `SIGCHLD` signal number, or zero when child signals are unavailable. |
 | `sigInt` | value | `Int` |  |  | The `SIGINT` signal number. |
+| `sigBreak` | value | `Int` |  |  | The Windows Ctrl-Break signal number, or 0 where it is unavailable. |
 | `forkChildIsZero` | value | `Int` |  |  | Whether `fork` answers 0 in the child, which is the POSIX convention and what Linux does. Darwin answers the child's pid to both, so `sysForkProcess` normalises; see `sysForkNum` above for the measurement. |
 | `usesSyscallAbi` | value | `Int` |  |  | 1 where the platform is reached through raw syscalls, 0 where it goes through the C library or a host shim. |
 | `platformWriteFd` | value | `(-> Int Int Int (Result Int Error))` | `Alloc` |  | The platform's own way to write to a descriptor where raw `write` is not available; `Err` 78 where the raw syscall is used instead. |

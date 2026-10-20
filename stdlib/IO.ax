@@ -17,6 +17,7 @@
 (import Sys)
 (import Err)
 (import Internal.Raw)
+(import Internal.WindowsLiveness)
 (import Str)
 (import Vec)
 (import Fmt)
@@ -28,11 +29,20 @@
 ; ------------------------------------------------------------------
 ; Owned files
 ; ------------------------------------------------------------------
+; Constructed once, before publication. Only the Windows runtime's
+; atomic helpers read or retire this word; Axiom never mutates it.
+(struct FileMarker
+  (alive : Int))
+
+(struct MarkerSlot
+  (mut marker : (Option FileMarker)))
+
 ;; An open file, socket or standard stream. Aliases share it; the last
 ;; share closes the descriptor, and `fileClose` closes it early for
 ;; every alias.
 (pub struct File sealed
-  (owner : Handle))
+  (owner : Handle)
+  (marker : (Option FileMarker)))
 
 ; The release of an owned descriptor: close it.
 (:: fileDrop (-> Int Int))
@@ -46,15 +56,48 @@
 (fn (fileKeep fd)
   0)
 
+; Windows pollers keep the marker, never the owner. The resource owns
+; this callback and its captured marker until cleanup has retired the
+; marker before closing the descriptor. Standard streams retire their
+; File value while leaving the process's underlying handle open.
+(:: ioFile (-> Int Bool File))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (ioFile fd keep)
+  (if (== usesSyscallAbi 1)
+    (File
+      :owner
+        (__resource_new
+          (if keep
+            fileKeep
+            fileDrop)
+          fd)
+      :marker None)
+    {
+      (let marker (FileMarker :alive 1))
+      (File
+        :owner
+          (__resource_new
+            (lambda (h)
+              {
+                (let _ (windowsMarkerRetire (as marker Int)))
+                (if keep
+                  0
+                  (ioClose h))
+              }
+            )
+            fd)
+        :marker (Some marker))
+    }))
+
 ; Take over `fd`, an open descriptor nothing else owns. Private: every
 ; descriptor this module opens comes through here, and nothing outside
 ; can hand it a number.
 (:: ioAdopt (-> Int File))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 ;@axiom:pre((>= fd 0))
 (fn (ioAdopt fd)
-  (File :owner (__resource_new fileDrop fd)))
+  (ioFile fd false))
 
 ; The descriptor `f` owns, for one call. Traps 85 once `f` is closed.
 (:: ioFd (-> File Int))
@@ -67,25 +110,22 @@
 ;; that one value and leaves the process's stream open.
 (pub :: stdin File)
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (stdin)
-  (File :owner (__resource_new fileKeep 0)))
+  (ioFile 0 true))
 
 ;; The process's standard output as a `File`, for `fileWrite` and
 ;; friends. One shared owner: it is never closed by scope.
 (pub :: stdout File)
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (stdout)
-  (File :owner (__resource_new fileKeep 1)))
+  (ioFile 1 true))
 
 ;; The process's standard error as a `File`. One shared owner: it is
 ;; never closed by scope.
 (pub :: stderr File)
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (stderr)
-  (File :owner (__resource_new fileKeep 2)))
+  (ioFile 2 true))
 
 ;; The path of the null device, for `openPath`: `/dev/null`, or `NUL`
 ;; on Windows. A read from it is at the end of the file at once, a write
@@ -1392,6 +1432,38 @@
     }
   })
 
+; Restore through the original live handle to quiesce its input
+; reader. An adopted File's retired marker means its reader was closed,
+; and the guard's private duplicate still names the original console.
+; Standard stream File values never close their process handle/reader.
+(:: ioWinTermRelease (-> Int Int (Option FileMarker) Int Int Int Int))
+;@axiom:effect(io)
+(fn (ioWinTermRelease dup fd marker mode outDup outMode)
+  {
+    (let target
+      (if (|| (&& (>= fd 0) (<= fd 2)) (fileMarkerAlive marker))
+        fd
+        dup))
+    (let restored (platformConsoleSetMode target mode))
+    (let outRestored
+      (if (< outDup 0)
+        0
+        {
+          (let r (platformConsoleSetMode 1 outMode))
+          (if (< r 0)
+            (platformConsoleSetMode outDup outMode)
+            r)
+        }))
+    (let _ (ioClose dup))
+    (let _
+      (if (< outDup 0)
+        0
+        (ioClose outDup)))
+    (if (< restored 0)
+      restored
+      outRestored)
+  })
+
 ;; Put the terminal on `f` into raw mode, saving what it was first:
 ;; `(Ok guard)`, or `(Err e)` with the kernel's errno, ENOTTY for a pipe
 ;; or a file. With `keepSignals` true, ^C still raises SIGINT; with false
@@ -1415,42 +1487,50 @@
         (Err (mkError (- 0 mode) "termRaw"))
         {
           (let outMode (platformConsoleMode 1))
-          (let guard
-            (TermGuard
-              :owner
-                (__resource_new
-                  (lambda (d)
+          (let dup (windowsConsoleDup fd))
+          (if (< dup 0)
+            (Err (mkError (- 0 dup) "termRaw"))
+            {
+              (let outDup
+                (if (< outMode 0)
+                  -1
+                  (windowsConsoleDup 1)))
+              (if (&& (>= outMode 0) (< outDup 0))
+                {
+                  (let _ (ioClose dup))
+                  (Err (mkError (- 0 outDup) "termRaw"))
+                }
+                {
+                  (let marker f.marker)
+                  (let guard
+                    (TermGuard
+                      :owner
+                        (__resource_new
+                          (lambda (d) (ioWinTermRelease d fd marker mode outDup outMode)) dup)))
+                  (let raw
+                    (|
+                      (& mode
+                        (^
+                          (| 6
+                            (if keepSignals
+                              0
+                              1))
+                          (- 0 1)))
+                      512))
+                  (let r (platformConsoleSetMode fd raw))
+                  (if (< r 0)
+                    {
+                      (let _ (__resource_close guard.owner))
+                      (Err (mkError (- 0 r) "termRaw"))
+                    }
                     {
                       (let _
                         (if (< outMode 0)
                           0
-                          (platformConsoleSetMode 1 outMode)))
-                      (platformConsoleSetMode d mode)
-                    }
-                  )
-                  fd)))
-          (let raw
-            (|
-              (& mode
-                (^
-                  (| 6
-                    (if keepSignals
-                      0
-                      1))
-                  (- 0 1)))
-              512))
-          (let r (platformConsoleSetMode fd raw))
-          (if (< r 0)
-            {
-              (let _ (__resource_close guard.owner))
-              (Err (mkError (- 0 r) "termRaw"))
-            }
-            {
-              (let _
-                (if (< outMode 0)
-                  0
-                  (platformConsoleSetMode 1 (| outMode 4))))
-              (Ok guard)
+                          (platformConsoleSetMode 1 (| outMode 4))))
+                      (Ok guard)
+                    })
+                })
             })
         })
     }
@@ -1531,6 +1611,7 @@
   (mut count : Int)
   (ts : String)
   (regs : String)
+  (markers : (Vec MarkerSlot))
   (mut nregs : Int)
   (mut sigToken : Int)
   (mut sigFile : (Option File))
@@ -1549,6 +1630,28 @@
     (if (== pollUsesKqueue 1)
       24
       pollEventFdOffset)))
+
+; Fixed slots give each marker a declared counted field. Replacing or
+; clearing a slot releases the previous marker without moving vector
+; elements or making their ownership depend on a generic return value.
+(:: pollerMarkers (-> Int (Vec MarkerSlot)))
+(fn (pollerMarkers cap)
+  {
+    (let slots (vecWithCapacity cap))
+    (for i in 0..cap
+      {
+        (let _ (vecPush slots (MarkerSlot :marker None)))
+        0
+      })
+    slots
+  })
+
+(:: pollerMarkerAt (-> Poller Int (Option FileMarker)))
+(fn (pollerMarkerAt p i)
+  {
+    (let slot (vecGet p.markers i))
+    slot.marker
+  })
 
 ;; A poller that answers at most `cap` events per wait: `(Ok p)`, or
 ;; `(Err e)` carrying the errno - EMFILE when the process has no
@@ -1585,6 +1688,11 @@
                 (* cap 24)
                 8))
           :nregs 0
+          :markers
+            (pollerMarkers
+              (if (== usesSyscallAbi 0)
+                cap
+                0))
           :sigToken (- 0 1)
           :sigFile None
           :sigInfo
@@ -1628,14 +1736,32 @@
 
 ; Apply one registration record to the poller: kevent with a change
 ; list of one and no event list on the BSDs, epoll_ctl on Linux.
-(:: pollerApply (-> Poller Int String Int Int))
+(:: pollerApply (-> Poller Int String Int (Option FileMarker) Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
-(fn (pollerApply p fd rec op)
+(fn (pollerApply p fd rec op marker)
   {
     (let pfd (pollerFd p))
     (if (== usesSyscallAbi 0)
-      (pollerTable p fd (ioGetWord (strData rec) 0) (ioGetWord (strData rec) pollEventFdOffset) op)
+      {
+        (pollerPrune p)
+        (let r
+          (pollerTable p fd (ioGetWord (strData rec) 0) (ioGetWord (strData rec) pollEventFdOffset)
+            op marker))
+        ; Prime the persistent input reader without waiting for it.
+        ; A control probe would consume a pending signal, so only file
+        ; and socket registrations take this path.
+        (if (&& (>= r 0) (&& (== op pollAddOp) (!= fd -2)))
+          {
+            (let row (strAlloc 24))
+            (let ptr (strData row))
+            (ioPutWord ptr 0 fd)
+            (ioPutWord ptr 8 (ioGetWord (strData rec) 0))
+            (ioPutWord ptr 16 0)
+            (let _ (platformPoll ptr 1 0))
+          })
+        r
+      }
       (if (== pollUsesKqueue 1)
         (__syscall6 sysPollWaitNum pfd (strData rec) 1 0 0 0)
         (__syscall4 sysPollCtlNum pfd op fd (strData rec))))
@@ -1646,8 +1772,8 @@
 ; re-arms the descriptor's row; `pollDelOp` removes the descriptor's row
 ; and keeps the rows contiguous. A full table answers -EMFILE and the
 ; removal of an unknown descriptor -ENOENT, as `epoll_ctl` would.
-(:: pollerTable (-> Poller Int Int Int Int Int))
-(fn (pollerTable p fd interest token op)
+(:: pollerTable (-> Poller Int Int Int Int (Option FileMarker) Int))
+(fn (pollerTable p fd interest token op marker)
   {
     (let t (strData p.regs))
     (let at (pollerRowOf p fd 0))
@@ -1656,6 +1782,8 @@
         {
           (ioPutWord t (+ (* at 24) 8) interest)
           (ioPutWord t (+ (* at 24) 16) token)
+          (let slot (vecGet p.markers at))
+          (set slot.marker marker)
           0
         }
         (if (>= p.nregs p.cap)
@@ -1666,6 +1794,8 @@
             (ioPutWord t (+ (* i 24) 8) interest)
             (ioPutWord t (+ (* i 24) 16) token)
             (set p.nregs (+ i 1))
+            (let slot (vecGet p.markers i))
+            (set slot.marker marker)
             0
           }))
       (if (< at 0)
@@ -1678,13 +1808,50 @@
                 (ioPutWord t (* at 24) (ioGetWord t (* last 24)))
                 (ioPutWord t (+ (* at 24) 8) (ioGetWord t (+ (* last 24) 8)))
                 (ioPutWord t (+ (* at 24) 16) (ioGetWord t (+ (* last 24) 16)))
+                (let slot (vecGet p.markers at))
+                (set slot.marker (pollerMarkerAt p last))
                 0
               }
               0))
           (set p.nregs last)
+          (let lastSlot (vecGet p.markers last))
+          (set lastSlot.marker None)
           0
         }))
   })
+
+; Controls and internal raw registrations have no File marker. A
+; captured marker is process-safe to inspect even after its File dies.
+(macro (fileMarkerAlive marker) (match marker
+  ((None) true)
+  ((Some cell)
+    (!= (windowsMarkerAlive (as cell Int)) 0)
+  )))
+
+; Drop retired rows before capacity checks and waits. The last row
+; fills each hole, with its marker moved alongside its descriptor.
+(macro (pollerPrune p) {
+  (let t (strData p.regs))
+  (let mut i 0)
+  (while (< i p.nregs)
+    (if (fileMarkerAlive (pollerMarkerAt p i))
+      (set i (+ i 1))
+      {
+        (let last (- p.nregs 1))
+        (if (!= i last)
+          {
+            (ioPutWord t (* i 24) (ioGetWord t (* last 24)))
+            (ioPutWord t (+ (* i 24) 8) (ioGetWord t (+ (* last 24) 8)))
+            (ioPutWord t (+ (* i 24) 16) (ioGetWord t (+ (* last 24) 16)))
+            (let slot (vecGet p.markers i))
+            (set slot.marker (pollerMarkerAt p last))
+          })
+        (set p.nregs last)
+        (let lastSlot (vecGet p.markers last))
+        (set lastSlot.marker None)
+      }))
+  0
+})
 
 ; The row of `fd` in the table, searching from `i`, or -1.
 (:: pollerRowOf (-> Poller Int Int Int))
@@ -1709,7 +1876,7 @@
   {
     (let fd (ioFd f))
     (ioAnswer "pollerAdd"
-      (pollerApply p fd (pollerRec fd pollReadFilter pollAddOp token) pollAddOp))
+      (pollerApply p fd (pollerRec fd pollReadFilter pollAddOp token) pollAddOp f.marker))
   })
 
 ;; Stop watching `f`: `(Ok 0)`, or `(Err e)` - ENOENT when it was not
@@ -1719,12 +1886,17 @@
 (pub fn (pollerRemove p f)
   {
     (let fd (ioFd f))
-    (ioAnswer "pollerRemove" (pollerApply p fd (pollerRec fd pollReadFilter pollDelOp 0) pollDelOp))
+    (ioAnswer "pollerRemove"
+      (pollerApply p fd (pollerRec fd pollReadFilter pollDelOp 0) pollDelOp f.marker))
   })
 
 ;; Watch the signals in `mask` (bit N-1 for signal N, `Sys.sysSigBit`)
 ;; under `token`: `(Ok 0)`, or `(Err e)`. Block them with
 ;; `Sys.sysSignalBlock` first. `pollerSignal` reads which one arrived.
+;; Windows supports `Sys.Platform.sigInt` and `sigBreak`: other bits
+;; answer `Err` 78. One table row holds the mask; 0 removes it. The
+;; process mask persists after removal or close, and competing pollers
+;; consume each pending control once between them.
 (pub :: pollerAddSignals (-> Poller Int Int (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
@@ -1732,12 +1904,29 @@
   {
     (let _ (pollerFd p))
     (if (== usesSyscallAbi 0)
-      ; No signals to register: the token is remembered so a later wake
-      ; reports nothing as one, and the console's control events are a
-      ; later binding.
+      ; The Windows runtime owns the blocked mask and pending bits.
+      ; This table row keeps no callback pointer into the poller's
+      ; arena, so closing a poller cannot race the native handler.
       {
-        (set p.sigToken token)
-        (Ok 0)
+        (pollerPrune p)
+        (match (platformSignalBlock mask 0)
+          ((Err e) (Err (errContextOf e "pollerAddSignals")))
+          ((Ok _)
+            {
+              (let r
+                (if (== mask 0)
+                  (if (>= (pollerRowOf p -2 0) 0)
+                    (pollerTable p -2 0 0 pollDelOp None)
+                    0)
+                  (pollerTable p -2 mask token pollAddOp None)))
+              (if (< r 0)
+                (Err (ioFdError (- 0 r) "pollerAddSignals"))
+                {
+                  (set p.sigToken token)
+                  (Ok 0)
+                })
+            }
+          ))
       }
       (if (== signalUsesSignalFd 1)
         {
@@ -1775,7 +1964,7 @@
                 {
                   (let r
                     (pollerApply p signo (pollerRec signo pollSignalFilter pollAddOp token)
-                      pollAddOp))
+                      pollAddOp None))
                   (if (< r 0)
                     (set rc r))
                 }))
@@ -1807,6 +1996,7 @@
         ; readiness, then the token at `pollEventFdOffset`) for
         ; `pollerToken` to read.
         {
+          (pollerPrune p)
           (let n p.nregs)
           (let scratch
             (strAlloc
@@ -1834,7 +2024,11 @@
               (set i 0)
               (while (&& (< i n) (< k p.cap))
                 {
-                  (if (!= (ioGetWord s (+ (* i 24) 16)) 0)
+                  ; Recheck after the native wait: closing a File and
+                  ; reusing its HANDLE while the wait ran must not
+                  ; publish readiness under the retired File's token.
+                  (if (&& (!= (ioGetWord s (+ (* i 24) 16)) 0)
+                        (fileMarkerAlive (pollerMarkerAt p i)))
                     {
                       (ioPutWord e (* k pollEventSize) (ioGetWord s (+ (* i 24) 16)))
                       (ioPutWord e (+ (* k pollEventSize) pollEventFdOffset)
@@ -1884,8 +2078,9 @@
 
 ;; The signal event `i` of the last wait delivered, or `None` when it is
 ;; not a signal. On Linux this reads the signal descriptor, once per
-;; event. An `i` outside the last wait's events stops the program with
-;; status 77.
+;; event. Windows records one console control in the event, so reading
+;; it again answers the same number. An `i` outside the last wait's
+;; events stops the program with status 77.
 (pub :: pollerSignal (-> Poller Int (Option Int)))
 ;@axiom:effect(io)
 (pub fn (pollerSignal p i)
@@ -1893,29 +2088,36 @@
     (let _ (pollerFd p))
     (if (|| (< i 0) (>= i p.count))
       __indexTrap
-      (if (== signalUsesSignalFd 1)
-        (match p.sigFile
-          ((None) None)
-          ((Some sf)
-            (if (!= (pollerToken p i) p.sigToken)
-              None
-              {
-                (let n (ioReadFd (ioFd sf) (strData p.sigInfo) sigInfoSize))
-                (if (< n sigInfoSize)
-                  None
-                  (Some (ioGetInt32 (strData p.sigInfo) 0)))
-              })
-          ))
-        ; kqueue: the record's own 16-bit filter says whether it is a
-        ; signal, and its `ident` is the number.
+      (if (== usesSyscallAbi 0)
         {
-          (let b (strData p.events))
-          (let off (* i pollEventSize))
-          (if (&& (== (rawGetByte b (+ off 8)) (& pollSignalFilter 255))
-                (== (rawGetByte b (+ off 9)) (& (>> pollSignalFilter 8) 255)))
-            (Some (ioGetWord b off))
+          (let event (ioGetWord (strData p.events) (* i pollEventSize)))
+          (if (< event 0)
+            (Some (- 0 event))
             None)
-        }))
+        }
+        (if (== signalUsesSignalFd 1)
+          (match p.sigFile
+            ((None) None)
+            ((Some sf)
+              (if (!= (pollerToken p i) p.sigToken)
+                None
+                {
+                  (let n (ioReadFd (ioFd sf) (strData p.sigInfo) sigInfoSize))
+                  (if (< n sigInfoSize)
+                    None
+                    (Some (ioGetInt32 (strData p.sigInfo) 0)))
+                })
+            ))
+          ; kqueue: the record's own 16-bit filter says whether it is a
+          ; signal, and its `ident` is the number.
+          {
+            (let b (strData p.events))
+            (let off (* i pollEventSize))
+            (if (&& (== (rawGetByte b (+ off 8)) (& pollSignalFilter 255))
+                  (== (rawGetByte b (+ off 9)) (& (>> pollSignalFilter 8) 255)))
+              (Some (ioGetWord b off))
+              None)
+          })))
   })
 
 ;; Close the poller now rather than at its last share: `(Ok 0)`, or
@@ -2307,7 +2509,7 @@
                     0
                   (!= r (- 0 eInProgress))
                     r
-                  (socketAwaitConnect fd ms)))
+                  (socketAwaitConnect fd ms s.marker)))
               {
                 (let back (ioSetNonBlocking fd false))
                 (ioAnswer "socketConnectWithin"
@@ -2323,14 +2525,14 @@
 ; Wait up to `ms` for a non-blocking connect on `fd` to finish: 0, or
 ; `-errno`, `-ETIMEDOUT` when the time ran out. A wake means the connect
 ; finished either way, and SO_ERROR says which.
-(:: socketAwaitConnect (-> Int Int Int))
+(:: socketAwaitConnect (-> Int Int (Option FileMarker) Int))
 ;@axiom:effect(io)
-(fn (socketAwaitConnect fd ms)
+(fn (socketAwaitConnect fd ms marker)
   (match (pollerNew 1)
     ((Err e) (- 0 (errCode e)))
     ((Ok p)
       {
-        (let r (pollerApply p fd (pollerRec fd pollWriteFilter pollAddOp 0) pollAddOp))
+        (let r (pollerApply p fd (pollerRec fd pollWriteFilter pollAddOp 0) pollAddOp marker))
         (if (< r 0)
           r
           (match (pollerWait p ms)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Windows targets, windows-x86_64 and windows-aarch64: emitted on any
 # host, then linked on Windows runners and executed on each runner's
-# own architecture. Four things run:
+# own architecture. Five things run:
 #
 #   1. A hello world for each target. Its output must match the golden
 #      byte for byte, and its imports must stay within
@@ -15,6 +15,8 @@
 #      emitting host printed, which a Python oracle checked there.
 #   4. A large-frame fixture that requires the runtime's stack probe,
 #      followed by the standard-library battery.
+#   5. Console input and control-event probes in their own consoles,
+#      with synthetic input and no interactive desktop requirement.
 #
 # README's Targets section calls a target supported when "a CI job
 # executes what the compiler emits there". For Windows, this gate is
@@ -169,16 +171,21 @@ AX
       "$axc" --target="$t" emit-llvm "$work/leaky.ax" -o "$d/leaky.ll"
       "$axc" --diagnostic-format=ai --target="$t" emit-llvm "$work/large-frame.ax" -o "$d/large-frame.ll"
       cp "$work/large-frame.out" "$d/large-frame.out"
+      for probe in windows-console windows-controls; do
+        "$axc" --diagnostic-format=ai --target="$t" emit-llvm "tests/platform/$probe.ax" -o "$d/$probe.ll"
+        cp "tests/platform/$probe.out" "$d/$probe.out"
+      done
       # The allowlist travels with the modules, so the run half checks
       # against this commit's list rather than the runner's checkout.
       cp "$win_allow" "$d/platform-allow.windows.txt"
-      for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out platform-allow.windows.txt; do
+      cat "$win_allow" "$repo_root/tests/platform/windows-console-imports.txt" > "$d/console-probe-allow.txt"
+      for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out windows-console.ll windows-console.out windows-controls.ll windows-controls.out platform-allow.windows.txt console-probe-allow.txt; do
         [[ -s "$d/$f" ]] || { echo "FAIL --emit [$t]: $d/$f is missing or empty"; exit 1; }
       done
       # Each module must open with its own target's triple. A target that
       # fell through to another's triple would be assembled for the wrong
       # machine.
-      for f in hello.ll leaky.ll large-frame.ll; do
+      for f in hello.ll leaky.ll large-frame.ll windows-console.ll windows-controls.ll; do
         if [[ "$(head -1 "$d/$f")" != "target triple = \"$(triple_of "$t")\"" ]]; then
           echo "FAIL --emit [$t]: $d/$f opens with '$(head -1 "$d/$f")', not the $(triple_of "$t") triple"
           exit 1
@@ -216,7 +223,7 @@ AX
       command -v "$tool" > /dev/null 2>&1 || { echo "FAIL: $tool is not on PATH; the Windows link needs LLVM's llc, lld-link, llvm-dlltool and llvm-readobj"; exit 1; }
     done
     for t in "${win_targets[@]}"; do
-      for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out platform-allow.windows.txt; do
+      for f in hello.ll hello.out leaky.ll large-frame.ll large-frame.out windows-console.ll windows-console.out windows-controls.ll windows-controls.out platform-allow.windows.txt console-probe-allow.txt; do
         [[ -s "$dir/$t/$f" ]] || { echo "FAIL: $dir/$t/$f is missing or empty; run --emit first"; exit 1; }
       done
     done
@@ -258,6 +265,11 @@ AX
       done
       printf 'LIBRARY user32.dll\nEXPORTS\nMessageBoxA\n' > "$w/user32.def"
       llvm-dlltool -m "$(dlltool_machine "$t")" -d "$w/user32.def" -l "$w/user32.lib"
+      # Only the console probes may create a console and inject input.
+      # Keep those fixture APIs out of the production import allowlist.
+      probe_allow="$src/console-probe-allow.txt"
+      { printf 'LIBRARY kernel32.dll\nEXPORTS\n'; permitted_windows_for_dll "$probe_allow" kernel32; } > "$w/console-probe.def"
+      llvm-dlltool -m "$(dlltool_machine "$t")" -d "$w/console-probe.def" -l "$w/console-probe.lib"
 
       # Assemble and link one module. Silent on success; a failed link
       # prints its undefined symbols.
@@ -373,6 +385,31 @@ AX
       else
         status=1
       fi
+      for probe in windows-console windows-controls; do
+        if link_one "$probe" 1 "$w/console-probe.lib"; then
+          imports_of "$w/$probe.exe" > "$w/$probe.imports"
+          unexpected="$(unpermitted_imports "$w/$probe.imports" "$probe_allow")"
+          wrong_dll="$(misplaced_imports "$w/$probe.exe" "$probe_allow")"
+          if [[ -n "$unexpected" || -n "$wrong_dll" ]]; then
+            echo "FAIL $probe [$t]: imports outside the console probe's allowlist: $unexpected $wrong_dll"
+            status=1
+          elif [[ "$mode" == "--run" && "$t" == "$run_target" ]]; then
+            rc=0
+            timeout 30 "$w/$probe.exe" > "$w/$probe.stdout" 2> "$w/$probe.stderr" || rc=$?
+            if [[ "$rc" -eq 0 && ! -s "$w/$probe.stderr" ]] && cmp -s "$w/$probe.stdout" "$src/$probe.out"; then
+              echo "ok   $probe.exe [$t] EXECUTED: exit 0 and the expected console events"
+            else
+              echo "FAIL $probe.exe [$t]: exit $rc or console events differ from the expected result"
+              { diff "$src/$probe.out" "$w/$probe.stdout" || true; cat "$w/$probe.stderr"; } | head -10 | sed 's/^/    /'
+              status=1
+            fi
+          else
+            echo "ok   $probe.exe [$t] links with only permitted probe APIs; NOT EXECUTED on this host"
+          fi
+        else
+          status=1
+        fi
+      done
     done
 
     # 2 and 3. The compiler, linked the way the driver links a Windows

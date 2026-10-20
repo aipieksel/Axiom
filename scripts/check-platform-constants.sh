@@ -535,8 +535,8 @@ PROBE
 # `__axiom_*`, `mainCRTStartup`), the library's from `@Sys.Platform$*`,
 # and the rest of the module is ignored: the probe's own `main` calls
 # platform constants, which are not kernel32. A CamelCase call in a
-# runtime function that is not one of the six the emitter is known to
-# make is a FAIL, not a skip, for the same reason as an unread syscall.
+# runtime function that is not one of the calls below is a FAIL, not a
+# skip, for the same reason as an unread syscall.
 #
 # Reports through its output and exits 0, like `platform_table_report`.
 kernel32_table_report() {
@@ -563,6 +563,15 @@ kernel32_table_report() {
       # held.
       known["RtlCaptureStackBackTrace"] = 1; known["AddVectoredExceptionHandler"] = 1
       known["SetThreadStackGuarantee"] = 1; known["VirtualFree"] = 1
+      # The console-control callback and the persistent input reader
+      # live in the emitted runtime. POSIX keeps these duties in its
+      # kernel signal/readiness objects instead of an equivalent call.
+      known["SetConsoleCtrlHandler"] = 1; known["GetLastError"] = 1
+      known["GetFileType"] = 1; known["ReadFile"] = 1
+      known["SetConsoleMode"] = 1; known["GetConsoleMode"] = 1
+      known["CancelSynchronousIo"] = 1
+      known["Sleep"] = 1; known["CreateThread"] = 1
+      known["WaitForSingleObject"] = 1; known["CloseHandle"] = 1
     }
     /^define / {
       fn = $0
@@ -1003,5 +1012,121 @@ fi
 if ! python3 "$repo_root/tests/platform/windows-pollers.py" --axiom "$axc"; then
   status=1
 fi
+
+if ! python3 "$repo_root/tests/platform/windows-controls.py" --axiom "$axc"; then
+  status=1
+fi
+
+if ! python3 "$repo_root/tests/platform/windows-reader-generate.py" --check; then
+  status=1
+fi
+
+# Root every runtime boundary in an executable-shaped module, so the
+# pruner must retain each implementation the strict harness compares.
+# This source is emitted only: its null addresses must never execute.
+runtime_probe="$work/windows-runtime-probe.ax"
+runtime_ir="$work/windows-runtime-probe.ll"
+cat > "$runtime_probe" <<'PROBE'
+(extern "kernel32"
+  (controlBlock :: (-> Int Int) (symbol "__axiom_console_block"))
+  (controlTake :: (-> Int Int) (symbol "__axiom_console_take"))
+  (readerReady :: (-> Int Int) (symbol "__axiom_win_reader_ready"))
+  (readerRead :: (-> Int Int Int Int) (symbol "__axiom_win_reader_read"))
+  (readerMode :: (-> Int Int Int) (symbol "__axiom_win_reader_mode"))
+  (readerClose :: (-> Int Int) (symbol "__axiom_win_reader_close"))
+  (pollerAlive :: (-> Int Int) (symbol "__axiom_win_poller_alive"))
+  (pollerRetire :: (-> Int Int) (symbol "__axiom_win_poller_retire")))
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (main)
+  {
+    (let a (controlBlock 1048578))
+    (let b (controlTake 1048578))
+    (let c (readerReady 0))
+    (let d (readerRead 0 0 0))
+    (let e (readerMode 0 0))
+    (let f (readerClose 0))
+    (let g (pollerAlive 0))
+    (let h (pollerRetire 0))
+    (+ a (+ b (+ c (+ d (+ e (+ f (+ g h)))))))
+  })
+PROBE
+if "$axc" --diagnostic-format=ai --target=windows-x86_64 emit-llvm \
+    "$runtime_probe" -o "$runtime_ir" >"$work/windows-runtime.log" 2>&1; then
+  # The exact emitted callback, queue, reader and lifetime operations
+  # execute against host mocks. Windows binaries are cross-linked only.
+  if ! python3 "$repo_root/tests/platform/windows-console-runtime.py" \
+      "$repo_root/self_host/codegen.ax" "$work/windows-console-runtime" --module "$runtime_ir"; then
+    status=1
+  fi
+  if ! python3 "$repo_root/tests/platform/windows-reader-runtime.py" \
+      "$repo_root/self_host/codegen.ax" "$work/windows-reader-runtime" --module "$runtime_ir"; then
+    status=1
+  fi
+else
+  echo "FAIL Windows runtime: emit-llvm refused the boundary probe"
+  sed 's/^/    /' "$work/windows-runtime.log" | head -8
+  status=1
+fi
+
+if ! python3 "$repo_root/tests/platform/windows-readiness.py" --axiom "$axc"; then
+  status=1
+fi
+
+if ! python3 "$repo_root/tests/platform/windows-file-liveness.py" --axiom "$axc"; then
+  status=1
+fi
+
+# A program must not reach raw marker addresses through a trusted
+# public function, including when IO has already loaded the internal
+# module. Pin both the removed public name and the Internal boundary.
+boundary_probe="$work/windows-liveness-boundary.ax"
+for removed in platformPollerAlive platformPollerRetire platformConsoleDup; do
+  cat > "$boundary_probe" <<PROBE
+(import Sys.Platform)
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:restrict(no-unsafe)
+(fn (main) ($removed 0))
+PROBE
+  if "$axc" --diagnostic-format=ai --target=windows-x86_64 check "$boundary_probe" \
+      >"$work/windows-liveness-boundary.log" 2>&1; then
+    echo "FAIL Windows lifetime boundary: $removed is public"
+    status=1
+  elif ! grep -q "E AX3001 .*$removed" "$work/windows-liveness-boundary.log"; then
+    echo "FAIL Windows lifetime boundary: $removed did not report AX3001"
+    status=1
+  else
+    echo "ok   Windows lifetime boundary: $removed is absent from Sys.Platform"
+  fi
+done
+
+for operation in windowsMarkerAlive windowsMarkerRetire windowsConsoleDup; do
+  for access in direct transitive qualified; do
+    case "$access" in
+      direct) import_line='(import Internal.WindowsLiveness)'; helper="$operation" ;;
+      transitive) import_line='(import IO)'; helper="$operation" ;;
+      qualified) import_line='(import IO)'; helper="Internal.WindowsLiveness::$operation" ;;
+    esac
+    cat > "$boundary_probe" <<PROBE
+$import_line
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:restrict(no-unsafe)
+(fn (main) ($helper 0))
+PROBE
+    if "$axc" --diagnostic-format=ai --target=windows-x86_64 check "$boundary_probe" \
+        >"$work/windows-liveness-boundary.log" 2>&1; then
+      echo "FAIL Windows lifetime boundary: $access $operation was accepted"
+      status=1
+    elif ! grep -q 'E AX5002 .*Internal.WindowsLiveness' "$work/windows-liveness-boundary.log"; then
+      echo "FAIL Windows lifetime boundary: $access $operation did not report AX5002"
+      status=1
+    else
+      echo "ok   Windows lifetime boundary: $access $operation is refused with AX5002"
+    fi
+  done
+done
 
 exit "$status"

@@ -30,15 +30,14 @@
 ; `platformRealtimeNanos`, `platformSleepNanos`), entropy
 ; (`platformRandomBytes`), waiting on a word (`platformWaitWord`,
 ; `platformWakeWord`), memory (`platformMapPrivate` and its group), the
-; signal mask, which has nothing to block (`platformSignalBlock`), and
+; signal mask, which captures Ctrl-C and Ctrl-Break
+; (`platformSignalBlock`), and
 ; TCP sockets with their readiness (the `platformSocket` group and
 ; `platformPoll`, over ws2_32), and the console's modes and size
-; (`platformConsoleMode` and its group). The console's control events
-; are not yet; a `Sys.ax` function that needs them
-; reaches a `__syscallN` arm, which on this target the compiler lowers
-; to a trap (`axiom: no syscall ABI on this target`, status 74) rather
-; than to a `syscall` instruction the OS gives no meaning to. Loud, and
-; on purpose.
+; (`platformConsoleMode` and its group). Captured controls reach the
+; poller through the runtime's process-owned atomic queue. Unsupported
+; signal masks answer Err 78; close, logoff and shutdown retain their
+; system termination behaviour.
 ;
 ; THE NAMES BELOW EXIST because `Sys.ax` names every one of them
 ; and is checked against whichever platform module resolves. Every
@@ -550,8 +549,8 @@
 (pub fn (signalUsesSignalFd)
   1)
 
-;; sigprocmask(how, set, oset): 0 and unused. Windows delivers no
-;; signals; `platformSignalBlock` has nothing to block.
+;; sigprocmask(how, set, oset): 0 and unused. `platformSignalBlock`
+;; captures the supported console controls through the emitted runtime.
 (pub :: sysSigProcMaskNum Int)
 (pub fn (sysSigProcMaskNum)
   0)
@@ -569,8 +568,8 @@
 (pub fn (sigsetBytes)
   8)
 
-;; signalfd: 0 and unused, since Windows delivers no signals, but defined
-;; so that `Sys.ax` type-checks against every platform module.
+;; signalfd: 0 and unused. Controls use a poller table row and the
+;; runtime queue instead of a signal descriptor.
 (pub :: sysSignalFdNum Int)
 (pub fn (sysSignalFdNum)
   0)
@@ -608,6 +607,11 @@
 (pub :: sigInt Int)
 (pub fn (sigInt)
   2)
+
+;; The Windows Ctrl-Break signal number, or 0 where it is unavailable.
+(pub :: sigBreak Int)
+(pub fn (sigBreak)
+  21)
 
 ;; Whether `fork` answers 0 in the child, the POSIX convention: 1, though
 ;; this target has no `fork`.
@@ -815,20 +819,14 @@
   (if (winIsSocket (winHandleOf fd))
     (wsaRecv (winHandleOf fd) buf count)
     {
-      (let cell winCell)
-      {
-        (let ok (& (winReadFile (winHandleOf fd) buf count cell 0) 4294967295))
-        (if (== ok 0)
-          {
-            (let code (& winGetLastError 4294967295))
-            (if (== code 109)
-                (Ok 0)
-              (== code 1)
-                (Err (mkError eIsDir "platformReadFd"))
-              (Err (mkError (- 0 (winErrnoOf code)) "platformReadFd")))
-          }
-          (Ok (& (__load64 cell 0) 4294967295)))
-      }
+      (let r (winReaderRead (winHandleOf fd) buf count))
+      (if (>= r 0)
+        (Ok r)
+        (if (== r -109)
+            (Ok 0)
+          (== r -1)
+            (Err (mkError eIsDir "platformReadFd"))
+          (Err (mkError (- 0 (winErrnoOf (- 0 r))) "platformReadFd"))))
     }))
 
 ;; exit(code): `ExitProcess` ends every thread, as `exit_group` does.
@@ -1170,7 +1168,12 @@
       (if (wsaFailed (winCloseSocket h))
         wsaLastErr
         0)
-      (winBoolResult (winCloseHandle h)))
+      {
+        (let r (winReaderClose h))
+        (if (< r 0)
+          (winErrnoOf (- 0 r))
+          0)
+      })
   })
 
 ;; lseek(fd, offset, whence): the new absolute offset, or `-errno`. FILE_BEGIN, FILE_CURRENT and FILE_END are 0, 1
@@ -1208,7 +1211,8 @@
   })
 
 ;; pread(fd, buf, count, offset): bytes read, 0 at or past the end of
-;; the file (ERROR_HANDLE_EOF, 38), or `-errno`.
+;; the file (ERROR_HANDLE_EOF, 38), or `-errno`. Only disk files have
+;; a position: consoles and pipes answer ESPIPE (29).
 ;; The platform's own way to read at an offset where raw `pread` is not
 ;; available; -ENOSYS where the raw syscall is used instead.
 (pub :: platformPread (-> Int Int Int Int Int))
@@ -1216,19 +1220,27 @@
 ;@axiom:effect(unsafe)
 (pub fn (platformPread fd buf count offset)
   {
-    (let cell winCell)
-    (let ovl (winOverlappedAt offset))
-    (if (== (& (winReadFile (winHandleOf fd) buf count cell ovl) 4294967295) 0)
+    (let kind (& (winGetFileType (winHandleOf fd)) 4294967295))
+    (if (!= kind 1)
+      (if (== kind 0)
+        winLastErr
+        -29)
       {
-        (let code (& winGetLastError 4294967295))
-        (if (== code 38)
-          0
-          (winErrnoOf code))
-      }
-      (& (__load64 cell 0) 4294967295))
+        (let cell winCell)
+        (let ovl (winOverlappedAt offset))
+        (if (== (& (winReadFile (winHandleOf fd) buf count cell ovl) 4294967295) 0)
+          {
+            (let code (& winGetLastError 4294967295))
+            (if (== code 38)
+              0
+              (winErrnoOf code))
+          }
+          (& (__load64 cell 0) 4294967295))
+      })
   })
 
 ;; pwrite(fd, buf, count, offset): bytes written, or `-errno`.
+;; Consoles and pipes answer ESPIPE (29), as they do for `pread`.
 ;; The platform's own way to write at an offset where raw `pwrite` is
 ;; not available; -ENOSYS where the raw syscall is used instead.
 (pub :: platformPwrite (-> Int Int Int Int Int))
@@ -1236,11 +1248,18 @@
 ;@axiom:effect(unsafe)
 (pub fn (platformPwrite fd buf count offset)
   {
-    (let cell winCell)
-    (let ovl (winOverlappedAt offset))
-    (if (== (& (winWriteFile (winHandleOf fd) buf count cell ovl) 4294967295) 0)
-      winLastErr
-      (& (__load64 cell 0) 4294967295))
+    (let kind (& (winGetFileType (winHandleOf fd)) 4294967295))
+    (if (!= kind 1)
+      (if (== kind 0)
+        winLastErr
+        -29)
+      {
+        (let cell winCell)
+        (let ovl (winOverlappedAt offset))
+        (if (== (& (winWriteFile (winHandleOf fd) buf count cell ovl) 4294967295) 0)
+          winLastErr
+          (& (__load64 cell 0) 4294967295))
+      })
   })
 
 ;; fsync(fd): 0, or `-errno`. `FlushFileBuffers` writes the file's data
@@ -2559,11 +2578,46 @@
     (Err (mkError (- 0 (winErrnoOf (& winGetLastError 4294967295))) "platformMunlock"))
     (Ok 0)))
 
-;; No signal mask on this platform: `Ok 0`, and nothing is blocked.
+; These functions are defined in the emitted runtime. Their process-wide
+; atomic mask and pending bits must outlive every poller and arena reset.
+; The kernel32 block shares the runtime's import group; the compiler
+; recognises these definitions and emits no DLL import for them.
+(extern "kernel32"
+  (winConsoleBlockRaw :: (-> Int Int) (symbol "__axiom_console_block"))
+  (winConsoleTakeRaw :: (-> Int Int) (symbol "__axiom_console_take"))
+  (winReaderRead :: (-> Int Int Int Int) (symbol "__axiom_win_reader_read"))
+  (winReaderReady :: (-> Int Int) (symbol "__axiom_win_reader_ready"))
+  (winReaderMode :: (-> Int Int Int) (symbol "__axiom_win_reader_mode"))
+  (winReaderClose :: (-> Int Int) (symbol "__axiom_win_reader_close")))
+
+; One pending console signal selected by `mask`, consumed atomically.
+; A zero answer means none is pending. The poller uses -2 as its control
+; registration's descriptor, distinct from every Windows HANDLE.
+(:: winTakeConsoleSignal (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (winTakeConsoleSignal mask)
+  (winConsoleTakeRaw mask))
+
+;; Capture Ctrl-C (`sigInt`) and Ctrl-Break (`sigBreak`) for the poller.
+;; The mask is process-wide and remains blocked after a poller closes.
+;; Unsupported bits answer `Err` 78 before changing the mask. A zero
+;; mask does nothing. Console close, logoff and shutdown keep their
+;; system termination behaviour.
 (pub :: platformSignalBlock (-> Int Int (Result Int Error)))
-;@axiom:effect(pure)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
 (pub fn (platformSignalBlock mask setbuf)
-  (Ok 0))
+  (if (!= (& mask -1048579) 0)
+    (Err (mkError 78 "platformSignalBlock"))
+    (if (== mask 0)
+      (Ok 0)
+      {
+        (let r (winConsoleBlockRaw mask))
+        (if (< r 0)
+          (Err (mkError (- 0 (winErrnoOf (- 0 r))) "platformSignalBlock"))
+          (Ok 0))
+      })))
 
 ; ------------------------------------------------------------------
 ; Sockets, over ws2_32.
@@ -2888,74 +2942,203 @@
     wsaLastErr
     0))
 
-;; The platform's poll over `n` records at `fds`, each three words: the
-;; SOCKET, the interest (`pollReadFilter`, `pollWriteFilter` or both)
-;; and, on return, the readiness in the same spelling, plus 24 (EPOLLERR
-;; and EPOLLHUP as Linux spells them) for an error, a hangup or a handle
-;; that is not a socket. `ms` negative waits without limit. Answers the
-;; count of ready records, or `-errno`. `WSAPoll` refuses an empty
-;; array, so with nothing registered this is a sleep that answers 0.
+(extern "kernel32"
+  (winGetTickCount64 :: Int (symbol "GetTickCount64")))
+
+; Readiness and reads share the runtime's native byte buffer. A
+; persistent ReadFile worker owns its buffer, so partial console reads
+; cannot hide or discard cached UTF-8 or cooked-line bytes. Disk files
+; are ready at EOF too; console and pipe writes have no readiness probe.
+(:: winPollHandle (-> Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (winPollHandle h kind interest)
+  (if (== kind 1)
+      (& interest (| pollReadFilter pollWriteFilter))
+    (|| (== kind 2) (== kind 3))
+      (if (== (& interest pollReadFilter) 0)
+        24
+        {
+          (let r (winReaderReady h))
+          (if (< r 0)
+            24
+            (if (== r 0)
+              0
+              pollReadFilter))
+        })
+    24))
+
+; The context owns one compact WSAPOLLFD array and its row map. Mixed
+; handle waits probe sockets without blocking; socket-only waits retain
+; WSAPoll's blocking path. Every iteration overwrites all readiness.
+(:: winPollOnce (-> Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (winPollOnce ctx waitMs)
+  {
+    (let fds (__load64 ctx 0))
+    (let n (__load64 ctx 1))
+    (let w (__load64 ctx 2))
+    (let rows (__load64 ctx 3))
+    (let ns (__load64 ctx 4))
+    (let kinds (__load64 ctx 5))
+    (let mut i 0)
+    (while (< i ns)
+      {
+        (__store64 w (+ (* i 2) 1) (& (__load64 w (+ (* i 2) 1)) 65535))
+        (set i (+ i 1))
+      })
+    (let r
+      (if (== ns 0)
+        0
+        (winWSAPoll w ns waitMs)))
+    (if (wsaFailed r)
+      wsaLastErr
+      {
+        (set i 0)
+        (while (< i ns)
+          {
+            (let events (& (>> (__load64 w (+ (* i 2) 1)) 16) 65535))
+            (__store64 fds (+ (__load64 rows i) 2)
+              (|
+                (if (!= (& events 256) 0)
+                  pollReadFilter
+                  0)
+                (|
+                  (if (!= (& events 16) 0)
+                    pollWriteFilter
+                    0)
+                  (if (!= (& events 7) 0)
+                    24
+                    0))))
+            (set i (+ i 1))
+          })
+        (let mut ready 0)
+        (set i 0)
+        (while (< i n)
+          {
+            (let kind (__load64 kinds i))
+            (if (!= kind 0)
+              (__store64 fds (+ (* i 3) 2)
+                (if (== kind 4)
+                  (- 0 (winTakeConsoleSignal (__load64 fds (+ (* i 3) 1))))
+                  (winPollHandle (winHandleOf (__load64 fds (* i 3))) kind
+                    (__load64 fds (+ (* i 3) 1))))))
+            (if (!= (__load64 fds (+ (* i 3) 2)) 0)
+              (set ready (+ ready 1)))
+            (set i (+ i 1))
+          })
+        ready
+      })
+  })
+
+(:: winPollLoop (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (winPollLoop ctx)
+  {
+    (let ms (__load64 ctx 7))
+    (let mixed (!= (__load64 ctx 8) 0))
+    (let elapsed (- winGetTickCount64 (__load64 ctx 6)))
+    (let remaining
+      (if (< ms 0)
+        (- 0 1)
+        (if (>= elapsed ms)
+          0
+          (- ms elapsed))))
+    (let waitMs
+      (if mixed
+        0
+        (if (> remaining 2147483647)
+          2147483647
+          remaining)))
+    (let r (winPollOnce ctx waitMs))
+    (if (!= r 0)
+      r
+      {
+        (let spent (- winGetTickCount64 (__load64 ctx 6)))
+        (if (&& (>= ms 0) (>= spent ms))
+          0
+          {
+            (if mixed
+              (winSleep
+                (if (|| (< ms 0) (> (- ms spent) 10))
+                  10
+                  (- ms spent))))
+            (winPollLoop ctx)
+          })
+      })
+  })
+
+;; Poll `n` three-word records: descriptor, interest and readiness. The
+;; read/write flags keep their platform spelling; 24 reports error or
+;; hangup. Sockets, console input, readable pipes and files can share a
+;; wait. Mixed waits check handles at most 10 ms apart. Negative `ms`
+;; waits without limit; 0 probes once. Console and pipe input is read
+;; ahead into a bounded native buffer shared with `platformReadFd`. An
+;; initial probe can be pending until the reader thread runs.
 (pub :: platformPoll (-> Int Int Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (platformPoll fds n ms)
   (if (<= n 0)
     {
-      (let _
-        (winSleep
-          (if (< ms 0)
-            4294967295
-            ms)))
+      (if (< ms 0)
+        (winSleep 4294967295)
+        (winSleepMillis ms))
       0
     }
     {
-      ; WSAPOLLFD: the SOCKET, then a SHORT of interest and a SHORT of
-      ; readiness in one word. POLLRDNORM is 256 and POLLWRNORM 16;
-      ; POLLERR, POLLHUP and POLLNVAL are 1, 2 and 4.
+      (let ctx (__alloc 72))
       (let w (__alloc (* n 16)))
+      (let rows (__alloc (* n 8)))
+      (let kinds (__alloc (* n 8)))
+      (let mut ns 0)
       (let mut i 0)
       (while (< i n)
         {
-          (let interest (__load64 fds (+ (* i 3) 1)))
-          (__store64 w (* i 2) (__load64 fds (* i 3)))
-          (__store64 w (+ (* i 2) 1)
-            (+
-              (if (!= (& interest pollReadFilter) 0)
-                256
-                0)
-              (if (!= (& interest pollWriteFilter) 0)
-                16
-                0)))
+          (let fd (__load64 fds (* i 3)))
+          (let h (winHandleOf fd))
+          (if (== fd (- 0 2))
+            (__store64 kinds i 4)
+            (if (winIsSocket h)
+              {
+                (let interest (__load64 fds (+ (* i 3) 1)))
+                (__store64 w (* ns 2) h)
+                (__store64 w (+ (* ns 2) 1)
+                  (|
+                    (if (!= (& interest pollReadFilter) 0)
+                      256
+                      0)
+                    (if (!= (& interest pollWriteFilter) 0)
+                      16
+                      0)))
+                (__store64 rows ns (* i 3))
+                (__store64 kinds i 0)
+                (set ns (+ ns 1))
+              }
+              {
+                (let kind (& (winGetFileType h) 4294967295))
+                (__store64 kinds i
+                  (if (&& (>= kind 1) (<= kind 3))
+                    kind
+                    5))
+              }))
           (set i (+ i 1))
         })
-      (let r
-        (winWSAPoll w n
-          (if (< ms 0)
-            (- 0 1)
-            ms)))
-      (if (wsaFailed r)
-        wsaLastErr
-        {
-          (set i 0)
-          (while (< i n)
-            {
-              (let revents (& (>> (__load64 w (+ (* i 2) 1)) 16) 65535))
-              (__store64 fds (+ (* i 3) 2)
-                (+
-                  (if (!= (& revents 256) 0)
-                    pollReadFilter
-                    0)
-                  (+
-                    (if (!= (& revents 16) 0)
-                      pollWriteFilter
-                      0)
-                    (if (!= (& revents 7) 0)
-                      24
-                      0))))
-              (set i (+ i 1))
-            })
-          (& r 4294967295)
-        })
+      (__store64 ctx 0 fds)
+      (__store64 ctx 1 n)
+      (__store64 ctx 2 w)
+      (__store64 ctx 3 rows)
+      (__store64 ctx 4 ns)
+      (__store64 ctx 5 kinds)
+      (__store64 ctx 6 winGetTickCount64)
+      (__store64 ctx 7 ms)
+      (__store64 ctx 8
+        (if (< ns n)
+          1
+          0))
+      (winPollLoop ctx)
     }))
 
 ; ------------------------------------------------------------------
@@ -2999,9 +3182,12 @@
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (platformConsoleSetMode fd mode)
-  (if (== (& (winSetConsoleMode (winHandleOf fd) mode) 4294967295) 0)
-    (winErrnoOf (& winGetLastError 4294967295))
-    0))
+  {
+    (let r (winReaderMode (winHandleOf fd) mode))
+    (if (< r 0)
+      (winErrnoOf (- 0 r))
+      0)
+  })
 
 ;; The console's window in character cells, `rows * 65536 + cols` from
 ;; the window rectangle `GetConsoleScreenBufferInfo` reports (four

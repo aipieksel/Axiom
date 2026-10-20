@@ -1,0 +1,154 @@
+; The actual IO table-poller and Windows mask wrapper run on the host;
+; the runtime queue and readiness boundary are deterministic mocks.
+(import IO)
+(import WindowsIO)
+(import WindowsPlatform)
+(import Err)
+(import Str)
+
+(extern "windows_controls_test"
+  (resetMock :: Int (symbol "resetMock"))
+  (queueMock :: (-> Int Int) (symbol "queueMock"))
+  (failMock :: (-> Int Int) (symbol "failMock"))
+  (readyMock :: (-> Int Int) (symbol "readyMock"))
+  (callsMock :: Int (symbol "callsMock"))
+  (maskMock :: Int (symbol "maskMock")))
+
+(:: say (-> Bool String Int))
+;@axiom:effect(io)
+(fn (say good label)
+  {
+    (IO::println
+      (concat
+        (if good
+          "ok   "
+          "FAIL ")
+        label))
+    (if good
+      0
+      1)
+  })
+
+(:: errorIs (-> (Result Int Error) Int Bool))
+(fn (errorIs result code)
+  (match result
+    ((Err e) (== e.code code))
+    ((Ok _) false)))
+
+(:: count (-> WindowsIO::Poller Int))
+;@axiom:effect(io)
+(fn (count p)
+  (match (WindowsIO::pollerWait p 0)
+    ((Ok n) n)
+    ((Err e) (- 0 e.code))))
+
+(:: signalIs (-> WindowsIO::Poller Int Bool))
+;@axiom:effect(io)
+(fn (signalIs p signo)
+  (match (WindowsIO::pollerSignal p 0)
+    ((Some n) (== n signo))
+    ((None) (== signo 0))))
+
+(:: exercise (-> WindowsIO::Poller WindowsIO::Poller Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (exercise p q)
+  {
+    (let mut bad 0)
+    (let _ resetMock)
+    (set bad (+ bad (say (isOk (WindowsPlatform::controlMaskBlock 0 0)) "zero mask succeeds")))
+    (set bad (+ bad (say (== callsMock 0) "zero mask does not install a handler")))
+    (set bad (+ bad
+               (say (errorIs (WindowsPlatform::controlMaskBlock 1 0) 78)
+                 "unsupported mask is refused")))
+    (set bad (+ bad (say (== callsMock 0) "unsupported mask never reaches the runtime")))
+    (let _ (failMock 5))
+    (set bad (+ bad
+               (say (errorIs (WindowsIO::pollerAddSignals p 2 70) 13)
+                 "handler registration errors use errno mapping")))
+    (set bad (+ bad
+               (say (&& (== maskMock 0) (== (count p) 0))
+                 "failed registration leaves no row or blocked mask")))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerAddSignals p 2 71)) "registration can be retried")))
+    ; A process may block both controls while one poller watches only
+    ; Ctrl-C. Ctrl-Break must remain pending for another registration.
+    (let _ (WindowsPlatform::controlMaskBlock 1048578 0))
+    (let _ (queueMock 1048576))
+    (set bad (+ bad (say (== (count p) 0) "a row does not consume signals outside its mask")))
+    (let _ (queueMock 2))
+    (let n (count p))
+    (set bad (+ bad
+               (say (&& (== n 1) (== (WindowsIO::pollerToken p 0) 71))
+                 "control readiness carries its token")))
+    (set bad (+ bad (say (&& (== n 1) (signalIs p 2)) "negative readiness decodes to Ctrl-C")))
+    (set bad (+ bad (say (&& (== n 1) (signalIs p 2)) "cached signal reads are repeatable")))
+    (set bad (+ bad (say (== (count p) 0) "the runtime control is consumed once")))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerAddSignals p 1048578 72))
+                 "re-registering updates a full table row")))
+    (let n2 (count p))
+    (set bad (+ bad
+               (say (&& (== n2 1) (&& (== (WindowsIO::pollerToken p 0) 72) (signalIs p 21)))
+                 "a pending Ctrl-Break keeps its own number")))
+    (set bad (+ bad
+               (say (errorIs (WindowsIO::pollerAddSignals p 3 99) 78)
+                 "an unsupported replacement is refused")))
+    (let _ (queueMock 2))
+    (let preserved (count p))
+    (set bad (+ bad
+               (say (&& (== preserved 1) (== (WindowsIO::pollerToken p 0) 72))
+                 "a refused replacement preserves the previous row")))
+    (set bad (+ bad (say (isOk (WindowsIO::pollerAddSignals p 0 0)) "zero mask removes the row")))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerAddSignals p 0 0))
+                 "removing an absent control row succeeds")))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerAdd p WindowsIO::stdin 80))
+                 "removed controls release table capacity")))
+    (set bad (+ bad
+               (say (errorIs (WindowsIO::pollerAddSignals p 2 81) 24)
+                 "a new control row respects table capacity")))
+    (let _ (readyMock 1))
+    (let ordinary (count p))
+    (set bad (+ bad
+               (say (&& (== ordinary 1) (&& (== (WindowsIO::pollerToken p 0) 80) (signalIs p 0)))
+                 "ordinary readiness is never a signal")))
+    (let _ (readyMock 0))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerRemove p WindowsIO::stdin))
+                 "ordinary rows can be removed")))
+    (let _ (queueMock 1048578))
+    (set bad (+ bad (say (== (count p) 0) "controls stay pending without a row")))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerAddSignals p 1048578 90))
+                 "controls register after a removal")))
+    (set bad (+ bad
+               (say (isOk (WindowsIO::pollerAddSignals q 1048578 91))
+                 "a second poller may register")))
+    (let first (count p))
+    (set bad (+ bad (say (&& (== first 1) (signalIs p 2)) "one pending bit is drained at a time")))
+    (let second (count q))
+    (set bad (+ bad
+               (say (&& (== second 1) (signalIs q 21))
+                 "another poller can drain the remaining bit")))
+    (set bad (+ bad
+               (say (&& (== (count p) 0) (== (count q) 0))
+                 "two pollers never redeliver a drained control")))
+    (set bad (+ bad
+               (say (&& (isOk (WindowsIO::pollerClose p)) (isOk (WindowsIO::pollerClose q)))
+                 "control rows close without callback-owned memory")))
+    (set bad (+ bad (say (== maskMock 1048578) "closing pollers retains the process mask")))
+    bad
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (match (WindowsIO::pollerNew 1)
+    ((Err _) 1)
+    ((Ok p)
+      (match (WindowsIO::pollerNew 1)
+        ((Err _) 1)
+        ((Ok q) (exercise p q)))
+    )))

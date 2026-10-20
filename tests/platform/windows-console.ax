@@ -1,0 +1,461 @@
+; Windows CI runs this in a private console. Reads use the public File
+; and Poller APIs: partial stream reads must preserve every byte, even
+; after ReadFile has consumed all of the console's input records.
+(import IO)
+(import Sys)
+(import Err)
+(import Str)
+
+(extern "kernel32"
+  (getStdHandleRaw :: (-> Int Int) (symbol "GetStdHandle"))
+  (setStdHandleRaw :: (-> Int Int Int) (symbol "SetStdHandle"))
+  (duplicateHandleRaw :: (-> Int Int Int Int Int Int Int Int) (symbol "DuplicateHandle"))
+  (createFileRaw :: (-> Int Int Int Int Int Int Int Int) (symbol "CreateFileW"))
+  (closeHandleRaw :: (-> Int Int) (symbol "CloseHandle"))
+  (freeConsoleRaw :: Int (symbol "FreeConsole"))
+  (allocConsoleRaw :: Int (symbol "AllocConsole"))
+  (setConsoleCtrlHandlerRaw :: (-> Int Int Int) (symbol "SetConsoleCtrlHandler"))
+  (setConsoleModeRaw :: (-> Int Int Int) (symbol "SetConsoleMode"))
+  (getConsoleModeRaw :: (-> Int Int Int) (symbol "GetConsoleMode"))
+  (setConsoleCPRaw :: (-> Int Int) (symbol "SetConsoleCP"))
+  (getConsoleCPRaw :: Int (symbol "GetConsoleCP"))
+  (writeConsoleInputRaw :: (-> Int Int Int Int Int) (symbol "WriteConsoleInputW")))
+
+(:: say (-> Bool String Int))
+;@axiom:effect(io)
+(fn (say good label)
+  {
+    (println
+      (concat
+        (if good
+          "ok   "
+          "FAIL ")
+        label))
+    (if good
+      0
+      1)
+  })
+
+; With STARTF_USESTDHANDLES, AllocConsole can keep the CI runner's
+; redirected stdin. Own a read/write CONIN$ handle for injection and
+; bind the public stdin File to it before any reader starts. Process
+; exit closes this handle.
+(:: bindConsoleInput Bool)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (bindConsoleInput)
+  {
+    (let name "C\0O\0N\0I\0N\0$\0\0\0")
+    (let h (createFileRaw (strData name) 3221225472 3 0 3 0 0))
+    (if (== h -1)
+      false
+      {
+        (let installed (!= (& (setStdHandleRaw -10 h) 4294967295) 0))
+        (let mode (strAlloc 8))
+        (let verified
+          (&& installed
+            (!= (& (getConsoleModeRaw (getStdHandleRaw -10) (strData mode)) 4294967295) 0)))
+        (if verified
+          true
+          {
+            (let _ (closeHandleRaw h))
+            false
+          })
+      })
+  })
+
+(:: privateConsole Bool)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (privateConsole)
+  {
+    (let outCell (strAlloc 8))
+    (let savedOut (strData outCell))
+    (let errCell (strAlloc 8))
+    (let savedErr (strData errCell))
+    (let outOk
+      (!= (& (duplicateHandleRaw -1 (getStdHandleRaw -11) -1 savedOut 0 0 2) 4294967295) 0))
+    (let errOk
+      (!= (& (duplicateHandleRaw -1 (getStdHandleRaw -12) -1 savedErr 0 0 2) 4294967295) 0))
+    (if (&& outOk errOk)
+      {
+        (let _ freeConsoleRaw)
+        (let attached (!= (& allocConsoleRaw 4294967295) 0))
+        (let inputReady (&& attached bindConsoleInput))
+        (let outRestored (!= (& (setStdHandleRaw -11 (__load64 savedOut 0)) 4294967295) 0))
+        (let errRestored (!= (& (setStdHandleRaw -12 (__load64 savedErr 0)) 4294967295) 0))
+        ; A runner can inherit the Ctrl-C-ignore attribute. Clear it
+        ; before installing the runtime's real handler.
+        (let enabled (!= (& (setConsoleCtrlHandlerRaw 0 0) 4294967295) 0))
+        (&& inputReady (&& outRestored (&& errRestored enabled)))
+      }
+      false)
+  })
+
+(:: waitCount (-> Poller Int Int))
+;@axiom:effect(io)
+(fn (waitCount p timeout)
+  (match (pollerWait p timeout)
+    ((Ok n) n)
+    ((Err e) (- 0 e.code))))
+
+; INPUT_RECORD is 20 bytes. Only key-down records with a nonzero
+; repeat count supply stream input; noise is injected separately.
+(:: put16 (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (put16 p at n)
+  {
+    (__store8 p at (& n 255))
+    (__store8 p (+ at 1) (& (>> n 8) 255))
+    0
+  })
+
+(:: keyRecord (-> Int Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (keyRecord p down vk cp control)
+  {
+    (let mut i 0)
+    (while (< i 20)
+      {
+        (__store8 p i 0)
+        (set i (+ i 1))
+      })
+    (put16 p 0 1)
+    (__store8 p 4 down)
+    (put16 p 8 1)
+    (put16 p 10 vk)
+    (put16 p 14 cp)
+    (__store8 p 16 control)
+    0
+  })
+
+(:: sendKey (-> Int Int Int Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (sendKey h vk cp control)
+  {
+    (let rec (strAlloc 20))
+    (let cell (strAlloc 8))
+    (keyRecord (strData rec) 1 vk cp control)
+    (&& (!= (& (writeConsoleInputRaw h (strData rec) 1 (strData cell)) 4294967295) 0)
+      (== (& (__load64 (strData cell) 0) 4294967295) 1))
+  })
+
+(:: sendPair (-> Int Int Int Int Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (sendPair h firstVk firstCp nextVk nextCp)
+  {
+    (let records (strAlloc 40))
+    (let cell (strAlloc 8))
+    (let p (strData records))
+    (keyRecord p 1 firstVk firstCp 0)
+    (keyRecord (+ p 20) 1 nextVk nextCp 0)
+    (&& (!= (& (writeConsoleInputRaw h p 2 (strData cell)) 4294967295) 0)
+      (== (& (__load64 (strData cell) 0) 4294967295) 2))
+  })
+
+; Three hundred records exceed the abandoned bounded record scan.
+; Focus and key-up/modifier events must not wake a stream reader, and
+; must not hide a later byte-producing key.
+(:: sendNoise (-> Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (sendNoise h)
+  {
+    (let records (strAlloc 6000))
+    (let cell (strAlloc 8))
+    (let p (strData records))
+    (let mut i 0)
+    (while (< i 300)
+      {
+        (let at (+ p (* i 20)))
+        (keyRecord at 0 65 97 0)
+        (if (== (% i 3) 0)
+            (put16 at 0 16)
+          (== (% i 3) 1)
+            (keyRecord at 1 16 0 16))
+        (set i (+ i 1))
+      })
+    (&& (!= (& (writeConsoleInputRaw h p 300 (strData cell)) 4294967295) 0)
+      (== (& (__load64 (strData cell) 0) 4294967295) 300))
+  })
+
+(:: readIs (-> File Int String Bool))
+;@axiom:effect(io)
+(fn (readIs f count text)
+  {
+    (let buf (readBufferNew count))
+    (match (fileRead f buf 0 count)
+      ((Err _) false)
+      ((Ok n) (&& (== n (strLen text)) (== (readBufferText buf 0 n) text))))
+  })
+
+(:: readByteIs (-> File Int Bool))
+;@axiom:effect(io)
+(fn (readByteIs f byte)
+  {
+    (let buf (readBufferNew 1))
+    (match (fileRead f buf 0 1)
+      ((Err _) false)
+      ((Ok n) (&& (== n 1) (== (readBufferByte buf 0) byte))))
+  })
+
+(:: rawStreamCases (-> Int File Poller TermGuard Int))
+;@axiom:effect(io)
+(fn (rawStreamCases h f p guard)
+  {
+    (let mut bad 0)
+    (set bad (+ bad (say (sendKey h 81 113 0) "a key is queued behind console noise")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (readIs f 1 "q"))
+                 "a later key reaches the stream reader")))
+    (set bad (+ bad (say (sendKey h 32 0 8) "Ctrl-Space with zero Unicode is queued")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (readByteIs f 0))
+                 "a NUL byte is readable input")))
+    (set bad (+ bad (say (sendKey h 69 233 0) "a UTF-8 console key is queued")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (readByteIs f 195))
+                 "a one-byte read returns the UTF-8 prefix")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 0) 1) (readByteIs f 169))
+                 "the cached UTF-8 continuation is immediately ready")))
+    (set bad (+ bad (say (sendPair h 69 233 90 122) "a UTF-8 key and later ASCII key are queued")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (readByteIs f 195))
+                 "the second UTF-8 prefix is read alone")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 0) 1) (readByteIs f 169))
+                 "later input does not discard a cached UTF-8 continuation")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (readIs f 1 "z"))
+                 "the later ASCII byte is preserved")))
+    (set bad (+ bad (say (sendKey h 37 0 0) "a VT left-arrow key is queued")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (readByteIs f 27))
+                 "a partial VT read returns its escape prefix")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 0) 1) (readIs f 2 "[D"))
+                 "the VT suffix is immediately ready")))
+    (set bad (+ bad (say (sendKey h 77 109 0) "input is queued before a mode change")))
+    (set bad (+ bad (say (== (waitCount p 2000) 1) "the mode-change byte is buffered")))
+    (set bad (+ bad (say (isOk (termRestore guard)) "a mode change joins the pending reader")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 0) 1) (readIs f 1 "m"))
+                 "a mode change retains completed bytes")))
+    (set bad (+ bad (say (== (waitCount p 20) 0) "an empty cooked reader stays pending")))
+    (set bad (+ bad (say (isOk (fileClose f)) "closing a pending reader cancels and joins it")))
+    bad
+  })
+
+(:: rawCases (-> Int File Poller TermGuard Int))
+;@axiom:effect(io)
+(fn (rawCases h f p guard)
+  {
+    (let mut bad 0)
+    (set bad (+ bad (say (sendNoise h) "console noise is queued")))
+    (set bad (+ bad (say (== (waitCount p 30) 0) "noise and modifiers produce no stream bytes")))
+    (set bad (+ bad (say (isOk (termRestore guard)) "a mode change cancels a pending read")))
+    (match (termRaw f false)
+      ((Err _)
+        (set bad (+ bad (say false "raw input restarts after mode cancellation")))
+      )
+      ((Ok next)
+        {
+          (set bad (+ bad (say true "raw input restarts after mode cancellation")))
+          (set bad (+ bad (rawStreamCases h f p next)))
+        }
+      ))
+    bad
+  })
+
+(:: consoleCases (-> Int File Poller Int))
+;@axiom:effect(io)
+(fn (consoleCases h f p)
+  {
+    (let mut bad 0)
+    (set bad (+ bad (say (isOk (pollerAdd p f 91)) "console input registers with a token")))
+    (set bad (+ bad (say (== (waitCount p 0) 0) "an initial zero-timeout probe does not block")))
+    (let queued
+      (&& (sendKey h 65 97 0)
+        (&& (sendKey h 66 98 0) (&& (sendKey h 67 99 0) (sendKey h 13 13 0)))))
+    (set bad (+ bad (say queued "a cooked line is queued")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 2000) 1) (== (pollerToken p 0) 91))
+                 "a completed cooked line becomes ready")))
+    (set bad (+ bad (say (readIs f 1 "a") "a cooked line can be read one byte at a time")))
+    (set bad (+ bad
+               (say (&& (== (waitCount p 0) 1) (readIs f 16 "bc\r\n"))
+                 "the cooked remainder is immediately ready and preserved")))
+    (match (termRaw f false)
+      ((Err _)
+        (set bad (+ bad (say false "raw mode is enabled")))
+      )
+      ((Ok guard)
+        {
+          (set bad (+ bad (say true "raw mode is enabled")))
+          (set bad (+ bad (rawCases h f p guard)))
+        }
+      ))
+    (set bad (+ bad (say (isOk (pollerClose p)) "the console poller closes safely")))
+    bad
+  })
+
+(:: stdinCases (-> Int Int))
+;@axiom:effect(io)
+(fn (stdinCases h)
+  {
+    (let first stdin)
+    (match (pollerNew 2)
+      ((Err _) (say false "a stdin poller is created"))
+      ((Ok p)
+        (match (termRaw first false)
+          ((Err _) (say false "stdin enters raw mode"))
+          ((Ok guard)
+            {
+              (let mut bad 0)
+              (set bad (+ bad
+                         (say (isOk (pollerAdd p first 92)) "stdin registers with the reader")))
+              (set bad (+ bad (say (sendKey h 69 233 0) "a UTF-8 stdin key is queued")))
+              (set bad (+ bad
+                         (say (&& (== (waitCount p 2000) 1) (readByteIs first 195))
+                           "stdin reads the first byte")))
+              (set bad (+ bad
+                         (say (isOk (termRestore guard))
+                           "stdin restores its mode with bytes buffered")))
+              (set bad (+ bad
+                         (say (isOk (fileClose first))
+                           "closing a stdin value leaves the process handle open")))
+              (let next stdin)
+              (set bad (+ bad
+                         (say (isOk (pollerAdd p next 93))
+                           "another stdin value reuses the process reader")))
+              (set bad (+ bad
+                         (say (&& (== (waitCount p 0) 1) (readByteIs next 169))
+                           "another stdin value retains the cached byte")))
+              (set bad (+ bad
+                         (say (&& (isOk (fileClose next)) (isOk (pollerClose p)))
+                           "stdin owners and its poller close safely")))
+              bad
+            }
+          ))
+      ))
+  })
+
+; Observe the same console through the independent handle AllocConsole
+; installed as standard input. This handle remains open when an owned
+; CONIN$ File closes, so a successful restore must change its real mode.
+(:: inputMode (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (inputMode h)
+  {
+    (let cell (strAlloc 8))
+    (if (== (& (getConsoleModeRaw h (strData cell)) 4294967295) 0)
+      -1
+      (& (__load64 (strData cell) 0) 4294967295))
+  })
+
+; The File ends at this function's return. The returned guard owns its
+; restoration handle, and must not keep the original File alive.
+(:: guardAfterFileScope (Result TermGuard Error))
+;@axiom:effect(io)
+(fn (guardAfterFileScope)
+  (match (openPath "CONIN$" oRdonly)
+    ((Err e) (Err e))
+    ((Ok f) (termRaw f false))))
+
+(:: guardAfterClose (-> Int Int Int))
+;@axiom:effect(io)
+(fn (guardAfterClose h before)
+  (match (openPath "CONIN$" oRdonly)
+    ((Err _) (say false "an owned input File opens for its guard"))
+    ((Ok f)
+      (match (termRaw f false)
+        ((Err _) (say false "a guard is created before closing its File"))
+        ((Ok guard)
+          {
+            (let mut bad 0)
+            (set bad (+ bad
+                       (say (&& (>= before 0) (!= (inputMode h) before))
+                         "the owned input File enters raw mode")))
+            (set bad (+ bad
+                       (say (isOk (fileClose f))
+                         "the input File closes before its guard restores")))
+            ; Opening another File gives Windows an opportunity to reuse
+            ; the retired input HANDLE. Correctness does not depend on
+            ; whether the kernel chooses that particular number.
+            (match (openPath nullDevice oRdonly)
+              ((Err _)
+                (set bad (+ bad (say false "an unrelated File opens after input closes")))
+              )
+              ((Ok other)
+                {
+                  (set bad (+ bad
+                             (say (isOk (termRestore guard))
+                               "a guard restores after explicit File close")))
+                  (set bad (+ bad
+                             (say (== (inputMode h) before)
+                               "explicit close preserves restoration of the original console mode")))
+                  (set bad (+ bad
+                             (say (&& (readIs other 1 "") (isOk (fileClose other)))
+                               "an unrelated File remains usable after guard restoration")))
+                }
+              ))
+            bad
+          }
+        ))
+    )))
+
+(:: guardLifetimeCases (-> Int Int))
+;@axiom:effect(io)
+(fn (guardLifetimeCases h)
+  {
+    (let before (inputMode h))
+    (let mut bad (guardAfterClose h before))
+    (match guardAfterFileScope
+      ((Err _)
+        (set bad (+ bad (say false "a guard outlives its input File scope")))
+      )
+      ((Ok guard)
+        {
+          (set bad (+ bad (say (!= (inputMode h) before) "a guard outlives its input File scope")))
+          (set bad (+ bad
+                     (say (isOk (termRestore guard))
+                       "a guard restores after lexical File release")))
+          (set bad (+ bad
+                     (say (== (inputMode h) before)
+                       "lexical release preserves restoration of the original console mode")))
+        }
+      ))
+    bad
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (main)
+  (if privateConsole
+    {
+      (let h (getStdHandleRaw -10))
+      (let savedCP getConsoleCPRaw)
+      (let setup
+        (&& (!= (& (setConsoleCPRaw 65001) 4294967295) 0)
+          (!= (& (setConsoleModeRaw h 3) 4294967295) 0)))
+      (let result
+        (if setup
+          (match (openPath "CONIN$" oRdonly)
+            ((Err _) (say false "console input opens as a File"))
+            ((Ok f)
+              (match (pollerNew 4)
+                ((Err _) (say false "a console poller is created"))
+                ((Ok p) (consoleCases h f p)))
+            ))
+          (say false "the private console uses cooked UTF-8 input")))
+      (let stdinResult (stdinCases h))
+      (let guardResult (guardLifetimeCases h))
+      (let _ (setConsoleCPRaw savedCP))
+      (+ result (+ stdinResult guardResult))
+    }
+    (say false "a private console preserves runner output")))

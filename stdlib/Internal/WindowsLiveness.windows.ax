@@ -1,0 +1,62 @@
+;;! Internal.WindowsLiveness - library-only Windows file-lifetime helpers.
+;
+; IO owns every cell and keeps its managed storage alive while a file
+; callback or poller refers to it. These wrappers expose raw addresses
+; only inside the standard library's Internal boundary (AX5002).
+; The two atomic definitions live in the emitted runtime; the kernel32
+; block shares its import group without importing them from a DLL.
+(extern "kernel32"
+  (winPollerAliveRaw :: (-> Int Int) (symbol "__axiom_win_poller_alive"))
+  (winPollerRetireRaw :: (-> Int Int) (symbol "__axiom_win_poller_retire"))
+  (winDuplicateHandleRaw :: (-> Int Int Int Int Int Int Int Int) (symbol "DuplicateHandle"))
+  (winGetStdHandleRaw :: (-> Int Int) (symbol "GetStdHandle"))
+  (winGetLastErrorRaw :: Int (symbol "GetLastError")))
+
+;; Read an aligned file-liveness cell with acquire ordering. Its owner
+;; keeps the cell alive; this call retains no pointer after returning.
+(pub :: windowsMarkerAlive (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsMarkerAlive cell)
+  (winPollerAliveRaw cell))
+
+;; Retire an aligned file-liveness cell with release ordering before
+;; its Windows HANDLE closes. The cell must outlive its registrations.
+(pub :: windowsMarkerRetire (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsMarkerRetire cell)
+  (winPollerRetireRaw cell))
+
+(:: windowsDupError (-> Int Int))
+(fn (windowsDupError code)
+  (if (== code 6)
+      -9
+    (== code 5)
+      -13
+    (== code 8)
+      -12
+    (== code 87)
+      -22
+    -5))
+
+;; A private, non-inheritable duplicate of a console handle, or
+;; `-errno`. IO owns the duplicate and closes it with its terminal guard.
+(pub :: windowsConsoleDup (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (windowsConsoleDup fd)
+  {
+    (let h
+      (if (== fd 0)
+          (winGetStdHandleRaw -10)
+        (== fd 1)
+          (winGetStdHandleRaw -11)
+        (== fd 2)
+          (winGetStdHandleRaw -12)
+        fd))
+    (let cell (__alloc 8))
+    (if (== (& (winDuplicateHandleRaw -1 h -1 cell 0 0 2) 4294967295) 0)
+      (windowsDupError (& winGetLastErrorRaw 4294967295))
+      (__load64 cell 0))
+  })

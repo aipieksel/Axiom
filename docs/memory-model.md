@@ -1130,6 +1130,17 @@ Tested by `tests/stdlib/785-stdio-file.ax`,
 `tests/stdlib/786-poller-owned.ax` and
 `scripts/check-terminal-restore.sh`.
 
+On Windows, each `File` carries a separate lifetime marker. A table
+poller retains that marker rather than the owner, and cleanup retires it
+before closing the handle. Reusing a handle number cannot revive an old
+registration. Standard-stream cleanup retires its marker while keeping
+the process handle open. Console and pipe reads use a process-owned
+native buffer shared with readiness checks; mode changes and close
+cancel and join a pending reader before acting on the handle.
+
+Tested by `tests/platform/windows-console.ax` and
+`tests/platform/windows-readiness.py`.
+
 **MM-EXEC-18 (H, 2026-09-27). Interrupt handlers: one at a time, no
 allocation, no recovery, state shared only through the unsafe layer.**
 On `baremetal-aarch64` a function tagged `;@axiom:isr(irq)` is the IRQ

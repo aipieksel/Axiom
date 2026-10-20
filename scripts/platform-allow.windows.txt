@@ -6,20 +6,16 @@
 # Linux and macOS assert a NEGATIVE - no libc name among the imports;
 # Windows has no syscall ABI, so its runtime must import SOMETHING, and
 # the claim there is a POSITIVE: nothing outside this list. Every name
-# here is one the emitted runtime or `stdlib/Sys/Platform.windows.ax`
+# here is one the emitted runtime, `stdlib/Sys/Platform.windows.ax` or
+# `stdlib/Internal/WindowsLiveness.windows.ax`
 # reaches by call where the other targets make a syscall, and the gate
 # refuses a libc name on this list whatever it says (`libc_names`), so
 # the list cannot launder one. It may shrink; it grows only in a
 # reviewed diff.
 #
-# MEASURED, not guessed, 2026-08-29: every one of the 82 stdlib cases
-# emitted for windows-x86_64 and assembled at -O0, -O1 and -O2 (246
-# objects) imports exactly the first eight names below and nothing else.
-# `__chkstk` - the Win64 stack probe LLVM emits for a frame past 4 KiB,
-# compiler-runtime rather than libc - appeared in none of the 246, so it
-# is NOT pre-permitted: a dead allowlist entry is a hole nobody
-# re-examines. The day a frame that large is emitted, the gate goes red
-# and the entry is added with that measurement beside it.
+# Large stack frames call `__chkstk`, which the emitted runtime defines
+# for both architectures. It is not an allowed import: an executable
+# must carry its own probe rather than depend on a compiler runtime DLL.
 
 # The emitted runtime (self_host/codegen.ax, emitRuntimeMap /
 # emitRuntimeWrite / emitRuntimeExit / emitWinEntry): one kernel32 call
@@ -82,12 +78,17 @@ VirtualUnlock                                 # munlock
 WaitOnAddress@api-ms-win-core-synch-l1-2-0    # the futex wait on a word
 WakeByAddressAll@api-ms-win-core-synch-l1-2-0 # and its wake
 
-# The console (`Sys/Platform.windows.ax`): `isTerminal`, `termSize` and
-# `termRaw`.
+# The console (`Sys/Platform.windows.ax` and the private guard-handle
+# binding in `Internal/WindowsLiveness.windows.ax`): `isTerminal`,
+# `termSize` and `termRaw`.
 GetFileType                 # a console is a character device ...
 GetConsoleMode              # ... that answers this; also raw mode's saved word
+DuplicateHandle             # private terminal guard handles survive File close
 SetConsoleMode              # raw mode, and its restore
+SetConsoleCtrlHandler       # process-owned Ctrl-C and Ctrl-Break handler
+CancelSynchronousIo         # stop a pending reader before mode changes or close
 GetConsoleScreenBufferInfo  # the window's rows and columns
+GetTickCount64             # millisecond deadlines for mixed handle/socket waits
 
 # Threads (codegen's `emitParThreadWin`, the thread half `parallel`
 # takes where there is no `fork`).

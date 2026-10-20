@@ -16,6 +16,18 @@ its changelog too.
 
 ## Unreleased
 
+- Windows links collect every consecutive `extern` block for a DLL.
+  A later block no longer loses its generated import library and draws
+  a false AX4004. Tested by `scripts/check-driver.sh`.
+
+- Windows pollers watch console input, pipes, Ctrl-C and Ctrl-Break.
+  Readiness checks share buffered reads, including partial UTF-8 and
+  cooked console lines. Mode changes and close cancel and join pending
+  reads; per-file lifetime markers prevent a reused handle from reviving
+  a closed registration. Tested by `tests/platform/windows-console.ax`,
+  `tests/platform/windows-controls.ax` and
+  `tests/platform/windows-reader-runtime.py`.
+
 - The checked-program handoff snapshots the merged declaration list.
   Appending, removing, replacing or reordering its members after the
   final check stops emission with status 80. Rechecking creates a new
@@ -44,6 +56,7 @@ its changelog too.
   runs with the effects declared where the value was made, not where it
   drops. A new fixture shows that an effect claim the walk cannot check
   never stands in for its callee.
+
 
 - Nested recovery can reset to a shared mark without reclaiming its
   outer thunk's hidden closure. Immediate recovery lambdas live in the

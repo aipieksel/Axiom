@@ -1,0 +1,301 @@
+; Execute the actual Windows multiplexer and its shared-reader wrappers
+; against deterministic API boundaries. No host clock or input is used.
+(import Err)
+(import WindowsPlatform)
+
+(extern "windows_readiness_test"
+  (say :: (-> Bool String Int) (symbol "readinessSay"))
+  (reset :: Int (symbol "readinessReset"))
+  (plan :: (-> Int Int Int Int Int) (symbol "readinessPlan"))
+  (results :: (-> Int Int Int Int) (symbol "readinessResults"))
+  (bytes :: Int (symbol "readinessBytes"))
+  (pollError :: (-> Int Int) (symbol "readinessPollError"))
+  (positional :: (-> Int Int Int) (symbol "readinessPositional"))
+  (stat :: (-> Int Int) (symbol "readinessStat")))
+
+(:: row (-> Int Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (row p i fd interest)
+  {
+    (__store64 p (* i 3) fd)
+    (__store64 p (+ (* i 3) 1) interest)
+    (__store64 p (+ (* i 3) 2) 999)
+    0
+  })
+
+(:: ready (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (ready p i)
+  (__load64 p (+ (* i 3) 2)))
+
+(:: readIs (-> Int Int Int Bool))
+;@axiom:effect(io)
+(fn (readIs fd p want)
+  (match (WindowsPlatform::platformReadFd fd p 1)
+    ((Ok n) (== n want))
+    ((Err _) false)))
+
+(:: readErr (-> Int Int Int Bool))
+;@axiom:effect(io)
+(fn (readErr fd p want)
+  (match (WindowsPlatform::platformReadFd fd p 1)
+    ((Ok _) false)
+    ((Err e) (== (errCode e) want))))
+
+(:: heldPoll (-> Int Int Int))
+;@axiom:effect(io)
+(fn (heldPoll p ms)
+  {
+    (let before (__axiom_mem_stat 0))
+    (let _ (WindowsPlatform::platformPoll p 1 ms))
+    (- (__axiom_mem_stat 0) before)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (main)
+  {
+    (let p (__alloc 120))
+    (let buf (__alloc 8))
+    (let mut bad 0)
+    (reset)
+    (row p 0 0 1)
+    (let finite (WindowsPlatform::platformPoll p 1 35))
+    (set bad (+ bad
+               (say
+                 (&& (== finite 0)
+                   (&& (== (ready p 0) 0)
+                     (&& (== (stat 0) 35) (&& (== (stat 1) 4) (== (stat 5) 0)))))
+                 "finite deadline")))
+    (set bad (+ bad (say (&& (== (stat 4) 5) (== (stat 2) 0)) "idle handle probes")))
+    (reset)
+    (row p 0 0 1)
+    (plan 10 20 1 0)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 -1) 1)
+                   (&& (== (stat 0) 20) (== (ready p 0) 1)))
+                 "indefinite handle wait")))
+    (reset)
+    (row p 0 0 1)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 0)
+                   (&& (== (stat 0) 0) (&& (== (stat 1) 0) (== (stat 4) 1))))
+                 "one initial probe")))
+    (plan 10 0 1 0)
+    (set bad (+ bad
+               (say (&& (== (WindowsPlatform::platformPoll p 1 0) 1) (== (ready p 0) 1))
+                 "completed console bytes")))
+    (plan 10 0 -6 0)
+    (set bad (+ bad
+               (say (&& (== (WindowsPlatform::platformPoll p 1 0) 1) (== (ready p 0) 24))
+                 "reader errors are events")))
+    (reset)
+    (row p 0 30 5)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 99) 1)
+                   (&& (== (ready p 0) 5) (== (stat 4) 0)))
+                 "disk readiness")))
+    (row p 0 40 1)
+    (set bad (+ bad
+               (say (&& (== (WindowsPlatform::platformPoll p 1 0) 1) (== (ready p 0) 24))
+                 "invalid handle")))
+    (row p 0 20 4)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 1)
+                   (&& (== (ready p 0) 24) (== (stat 4) 0)))
+                 "unsupported pipe write probe")))
+    (reset)
+    (row p 0 100 1)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 35) 0)
+                   (&& (== (stat 0) 35) (&& (== (stat 2) 1) (&& (== (stat 3) 35) (== (stat 1) 0)))))
+                 "socket blocking path")))
+    (set bad (+ bad (say (== (ready p 0) 0) "socket clears stale readiness")))
+    (reset)
+    (row p 0 100 1)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 3000000000) 0)
+                   (&& (== (stat 0) 3000000000) (&& (== (stat 2) 2) (== (stat 3) 852516353))))
+                 "socket DWORD timeout chunks")))
+    (reset)
+    (row p 0 100 1)
+    (plan 100 20 0 256)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 -1) 1)
+                   (&& (== (ready p 0) 1) (&& (== (stat 3) -1) (== (stat 0) 20))))
+                 "indefinite socket wait")))
+    (reset)
+    (row p 0 0 1)
+    (row p 1 100 1)
+    (row p 2 20 1)
+    (plan 10 20 1 0)
+    (plan 100 20 0 256)
+    (plan 20 20 1 0)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 3 35) 3)
+                   (&& (== (ready p 0) 1) (&& (== (ready p 1) 1) (== (ready p 2) 1))))
+                 "mixed row mapping")))
+    (set bad (+ bad
+               (say
+                 (&& (== (stat 0) 20)
+                   (&& (== (stat 3) 0) (&& (== (stat 2) 3) (&& (== (stat 1) 2) (== (stat 5) 0)))))
+                 "mixed waits never block sockets")))
+    (plan 10 -1 0 0)
+    (plan 100 -1 0 0)
+    (plan 20 -1 0 0)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 3 0) 0)
+                   (&& (== (ready p 0) 0) (&& (== (ready p 1) 0) (== (ready p 2) 0))))
+                 "all rows clear on next probe")))
+    (reset)
+    (row p 0 0 1)
+    (row p 1 101 4)
+    (row p 2 102 1)
+    (plan 101 0 0 16)
+    (plan 102 0 0 7)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 3 0) 2)
+                   (&& (== (ready p 1) 4) (== (ready p 2) 24)))
+                 "socket write and error flags")))
+    (reset)
+    (row p 0 100 1)
+    (pollError 10022)
+    (set bad (+ bad (say (== (WindowsPlatform::platformPoll p 1 0) -22) "WSAPoll errno")))
+    (reset)
+    (row p 0 -2 2)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 1)
+                   (&& (== (ready p 0) -2) (&& (== (stat 13) 1) (== (stat 4) 0))))
+                 "control sentinel readiness")))
+    (reset)
+    (row p 0 0 1)
+    (let shortHeld (heldPoll p 1))
+    (reset)
+    (let longHeld (heldPoll p 1000))
+    (set bad (+ bad
+               (say (&& (> shortHeld 0) (== shortHeld longHeld)) "idle loop allocates no more")))
+    (reset)
+    (bytes)
+    (row p 0 0 1)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 1)
+                   (&& (readIs 0 buf 1) (== (__load8 buf 0) 195)))
+                 "first encoded byte")))
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 1)
+                   (&& (readIs 0 buf 1) (== (__load8 buf 0) 169)))
+                 "cached continuation byte")))
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 1)
+                   (&& (readIs 0 buf 1) (== (__load8 buf 0) 120)))
+                 "buffered next character")))
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPoll p 1 0) 0)
+                   (&& (== (stat 9) 10) (== (stat 6) 3)))
+                 "drained buffer is pending")))
+    (reset)
+    (set bad (+ bad
+               (say
+                 (match (WindowsPlatform::platformReadFd 0 buf 0)
+                   ((Ok n) (== n 0))
+                   ((Err _) false))
+                 "zero byte read")))
+    (results -109 0 0)
+    (set bad (+ bad (say (readIs 20 buf 0) "broken pipe EOF")))
+    (results -1 0 0)
+    (set bad (+ bad (say (readErr 30 buf 21) "directory read error")))
+    (results -6 0 0)
+    (set bad (+ bad (say (readErr 0 buf 9) "invalid reader handle")))
+    (results -5 0 0)
+    (set bad (+ bad (say (readErr 0 buf 13) "reader permission error")))
+    (set bad (+ bad
+               (say (&& (readIs 100 buf 1) (&& (== (stat 11) 1) (== (__load8 buf 0) 115)))
+                 "socket read bypasses reader")))
+    (reset)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformConsoleSetMode 0 99) 0)
+                   (&& (== (stat 7) 1) (&& (== (stat 9) 10) (== (stat 10) 99))))
+                 "owned mode transaction")))
+    (results 0 -5 0)
+    (set bad (+ bad (say (== (WindowsPlatform::platformConsoleSetMode 0 0) -13) "mode errno")))
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformClose 0) 0)
+                   (&& (== (stat 8) 1) (== (stat 9) 10)))
+                 "owned close transaction")))
+    (results 0 0 -6)
+    (set bad (+ bad (say (== (WindowsPlatform::platformClose 20) -9) "close errno")))
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformClose 100) 0)
+                   (&& (== (stat 8) 2) (== (stat 12) 1)))
+                 "socket close bypasses reader")))
+    (reset)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPread 0 buf 8 99) -29)
+                   (&& (== (stat 14) 0) (== (stat 6) 0)))
+                 "console positional read is ESPIPE")))
+    (set bad (+ bad
+               (say (&& (== (WindowsPlatform::platformPwrite 0 buf 8 99) -29) (== (stat 15) 0))
+                 "console positional write is ESPIPE")))
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPread 20 buf 8 99) -29)
+                   (&& (== (stat 14) 0) (== (stat 6) 0)))
+                 "pipe positional read is ESPIPE")))
+    (set bad (+ bad
+               (say (&& (== (WindowsPlatform::platformPwrite 20 buf 8 99) -29) (== (stat 15) 0))
+                 "pipe positional write is ESPIPE")))
+    (reset)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPread 30 buf 8 4294967303) 3)
+                   (&& (== (stat 14) 1)
+                     (&& (== (stat 16) 4294967303)
+                       (&& (== (stat 17) 30) (&& (== (stat 18) 8) (== (stat 5) 0))))))
+                 "disk positional read keeps 64 bit offset")))
+    (positional 4 0)
+    (set bad (+ bad
+               (say
+                 (&& (== (WindowsPlatform::platformPwrite 30 buf 8 12884901899) 4)
+                   (&& (== (stat 15) 1)
+                     (&& (== (stat 16) 12884901899)
+                       (&& (== (stat 17) 30) (&& (== (stat 18) 8) (== (stat 5) 0))))))
+                 "disk positional write keeps 64 bit offset")))
+    (positional 0 38)
+    (set bad (+ bad
+               (say (== (WindowsPlatform::platformPread 30 buf 8 99) 0)
+                 "positional read past EOF")))
+    (positional 0 5)
+    (set bad (+ bad
+               (say (== (WindowsPlatform::platformPread 30 buf 8 99) -13) "positional read errno")))
+    (positional 0 112)
+    (set bad (+ bad
+               (say (== (WindowsPlatform::platformPwrite 30 buf 8 99) -28)
+                 "positional write errno")))
+    (set bad (+ bad
+               (say (== (WindowsPlatform::platformPread 40 buf 8 99) -9)
+                 "invalid positional read handle")))
+    (set bad (+ bad
+               (say (== (WindowsPlatform::platformPwrite 40 buf 8 99) -9)
+                 "invalid positional write handle")))
+    bad
+  })

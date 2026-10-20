@@ -1388,6 +1388,18 @@ does it early. `termSize` and `isTerminal` ask about a `File` such as
 line editor, and `Tui.Term` connects it to terminal I/O. The
 [library API](stdlib-api.md#tuiterm) lists the exact operations.
 
+Windows console and pipe reads share a buffer with `Poller`, so a
+readiness check preserves bytes left by an earlier read. Changing
+console mode or closing a file stops its pending reader first.
+`pollerAddSignals` accepts `sigInt` for Ctrl-C and `sigBreak` for
+Ctrl-Break on Windows. Other signal bits answer `Err` 78. The process
+keeps its control mask after a poller closes; competing pollers consume
+each pending control once between them. Console close, logoff and
+shutdown retain Windows' termination behaviour.
+
+Tested by `tests/platform/windows-console.ax` and
+`tests/platform/windows-controls.ax`.
+
 ## Memory
 
 Axiom calls its memory model **RECAP**: region-scoped, effect-checked,
@@ -2075,6 +2087,10 @@ returns a `Result` for each word. `taskRunCommand` runs one argument
 vector; `taskRunCommands` runs a bounded command pool. The
 [library reference](stdlib.md#task-chan-and-sync) gives the entry points, and the [memory model](memory-model.md) defines publication,
 atomic ordering and lifecycle rules.
+
+Not yet: `Task`'s isolated worker lifecycle has no Windows lowering.
+Command spawning through `Sys` works there. See the
+[platform roadmap](roadmap.md#platforms-and-release).
 
 ## Calling Rust
 

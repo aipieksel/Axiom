@@ -1,0 +1,156 @@
+; Run in a private console, so synthetic controls cannot reach the
+; runner or another terminal. Windows CI executes this fixture; host
+; mocks exercise registration and event decoding separately.
+(import IO)
+(import Sys)
+(import Sys.Platform)
+(import Err)
+(import Str)
+
+(extern "kernel32"
+  (getStdHandleRaw :: (-> Int Int) (symbol "GetStdHandle"))
+  (setStdHandleRaw :: (-> Int Int Int) (symbol "SetStdHandle"))
+  (duplicateHandleRaw :: (-> Int Int Int Int Int Int Int Int) (symbol "DuplicateHandle"))
+  (freeConsoleRaw :: Int (symbol "FreeConsole"))
+  (allocConsoleRaw :: Int (symbol "AllocConsole"))
+  (setConsoleCtrlHandlerRaw :: (-> Int Int Int) (symbol "SetConsoleCtrlHandler"))
+  (generateConsoleCtrlEventRaw :: (-> Int Int Int) (symbol "GenerateConsoleCtrlEvent")))
+
+(:: say (-> Bool String Int))
+;@axiom:effect(io)
+(fn (say good label)
+  {
+    (println
+      (concat
+        (if good
+          "ok   "
+          "FAIL ")
+        label))
+    (if good
+      0
+      1)
+  })
+
+; Duplicate the runner's redirected streams before changing consoles.
+; The new handles survive FreeConsole; restoring them keeps capture
+; working after AllocConsole replaces the process's standard handles.
+(:: privateConsole Bool)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (privateConsole)
+  {
+    (let outCell (strAlloc 8))
+    (let savedOut (strData outCell))
+    (let errCell (strAlloc 8))
+    (let savedErr (strData errCell))
+    (let outOk
+      (!= (& (duplicateHandleRaw -1 (getStdHandleRaw -11) -1 savedOut 0 0 2) 4294967295) 0))
+    (let errOk
+      (!= (& (duplicateHandleRaw -1 (getStdHandleRaw -12) -1 savedErr 0 0 2) 4294967295) 0))
+    (if (&& outOk errOk)
+      {
+        (let _ freeConsoleRaw)
+        (let attached (!= (& allocConsoleRaw 4294967295) 0))
+        (let outRestored (!= (& (setStdHandleRaw -11 (__load64 savedOut 0)) 4294967295) 0))
+        (let errRestored (!= (& (setStdHandleRaw -12 (__load64 savedErr 0)) 4294967295) 0))
+        ; A runner can inherit the Ctrl-C-ignore attribute. Clear it
+        ; before installing the runtime's real handler.
+        (let enabled (!= (& (setConsoleCtrlHandlerRaw 0 0) 4294967295) 0))
+        (&& attached (&& outRestored (&& errRestored enabled)))
+      }
+      false)
+  })
+
+(:: waitCount (-> Poller Int Int))
+;@axiom:effect(io)
+(fn (waitCount p timeout)
+  (match (pollerWait p timeout)
+    ((Ok n) n)
+    ((Err e) (- 0 e.code))))
+
+(:: signalIs (-> Poller Int Bool))
+;@axiom:effect(io)
+(fn (signalIs p signo)
+  (match (pollerSignal p 0)
+    ((Some n) (== n signo))
+    ((None) false)))
+
+(:: unsupported (-> (Result Int Error) Bool))
+(fn (unsupported result)
+  (match result
+    ((Err e) (== e.code 78))
+    ((Ok _) false)))
+
+(:: sendControl (-> Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (sendControl event)
+  (!= (& (generateConsoleCtrlEventRaw event 0) 4294967295) 0))
+
+(:: exercise (-> Poller Poller Int))
+;@axiom:effect(io)
+(fn (exercise p q)
+  {
+    (let mask (| (sysSigBit sigInt) (sysSigBit sigBreak)))
+    (let scratchBytes (strAlloc 16))
+    (let scratch (strData scratchBytes))
+    (let mut bad 0)
+    (set bad (+ bad (say (isOk (sysSignalBlock 0 scratch)) "an empty control mask is a no-op")))
+    (set bad (+ bad
+               (say (unsupported (sysSignalBlock (sysSigBit sigTerm) scratch))
+                 "unsupported controls are refused")))
+    (set bad (+ bad
+               (say (isOk (sysSignalBlock mask scratch)) "Ctrl-C and Ctrl-Break are captured")))
+    (set bad (+ bad (say (isOk (pollerAddSignals p mask 77)) "controls register with a token")))
+    (set bad (+ bad (say (== (waitCount p 0) 0) "an idle control wait is empty")))
+    (set bad (+ bad (say (sendControl 0) "Ctrl-C is generated in the private console")))
+    (let first (waitCount p 2000))
+    (set bad (+ bad
+               (say (&& (== first 1) (&& (== (pollerToken p 0) 77) (signalIs p sigInt)))
+                 "Ctrl-C reaches its registered token")))
+    (set bad (+ bad
+               (say (&& (== first 1) (signalIs p sigInt))
+                 "reading the cached signal is repeatable")))
+    (set bad (+ bad (say (== (waitCount p 0) 0) "a delivered control is consumed once")))
+    (set bad (+ bad (say (sendControl 1) "Ctrl-Break is generated in the private console")))
+    (let second (waitCount p 2000))
+    (set bad (+ bad
+               (say (&& (== second 1) (signalIs p sigBreak))
+                 "Ctrl-Break has its own signal number")))
+    (set bad (+ bad
+               (say (unsupported (pollerAddSignals p (sysSigBit sigTerm) 99))
+                 "an unsupported registration is refused")))
+    (set bad (+ bad (say (isOk (pollerAddSignals p 0 0)) "an empty mask removes the control row")))
+    (set bad (+ bad
+               (say (&& (sendControl 0) (== (waitCount p 20) 0))
+                 "removed controls do not wake the poller")))
+    (set bad (+ bad
+               (say (isOk (pollerAddSignals p mask 88)) "the control row can be registered again")))
+    (let pending (waitCount p 2000))
+    (set bad (+ bad
+               (say (&& (== pending 1) (&& (== (pollerToken p 0) 88) (signalIs p sigInt)))
+                 "the process mask retains a control while no poller watches")))
+    (set bad (+ bad (say (isOk (pollerAddSignals q mask 66)) "another poller may watch controls")))
+    (set bad (+ bad (say (sendControl 1) "another Ctrl-Break is generated")))
+    (let shared (waitCount q 2000))
+    (set bad (+ bad
+               (say (&& (== shared 1) (&& (signalIs q sigBreak) (== (waitCount p 0) 0)))
+                 "one of two pollers consumes the pending control")))
+    (set bad (+ bad
+               (say (&& (isOk (pollerClose p)) (isOk (pollerClose q)))
+                 "control pollers close safely")))
+    bad
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if privateConsole
+    (match (pollerNew 4)
+      ((Err _) (say false "control pollers are created"))
+      ((Ok p)
+        (match (pollerNew 4)
+          ((Err _) (say false "control pollers are created"))
+          ((Ok q) (exercise p q)))
+      ))
+    (say false "a private console preserves runner output")))

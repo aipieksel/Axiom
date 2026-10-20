@@ -1,0 +1,398 @@
+; Real File cleanup and table registrations run with deterministic
+; native boundaries. Every new open can reuse the exact same number.
+(import Err)
+(import WindowsIO)
+(import WindowsMarker)
+
+(extern "windows_liveness_test"
+  (say :: (-> Bool String Int) (symbol "livenessSay"))
+  (reset :: Int (symbol "livenessReset"))
+  (nextFd :: (-> Int Int) (symbol "livenessFd"))
+  (retireDuringPoll :: Int (symbol "livenessRetireDuringPoll"))
+  (failDup :: (-> Int Int) (symbol "livenessFailDup"))
+  (modeFault :: (-> Int Int Int Int) (symbol "livenessModeFault"))
+  (modeSeen :: (-> Int Int Bool) (symbol "livenessModeSeen"))
+  (stat :: (-> Int Int) (symbol "livenessStat")))
+
+(:: count (-> WindowsIO::Poller Int))
+;@axiom:effect(io)
+(fn (count p)
+  (match (WindowsIO::pollerWait p 0)
+    ((Ok n) n)
+    ((Err e) (- 0 (errCode e)))))
+
+(:: tokenIs (-> WindowsIO::Poller Int Bool))
+;@axiom:effect(io)
+(fn (tokenIs p token)
+  (&& (== (count p) 1) (== (WindowsIO::pollerToken p 0) token)))
+
+(:: scoped (-> WindowsIO::Poller Int Int))
+;@axiom:effect(io)
+(fn (scoped p token)
+  (match (WindowsIO::openPath "mock" 0)
+    ((Err _) 1)
+    ((Ok f)
+      (if (isOk (WindowsIO::pollerAdd p f token))
+        0
+        1)
+    )))
+
+(:: explicitClose (-> WindowsIO::Poller Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (explicitClose p)
+  (match (WindowsIO::openPath "first" 0)
+    ((Err _) 1)
+    ((Ok f)
+      {
+        (let mut bad 0)
+        (set bad (+ bad (say (isOk (WindowsIO::pollerAdd p f 11)) "add owned file")))
+        (set bad (+ bad (say (tokenIs p 11) "live owner has its token")))
+        (let _ (WindowsIO::fileClose f))
+        (set bad (+ bad
+                   (say (&& (== (stat 1) 1) (&& (== (stat 2) 1) (== (stat 5) 0)))
+                     "retire precedes native close")))
+        (set bad (+ bad (say (== (count p) 0) "closed registration is pruned")))
+        (match (WindowsIO::openPath "reused" 0)
+          ((Err _) (+ bad 1))
+          ((Ok replacement)
+            {
+              (set bad (+ bad (say (== (count p) 0) "reused number has no old token")))
+              (set bad (+ bad
+                         (say (isOk (WindowsIO::pollerAdd p replacement 22))
+                           "retired row releases capacity")))
+              (set bad (+ bad (say (tokenIs p 22) "replacement gets its own marker")))
+              (let _ (WindowsIO::fileClose replacement))
+              (set bad (+ bad (say (== (count p) 0) "replacement retirement is independent")))
+              bad
+            }
+          ))
+      }
+    )))
+
+(:: dropped (-> WindowsIO::Poller Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (dropped p)
+  {
+    (let _ reset)
+    (let status (scoped p 33))
+    (let mut bad (say (== status 0) "scoped registration succeeds"))
+    (set bad (+ bad (say (&& (== (stat 1) 1) (== (stat 5) 0)) "poller does not retain File owner")))
+    (set bad (+ bad (say (== (count p) 0) "lexical release removes readiness")))
+    (match (WindowsIO::openPath "again" 0)
+      ((Err _) (+ bad 1))
+      ((Ok f)
+        {
+          (set bad (+ bad
+                     (say (isOk (WindowsIO::pollerAdd p f 44)) "scope release recovers capacity")))
+          (set bad (+ bad (say (tokenIs p 44) "scope reuse cannot revive old marker")))
+          (let _ (WindowsIO::fileClose f))
+          bad
+        }
+      ))
+  })
+
+(:: duringWait (-> WindowsIO::Poller Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (duringWait p)
+  {
+    (let _ reset)
+    (match (WindowsIO::openPath "during" 0)
+      ((Err _) 1)
+      ((Ok f)
+        {
+          (let _ (WindowsIO::pollerAdd p f 55))
+          (let _ retireDuringPoll)
+          (let n (count p))
+          (let mut bad
+            (say (&& (== n 0) (== (stat 6) 0)) "retirement during wait suppresses event"))
+          (set bad (+ bad (say (== (count p) 0) "next wait removes retired row")))
+          (let _ (WindowsIO::fileClose f))
+          bad
+        }
+      ))
+  })
+
+(:: movedRows (-> WindowsIO::Poller Bool Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (movedRows p remove)
+  {
+    (let _ reset)
+    (match (WindowsIO::openPath "left" 0)
+      ((Err _) 1)
+      ((Ok left)
+        {
+          (let _ (nextFd 43))
+          (match (WindowsIO::openPath "right" 0)
+            ((Err _) 1)
+            ((Ok right)
+              {
+                (let _ (WindowsIO::pollerAdd p left 66))
+                (let _ (WindowsIO::pollerAdd p right 77))
+                (if remove
+                  {
+                    (let _ (WindowsIO::pollerRemove p left))
+                    ()
+                  }
+                  ())
+                (let _ (WindowsIO::fileClose left))
+                (let mut bad (say (tokenIs p 77) "compaction preserves live row marker"))
+                (let _ (WindowsIO::fileClose right))
+                (set bad (+ bad (say (== (count p) 0) "compaction keeps matching retirement")))
+                bad
+              }
+            ))
+        }
+      ))
+  })
+
+(:: standard (-> WindowsIO::Poller Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (standard p)
+  {
+    (let _ reset)
+    (let stream WindowsIO::stdin)
+    (let _ (WindowsIO::pollerAdd p stream 88))
+    (let mut bad (say (tokenIs p 88) "live standard stream registers"))
+    (let _ (WindowsIO::fileClose stream))
+    (set bad (+ bad
+               (say (&& (== (stat 1) 0) (== (stat 2) 1))
+                 "standard value retires without closing process input")))
+    (set bad (+ bad (say (== (count p) 0) "closed standard value has no token")))
+    bad
+  })
+
+(:: guardError (-> (Result WindowsIO::TermGuard Error) Int Bool))
+(fn (guardError result code)
+  (match result
+    ((Ok _) false)
+    ((Err e) (== (errCode e) code))))
+
+(:: activeGuard Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (activeGuard)
+  {
+    (let _ reset)
+    (match (WindowsIO::openPath "active" 0)
+      ((Err _) 1)
+      ((Ok f)
+        (match (WindowsIO::termRaw f false)
+          ((Err _) 1)
+          ((Ok g)
+            {
+              (let mut bad
+                (say (&& (== (stat 8) 2) (&& (modeSeen 42 512) (modeSeen 1 7)))
+                  "raw mode owns input and output duplicates"))
+              (let restored (WindowsIO::termRestore g))
+              (set bad (+ bad
+                         (say
+                           (&& (isOk restored)
+                             (&& (modeSeen 42 7) (&& (! (modeSeen 142 7)) (== (stat 9) 2))))
+                           "live input restore quiesces original reader")))
+              (let again (WindowsIO::termRestore g))
+              (set bad (+ bad
+                         (say (&& (isOk again) (== (stat 9) 2))
+                           "guard restore closes duplicates once")))
+              bad
+            }
+          ))
+      ))
+  })
+
+(:: retiredGuard Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (retiredGuard)
+  {
+    (let _ reset)
+    (match (WindowsIO::openPath "retired" 0)
+      ((Err _) 1)
+      ((Ok f)
+        (match (WindowsIO::termRaw f false)
+          ((Err _) 1)
+          ((Ok g)
+            {
+              (let _ (WindowsIO::fileClose f))
+              (let mut bad (say (== (stat 1) 1) "guard does not retain original File"))
+              (match (WindowsIO::openPath "recycled" 0)
+                ((Err _) (+ bad 1))
+                ((Ok replacement)
+                  {
+                    (let restored (WindowsIO::termRestore g))
+                    (set bad (+ bad
+                               (say (&& (isOk restored) (&& (modeSeen 142 7) (! (modeSeen 42 7))))
+                                 "retired input restore uses owned duplicate")))
+                    (set bad (+ bad
+                               (say (&& (== (stat 1) 1) (== (stat 9) 2))
+                                 "guard never closes recycled handle")))
+                    (let _ (WindowsIO::fileClose replacement))
+                    bad
+                  }
+                ))
+            }
+          ))
+      ))
+  })
+
+(:: lexicalGuard (Result WindowsIO::TermGuard Error))
+;@axiom:effect(io)
+(fn (lexicalGuard)
+  (match (WindowsIO::openPath "lexical" 0)
+    ((Err e) (Err e))
+    ((Ok f)
+      {
+        (let result (WindowsIO::termRaw f false))
+        (match result
+          ((Err e) (Err e))
+          ((Ok g) (Ok g)))
+      }
+    )))
+
+(:: droppedGuard Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (droppedGuard)
+  {
+    (let _ reset)
+    (match lexicalGuard
+      ((Err _) 1)
+      ((Ok g)
+        {
+          ; Returning a guard can conservatively park its File because
+          ; the captured descriptor is a word. Both liveness states
+          ; must restore safely; explicit close above pins retirement.
+          (let closed (== (stat 1) 1))
+          (let mut bad (say (== (stat 9) 0) "returned guard keeps duplicates until restore"))
+          (let restored (WindowsIO::termRestore g))
+          (set bad (+ bad
+                     (say
+                       (&& (isOk restored)
+                         (&& (== (stat 9) 2)
+                           (if closed
+                             (&& (modeSeen 142 7) (! (modeSeen 42 7)))
+                             (&& (modeSeen 42 7) (! (modeSeen 142 7))))))
+                       "returned guard restores through live original or duplicate")))
+          bad
+        }
+      ))
+  })
+
+(:: guardFailures Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (guardFailures)
+  {
+    (let _ reset)
+    (match (WindowsIO::openPath "failures" 0)
+      ((Err _) 1)
+      ((Ok f)
+        {
+          (let _ (failDup 1))
+          (let mut bad
+            (say
+              (&& (guardError (WindowsIO::termRaw f false) 13) (&& (== (stat 7) 0) (== (stat 9) 0)))
+              "input duplicate failure leaves mode unchanged"))
+          (let _ reset)
+          (let _ (failDup 2))
+          (set bad (+ bad
+                     (say
+                       (&& (guardError (WindowsIO::termRaw f false) 9)
+                         (&& (== (stat 7) 0) (== (stat 9) 1)))
+                       "output duplicate failure closes input duplicate")))
+          (let _ reset)
+          (let _ (modeFault 42 512 13))
+          (set bad (+ bad
+                     (say
+                       (&& (guardError (WindowsIO::termRaw f false) 13)
+                         (&& (== (stat 9) 2) (&& (modeSeen 42 7) (modeSeen 1 3))))
+                       "raw setter failure restores and closes duplicates")))
+          bad
+        }
+      ))
+  })
+
+(:: standardGuard Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (standardGuard)
+  {
+    (let _ reset)
+    (let input WindowsIO::stdin)
+    (match (WindowsIO::termRaw input false)
+      ((Err _) 1)
+      ((Ok g)
+        {
+          (let _ (WindowsIO::fileClose input))
+          (let mut bad (say (== (stat 1) 0) "logical standard close keeps process reader"))
+          (let restored (WindowsIO::termRestore g))
+          (set bad (+ bad
+                     (say
+                       (&& (isOk restored)
+                         (&& (modeSeen 0 7) (&& (! (modeSeen 100 7)) (== (stat 9) 2))))
+                       "standard guard restores through process reader")))
+          bad
+        }
+      ))
+  })
+
+(:: outputGuard Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (outputGuard)
+  {
+    (let _ reset)
+    (match (WindowsIO::openPath "output" 0)
+      ((Err _) 1)
+      ((Ok f)
+        (match (WindowsIO::termRaw f false)
+          ((Err _) 1)
+          ((Ok g)
+            {
+              (let _ (modeFault 1 3 9))
+              (let restored (WindowsIO::termRestore g))
+              (say (&& (isOk restored) (&& (modeSeen 1 3) (&& (modeSeen 101 3) (== (stat 9) 2))))
+                "output restore falls back to its duplicate")
+            }
+          ))
+      ))
+  })
+
+(:: exercise (-> WindowsIO::Poller WindowsIO::Poller Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (exercise p two)
+  {
+    (let _ reset)
+    (let a (explicitClose p))
+    (let b (dropped p))
+    (let c (duringWait p))
+    (let d (movedRows two false))
+    (let e (movedRows two true))
+    (let f (standard p))
+    (let g activeGuard)
+    (let h retiredGuard)
+    (let i droppedGuard)
+    (let j guardFailures)
+    (let k standardGuard)
+    (let l outputGuard)
+    (let m
+      (say (&& (== (WindowsMarker::markerDup 4294967303) 4294967403) (== (stat 6) 0))
+        "DuplicateHandle preserves 64 bit handles and flags"))
+    (+ a (+ b (+ c (+ d (+ e (+ f (+ g (+ h (+ i (+ j (+ k (+ l m))))))))))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (match (WindowsIO::pollerNew 1)
+    ((Err _) 1)
+    ((Ok p)
+      (match (WindowsIO::pollerNew 2)
+        ((Err _) 1)
+        ((Ok two) (exercise p two)))
+    )))

@@ -1436,6 +1436,29 @@ PY
     bad "--emit-staticlib for windows-aarch64 (rc=$rc: $(head -1 walib.log))"
   fi
 
+  # Consecutive blocks for one DLL must both reach the generated import
+  # library, including a block immediately after a declare run.
+  cat >win-consecutive.ax <<'EOF'
+(extern "kernel32"
+  (threadId :: Int (symbol "GetCurrentThreadId")))
+(extern "kernel32"
+  (processHeap :: Int (symbol "GetProcessHeap")))
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (main) (+ threadId processHeap))
+EOF
+  for win_target in windows-x86_64 windows-aarch64; do
+    "$s1" build --target="$win_target" --input win-consecutive.ax --output "win-consecutive-$win_target" >win-consecutive.log 2>&1; rc=$?
+    if [[ $rc == 0 ]] && llvm-readobj --coff-imports "win-consecutive-$win_target.exe" >win-consecutive.imports \
+        && grep -q 'Symbol: GetCurrentThreadId' win-consecutive.imports \
+        && grep -q 'Symbol: GetProcessHeap' win-consecutive.imports; then
+      ok "consecutive kernel32 blocks both reach the $win_target PE import table"
+    else
+      bad "consecutive kernel32 blocks on $win_target (rc=$rc: $(head -1 win-consecutive.log))"
+    fi
+  done
+
   # And the POSIX link is untouched by any of it: the same program for
   # the host still links through cc, with no .exe and no lld-link.
   PATH="$work/fake-lld:$PATH" "$s1" build --input hello.ax --output hostbuild >/dev/null 2>&1
