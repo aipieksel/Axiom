@@ -240,6 +240,7 @@ have() { # have <got> <want> <what>
 # Err.mapOk/mapErr/andThen/optMap/optAndThen and to the full-library
 # Btree.btreeCheck/checkChain/checkTree lower bounds. Concrete effects
 # and their existing callback effect parameters remain unchanged.
+<<<<<<< HEAD
 # Handler lifetime analysis adds four Alloc,Mut helpers, one Mut helper
 # and two pure predicates. Comparing both source trees with the same
 # compiler changes no existing function's effect row, including IO.
@@ -247,13 +248,34 @@ have() { # have <got> <want> <what>
 # Same-compiler comparison: Alloc,IO,Mut -> Alloc,IO,Mut,Unsafe.
 # Application scratch-slot retirement makes the same transfer for emitApp.
 # Two private String-slot setters add Mut,Unsafe rows; existing rows stay fixed.
+||||||| parent of a9c00b49 (Compact checked syntax identity tracking)
+# Retiring the emitter's displaced line and argument buffer shares adds
+# Unsafe to pruneDeadDefs and emitApp: Alloc,IO,Mut -> Alloc,IO,Mut,Unsafe.
+# A same-compiler comparison against 85765c63 changes no other effect row.
+# Fixed typed result/label setters add two Mut,Unsafe rows; comparing against
+# c68d1794 with one compiler changes no existing function effect row.
+=======
+# Retiring the emitter's displaced line and argument buffer shares adds
+# Unsafe to pruneDeadDefs and emitApp: Alloc,IO,Mut -> Alloc,IO,Mut,Unsafe.
+# A same-compiler comparison against 85765c63 changes no other effect row.
+# Fixed typed result/label setters add two Mut,Unsafe rows; comparing against
+# c68d1794 with one compiler changes no existing function effect row.
+# The exact address seen set adds three Alloc,Mut helpers and two pure
+# helpers. Compared with a37f9cc2 using one compiler, existing rows are unchanged.
+>>>>>>> a9c00b49 (Compact checked syntax identity tracking)
 echo "== compiler view: symbols --calls self_host/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
+<<<<<<< HEAD
 have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3360 "exactly Alloc,Mut"
+||||||| parent of a9c00b49 (Compact checked syntax identity tracking)
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3356 "exactly Alloc,Mut"
+=======
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3359 "exactly Alloc,Mut"
+>>>>>>> a9c00b49 (Compact checked syntax identity tracking)
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 453 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 194 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 117 "exactly Alloc"

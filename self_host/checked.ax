@@ -10,7 +10,6 @@
 (import codegen)
 (import diag)
 (import Vec)
-(import Map)
 (import Mem)
 (import Str)
 
@@ -143,36 +142,97 @@
     (57 "nww")
     (_ "www")))
 
-; Hash buckets use nodeSame for equality, including a colliding bucket.
+; nilNode is never visited, so its address marks an empty slot.
+; The append-only pending queue keeps every visited node live.
+; Addr keeps exact identity without retaining a second graph of nodes.
+(struct CheckedSeen
+  (mut slots : (Vec Addr))
+  (mut count : Int))
+
+(:: checkedSeenTable (-> Int (Vec Addr)))
+(fn (checkedSeenTable capacity)
+  {
+    (let slots (vecWithCapacity capacity))
+    (let mut i 0)
+    (while (< i capacity)
+      {
+        (vecPush slots (addrOf nilNode))
+        (set i (+ i 1))
+      })
+    slots
+  })
+
+(:: checkedSeenNew CheckedSeen)
+(fn (checkedSeenNew)
+  (CheckedSeen :slots (checkedSeenTable 16) :count 0))
+
+(:: checkedSeenIndex (-> Addr Int Int))
+(fn (checkedSeenIndex node capacity)
+  (& (addrHash node) (- capacity 1)))
+
+; Every table has an empty slot at the three-quarter load bound.
+; Bound the scan as well, so a broken internal table fails closed.
+(:: checkedSeenFind (-> Addr (Vec Addr) Int))
+(fn (checkedSeenFind node slots)
+  {
+    (let capacity (vecLen slots))
+    (let mut index (checkedSeenIndex node capacity))
+    (let mut steps 0)
+    (let mut found false)
+    (while (&& (! found) (< steps capacity))
+      {
+        (let other (vecGet slots index))
+        (if (|| (addrEq other (addrOf nilNode)) (addrEq node other))
+          (set found true)
+          (set index (& (+ index 1) (- capacity 1))))
+        (set steps (+ steps 1))
+      })
+    (if found
+      index
+      __indexTrap)
+  })
+
+(:: checkedSeenGrow (-> CheckedSeen Int))
+(fn (checkedSeenGrow seen)
+  {
+    (let old seen.slots)
+    (let capacity (vecLen old))
+    ; Keep doubling within Vec's byte-count range before arithmetic.
+    (if (> capacity 288230376151711744)
+      __indexTrap)
+    (let slots (checkedSeenTable (* capacity 2)))
+    (let mut i 0)
+    (while (< i capacity)
+      {
+        (let node (vecGet old i))
+        (if (! (addrEq node (addrOf nilNode)))
+          (vecSet slots (checkedSeenFind node slots) node))
+        (set i (+ i 1))
+      })
+    (set seen.slots slots)
+    0
+  })
+
 ; Each node is visited once even when syntax shares a subtree or cycles.
-(:: checkedVisit (-> ASTNode (Map Nodes) Bool))
+(:: checkedVisit (-> ASTNode CheckedSeen Bool))
 (fn (checkedVisit node seen)
   (if (nodeSame node nilNode)
     false
     {
-      (let key (addrHash (addrOf node)))
-      (let bucket (mapGet seen key nilNodes))
-      (let mut found false)
-      (if (! (vecIsNull bucket))
-        (for other in bucket
-          (if (nodeSame node other)
-            (set found true))))
-      (if found
+      (let address (addrOf node))
+      (let slots seen.slots)
+      (let index (checkedSeenFind address slots))
+      (if (addrEq address (vecGet slots index))
         false
-        (if (vecIsNull bucket)
-          {
-            ; Most address hashes name one node. Keep the new bucket's
-            ; birth share local; the map takes its own share.
-            (let values (vecWithCapacity 1))
-            (vecPush values node)
-            (mapInsert seen key values)
-            true
-          }
-          {
-            ; Growth keeps the header already owned by the map.
-            (vecPush bucket node)
-            true
-          }))
+        {
+          ; A duplicate does not grow the table. Recompute its slot only
+          ; after growth, because the larger mask changes probe chains.
+          (if (>= seen.count (- (vecLen slots) (/ (vecLen slots) 4)))
+            (checkedSeenGrow seen))
+          (vecSet seen.slots (checkedSeenFind address seen.slots) address)
+          (set seen.count (+ seen.count 1))
+          true
+        })
     }))
 
 (:: checkedSnapshotNodes (-> Nodes Nodes (Vec CheckedSyntax) Int))
@@ -204,7 +264,7 @@
   {
     (let snapshots vecNew)
     (let pending (checkedCopyDeclarations declarations))
-    (let seen mapNew)
+    (let seen checkedSeenNew)
     (let mut i 0)
     (while (< i (vecLen pending))
       {

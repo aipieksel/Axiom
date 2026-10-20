@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the production snapshot walker with forced hash collisions."""
+"""Run the production typed snapshot seen set with forced hash collisions."""
 import argparse
 import os
 from pathlib import Path
@@ -9,30 +9,51 @@ import tempfile
 
 
 EXPORTS = r'''
-(pub :: probeVisit (-> ASTNode (Map Nodes) Bool))
+(pub :: probeNew CheckedSeen)
+(pub fn (probeNew) checkedSeenNew)
+(pub :: probeVisit (-> ASTNode CheckedSeen Bool))
 (pub fn (probeVisit node seen) (checkedVisit node seen))
-
-; Key zero occupies slot zero. Read its word without taking a getter
-; share, so the count observes only ownership retained by the walker.
-(pub :: probeBucketAddress (-> (Map Nodes) Int))
+(pub :: probeCount (-> CheckedSeen Int))
+(pub fn (probeCount seen) seen.count)
+(pub :: probeCapacity (-> CheckedSeen Int))
+(pub fn (probeCapacity seen) (vecLen seen.slots))
+(pub :: probeStorageCapacity (-> CheckedSeen Int))
+(pub fn (probeStorageCapacity seen) (vecCap seen.slots))
+(pub :: probeSlots (-> CheckedSeen (Vec Addr)))
+(pub fn (probeSlots seen) seen.slots)
+; Read the typed field's word without creating a getter share.
+(pub :: probeSlotsCount (-> CheckedSeen Int))
 ;@axiom:effect(unsafe)
-(pub fn (probeBucketAddress seen)
-  (__load64 (__load64 (as seen Int) 3) 0))
-(pub :: probeBucketCapacity (-> (Map Nodes) Int))
-;@axiom:effect(unsafe)
-(pub fn (probeBucketCapacity seen) (__load64 (probeBucketAddress seen) 1))
-(pub :: probeBucketLength (-> (Map Nodes) Int))
-;@axiom:effect(unsafe)
-(pub fn (probeBucketLength seen) (__load64 (probeBucketAddress seen) 0))
-(pub :: probeBucketCount (-> (Map Nodes) Int))
-;@axiom:effect(unsafe)
-(pub fn (probeBucketCount seen) (__load64 (probeBucketAddress seen) -2))
-(pub :: probeBucketMembers (-> (Map Nodes) ASTNode ASTNode ASTNode Bool))
-(pub fn (probeBucketMembers seen first second third)
+(pub fn (probeSlotsCount seen) (__load64 (__load64 (as seen Int) 0) -2))
+(pub :: probeAt (-> CheckedSeen Int Addr))
+(pub fn (probeAt seen index) (vecGet seen.slots index))
+(pub :: probeHas (-> ASTNode CheckedSeen Bool))
+(pub fn (probeHas node seen)
+  (addrEq (addrOf node)
+    (vecGet seen.slots (checkedSeenFind (addrOf node) seen.slots))))
+(pub :: probeOccupied (-> CheckedSeen Int))
+(pub fn (probeOccupied seen)
   {
-    (let values (mapGet seen 0 nilNodes))
-    (&& (nodeSame (vecGet values 0) first)
-      (&& (nodeSame (vecGet values 1) second) (nodeSame (vecGet values 2) third)))
+    (let mut count 0)
+    (for node in seen.slots
+      (if (! (addrEq node (addrOf nilNode))) (set count (+ count 1))))
+    count
+  })
+(pub :: probeNilCount (-> CheckedSeen Int))
+(pub fn (probeNilCount seen) (- (vecLen seen.slots) (probeOccupied seen)))
+(pub :: probeOwnerDrop (-> ASTNode Int))
+(pub fn (probeOwnerDrop node)
+  {
+    (let seen checkedSeenNew)
+    (checkedVisit node seen)
+    0
+  })
+(pub :: probeOwnerDropDelta (-> ASTNode Int))
+(pub fn (probeOwnerDropDelta node)
+  {
+    (let before (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+    (for i in 0..100 (probeOwnerDrop node))
+    (- (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)) before)
   })
 (pub :: probeSnapshot (-> Nodes (Vec CheckedSyntax)))
 (pub fn (probeSnapshot nodes) (checkedSnapshot nodes))
@@ -64,10 +85,12 @@ def checked_source(root):
     copy_begin = source.index('(:: checkedCopyDeclarations ')
     copy_end = source.index('(pub :: checkedDeclarationsUnchanged ', copy_begin)
     block = source[copy_begin:copy_end] + source[begin:end]
-    key = '(addrHash (addrOf node))'
+    key = '(addrHash node)'
     assert block.count(key) == 1, 'snapshot hash seam changed'
-    return ('(import core)\n(import parser)\n(import Vec)\n(import Map)\n'
-            '(import Mem)\n(import Str)\n' + block.replace(key, '0') + EXPORTS)
+    # Hash 15 wraps the initial 16-slot cluster across zero, then requires
+    # reinsertion rather than preserving old indices when capacity grows.
+    return ('(import core)\n(import parser)\n(import Vec)\n'
+            '(import Mem)\n(import Str)\n' + block.replace(key, '15') + EXPORTS)
 
 
 def run(compiler, root, work, source, name, level):
@@ -82,12 +105,39 @@ def run(compiler, root, work, source, name, level):
          str(root / 'tests/tools/checked-snapshot-capacity.ax'),
          '--opt', level, '--alloc-poison', '--emit-llvm', '-o', str(output)],
         env=env, cwd=work, capture_output=True, text=True, timeout=180)
-    assert build.returncode == 0, (name, level, build.stdout, build.stderr)
     (directory / ('build-O' + level + '.log')).write_text(build.stdout + build.stderr)
+    assert build.returncode == 0, (name, level, build.stdout, build.stderr)
     actual = subprocess.run([str(output)], capture_output=True, text=True, timeout=15)
-    assert actual.returncode == 0, (name, level, actual.returncode, actual.stderr)
     (directory / ('run-O' + level + '.out')).write_text(actual.stdout)
+    assert actual.returncode == 0, (name, level, actual.returncode, actual.stderr)
     return actual.stdout
+
+
+def function_ir(module, name):
+    match = re.search(r'^define [^\n]*@"?' + re.escape(name)
+                      + r'"?\([^\n]*\) [^\n]*\{\n.*?^\}', module, re.M | re.S)
+    assert match is not None, ('missing emitted function', name)
+    return match.group()
+
+
+def assert_owner_release(work):
+    module = (work / 'positive/snapshot-O0.ll').read_text()
+    for function in ('CheckedSnapshotProbe$checkedSnapshot',
+                     'CheckedSnapshotProbe$probeOwnerDrop'):
+        body = function_ir(module, function)
+        constructor = re.search(r'(?P<value>%[^ ]+) = call i64 '
+                                r'@"?CheckedSnapshotProbe\$checkedSeenNew"?\(', body)
+        assert constructor is not None, ('seen constructor missing', function)
+        release = 'call void @axiom_release(i64 ' + constructor['value'] + ')'
+        assert release in body, ('seen owner is parked', function, body)
+
+
+def rejected(actual, required, name):
+    lines = actual.splitlines()
+    assert len(lines) == 41, (name, 'incomplete assertions', actual)
+    failed = {int(line.split()[0]) for line in lines if line.endswith(' false')}
+    assert required <= failed, (name, 'negative control escaped assertions', failed)
+    return sorted(failed)
 
 
 def main():
@@ -98,7 +148,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     compiler = str(Path(args.compiler).resolve())
     source = checked_source(root)
-    expected = ''.join(f'{i} true\n' for i in range(1, 22))
+    expected = ''.join(f'{i} true\n' for i in range(1, 42))
     owner = None
     if args.work is None:
         owner = tempfile.TemporaryDirectory(prefix='axiom-checked-snapshot-')
@@ -110,27 +160,21 @@ def main():
         for level in ('0', '2'):
             actual = run(compiler, root, work, source, 'positive', level)
             assert actual == expected, (level, 'snapshot assertions failed', actual)
-        seam = '(let values (vecWithCapacity 1))'
-        assert source.count(seam) == 1, 'one-entry constructor seam changed'
-        control = source.replace(seam, '(let values vecNew)')
-        actual = run(compiler, root, work, control, 'capacity-control', '0')
-        assert '4 false\n' in actual, ('capacity control escaped assertion', actual)
-        assert actual != expected, 'capacity control unexpectedly passed'
-        # Joining a fresh allocation and a borrowed bucket in one binding
-        # parks the fresh birth share. The map must be its sole owner.
-        seam = re.search(r'\(if \(vecIsNull bucket\)\n.*?true\n\s+\}\)', source, re.S)
-        assert seam is not None, 'branch-local ownership seam changed'
-        former_phi = '''{
-            (let values (if (vecIsNull bucket) (vecWithCapacity 1) bucket))
-            (vecPush values node)
-            (mapInsert seen key values)
-            true
-          }'''
-        control = source[:seam.start()] + former_phi + source[seam.end():]
-        actual = run(compiler, root, work, control, 'ownership-control', '0')
-        failed = [line for line in actual.splitlines() if line.endswith(' false')]
-        assert failed == ['5 false', '10 false'], ('ownership control', actual)
-        print('ok   checked snapshot: 21 cases at O0/O2, capacity and ownership ablations rejected')
+        assert_owner_release(work)
+        seam = '(addrEq node other)'
+        assert source.count(seam) == 1, 'identity comparison seam changed'
+        control = source.replace(seam,
+            '(== (checkedSeenIndex node capacity) (checkedSeenIndex other capacity))')
+        equality = rejected(run(compiler, root, work, control, 'equality-control', '0'),
+                            {14, 16, 17}, 'equality')
+        seam = re.compile(r'(\(vecSet slots )'
+                          r'\(checkedSeenFind node slots\)( node\))')
+        assert len(seam.findall(source)) == 1, 'growth reinsertion seam changed'
+        control = seam.sub(r'\1i\2', source)
+        rehash = rejected(run(compiler, root, work, control, 'rehash-control', '0'),
+                          {24, 25, 35}, 'rehash')
+        print('ok   checked snapshot: 41 cases at O0/O2; exact owner releases; '
+              f'equality ablation {equality}; rehash ablation {rehash}')
     finally:
         if owner is not None:
             owner.cleanup()
