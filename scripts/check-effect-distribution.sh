@@ -233,8 +233,9 @@ have() { # have <got> <want> <what>
 # rows. ProcessPath absorbs five Sys helpers; TaskWords replaces the
 # command-word helper; structSubstEnv replaces structSubstFrom. The only
 # surviving source row change is fnRetIsFloat gaining Alloc. No existing
-# function gains or loses IO; added/removed IO rows belong to those
-# explicit command/worker paths. The glob below includes Task.Worker.
+# function gains or loses IO. Added IO rows are two LSP assists, two
+# Sys path helpers and command/worker paths; the two removed IO helpers
+# are replaced by those paths. The glob below includes Task.Worker.
 # On identical source, callback-alias inference adds incomplete marks to
 # Err.mapOk/mapErr/andThen/optMap/optAndThen and to the full-library
 # Btree.btreeCheck/checkChain/checkTree lower bounds. Concrete effects
