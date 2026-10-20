@@ -1,0 +1,101 @@
+; Each unsigned definition needs one signature, even when several
+; parameters, aliases or nested payloads need a non-Int type.
+(import Str)
+(import Vec)
+(import UnsignedParameters)
+
+(fn (text a b)
+  {
+    (let alias a)
+    (strLen a)
+    (strLen alias)
+    (strLen b)
+    ; This literal is independently wrong and still draws AX3004.
+    (strLen 41)
+  })
+
+(fn (condition flag)
+  {
+    (if flag
+      1
+      2)
+    (if flag
+      3
+      4)
+  })
+
+(fn (callback f)
+  {
+    (f 1)
+    (f 2)
+  })
+
+(fn (fraction x y)
+  {
+    (+ x 1.5)
+    (+ y 2.5)
+    ; Poison does not turn an unrelated Int literal into Float.
+    (+ 1 2.5)
+  })
+
+(fn (field record)
+  {
+    record.missing
+    record.again
+  })
+
+(fn (store record)
+  {
+    (set record.missing 1)
+    (set record.again 2)
+  })
+
+(fn (iterate values)
+  {
+    (for value in values
+      value)
+    (for value in values
+      value)
+  })
+
+(:: needStrings (-> (Vec String) Int))
+(fn (needStrings values)
+  (strLen (vecGet values 0)))
+
+(fn (nested value)
+  {
+    (let values vecNew)
+    (vecPush values value)
+    (needStrings values)
+    (needStrings values)
+  })
+
+; Captured defaults belong to the outer definition.
+(fn (capture text)
+  {
+    (let f (lambda (n) (+ n (strLen text))))
+    (f 1)
+    (f 2)
+    (strLen text)
+    ; A shadowing local has its own independently wrong type.
+    (let text 42)
+    (strLen text)
+  })
+
+; Contract expressions need the same declared parameter types.
+;@axiom:pre((> (strLen value) 0))
+;@axiom:post((> (strLen value) 0))
+(fn (contract value)
+  0)
+
+; Signed definitions keep each independent mismatch.
+(:: signed (-> Int Int))
+(fn (signed a)
+  {
+    (strLen a)
+    (strLen a)
+  })
+
+(:: main Int)
+(fn (main)
+  0)

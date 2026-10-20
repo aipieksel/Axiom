@@ -1197,7 +1197,7 @@ This section records the codes below. All of them are built, and
 | `AX3071` `unretained-store` | a bare `__store64` of a reference-typed value through `as` | `tests/diagnostics/1002-unretained-store.ax` |
 | `AX3072` `addr-nonliteral` | `__addr` of anything but a string literal | `tests/diagnostics/1003-addr-nonliteral.ax` |
 | `AX3073` `undeclared-unsafe` | a declaration performs a raw primitive, calls an `extern` or forges a reference or a spawn handle without `;@axiom:effect(unsafe)` | An error. `tests/diagnostics/1004-undeclared-unsafe.ax`, `tests/diagnostics/1040-forging-cast.ax`, `tests/diagnostics/1116-extern-unsafe.ax`, `tests/diagnostics/1260-spawn-forging-cast.ax` |
-| `AX3089` `signature-needed` | a function with no signature, called from inside its own body or from a declaration above it, before its type is known | An error. `tests/diagnostics/1032-signature-needed.ax` |
+| `AX3089` `signature-needed` | a function needs a signature: it is called before its type is known, or its body needs parameter types other than the default `Int` | An error. `tests/diagnostics/1032-signature-needed.ax`, `tests/diagnostics/1474-unsigned-parameter-poison.ax` |
 | `AX3090` `recover-thunk-unseen` | a recovery point's thunk that isn't a lambda written at the call or a top-level function, so the region check can't walk it | An error. `tests/diagnostics/1033-recover-escape.ax` |
 | `AX3091` `inline-asm` | an `asm` form the compiler can't lower: an unknown architecture, operand kind or option, a second arm for one architecture, a template naming no operand or defining a named label, a second answered output, a `const` it can't fold, a `sym` with no symbol, or a register an arm can't name | An error, where the form is written. `tests/diagnostics/1044-inline-asm.ax`, `tests/diagnostics/1280-inline-asm-forms.ax` |
 | `AX3123` `propagate-position` | a `?` with no tail to propagate to: inside a branch, a `let` body, a loop, a region or a handler whose value an expression around it still uses | `tests/diagnostics/1300-propagate-position.ax` |
@@ -1348,9 +1348,11 @@ group key only when a real cascade survives poisoning. Tested by
 `tests/diagnostics/1380-poisoned-checks.ax`, where five mistakes draw
 five errors.
 
-Not yet: a definition without a signature types its parameters as
-`Int`, so each use of a parameter that isn't an `Int` draws a
-mismatch. See the [roadmap](roadmap.md).
+Without a signature, a function's parameters default to `Int`. A body
+that needs another type draws one `AX3089` at the definition. The
+default parameter types then become poison, including their aliases
+and uses inside containers. Independent mistakes still draw their own
+diagnostics. Tested by `tests/diagnostics/1474-unsigned-parameter-poison.ax`.
 
 ---
 

@@ -3225,7 +3225,8 @@
   (formatChecked : (Vec ASTNode))
   (computeRequests : (Vec Int))
   (mut computeEnabled : Int)
-  (mut validatingEffects : Bool))
+  (mut validatingEffects : Bool)
+  (mut unsignedParams : Nodes))
 
 (pub struct TC
   (fns : (Vec Int))
@@ -4641,7 +4642,8 @@
                     :formatChecked vecNew
                     :computeRequests vecNew
                     :computeEnabled 0
-                    :validatingEffects false)) Int))
+                    :validatingEffects false
+                    :unsignedParams nilNodes)) Int))
         {
           (memSetWord tc 30 (tyIdxNew (vecLen allDecls)))
           ; The builtin `Option` went into `datas` before this record
@@ -9959,14 +9961,108 @@
 ; Both types of one mismatch, named from one table - see `tyRender`.
 (pub :: emitMismatchTy (-> Int ASTNode ASTNode Int Int))
 (pub fn (emitMismatchTy tc want got span)
-  {
-    (let names vecNew)
+  (if (|| (refuseUnsignedParam tc want) (refuseUnsignedParam tc got))
+    0
     {
-      (tyVarsInto want names)
-      (tyVarsInto got names)
-      (emitMismatch tc (tyRenderScoped want names (memGetWord tc 16))
-        (tyRenderScoped got names (memGetWord tc 16)) span)
-    }
+      (let names vecNew)
+      {
+        (tyVarsInto want names)
+        (tyVarsInto got names)
+        (emitMismatch tc (tyRenderScoped want names (memGetWord tc 16))
+          (tyRenderScoped got names (memGetWord tc 16)) span)
+      }
+    }))
+
+; Unsigned parameters keep distinct default Int nodes. Aliases and
+; generic payloads retain those nodes, so their identity records which
+; assumption failed without confusing an unrelated Int literal with it.
+; Once that assumption fails, poison every default in this definition:
+; the missing signature is one cause, regardless of how many parameters
+; or aliases need a type. Declared types and other expressions stay live.
+(:: unsignedParamIn (-> Nodes ASTNode Bool))
+(fn (unsignedParamIn params ty0)
+  {
+    (let ty (tyResolve ty0))
+    (let mut i 0)
+    (let mut found false)
+    (while (< i (vecLen params))
+      {
+        (if (nodeSame ty (vecGet params i))
+          (set found true))
+        (set i (+ i 1))
+      })
+    (if (|| found (nodeSame ty nilNode))
+      found
+      (if (== (nodeTag ty) TAG_T_CON)
+        (unsignedParamInVec params (nodeBChildren ty))
+        (if (== (nodeTag ty) TAG_T_ARR)
+          (|| (unsignedParamIn params (nodeAChild ty)) (unsignedParamIn params (nodeBChild ty)))
+          (if (== (nodeTag ty) TAG_T_TUP)
+            (unsignedParamInVec params (nodeAChildren ty))
+            (if (== (nodeTag ty) TAG_T_PTR)
+              (unsignedParamIn params (nodeAChild ty))
+              false)))))
+  })
+
+(:: unsignedParamInVec (-> Nodes Nodes Bool))
+(fn (unsignedParamInVec params tys)
+  {
+    (let mut i 0)
+    (let mut found false)
+    (while (&& (! found) (< i (vecLen tys)))
+      {
+        (set found (unsignedParamIn params (vecGet tys i)))
+        (set i (+ i 1))
+      })
+    found
+  })
+
+(:: refuseUnsignedParam (-> Int ASTNode Bool))
+(fn (refuseUnsignedParam tc ty)
+  {
+    (let state (tcCheckState tc))
+    (let params state.unsignedParams)
+    (if (== (as params Int) 0)
+      false
+      (if (! (unsignedParamIn params ty))
+        false
+        {
+          (let mut i 0)
+          (while (< i (vecLen params))
+            {
+              (writeNodeWord (vecGet params i) 0 TAG_T_ERR)
+              (set i (+ i 1))
+            })
+          true
+        }))
+  })
+
+; Lambda grounding can discard a speculative pass's diagnostics. Keep
+; the failed default in the type nodes, then report once after the whole
+; function body, when the real diagnostic vector is restored.
+(:: emitUnsignedSignature (-> Int Int))
+(fn (emitUnsignedSignature tc)
+  {
+    (let state (tcCheckState tc))
+    (let params state.unsignedParams)
+    (if (== (as params Int) 0)
+      0
+      (if (|| (== (vecLen params) 0) (== (tyIsErr (vecGet params 0)) 0))
+        0
+        {
+          (let d (readAstNode tc 24))
+          (if (== (nodeSpan d) 0)
+            0
+            (emitDiag tc
+              (diagSetLabel
+                (mkDiagNote SEV_ERROR "AX3089" "signature-needed" (nodeSpan d)
+                  (concat "`"
+                    (concat (bareOf (nodeAName d))
+                      "` needs a signature to declare its parameter types"))
+                  0 0 "write a `(:: ...)` signature above this definition"
+                  "parameters of a function without a signature default to Int; this body needs a different parameter type")
+                "declare this function's parameter types")))
+        }))
   })
 
 (pub :: emitMismatch (-> Int String String Int Int))
@@ -10039,8 +10135,9 @@
                   (if (== (as help Int) 0)
                     0
                     {
-                      (emitMismatchHelp tc (tyRenderIn wantArg names) (tyRenderIn argTy names) span
-                        help)
+                      (if (! (refuseUnsignedParam tc argTy))
+                        (emitMismatchHelp tc (tyRenderIn wantArg names) (tyRenderIn argTy names)
+                          span help))
                       1
                     })
                 }
@@ -10924,7 +11021,7 @@
       (if (== (isPendingNode cty) 1)
         (refusePendingOperand tc cty "Bool" (spanOf cnd))
         (if (&& (== (tyIsErr cty) 0) (== (tyCompat tc cty mkBoolTy) 0))
-          (emitMismatch tc "Bool" (tyRender cty) (spanOf cnd))
+          (emitMismatchTy tc mkBoolTy cty (spanOf cnd))
           (refuseUnknownOperand tc "Bool" cty (spanOf cnd))))
       cty
     }
@@ -13508,10 +13605,11 @@
                                         (if (== (tyIsSilentWild funcTy) 1)
                                           mkSilentWild
                                           {
-                                            (if (== (signatureNeeded tc hname headIsVar) 1)
-                                              (emitSignatureNeeded tc hname (spanOf e))
-                                              (emitMismatch tc "function type" (tyRender funcTy)
-                                                (spanOf e)))
+                                            (if (! (refuseUnsignedParam tc funcTy))
+                                              (if (== (signatureNeeded tc hname headIsVar) 1)
+                                                (emitSignatureNeeded tc hname (spanOf e))
+                                                (emitMismatch tc "function type" (tyRender funcTy)
+                                                  (spanOf e))))
                                             (nodeBuildTErrPlain 0 0 0)
                                           }))))
                                 }
@@ -14890,10 +14988,10 @@
                   (if (sizedTyIn op "% & | ^ << >>")
                     (emitMismatch tc "an integer" "Float" (nodeSpan head)))
                   (if (&& (== (tyIsFloatTy lt) 0) (== (tyCompat tc lt mkFloatTy) 0))
-                    (emitMismatch tc "Float" (tyRender lt) (spanOf l))
+                    (emitMismatchTy tc mkFloatTy lt (spanOf l))
                     (refuseUnknownOperand tc "Float" lt (spanOf l)))
                   (if (&& (== (tyIsFloatTy rt) 0) (== (tyCompat tc rt mkFloatTy) 0))
-                    (emitMismatch tc "Float" (tyRender rt) (spanOf r))
+                    (emitMismatchTy tc mkFloatTy rt (spanOf r))
                     (refuseUnknownOperand tc "Float" rt (spanOf r)))
                   ; The one thing `restrict(no-wrap)` and
                   ; `restrict(no-trap)` need and cannot
@@ -21214,6 +21312,8 @@
 (pub fn (checkField tc e)
   {
     (let baseTy (checkExprH tc (nodeAChild e) 0))
+    (if (tyIsBareInt baseTy)
+      (refuseUnsignedParam tc baseTy))
     (if (== (nodeTag baseTy) TAG_T_CON)
       {
         (let ent (findStruct tc (nodeAName baseTy)))
@@ -21592,6 +21692,8 @@
   {
     (let baseTy (checkExprH tc (nodeAChild e) 0))
     {
+      (if (tyIsBareInt baseTy)
+        (refuseUnsignedParam tc baseTy))
       (if (== (nodeTag baseTy) TAG_T_CON)
         {
           (let ent (findStruct tc (nodeAName baseTy)))
@@ -29332,6 +29434,11 @@
           (refuseReservedParams tc params (nodeSpan d) 0)
           (checkDupParams tc d params 1)
           (bindFnParams tc params ptys sigTy 0)
+          (let state (tcCheckState tc))
+          (set state.unsignedParams (if (&& (== (nodeTag sigTy) TAG_T_VAR)
+                                          (strStartsWith (nodeAName sigTy) "_fn_"))
+            ptys
+            nilNodes))
           ; A LAMBDA BODY IS CHECKED AGAINST THE DECLARED RESULT, for the
           ; reason `checkHandler` gives one line for one: `bindLamParams`
           ; binds every parameter to a FRESH TYPE VARIABLE, and
@@ -29414,11 +29521,13 @@
                 ; no signature, which is exactly the case a `post`
                 ; naming `result` has to be refused for.
                 (checkContracts tc d resTy)
+                (emitUnsignedSignature tc)
                 (if (&& (!= ent 0)
                       (&& (! (nodeSame (readAstNode ent 1) nilNode))
                         (== (nodeTag (readAstNode ent 1)) TAG_T_VAR)))
                   (memSetWord ent 1 (ctorArrowOf ptys bodyTy (- (vecLen ptys) 1))))
                 (scopeTrunc (tcScopeVec tc) base)
+                (set state.unsignedParams nilNodes)
                 ; Every pin this body makes has been made.
                 (evSettle tc)
                 (memSetWord tc 16 0)
