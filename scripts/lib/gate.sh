@@ -567,6 +567,7 @@ docs/roadmap.md
 docs/embedded-guide.md
 docs/restricted-profile.md
 docs/assurance.md
+docs/safety-contracts.md
 docs/crypto.md
 docs/obfuscation.md
 docs/chrono.md

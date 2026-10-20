@@ -57,10 +57,14 @@ memory model's *Assurance evidence* table.
 
 ### The safety contract
 
+The [safety contracts and trusted boundary inventory](safety-contracts.md)
+give the source obligations, counterexamples and unproved limits behind
+this table.
+
 Safe code is code with no `effect(unsafe)` declaration of its own and no
-`extern` block. This is what the compiler guarantees for it, how each
-guarantee is enforced, a program it refuses, and where the guarantee
-stops.
+`extern` block. Its safety depends on the trusted interfaces it reaches.
+This table maps its safety obligations to their checks, refusals and
+limits.
 
 | Invariant | Enforced by | A program it refuses | Limit |
 |---|---|---|---|
@@ -76,8 +80,8 @@ stops.
 Four properties are kept apart. Memory safety is the first seven rows:
 no read, write or release outside what the types allow. Resource
 cleanup is `MM-LIFE-2`'s owners releasing their `File`, `Poller` and
-`TermGuard` values at scope end. Leak freedom is weaker than both: a
-cycle leaks until its arena resets, and the model says so. Bounded
+`TermGuard` values at scope end. Leak freedom would reclaim every
+unreachable allocation; a cycle can leak until its arena resets. Bounded
 execution is promised only where a trap or a budget says so: the index
 and count traps, `Task`'s stacks and deadlines, and the restricted
 profile's rules.
