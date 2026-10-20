@@ -21,6 +21,12 @@ its changelog too.
   function no longer warns. Live unsupported calls still warn and emit
   their status-79 trap. Tested by `scripts/check-parallel.sh`.
 
+- Checked function types reach native numeric lowering through a typed
+  handoff. Functions with an inferred `Float` result, including imported
+  functions, use floating-point arithmetic at their call sites. Tested by
+  `tests/selfhost/1044-checked-function-types.ax` and
+  `tests/lsp/checked-function-types.py`.
+
 - Windows CI can package its executed compiler as a preview ZIP with
   its standard library, docs, source commit and SHA-256 inventory.
   `scripts/install.ps1` verifies a local preview, probes its compiler

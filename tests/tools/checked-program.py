@@ -2,6 +2,7 @@
 """Exercise the final-check handoff through the CLI's production path."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -98,7 +99,7 @@ def main():
             result = subprocess.run(
                 [compiler, '--diagnostic-format=ai', 'build',
                  str(root / 'tests/selfhost' / name), '-o', str(output)],
-                cwd=work, env=environment, capture_output=True, text=True, timeout=180)
+                cwd=work, env=environment, capture_output=True, text=True, timeout=300)
             assert result.returncode == 0, result.stderr
 
         for name, status in (('1033-checked-declarations.ax', 42),
@@ -125,6 +126,61 @@ def main():
         result = subprocess.run([str(executable)], cwd=work,
                                 capture_output=True, timeout=30)
         assert result.returncode == 0, (result.returncode, result.stderr)
+        checks += 1
+
+        # Inferred return types must reach numeric lowering. A Float call
+        # has the same word representation as Int, so successful assembly
+        # alone does not detect integer arithmetic on its bit pattern.
+        numeric = root / 'tests/selfhost/1044-checked-function-types.ax'
+        for level in ('0', '2'):
+            executable = work / ('checked-numeric-' + level)
+            built = subprocess.run(
+                [compiler, '--diagnostic-format=ai', 'build', str(numeric),
+                 '--opt', level, '-o', str(executable)], cwd=work,
+                env=probe_env, capture_output=True, text=True, timeout=180)
+            assert built.returncode == 0, built.stderr
+            result = subprocess.run([str(executable)], cwd=work,
+                                    capture_output=True, timeout=30)
+            assert result.returncode == 42, (level, result.returncode, result.stderr)
+            checks += 1
+
+        # Withhold only the checked function-type handoff. The accepted
+        # source still builds, but computes the wrong answer, exit 1.
+        # This leaves ownership and effect inference in both stages intact.
+        seam = '(checkedFunctionTypes program.functions)'
+        assert source.count(seam) == 1, 'missing checked function-type handoff seam'
+        numeric_control = work / 'numeric-control-source'
+        shutil.copytree(root / 'self_host', numeric_control)
+        (numeric_control / 'checked.ax').write_text(source.replace(seam, 'vecNew'))
+        control_compiler = work / 'numeric-control-compiler'
+        built = subprocess.run(
+            [compiler, '--diagnostic-format=ai', 'build', str(numeric_control / 'main.ax'),
+             '-o', str(control_compiler)], cwd=work, env=env,
+            capture_output=True, text=True, timeout=600)
+        assert built.returncode == 0, built.stderr
+        executable = work / 'numeric-control'
+        # Use the original silent miscompilation as the control. The wider
+        # positive fixture also mixes applications and nullary references;
+        # their mismatched flags can instead trigger the AX4002 guard.
+        control_input = work / 'numeric-control.ax'
+        control_input.write_text(
+            '(fn (value) 2.5)\n'
+            '(fn (fraction n) (/ (as n Float) 2.0))\n'
+            '(:: main Int)\n'
+            '(fn (main) (if (&& (== (as (+ value value) Int) 5) '
+            '(== (as (+ (fraction 5) (fraction 5)) Int) 5)) 42 1))\n')
+        accepted = subprocess.run(
+            [str(control_compiler), '--diagnostic-format=ai', 'check', str(control_input)],
+            cwd=work, env=env, capture_output=True, text=True, timeout=60)
+        assert accepted.returncode == 0, accepted.stderr
+        built = subprocess.run(
+            [str(control_compiler), '--diagnostic-format=ai', 'build', str(control_input),
+             '-o', str(executable)], cwd=work, env=probe_env,
+            capture_output=True, text=True, timeout=60)
+        assert built.returncode == 0, built.stderr
+        result = subprocess.run([str(executable)], cwd=work,
+                                capture_output=True, timeout=30)
+        assert result.returncode == 1, (result.returncode, result.stderr)
         checks += 1
 
         # The emitter has one way in. `emitResolvedMode` is called from

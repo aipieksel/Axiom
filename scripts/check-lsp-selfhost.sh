@@ -631,6 +631,9 @@ status=$?
 if ! python3 tests/lsp/axql.py "$work/stage1"; then
   status=1
 fi
+if ! python3 tests/lsp/checked-function-types.py "$work/stage1"; then
+  status=1
+fi
 if ! python3 tests/lsp/incremental-sync.py "$work/stage1"; then
   status=1
 fi

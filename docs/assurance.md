@@ -123,6 +123,15 @@ one answer: for every diagnostics fixture, `check` on the command line,
 the language server, the REPL and `build` report the same diagnostics
 (`scripts/check-surface-agreement.sh`).
 
+The final handoff also carries function types into native numeric
+lowering. An inferred `Float` result uses floating-point arithmetic,
+including through imports. Tested by
+`tests/selfhost/1044-checked-function-types.ax` and
+`tests/lsp/checked-function-types.py`.
+
+Not yet: the backend's full semantic representation is
+[on the roadmap](roadmap.md#checks-and-claims).
+
 ### Effects, rule by rule
 
 The effect walk infers each function's row from its body and its

@@ -612,6 +612,9 @@
       ; slot 24: native executable mode, selected once at the pipeline
       ; boundary. Emitters read this value without consulting host IO.
       (vecPush ps 0)
+      ; slot 25: numeric representation flags from checked function types.
+      ; Kept separately from the ownership and evidence signature table.
+      (vecPush ps 0)
       (addTypeNamed ts "Some" TF_DATA 1 0 2
         {
           (let f vecNew)
@@ -4282,24 +4285,82 @@
       }
     }))
 
-; Whether function `name` (already mangled) returns a float. Unknown
-; names answer 0: a function with no signature cannot traffic in floats,
-; because nothing could have told the emitter which of its words are
-; bit patterns.
+; Numeric representation is a checked type fact, including for functions
+; without a written signature. It does not establish ownership or effects.
+(struct FunctionFloatIndex
+  (names : Int)
+  (flags : (Vec Ints)))
+
+(:: functionFloatIndex (-> FunctionTypes FunctionFloatIndex))
+(fn (functionFloatIndex types)
+  {
+    (let names internNew)
+    (let flags vecNew)
+    (for entry in types
+      {
+        (let id (internIntern names (declSpellingOf entry.name)))
+        (if (== id (vecLen flags))
+          (vecPush flags (functionFloatFlags entry.ty entry.arity vecNew)))
+      })
+    (FunctionFloatIndex :names names :flags flags)
+  })
+
+; Stop at the definition's arity: a returned function is one word.
+; Resolve inference pins at every arrow position before classifying it.
+(:: functionFloatFlags (-> ASTNode Int Ints Ints))
+(fn (functionFloatFlags ty arity flags)
+  {
+    (let resolved (tyResolve ty))
+    (if (<= arity 0)
+      (vecPush flags (tyIsBareFloat resolved))
+      (if (== (nodeTag resolved) TAG_T_ARR)
+        {
+          (vecPush flags (tyIsBareFloat (tyResolve (nodeAChild resolved))))
+          (functionFloatFlags (nodeBChild resolved) (- arity 1) flags)
+        }
+        {
+          (vecPush flags 0)
+          (functionFloatFlags resolved (- arity 1) flags)
+        }))
+  })
+
+(:: checkedFloatFlags (-> Int String (Option Ints)))
+;@axiom:effect(unsafe)
+(fn (checkedFloatFlags cg name)
+  (if (== (pairSlot cg 25) 0)
+    None
+    {
+      (let index (as (pairSlot cg 25) FunctionFloatIndex))
+      (match (internFind index.names (declSpellingOf name))
+        ((Some id) (Some (vecGet index.flags id)))
+        ((None) None))
+    }))
+
+; Partial compiler clients can still consult the written signature table.
+(:: functionFlags (-> Int String Ints))
+;@axiom:effect(unsafe)
+(fn (functionFlags cg name)
+  (match (checkedFloatFlags cg name)
+    ((Some flags) flags)
+    ((None)
+      {
+        (let entry (findFSigCg cg name))
+        (if (== entry 0)
+          (as 0 Ints)
+          (memGetWordVec entry 2))
+      }
+    )))
+
+; Whether function `name` (already mangled) returns a bare float.
 (pub :: fnRetIsFloat (-> Int String Int))
 (pub fn (fnRetIsFloat cg name)
   {
-    (let e (findFSigCg cg name))
-    (if (== e 0)
+    (let flags (functionFlags cg name))
+    (if (== (as flags Int) 0)
       0
-      {
-        (let flags (memGetWordVec e 2))
-        (if (== (as flags Int) 0)
-          0
-          (if (== (vecLen flags) 0)
-            0
-            (vecGet flags (- (vecLen flags) 1))))
-      })
+      (if (== (vecLen flags) 0)
+        0
+        (vecGet flags (- (vecLen flags) 1))))
   })
 
 ; Whether parameter `idx` of the function being emitted is a float. The
@@ -17938,15 +17999,16 @@
 
 ; Keep mode selection explicit: program arguments after `run FILE`
 ; cannot change code generation by resembling compiler flags.
-(pub :: emitResolvedMode (-> (Vec ASTNode) Strings Strings Int Bool String))
+(pub :: emitResolvedMode (-> Nodes FunctionTypes Strings Strings Int Bool String))
 ;@axiom:effect(io)
-(pub fn (emitResolvedMode allDecls bares fulls tcode obscure)
+(pub fn (emitResolvedMode allDecls functionTypes bares fulls tcode obscure)
   ; Every signature is known and the type table is built:
   ; index both, then decide who owns what result before a
   ; function is emitted.
   {
     (let cg newCG)
     (let emitT0 (emitPhaseNow))
+    (pairSetSlot cg 25 (functionFloatIndex functionTypes))
     {
       (let _mode
         (pairSetSlot cg 16
@@ -18920,14 +18982,7 @@
       (let _5r (memSetWord cg 41 (borrowedTailLeaves cg name body params)))
       (let _5p (memSetWord cg 42 vecNew))
       (let _5s (memSetWord (pairSlot cg 18) 0 0))
-      (let _6
-        (memSetWord cg 18
-          {
-            (let e (findFSigCg cg name))
-            (if (== e 0)
-              0
-              (memGetWord e 2))
-          }))
+      (let _6 (memSetWord cg 18 (functionFlags cg name)))
       {
         (let takesEv (fnTakesEvw cg name))
         {

@@ -79,6 +79,18 @@
     ((Some program) program)
     ((None) __indexTrap)))
 
+; Pass semantic types without exposing the checker's packed context to
+; emission. The complete entries stay owned by the checked handoff.
+(:: checkedFunctionTypes (-> (Vec FnEnt) FunctionTypes))
+(fn (checkedFunctionTypes functions)
+  {
+    (let types (vecWithCapacity (vecLen functions)))
+    (for entry in functions
+      (if (&& (== entry.isBuiltin 0) (== entry.isEffectOp 0))
+        (vecPush types (FunctionType :name entry.name :ty entry.ty :arity entry.paramCount))))
+    types
+  })
+
 ; The type, effect and region records stay owned by the handoff while
 ; the emitter uses the checked AST stamps for representation decisions.
 ; Unknown effects and absent region facts retain their original status.
@@ -89,5 +101,6 @@
 (pub fn (emitCheckedProgram program bares fulls target obscure)
   {
     (set program.available false)
-    (emitResolvedMode program.declarations bares fulls target obscure)
+    (emitResolvedMode program.declarations (checkedFunctionTypes program.functions) bares fulls
+      target obscure)
   })

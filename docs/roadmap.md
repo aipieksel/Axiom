@@ -73,7 +73,7 @@ integrator would still need.
 
 | Item | State | Where it's specified or tested |
 |---|---|---|
-| Compiler data uses typed structures and checked effect boundaries across every phase | In progress | Typed AST and effect values cross every phase; the CLI and REPL emit through a sealed handoff that rejects declaration-list edits. A typed semantic IR, recursive AST edit tracking, alias revision tracking, and packed registry and frame storage remain |
+| Compiler data uses typed structures and checked effect boundaries across every phase | In progress | Typed AST and effect values cross every phase; the CLI and REPL emit through a sealed handoff that rejects declaration-list edits and supplies checked function types for numeric lowering. A typed semantic IR, recursive AST edit tracking, alias revision tracking, and packed registry and frame storage remain |
 | Native tool arguments keep their string vector type to the syscall boundary | Done | `scripts/check-driver.sh`, `scripts/check-bootstrap.sh` |
 | Known callback arguments honour effect restrictions through forwarding and captures | Done | `tests/diagnostics/1463-callback-restrictions.ax` |
 | Opaque callback aliases preserve incomplete effect rows through forwarding, captures and mutable bindings | Done | `tests/diagnostics/1482-callback-alias-effects.ax`, `tests/selfhost/1042-callback-alias-effects.ax` |

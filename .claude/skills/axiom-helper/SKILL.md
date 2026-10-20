@@ -99,11 +99,13 @@ Module dependencies flow one way, and the `(import ...)` lines are the
 proof - but the shape is a DAG, not a chain: `core` imports no
 compiler module; `lexer` imports `core`; `parser` imports `lexer`;
 `expand` reads `parser` and `namespace`; `typecheck` reads `parser`;
-`codegen` reads `parser`, `namespace` and `expand` (never `typecheck`);
+`codegen` reads `parser`, `namespace`, `expand` and shared type queries
+from `typecheck`;
 `driver` reads `parser` and `codegen`; `main` imports the CLI-closed
-set. The lexer does not know about types, and `codegen.ax` does not
-import `typecheck.ax` — emission reads the AST and the mangled
-namespace, not the checker's judgements.
+set. The lexer does not know about types. Emission reads checked
+function types for numeric representation, alongside the AST and the
+mangled namespace. The sealed handoff in `checked.ax` supplies those
+types after the final successful check.
 
 ## 3. Correctness patterns
 

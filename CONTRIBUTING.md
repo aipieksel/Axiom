@@ -142,12 +142,13 @@ The shape is a DAG rather than a chain:
 - `core` imports no compiler module. `lexer` imports `core`, and
   `parser` imports `lexer`.
 - `expand` reads `parser` and `namespace`. `typecheck` reads `parser`.
-- `codegen` reads `parser`, `namespace` and `expand`, and never
-  `typecheck`. Emission reads the AST and the mangled namespace, not
-  the checker's judgements.
+- `codegen` reads `parser`, `namespace` and `expand`, with shared type
+  queries from `typecheck`. Emission reads checked function types for
+  numeric representation, alongside the AST and the mangled namespace.
 - `checked` reads `typecheck` and `codegen`. The CLI and the REPL hand
   their final successful check to emission through a sealed
-  `CheckedProgram`, and the emitter has no other way in
+  `CheckedProgram`. Its `FunctionTypes` view carries checked types and
+  definition arities into numeric lowering. The emitter has no other way in
   (`tests/tools/checked-program.py`).
 - `driver` reads `parser` and `codegen`. `main` imports what the
   command line needs, and reaches `namespace` through `expand` and
