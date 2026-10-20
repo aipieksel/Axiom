@@ -97,21 +97,22 @@ Source-only: `darwin-x86_64`, `freebsd-aarch64`, `freebsd-x86_64`,
 `linux-x86_64`, `windows-aarch64`, `windows-x86_64`,
 `baremetal-aarch64`. The compiler emits
 code for each, and
-CI assembles that code on every change. CI runs the test battery on
-none of them, so they aren't supported, and no prebuilt archive is
-published for them. CI builds the compiler from the seed in
+CI assembles that code on every change. None of them runs the whole
+test battery or ships a prebuilt archive, so they aren't supported.
+CI builds the compiler from the seed in
 `bootstrap/` on `linux-x86_64`, and on `freebsd-x86_64` and
 `freebsd-aarch64` in FreeBSD 14.4 VMs. No runner builds it on
 `darwin-x86_64`.
-No runner builds the compiler from the seed on `windows-x86_64` or
-`windows-aarch64`, because there is no Windows seed. CI cross-emits the
-compiler for `windows-x86_64` instead and runs it on a Windows runner:
-it emits itself byte for byte and builds and runs a few programs, but
-the test battery doesn't run there. No runner executes `windows-aarch64`
-code; CI only links it.
 No runner builds the compiler on `baremetal-aarch64`; its embedded
 image checks and optional QEMU execution are described in the
 [embedded guide](docs/embedded-guide.md).
+
+There is no Windows seed, so no runner builds the compiler from one on
+`windows-x86_64` or `windows-aarch64`. CI cross-emits the compiler for
+each and runs it on a Windows runner of that architecture. There it
+emits itself byte for byte, builds and runs a few programs, and runs
+the test battery. `tests/stdlib/windows-skip.txt` names the cases a
+target cannot run there yet, each with its reason.
 
 ## Quick start
 

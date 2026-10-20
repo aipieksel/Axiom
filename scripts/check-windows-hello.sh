@@ -181,16 +181,18 @@ AX
       done
       echo "ok   emitted hello.ll and leaky.ll for $t into $d ($(grep -c '^define' "$d/hello.ll") defines in hello, triple $(triple_of "$t"))"
     done
-    # 2. The compiler, for the Windows target a runner executes. The
+    # 2. The compiler, for each Windows target a runner executes. The
     #    runner's own build of it must emit this again, byte for byte.
     sh="$dir/selfhost"
     mkdir -p "$sh"
-    "$axc" --target=windows-x86_64 emit-llvm self_host/main.ax -o "$sh/axiom.ll"
-    if [[ "$(head -1 "$sh/axiom.ll")" != "target triple = \"$(triple_of windows-x86_64)\"" ]]; then
-      echo "FAIL --emit: the compiler's IR opens with '$(head -1 "$sh/axiom.ll")', not the $(triple_of windows-x86_64) triple"
-      exit 1
-    fi
-    echo "ok   emitted the compiler for windows-x86_64 into $sh ($(grep -c '^define' "$sh/axiom.ll") defines)"
+    for t in "${win_targets[@]}"; do
+      "$axc" --target="$t" emit-llvm self_host/main.ax -o "$sh/axiom-$t.ll"
+      if [[ "$(head -1 "$sh/axiom-$t.ll")" != "target triple = \"$(triple_of "$t")\"" ]]; then
+        echo "FAIL --emit: the compiler's IR for $t opens with '$(head -1 "$sh/axiom-$t.ll")', not the $(triple_of "$t") triple"
+        exit 1
+      fi
+      echo "ok   emitted the compiler for $t into $sh ($(grep -c '^define' "$sh/axiom-$t.ll") defines)"
+    done
     # 3. The tree audit's report over the fixture, from this host's
     #    compiler, held to an independent oracle before it travels.
     tree_fixture "$work/tree"
@@ -348,51 +350,54 @@ AX
     done
 
     # 2 and 3. The compiler, linked the way the driver links a Windows
-    # executable, then run on a windows-x86_64 runner.
+    # executable: for both targets under --link, and under --run for the
+    # one this runner executes, which then runs it.
     sh="$dir/selfhost"
-    allow="$dir/windows-x86_64/platform-allow.windows.txt"
-    for f in axiom.ll tree-audit.out; do
-      [[ -s "$sh/$f" ]] || { echo "FAIL: $sh/$f is missing or empty; run --emit first"; exit 1; }
+    [[ -s "$sh/tree-audit.out" ]] || { echo "FAIL: $sh/tree-audit.out is missing or empty; run --emit first"; exit 1; }
+    if [[ "$mode" == "--run" ]]; then link_targets=("$run_target"); else link_targets=("${win_targets[@]}"); fi
+    for t in "${link_targets[@]}"; do
+      allow="$dir/$t/platform-allow.windows.txt"
+      [[ -s "$sh/axiom-$t.ll" ]] || { echo "FAIL: $sh/axiom-$t.ll is missing or empty; run --emit first"; exit 1; }
+      w="$work/selfhost-$t"
+      mkdir -p "$w"
+      implibs=()
+      for dll in $(permitted_windows_dlls "$allow"); do
+        { printf 'LIBRARY %s.dll\nEXPORTS\n' "$dll"; permitted_windows_for_dll "$allow" "$dll"; } > "$w/$dll.def"
+        llvm-dlltool -m "$(dlltool_machine "$t")" -d "$w/$dll.def" -l "$w/$dll.lib"
+        implibs+=("$w/$dll.lib")
+      done
+      if ! llc -filetype=obj -O1 -relocation-model=pic "$sh/axiom-$t.ll" -o "$w/axiom.obj" 2>"$w/axiom.llc.err"; then
+        echo "FAIL axiom.exe [$t]: llc refused the compiler's IR"
+        sed 's/^/    /' "$w/axiom.llc.err" | head -5
+        exit 1
+      fi
+      # The 8 MB stack the driver gives every Windows executable. The
+      # compiler overflows Windows' 1 MB default compiling itself.
+      if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine "$t")" -stack:8388608 "-out:$w/axiom.exe" "$w/axiom.obj" "${implibs[@]}" >"$w/axiom.link.log" 2>&1; then
+        echo "FAIL axiom.exe [$t]: lld-link failed"
+        { grep -o 'undefined symbol: [A-Za-z_][A-Za-z0-9_]*' "$w/axiom.link.log" || true; } | sed 's/^/    /' | sort -u
+        sed 's/^/    /' "$w/axiom.link.log" | head -5
+        exit 1
+      fi
+      imports_of "$w/axiom.exe" > "$w/axiom.imports"
+      unexpected="$(unpermitted_imports "$w/axiom.imports" "$allow")"
+      if [[ -n "$unexpected" ]]; then
+        echo "FAIL axiom.exe [$t] imports symbols $allow does not permit:"
+        printf '%s\n' "$unexpected" | sed 's/^/    /'
+        status=1
+      elif [[ -n "$(misplaced_imports "$w/axiom.exe" "$allow")" ]]; then
+        # A POSIX-spelled Winsock name is permitted from ws2_32 and no
+        # other DLL: this is where that `@dll` becomes a fact about the
+        # executable (`scripts/lib/imports.sh`, `misplaced_imports`).
+        echo "FAIL axiom.exe [$t] imports a permitted name from another DLL than $allow says:"
+        misplaced_imports "$w/axiom.exe" "$allow" | sed 's/^/    /'
+        status=1
+      else
+        echo "ok   axiom.exe [$t] links ($(wc -c < "$w/axiom.exe" | tr -d ' ') bytes) and imports only permitted names ($(grep -c . "$w/axiom.imports"), each from the DLL the list names)"
+      fi
     done
-    w="$work/selfhost"
-    mkdir -p "$w"
-    implibs=()
-    for dll in $(permitted_windows_dlls "$allow"); do
-      { printf 'LIBRARY %s.dll\nEXPORTS\n' "$dll"; permitted_windows_for_dll "$allow" "$dll"; } > "$w/$dll.def"
-      llvm-dlltool -m "$(dlltool_machine windows-x86_64)" -d "$w/$dll.def" -l "$w/$dll.lib"
-      implibs+=("$w/$dll.lib")
-    done
-    if ! llc -filetype=obj -O1 -relocation-model=pic "$sh/axiom.ll" -o "$w/axiom.obj" 2>"$w/axiom.llc.err"; then
-      echo "FAIL axiom.exe: llc refused the compiler's IR"
-      sed 's/^/    /' "$w/axiom.llc.err" | head -5
-      exit 1
-    fi
-    # The 8 MB stack the driver gives every Windows executable. The
-    # compiler overflows Windows' 1 MB default compiling itself.
-    if ! lld-link -subsystem:console -entry:mainCRTStartup "-machine:$(link_machine windows-x86_64)" -stack:8388608 "-out:$w/axiom.exe" "$w/axiom.obj" "${implibs[@]}" >"$w/axiom.link.log" 2>&1; then
-      echo "FAIL axiom.exe: lld-link failed"
-      { grep -o 'undefined symbol: [A-Za-z_][A-Za-z0-9_]*' "$w/axiom.link.log" || true; } | sed 's/^/    /' | sort -u
-      sed 's/^/    /' "$w/axiom.link.log" | head -5
-      exit 1
-    fi
-    imports_of "$w/axiom.exe" > "$w/axiom.imports"
-    unexpected="$(unpermitted_imports "$w/axiom.imports" "$allow")"
-    if [[ -n "$unexpected" ]]; then
-      echo "FAIL axiom.exe imports symbols $allow does not permit:"
-      printf '%s\n' "$unexpected" | sed 's/^/    /'
-      status=1
-    elif [[ -n "$(misplaced_imports "$w/axiom.exe" "$allow")" ]]; then
-      # A POSIX-spelled Winsock name is permitted from ws2_32 and no
-      # other DLL: this is where that `@dll` becomes a fact about the
-      # executable (`scripts/lib/imports.sh`, `misplaced_imports`).
-      echo "FAIL axiom.exe imports a permitted name from another DLL than $allow says:"
-      misplaced_imports "$w/axiom.exe" "$allow" | sed 's/^/    /'
-      status=1
-    else
-      echo "ok   axiom.exe links ($(wc -c < "$w/axiom.exe" | tr -d ' ') bytes) and imports only permitted names ($(grep -c . "$w/axiom.imports"), each from the DLL the list names)"
-    fi
-
-    if [[ "$mode" == "--run" && "$run_target" == windows-x86_64 ]]; then
+    if [[ "$mode" == "--run" ]]; then
+      w="$work/selfhost-$run_target"
       # Two levels below `stdlib/`, where the compiler looks for its
       # library when nothing names one.
       ax="$repo_root/.axiom-bin/axiom.exe"
@@ -401,10 +406,10 @@ AX
       unset AXIOM_STDLIB AXIOM_PATH
 
       # 2a. It emits itself as the host's compiler emitted it.
-      if ( cd "$repo_root" && "$ax" --target=windows-x86_64 emit-llvm self_host/main.ax -o "$w/native.ll" ) > "$w/native.log" 2>&1 \
-         && cmp -s "$w/native.ll" "$sh/axiom.ll"; then
+      if ( cd "$repo_root" && "$ax" --target="$run_target" emit-llvm self_host/main.ax -o "$w/native.ll" ) > "$w/native.log" 2>&1 \
+         && cmp -s "$w/native.ll" "$sh/axiom-$run_target.ll"; then
         echo "ok   axiom.exe EXECUTED: its emission of self_host/main.ax is the host's, byte for byte ($(wc -l < "$w/native.ll" | tr -d ' ') lines)"
-        { cat "$sh/axiom.ll"; printf 'x'; } > "$w/axiom.ll.corrupt"
+        { cat "$sh/axiom-$run_target.ll"; printf 'x'; } > "$w/axiom.ll.corrupt"
         if cmp -s "$w/native.ll" "$w/axiom.ll.corrupt"; then
           echo "FAIL negative probe [compiler]: a corrupted emission still matched"
           status=1
@@ -414,7 +419,7 @@ AX
       else
         echo "FAIL axiom.exe did not emit self_host/main.ax as the host did"
         sed 's/^/    /' "$w/native.log" | head -5
-        [[ -s "$w/native.ll" ]] && { diff "$sh/axiom.ll" "$w/native.ll" || true; } | head -10 | sed 's/^/    /'
+        [[ -s "$w/native.ll" ]] && { diff "$sh/axiom-$run_target.ll" "$w/native.ll" || true; } | head -10 | sed 's/^/    /'
         status=1
       fi
 
@@ -452,12 +457,12 @@ AX
           sed 's/^/    /' "$w/$case.build.log" | head -5
           status=1
         elif [[ "$rc2" -ne 0 ]] || ! cmp -s "$w/$case.stdout" "tests/stdlib/$case.out"; then
-          echo "FAIL $case on Windows exited $rc2, or its output is not the golden's"
+          echo "FAIL $case on $run_target exited $rc2, or its output is not the golden's"
           { diff "tests/stdlib/$case.out" "$w/$case.stdout" || true; } | head -10 | sed 's/^/    /'
           sed 's/^/    /' "$w/$case.stderr" | head -3
           status=1
         else
-          echo "ok   $case runs on Windows to its golden"
+          echo "ok   $case runs on $run_target to its golden"
         fi
       done
 
@@ -496,7 +501,8 @@ AX
       #    compiler and run to its golden, its exit status and, where a
       #    `.err` exists, its stderr, each up to the backtrace marker,
       #    with its `.in` on fd 0 or nothing. `tests/stdlib/windows-skip.txt`
-      #    names the cases this target cannot run yet, each with its
+      #    names the cases a target cannot run yet, for both targets or,
+      #    with `@<target>` after the name, for one, each with its
       #    reason: a listed case that fails does not fail the leg and
       #    is reported with the first lines of its difference, a listed
       #    case that passes is reported so the list can shrink, and an
@@ -508,7 +514,7 @@ AX
       for case_file in "$repo_root"/tests/stdlib/[0-9]*.ax; do
         name="$(basename "$case_file" .ax)"
         listed=0
-        grep -qE "^$name( |\$)" "$skip_list" && listed=1
+        grep -qE "^$name( |\$)|^$name@$run_target( |\$)" "$skip_list" && listed=1
         want_exit=0
         [[ -f "$repo_root/tests/stdlib/$name.exit" ]] && want_exit="$(tr -d '[:space:]' < "$repo_root/tests/stdlib/$name.exit")"
         stdin_src=/dev/null
@@ -538,14 +544,14 @@ AX
           else
             # a listed failure does not fail the leg, and says what it
             # did, so the reason beside its name can be checked
-            echo "note $name is listed and still fails on Windows: build exit $brc, run exit $rrc (want $want_exit)"
+            echo "note $name is listed and still fails on $run_target: build exit $brc, run exit $rrc (want $want_exit)"
             { diff "$repo_root/tests/stdlib/$name.out" "$w/bat-$name.stdout" 2>/dev/null || true; } | head -4 | sed 's/^/    /'
             { cat "$w/bat-$name.build.log" "$w/bat-$name.stderr" 2>/dev/null || true; } | head -3 | sed 's/^/    /'
           fi
         elif [[ "$good" -eq 1 ]]; then
           ran=$((ran + 1))
         else
-          echo "FAIL $name on Windows: build exit $brc, run exit $rrc (want $want_exit), or its output is off the golden"
+          echo "FAIL $name on $run_target: build exit $brc, run exit $rrc (want $want_exit), or its output is off the golden"
           { diff "$repo_root/tests/stdlib/$name.out" "$w/bat-$name.stdout" 2>/dev/null || true; } | head -6 | sed 's/^/    /'
           { cat "$w/bat-$name.build.log" "$w/bat-$name.stderr" 2>/dev/null || true; } | head -4 | sed 's/^/    /'
           status=1
@@ -556,13 +562,11 @@ AX
         echo "FAIL the battery ran only $ran case(s) to their goldens; the floor is 150"
         status=1
       else
-        echo "ok   the battery: $ran case(s) ran on Windows to their goldens, $skipped listed in tests/stdlib/windows-skip.txt"
+        echo "ok   the battery: $ran case(s) ran on $run_target to their goldens, $skipped listed in tests/stdlib/windows-skip.txt"
       fi
       if [[ -n "$passing_skips" ]]; then
-        echo "note listed case(s) that pass on Windows and can leave the list:$passing_skips"
+        echo "note listed case(s) that pass on $run_target and can leave the list:$passing_skips"
       fi
-    elif [[ "$mode" == "--run" ]]; then
-      echo "ok   axiom.exe NOT EXECUTED: this runner executes $run_target, and the compiler is built for windows-x86_64"
     else
       echo "ok   axiom.exe NOT EXECUTED: --link assembles, links and reads imports on a host that cannot run a PE; a Windows runner runs --run"
     fi

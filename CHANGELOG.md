@@ -16,6 +16,11 @@ its changelog too.
 
 ## Unreleased
 
+- CI's Windows arm64 leg builds the compiler for its own architecture
+  and runs the standard-library battery with it, as the x86_64 leg
+  does. A line in `tests/stdlib/windows-skip.txt` can name one
+  architecture.
+
 - Stack overflow is a named trap on Windows: a program that runs out of
   stack reports `axiom: stack overflow`, its backtrace and status 86,
   as it does on the POSIX targets, on the entry thread and on the
