@@ -16,6 +16,11 @@ its changelog too.
 
 ## Unreleased
 
+- Stack overflow is a named trap on Windows: a program that runs out of
+  stack reports `axiom: stack overflow`, its backtrace and status 86,
+  as it does on the POSIX targets, on the entry thread and on the
+  threads `parallel` makes.
+
 - AXQLite opens, locks and writes its database on Windows: the pager
   reaches the file through the platform module where the target has no
   syscall ABI (`pread`, `pwrite`, `fsync`, `ftruncate`, `flock`, open

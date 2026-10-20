@@ -1265,7 +1265,7 @@ if command -v lld-link > /dev/null 2>&1 && command -v llvm-dlltool > /dev/null 2
   # later drops. With all four on the search path the driver makes none,
   # so the probes below reach lld-link with no llvm-dlltool at all.
   mkdir -p "$work/winlib"
-  printf 'LIBRARY kernel32.dll\nEXPORTS\nVirtualAlloc\nGetStdHandle\nWriteFile\nExitProcess\nGetCommandLineW\nGetEnvironmentStringsW\nReadFile\nGetLastError\nRtlCaptureStackBackTrace\n' > "$work/winlib/kernel32.def"
+  printf 'LIBRARY kernel32.dll\nEXPORTS\nVirtualAlloc\nGetStdHandle\nWriteFile\nExitProcess\nGetCommandLineW\nGetEnvironmentStringsW\nReadFile\nGetLastError\nRtlCaptureStackBackTrace\nAddVectoredExceptionHandler\nSetThreadStackGuarantee\n' > "$work/winlib/kernel32.def"
   llvm-dlltool -m i386:x86-64 -d "$work/winlib/kernel32.def" -l "$work/winlib/kernel32.lib"
   printf 'LIBRARY bcryptprimitives.dll\nEXPORTS\nProcessPrng\n' > "$work/winlib/bcryptprimitives.def"
   llvm-dlltool -m i386:x86-64 -d "$work/winlib/bcryptprimitives.def" -l "$work/winlib/bcryptprimitives.lib"

@@ -554,6 +554,15 @@ kernel32_table_report() {
       floor_of["WriteFile"]    = 2
       known["VirtualAlloc"] = 1; known["ExitProcess"] = 1; known["WriteFile"] = 1
       known["GetStdHandle"] = 1; known["GetCommandLineW"] = 1; known["GetEnvironmentStringsW"] = 1
+      # No syscall counterpart, by design: the frames of the backtracer
+      # on windows-x86_64 (emitBtWalkCaptured), where the POSIX targets
+      # read frame pointers; the handler of the stack-overflow trap and
+      # the stack kept for it (emitWinFaultRuntime), where they install
+      # a signal handler on an alternate stack; and the munmap of the
+      # handle table lost to a racer and of the arena chunks a thread
+      # held.
+      known["RtlCaptureStackBackTrace"] = 1; known["AddVectoredExceptionHandler"] = 1
+      known["SetThreadStackGuarantee"] = 1; known["VirtualFree"] = 1
     }
     /^define / {
       fn = $0

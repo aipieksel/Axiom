@@ -194,6 +194,8 @@ have() { # have <got> <want> <what>
 # The pager's five platform shims (`platformPread`, `platformPwrite`,
 # `platformFsync`, `platformFtruncate`, `platformFlock`) are pure
 # sentinels on the host, in both views; the pager's `dbOpen` is IO.
+# The Windows stack-overflow trap adds three Alloc,Mut emitters:
+# `emitWinFaultRuntime`, `emitWinFaultCaptured`, `emitWinFaultChain`.
 # The full stdlib view also charges the closure factories fallibleCounting
 # (Mut to Alloc,Mut) and fallibleDefault (pure to Alloc).
 # Typed AST migration compared against 63883c3d with the same compiler:
@@ -221,7 +223,7 @@ echo "== compiler view: symbols --calls self_host/main.ax =="
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3223 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3226 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 451 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 189 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 114 "exactly Alloc"

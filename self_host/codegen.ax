@@ -8197,6 +8197,12 @@
     (emitLine cg "")
     (emitLine cg "define internal ptr @__axiom_par_entry(ptr %pg) #0 {")
     (emitLine cg "entry:")
+    ; the thread keeps 64 KiB of its stack for the stack-overflow
+    ; handler, as the entry thread does (`emitWinFaultRuntime`)
+    (emitLine cg "  %gsz = alloca i32, align 4")
+    (emitLine cg "  store i32 65536, ptr %gsz")
+    (emitLine cg "  %gszi = ptrtoint ptr %gsz to i64")
+    (emitLine cg "  %gok = call i64 @SetThreadStackGuarantee(i64 %gszi)")
     (emitLine cg "  %p1 = getelementptr i64, ptr %pg, i64 1")
     (emitLine cg "  %fn = load i64, ptr %p1")
     (emitLine cg "  %p2 = getelementptr i64, ptr %pg, i64 2")
@@ -10637,6 +10643,8 @@
           (vecPush v "VirtualFree")
           (if (== t 6)
             (vecPush v "RtlCaptureStackBackTrace"))
+          (vecPush v "AddVectoredExceptionHandler")
+          (vecPush v "SetThreadStackGuarantee")
           (vecPush v "GetStdHandle")
           (vecPush v "WriteFile")
           (vecPush v "ExitProcess")
@@ -10655,6 +10663,132 @@
             })
           v
         }))
+  })
+
+; The stack-overflow trap on Windows. The POSIX targets map their own
+; guarded stacks and take SIGSEGV on an alternate stack
+; (`emitStackRunGuarded`); Windows gives every thread a guard page and
+; raises STATUS_STACK_OVERFLOW when the last one is hit, so the runtime
+; installs one vectored exception handler at entry and, on each thread,
+; `SetThreadStackGuarantee` keeps 64 KiB of the stack for the handler
+; to run on. The handler reports the same line as the POSIX trap and
+; the backtrace from the faulting frame, then exits 86; any other
+; exception passes to the system (EXCEPTION_CONTINUE_SEARCH), as a
+; fault outside the guard keeps its signal status there. On
+; windows-x86_64 the backtrace is the captured one (`emitBtWalkCaptured`)
+; with the handler's own frame skipped and the dispatcher's frames
+; above it dropped by the image's address range, read from the PE
+; header through the linker's `__ImageBase`: those frames lie above
+; every address in the symbol table and would otherwise take its last
+; name. On windows-aarch64 the chain is walked from the context's frame
+; pointer, naming the faulting address first, as the POSIX trace does.
+; The exception record's code is its first word; the context is the
+; second word of the EXCEPTION_POINTERS the handler is given, with Fp
+; at 240 and Pc at 264 in the ARM64 CONTEXT.
+(pub :: emitWinFaultRuntime (-> Int Int))
+(pub fn (emitWinFaultRuntime cg)
+  {
+    (let msg "axiom: stack overflow: the fault address is in the guard below a mapped stack")
+    (let n (fmtInt (+ (strLen msg) 1)))
+    (let t (memGetWord cg 26))
+    {
+      (emitLine cg
+        (concat "@__axiom_win_stack_msg = private unnamed_addr constant ["
+          (concat n (concat " x i8] c\"" (concat msg "\\0A\"")))))
+      (if (== t 6)
+        (emitLine cg "@__ImageBase = external global i8"))
+      (emitLine cg "define internal i64 @__axiom_veh(i64 %info) #0 {")
+      (emitLine cg "entry:")
+      ; the capture buffer is a static alloca in the entry block: one
+      ; in the fault block would be dynamic, and llc probes a dynamic
+      ; frame through the CRT's `__chkstk`, which no program here has
+      (if (== t 6)
+        (emitLine cg "  %buf = alloca [64 x i64], align 16"))
+      (emitLine cg "  %ip = inttoptr i64 %info to ptr")
+      (emitLine cg "  %recw = load i64, ptr %ip")
+      (emitLine cg "  %recp = inttoptr i64 %recw to ptr")
+      (emitLine cg "  %code32 = load i32, ptr %recp")
+      (emitLine cg "  %code = zext i32 %code32 to i64")
+      (emitLine cg "  %isover = icmp eq i64 %code, 3221225725")
+      (emitLine cg "  br i1 %isover, label %over, label %pass")
+      (emitLine cg "over:")
+      (emitLine cg "  %mp = ptrtoint ptr @__axiom_win_stack_msg to i64")
+      (emitRuntimeWrite cg "%mp" n)
+      (if (== (pairSlot cg 16) 0)
+        (if (== t 6)
+          (emitWinFaultCaptured cg)
+          (emitWinFaultChain cg)))
+      (emitLine cg "  call i64 @ExitProcess(i64 86)")
+      (emitLine cg "  unreachable")
+      (emitLine cg "pass:")
+      (emitLine cg "  ret i64 0")
+      (emitLine cg "}")
+      (emitLine cg "")
+      cg
+    }
+  })
+
+; windows-x86_64: the captured return addresses from the handler's
+; caller up, the first inside the image starting the trace.
+(pub :: emitWinFaultCaptured (-> Int Int))
+(pub fn (emitWinFaultCaptured cg)
+  {
+    (emitLine cg "  %bufi = ptrtoint ptr %buf to i64")
+    (emitLine cg "  %n0 = call i64 @RtlCaptureStackBackTrace(i64 1, i64 64, i64 %bufi, i64 0)")
+    (emitLine cg "  %n = and i64 %n0, 65535")
+    (emitLine cg "  %base = ptrtoint ptr @__ImageBase to i64")
+    (emitLine cg "  %lfa = add i64 %base, 60")
+    (emitLine cg "  %lfp = inttoptr i64 %lfa to ptr")
+    (emitLine cg "  %lfanew32 = load i32, ptr %lfp")
+    (emitLine cg "  %lfanew = zext i32 %lfanew32 to i64")
+    (emitLine cg "  %sza = add i64 %base, %lfanew")
+    (emitLine cg "  %szb = add i64 %sza, 80")
+    (emitLine cg "  %szp = inttoptr i64 %szb to ptr")
+    (emitLine cg "  %sz32 = load i32, ptr %szp")
+    (emitLine cg "  %sz = zext i32 %sz32 to i64")
+    (emitLine cg "  %end = add i64 %base, %sz")
+    (emitLine cg "  br label %skip")
+    (emitLine cg "skip:")
+    (emitLine cg "  %i = phi i64 [ 0, %over ], [ %i1, %outside ]")
+    (emitLine cg "  %more = icmp ult i64 %i, %n")
+    (emitLine cg "  br i1 %more, label %look, label %trace")
+    (emitLine cg "look:")
+    (emitLine cg "  %ao = mul i64 %i, 8")
+    (emitLine cg "  %aa = add i64 %bufi, %ao")
+    (emitLine cg "  %ap = inttoptr i64 %aa to ptr")
+    (emitLine cg "  %a = load i64, ptr %ap")
+    (emitLine cg "  %ge = icmp uge i64 %a, %base")
+    (emitLine cg "  %lt = icmp ult i64 %a, %end")
+    (emitLine cg "  %in = and i1 %ge, %lt")
+    (emitLine cg "  br i1 %in, label %trace, label %outside")
+    (emitLine cg "outside:")
+    (emitLine cg "  %i1 = add i64 %i, 1")
+    (emitLine cg "  br label %skip")
+    (emitLine cg "trace:")
+    (emitLine cg "  %fo = mul i64 %i, 8")
+    (emitLine cg "  %fa = add i64 %bufi, %fo")
+    (emitLine cg "  %left = sub i64 %n, %i")
+    (emitLine cg "  call void @__axiom_backtrace_from(i64 %fa, i64 %left, i64 0, i64 0)")
+    cg
+  })
+
+; windows-aarch64: the chain from the context's frame pointer, the
+; faulting address named first.
+(pub :: emitWinFaultChain (-> Int Int))
+(pub fn (emitWinFaultChain cg)
+  {
+    (emitLine cg "  %ctxa = add i64 %info, 8")
+    (emitLine cg "  %ctxp = inttoptr i64 %ctxa to ptr")
+    (emitLine cg "  %ctx = load i64, ptr %ctxp")
+    (emitLine cg "  %fpa = add i64 %ctx, 240")
+    (emitLine cg "  %fpp = inttoptr i64 %fpa to ptr")
+    (emitLine cg "  %fp = load i64, ptr %fpp")
+    (emitLine cg "  %pca = add i64 %ctx, 264")
+    (emitLine cg "  %pcp = inttoptr i64 %pca to ptr")
+    (emitLine cg "  %pc = load i64, ptr %pcp")
+    (emitLine cg "  %ra = add i64 %pc, 1")
+    (emitLine cg "  call void @__axiom_backtrace_from(i64 %fp, i64 0, i64 -1, i64 %ra)")
+    cg
   })
 
 ; What a Windows module carries whether or not it has an entry: the
@@ -10678,6 +10812,8 @@
     (emitLine cg "declare dllimport i64 @VirtualFree(i64, i64, i64) #0")
     (if (== (memGetWord cg 26) 6)
       (emitLine cg "declare dllimport i64 @RtlCaptureStackBackTrace(i64, i64, i64, i64) #0"))
+    (emitLine cg "declare dllimport i64 @AddVectoredExceptionHandler(i64, i64) #0")
+    (emitLine cg "declare dllimport i64 @SetThreadStackGuarantee(i64) #0")
     (emitLine cg "declare dllimport i64 @GetStdHandle(i64) #0")
     (emitLine cg "declare dllimport i64 @WriteFile(i64, i64, i64, i64, i64) #0")
     (emitLine cg "declare dllimport i64 @ExitProcess(i64) #0")
@@ -10689,6 +10825,7 @@
     ; a real import. Measured 2026-08-29 on `010-hello`: `U _fltused`
     ; in the object without this line, `D _fltused` with it.
     (emitLine cg "@_fltused = global i32 1")
+    (emitWinFaultRuntime cg)
     ; Static TLS without a C runtime, for the `thread_local(localexec)`
     ; runtime globals of a module that spawns (MM-PAR-6): lld-link fills
     ; the PE's TLS data directory from `_tls_used`; the loader gives
@@ -12184,6 +12321,14 @@
     ; vector is `argc + 1 + envc + 1` words.
     (emitLine cg "define i64 @mainCRTStartup() #0 {")
     (emitLine cg "entry:")
+    ; the stack-overflow trap: 64 KiB of this stack kept for the
+    ; handler, and the handler installed first (`emitWinFaultRuntime`)
+    (emitLine cg "  %gsz = alloca i32, align 4")
+    (emitLine cg "  store i32 65536, ptr %gsz")
+    (emitLine cg "  %gszi = ptrtoint ptr %gsz to i64")
+    (emitLine cg "  %gok = call i64 @SetThreadStackGuarantee(i64 %gszi)")
+    (emitLine cg
+      "  %veh = call i64 @AddVectoredExceptionHandler(i64 1, i64 ptrtoint (ptr @__axiom_veh to i64))")
     (emitLine cg "  %cmd = call i64 @GetCommandLineW()")
     (emitLine cg "  %clen = call i64 @__axiom_win_wlen(i64 %cmd)")
     (emitLine cg "  %clen1 = add i64 %clen, 1")

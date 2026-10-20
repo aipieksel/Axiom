@@ -59,7 +59,7 @@ integrator would still need.
 | `vecFree` and `mapFree` leave safe code, so an early drop can't free a block still in use | Done | `tests/stdlib/406-array-form-large-block.ax`, `tests/stdlib/489-map-free.ax` |
 | CI builds the compiler with a poisoned allocator and checks it still reaches its fixpoint | Done | `scripts/check-poisoned-alloc.sh` |
 | Released blocks larger than 64 KiB can be reused | Done | `MM-ALLOC-25`, `tests/stdlib/974-large-block-reuse.ax` |
-| Stack overflow reports a named runtime trap | Native POSIX entry, worker and task stacks; bare-metal guard | `tests/stdlib/977-native-stack-overflow.ax`; Windows and host-owned archive stacks remain |
+| Stack overflow reports a named runtime trap | Native POSIX entry, worker and task stacks; Windows threads; bare-metal guard | `tests/stdlib/977-native-stack-overflow.ax`; host-owned archive stacks remain |
 | No cast, `Int` container or raw store lets a heap value become an untracked word in safe code | Not started | `MM-VAL-24` |
 | The raw memory layer and the word-to-reference accessors are internal to the library, so safe code can't read memory at an address or forge a reference from a word | Done | `MM-EXEC-9g`, `tests/diagnostics/1470-internal-import.ax` |
 | Public functions that take a raw address, such as `sysRandomBytes`, `sysWaitWord` and the clock reads that fill a caller's buffer, take typed values instead | Not started | `MM-EXEC-9d` |
