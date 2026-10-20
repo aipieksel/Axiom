@@ -3,6 +3,7 @@
 from pathlib import Path
 import os
 import shutil
+import re
 import subprocess
 import sys
 import tempfile
@@ -103,7 +104,9 @@ def main():
             assert result.returncode == 0, result.stderr
 
         for name, status in (('1033-checked-declarations.ax', 42),
-                             ('1034-checked-declarations-stale.ax', 80)):
+                             ('1034-checked-declarations-stale.ax', 80),
+                             ('1040-checked-nested.ax', 42),
+                             ('1041-checked-nested-stale.ax', 80)):
             executable = work / name.removesuffix('.ax')
             build_probe(name, executable, probe_env)
             result = subprocess.run([str(executable)], cwd=work,
@@ -181,6 +184,31 @@ def main():
         result = subprocess.run([str(executable)], cwd=work,
                                 capture_output=True, timeout=30)
         assert result.returncode == 1, (result.returncode, result.stderr)
+        checks += 1
+
+        # Independently remove only nested-syntax enforcement. The stale
+        # nested edit must then emit, while declaration-list enforcement
+        # stays present. This catches a missing or ineffective guard.
+        nested_seam = ';@axiom:pre((checkedSyntaxUnchanged program))\n'
+        assert source.count(nested_seam) == 1, 'missing nested-syntax enforcement seam'
+        (control / 'checked.ax').write_text(source.replace(nested_seam, ''))
+        executable = work / 'unchecked-nested-control'
+        build_probe('1041-checked-nested-stale.ax', executable, control_env)
+        result = subprocess.run([str(executable)], cwd=work,
+                                capture_output=True, timeout=30)
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        checks += 1
+
+        # Every current AST tag has an explicit traversal decision. A new
+        # tag must update the checked handoff's schema rather than silently
+        # inheriting the leaf fallback.
+        parser = (root / 'self_host/parser.ax').read_text()
+        tags = {int(value) for value in re.findall(
+            r'\(pub fn \(TAG_\w+\)\s+(\d+)\)', parser)}
+        shape = source.split('(fn (checkedSyntaxShape tag)', 1)[1].split(
+            '; Hash buckets', 1)[0]
+        covered = {int(value) for value in re.findall(r'\((\d+) "[wnNS]+"\)', shape)}
+        assert tags == covered, ('unchecked AST schema tags', tags - covered, covered - tags)
         checks += 1
 
         # The emitter has one way in. `emitResolvedMode` is called from

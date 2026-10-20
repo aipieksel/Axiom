@@ -1,7 +1,7 @@
 ; The synchronous compilation handoff. Only a successful final check
 ; constructs this sealed value; emission consumes it once. The driver
 ; keeps AST payloads private and makes no edits after this check. The
-; declaration list is snapshotted and compared before emission.
+; declaration list and nested syntax are snapshotted before emission.
 ; This retains existing checker facts, including their incompleteness;
 ; it does not turn the word-based backend into a typed semantic IR.
 (import core)
@@ -10,11 +10,15 @@
 (import codegen)
 (import diag)
 (import Vec)
+(import Map)
+(import Mem)
+(import Str)
 
 (pub struct CheckedProgram sealed
   (declarations : Nodes)
   (inputDeclarations : Nodes)
   (functions : (Vec FnEnt))
+  (syntax : (Vec CheckedSyntax))
   (mut available : Bool))
 
 (pub struct CheckedResult
@@ -38,6 +42,7 @@
               :declarations (checkedCopyDeclarations declarations)
               :inputDeclarations declarations
               :functions (tcFnsVec tc)
+              :syntax (checkedSnapshot declarations)
               :available true))
         }))
     (CheckedResult :diagnostics diagnostics :program program)
@@ -72,6 +77,228 @@
       unchanged
     }))
 
+; Exact retained copies, rather than hashes. The node copy owns its old
+; payloads, and typed vector copies retain any members a caller replaces.
+; This covers structural syntax and replacement of node metadata slots.
+; Packed auxiliary metadata and raw writes through string aliases remain
+; outside the snapshot; this is not a fully immutable semantic IR.
+(data CheckedSyntax
+  (CheckedNode ASTNode ASTNode)
+  (CheckedNodes Nodes Nodes)
+  (CheckedNames Names Names))
+
+; The three payload slots: n is a node, N a node vector, S a name vector.
+; Other slots are compared as words but their contents are not traversed.
+; Checker-only stamps are not parsed syntax: in particular tag 53 also
+; names extern declarations, so following every ty slot as syntax is wrong.
+(:: checkedSyntaxShape (-> Int String))
+(fn (checkedSyntaxShape tag)
+  (match tag
+    (0 "wnw")
+    (1 "www")
+    (2 "www")
+    (3 "www")
+    (4 "nnw")
+    (5 "Snw")
+    (6 "wnn")
+    (7 "nnn")
+    (8 "Nww")
+    (9 "nww")
+    (10 "wSn")
+    (11 "www")
+    (12 "wNw")
+    (13 "wNN")
+    (14 "wSw")
+    (15 "wSn")
+    (16 "nNw")
+    (17 "nnw")
+    (20 "www")
+    (21 "www")
+    (22 "www")
+    (23 "www")
+    (24 "wnn")
+    (25 "wnw")
+    (26 "nNw")
+    (27 "nww")
+    (28 "nwn")
+    (30 "wSN")
+    (32 "www")
+    (33 "wNw")
+    (34 "nnw")
+    (35 "Nww")
+    (37 "nww")
+    (38 "www")
+    (39 "www")
+    (40 "wNw")
+    (42 "nNn")
+    (43 "wNN")
+    (47 "wnS")
+    (50 "wNw")
+    (51 "wnN")
+    (52 "wnN")
+    (53 "wSN")
+    (54 "wnw")
+    (55 "wnN")
+    (56 "nNn")
+    (57 "nww")
+    (_ "www")))
+
+; Hash buckets use nodeSame for equality, including a colliding bucket.
+; Each node is visited once even when syntax shares a subtree or cycles.
+(:: checkedVisit (-> ASTNode (Map Nodes) Bool))
+(fn (checkedVisit node seen)
+  (if (nodeSame node nilNode)
+    false
+    {
+      (let key (addrHash (addrOf node)))
+      (let bucket (mapGet seen key nilNodes))
+      (let mut found false)
+      (if (! (vecIsNull bucket))
+        (for other in bucket
+          (if (nodeSame node other)
+            (set found true))))
+      (if found
+        false
+        {
+          (let values
+            (if (vecIsNull bucket)
+              vecNew
+              bucket))
+          (vecPush values node)
+          (mapInsert seen key values)
+          true
+        })
+    }))
+
+(:: checkedSnapshotNodes (-> Nodes Nodes (Vec CheckedSyntax) Int))
+(fn (checkedSnapshotNodes nodes pending snapshots)
+  (if (vecIsNull nodes)
+    0
+    {
+      (let accepted (checkedCopyDeclarations nodes))
+      (vecPush snapshots (CheckedNodes nodes accepted))
+      (for node in accepted
+        (vecPush pending node))
+      0
+    }))
+
+(:: checkedSnapshotNames (-> Names (Vec CheckedSyntax) Int))
+(fn (checkedSnapshotNames names snapshots)
+  (if (vecIsNull names)
+    0
+    {
+      (let accepted (vecWithCapacity (vecLen names)))
+      (for name in names
+        (vecPush accepted name))
+      (vecPush snapshots (CheckedNames names accepted))
+      0
+    }))
+
+(:: checkedSnapshot (-> Nodes (Vec CheckedSyntax)))
+(fn (checkedSnapshot declarations)
+  {
+    (let snapshots vecNew)
+    (let pending (checkedCopyDeclarations declarations))
+    (let seen mapNew)
+    (let mut i 0)
+    (while (< i (vecLen pending))
+      {
+        (let node (vecGet pending i))
+        (set i (+ i 1))
+        (if (checkedVisit node seen)
+          {
+            (vecPush snapshots (CheckedNode node (nodeClone node)))
+            (let tag (nodeTag node))
+            (let shape (checkedSyntaxShape tag))
+            (let mut slot 1)
+            (while (<= slot 3)
+              {
+                (let kind (strByte shape (- slot 1)))
+                (if (== kind 110)
+                    (vecPush pending (nodeChildAt node slot))
+                  (== kind 78)
+                    (checkedSnapshotNodes (nodeChildrenAt node slot) pending snapshots)
+                  (== kind 83)
+                    (checkedSnapshotNames (nodeNamesAt node slot) snapshots)
+                  0)
+                (set slot (+ slot 1))
+              })
+            ; Type syntax on declarations has a fixed payload view.
+            (if (|| (== tag TAG_D_SIG) (== tag TAG_FIELD))
+                (vecPush pending (nodeTyChild node))
+              (== tag TAG_CTOR)
+                (checkedSnapshotNodes (nodeTyChildren node) pending snapshots)
+              (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))
+                (checkedSnapshotNames (nodeTyNames node) snapshots)
+              0)
+            ; Effect and extern members put their type in b. Struct
+            ; fields put a 0/1 flag there and keep their type in ty.
+            (if (&& (== tag TAG_FIELD) (> (nodeB node) 1))
+              (vecPush pending (nodeBChild node)))
+            (if (|| (== tag TAG_CTOR) (== tag TAG_E_APP))
+              (checkedSnapshotNames (nodeFieldNamesNames node) snapshots))
+          })
+      })
+    snapshots
+  })
+
+(:: checkedNodesSame (-> Nodes Nodes Bool))
+(fn (checkedNodesSame actual accepted)
+  {
+    (let mut same (== (vecLen actual) (vecLen accepted)))
+    (let mut i 0)
+    (while (&& same (< i (vecLen accepted)))
+      {
+        (set same (nodeSame (vecGet actual i) (vecGet accepted i)))
+        (set i (+ i 1))
+      })
+    same
+  })
+
+(:: checkedSyntaxSame (-> CheckedSyntax Bool))
+(fn (checkedSyntaxSame snapshot)
+  (match snapshot
+    ((CheckedNode actual accepted)
+      {
+        (let mut same true)
+        (let mut slot 0)
+        (while (&& same (< slot 13))
+          {
+            (set same (== (nodeWireWord actual slot) (nodeWireWord accepted slot)))
+            (set slot (+ slot 1))
+          })
+        same
+      }
+    )
+    ((CheckedNodes actual accepted) (checkedNodesSame actual accepted))
+    ((CheckedNames actual accepted)
+      {
+        (let mut same (== (vecLen actual) (vecLen accepted)))
+        (let mut i 0)
+        (while (&& same (< i (vecLen accepted)))
+          {
+            (set same (addrEq (addrOf (vecGet actual i)) (addrOf (vecGet accepted i))))
+            (set i (+ i 1))
+          })
+        same
+      }
+    )))
+
+;; Whether snapshotted syntax nodes, child lists and name lists still
+;; have their accepted contents. Packed auxiliary metadata is not covered.
+(pub :: checkedSyntaxUnchanged (-> CheckedProgram Bool))
+(pub fn (checkedSyntaxUnchanged program)
+  {
+    (let mut same true)
+    (let mut i 0)
+    (while (&& same (< i (vecLen program.syntax)))
+      {
+        (set same (checkedSyntaxSame (vecGet program.syntax i)))
+        (set i (+ i 1))
+      })
+    same
+  })
+
 (pub :: checkedProgramOf (-> CheckedResult CheckedProgram))
 ;@axiom:pre((isSome result.program))
 (pub fn (checkedProgramOf result)
@@ -98,6 +325,7 @@
 ;@axiom:effect(io)
 ;@axiom:pre(program.available)
 ;@axiom:pre((checkedDeclarationsUnchanged program))
+;@axiom:pre((checkedSyntaxUnchanged program))
 (pub fn (emitCheckedProgram program bares fulls target obscure)
   {
     (set program.available false)

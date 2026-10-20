@@ -1,0 +1,45 @@
+(import core)
+(import lexer)
+(import parser)
+(import checked)
+(import codegen)
+(import expand)
+(import Str)
+(import Vec)
+
+(pub struct NestedCase
+  (declarations : Nodes)
+  (units : Units)
+  (program : CheckedProgram))
+
+(pub :: nestedExample (-> String NestedCase))
+;@axiom:effect(io)
+(pub fn (nestedExample source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units vecNew)
+    (vecPush units
+      (as (CUnit2 :file "checked.ax" :src source :name "" :imports vecNew :library false) Int))
+    (let bares vecNew)
+    (let fulls vecNew)
+    (let mods vecNew)
+    (let merged (resolveImports declarations bares fulls mods 0 "" units))
+    (expandProgram declarations merged vecNew vecNew units bares fulls mods)
+    (let result (checkExpandedProgram declarations merged units))
+    (NestedCase :declarations merged :units units :program (checkedProgramOf result))
+  })
+
+(pub :: nestedMain (-> NestedCase ASTNode))
+(pub fn (nestedMain example)
+  {
+    (let mut found nilNode)
+    (for declaration in example.declarations
+      (if (&& (== (nodeTag declaration) TAG_D_FN) (strEq (nodeAName declaration) "main"))
+        (set found declaration)))
+    found
+  })
+
+(pub :: nestedBody (-> NestedCase ASTNode))
+(pub fn (nestedBody example)
+  (nodeCChild (nestedMain example)))

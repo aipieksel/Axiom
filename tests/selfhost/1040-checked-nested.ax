@@ -1,0 +1,106 @@
+; expect 42
+(import core)
+(import parser)
+(import checked)
+(import CheckedNested)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: refused (-> NestedCase Bool))
+;@axiom:effect(io)
+(fn (refused example)
+  {
+    (let status
+      (__axiom_recover __axiom_arena_mark
+        (lambda (ignored) (strLen (emitCheckedProgram example.program vecNew vecNew 0 false)))))
+    (&& (! (checkedSyntaxUnchanged example.program)) (== status 80))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source "(:: main Int) (fn (main) { 40 42 })")
+    (let same (nestedExample source))
+    (writeNodeWord (nestedBody same) 4 (nodeSpan (nestedBody same)))
+    (vecSet (nodeAChildren (nestedBody same)) 0 (vecGet (nodeAChildren (nestedBody same)) 0))
+    (let unchanged (checkedSyntaxUnchanged same.program))
+    (let ir (emitCheckedProgram same.program vecNew vecNew 0 false))
+    (let scalar (nestedExample source))
+    (writeNodeWord (vecGet (nodeAChildren (nestedBody scalar)) 1) 1 43)
+    (let scalarRefused (refused scalar))
+    (let fresh (checkExpandedProgram scalar.declarations scalar.declarations scalar.units))
+    (let freshOk
+      (&& (== (countErrorDiags fresh.diagnostics) 0)
+        (&& (checkedSyntaxUnchanged (checkedProgramOf fresh))
+          (> (strLen (emitCheckedProgram (checkedProgramOf fresh) vecNew vecNew 0 false)) 0))))
+    (let replaced (nestedExample source))
+    (vecSet (nodeAChildren (nestedBody replaced)) 1 (mkEInt 44))
+    (let appended (nestedExample source))
+    (vecPush (nodeAChildren (nestedBody appended)) (mkEInt 44))
+    (let removed (nestedExample source))
+    (vecPop (nodeAChildren (nestedBody removed)))
+    (let cleared (nestedExample source))
+    (vecClear (nodeAChildren (nestedBody cleared)))
+    (let ordered (nestedExample source))
+    (let items (nodeAChildren (nestedBody ordered)))
+    (let first (vecGet items 0))
+    (vecSet items 0 (vecGet items 1))
+    (vecSet items 1 first)
+    (let branch (nestedExample "(:: main Int) (fn (main) (if true 42 1))"))
+    (writeNodeChild (nestedBody branch) 2 (mkEInt 43))
+    (let stamped (nestedExample "(:: main Int) (fn (main) (+ 40 2))"))
+    (setNodeResWord (nestedBody stamped)
+      (if (== (nodeResWord (nestedBody stamped)) 0)
+        1
+        0))
+    (let typed (nestedExample "(:: main Int) (fn (main) 42)"))
+    (let signature (vecGet typed.declarations 0))
+    (writeNodeText (nodeTyChild signature) 1 "Bool")
+    (let named (nestedExample "(:: main Int) (fn (main) 42)"))
+    (vecPush (nodeBNames (nestedMain named)) "unverified")
+    (let labelled
+      (nestedExample
+        "(struct Answer (value : Int)) (:: main Int) (fn (main) { (Answer :value 42) 42 })"))
+    (let call (vecGet (nodeAChildren (nestedBody labelled)) 0))
+    (vecSet (nodeFieldNamesNames call) 0 "unchecked")
+    (let invalid (nestedExample "(:: main Int) (fn (main) 42)"))
+    (writeNodeChild (nestedMain invalid) 3 (mkEVarAt "missing" (nodeSpan (nestedBody invalid))))
+    (let bad (checkExpandedProgram invalid.declarations invalid.declarations invalid.units))
+    (if (! unchanged)
+        1
+      (<= (strLen ir) 0)
+        2
+      (! scalarRefused)
+        3
+      (! freshOk)
+        4
+      (! (refused replaced))
+        5
+      (! (refused appended))
+        6
+      (! (refused removed))
+        7
+      (! (refused cleared))
+        8
+      (! (refused ordered))
+        9
+      (! (refused branch))
+        10
+      (! (refused stamped))
+        11
+      (! (refused typed))
+        12
+      (! (refused named))
+        13
+      (! (refused labelled))
+        17
+      (! (refused invalid))
+        14
+      (<= (countErrorDiags bad.diagnostics) 0)
+        15
+      (! (isNone bad.program))
+        16
+      42)
+  })
