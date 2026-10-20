@@ -544,22 +544,21 @@ fi
 # ---------------------------------------------------------------------
 echo "== 5. resources beyond memory across trap-and-recover =="
 # ---------------------------------------------------------------------
+# Generated fixtures need the same target-selected, failing-on-error
+# counter as the checked-in resource lifetime cases.
+cp "$repo_root"/tests/stdlib/ResourceCount*.ax "$work/"
 cat > "$work/res.ax" <<'AX'
 ; args: mode n. 1 opens /dev/null inside a recovery point and traps
 ; before the close; 2 closes first; 4 opens n files outside any
 ; recovery point and holds them in a Vec. Prints how many descriptors
-; are open before and after, counted in /dev/fd. 3 spawns a forked
+; are open before and after, counted by ResourceCount. 3 spawns a forked
 ; child inside the extent and traps.
 (import IO)
+(import ResourceCount)
 (import Sys)
 (import Str)
 (import Mem)
 (import Vec)
-
-(:: openCount Int)
-;@axiom:effect(io)
-(fn (openCount)
-  (vecLen (unwrapOr (listDir "/dev/fd") vecNew)))
 
 (:: boom (-> Int Int))
 (fn (boom d)

@@ -1,20 +1,16 @@
 ; A dropped TCP client signals EOF; a dropped listener closes its
-; descriptor. The descriptor count is read from /dev/fd.
+; descriptor. The descriptor count is read through ResourceCount.
 (import IO)
+(import ResourceCount)
 (import Net)
 (import Sys)
 (import Err)
 (import Str)
 (import Vec)
 
-(:: openCount Int)
+(:: roundTrip (-> SocketAddr Bool Int))
 ;@axiom:effect(io)
-(fn (openCount)
-  (vecLen (unwrapOr (listDir "/dev/fd") vecNew)))
-
-(:: roundTrip (-> SocketAddr Int))
-;@axiom:effect(io)
-(fn (roundTrip addr)
+(fn (roundTrip addr report)
   (match (tcpListenAddr addr)
     ((Ok listener)
       (match (tcpListenerLocalAddr listener)
@@ -33,7 +29,10 @@
                       ()
                     }
                     (match (tcpReadAll peer)
-                      ((Ok s) (println (strEq s "hello")))
+                      ((Ok s)
+                        (if report
+                          (println (strEq s "hello")))
+                      )
                       ((Err e) (die (errorText e) 1)))
                     0
                   }
@@ -82,9 +81,12 @@
   (match (socketAddrParse "127.0.0.1:0")
     ((Ok addr)
       {
+        ; Load process-wide socket providers before measuring owner
+        ; lifetimes. A second round must release every handle it opens.
+        (roundTrip addr false)
         (let before openCount)
         {
-          (roundTrip addr)
+          (roundTrip addr true)
           (println (== openCount before))
           (eofAfterDrop addr)
         }

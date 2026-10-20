@@ -172,8 +172,20 @@ else
     printf '%s\n' "$laundered" | sed 's/^/    /'
     status=1
   else
+    resource_allow="$work/resource-count-allow.windows.txt"
+    cat "$win_allow" tests/stdlib/resource-count-imports.windows.txt > "$resource_allow"
+    if [[ -n "$(manifest_launders "$resource_allow")" ]]; then
+      echo "FAIL the resource-count fixture allowlist permits libc"
+      exit 1
+    fi
     for case_file in tests/stdlib/[0-9]*.ax; do
       name="$(basename "$case_file" .ax)"
+      # These APIs belong to the test probe, not the shipped runtime.
+      # Only fixtures that import it gain its two kernel32 bindings.
+      case_allow="$win_allow"
+      if grep -qxF '(import ResourceCount)' "$case_file"; then
+        case_allow="$resource_allow"
+      fi
       for wt in windows-x86_64 windows-aarch64; do
         wir="$work/$name.$wt.ll"
         if ! "$axc" --target="$wt" emit-llvm "$case_file" -o "$wir" > "$work/$name.$wt.emit" 2>&1; then
@@ -201,15 +213,15 @@ else
           status=1
           continue
         fi
-        unexpected="$(unpermitted_imports "$work/$name.$wt.declares" "$win_allow")"
+        unexpected="$(unpermitted_imports "$work/$name.$wt.declares" "$case_allow")"
         if [[ -n "$unexpected" ]]; then
-          echo "FAIL $name [$wt]: the IR declares symbols $win_allow does not permit:"
+          echo "FAIL $name [$wt]: the IR declares symbols $case_allow does not permit:"
           printf '%s\n' "$unexpected" | sed 's/^/    /'
           echo "    (a kernel32 entry point the runtime or Sys/Platform.windows.ax now needs is added to the list, in a reviewed diff)"
           status=1
           continue
         fi
-        echo "ok   $name [$wt] (no libc in IR; $n_decl declares, all of $n_permitted_win permitted)"
+        echo "ok   $name [$wt] (no libc in IR; $n_decl declares, all permitted by $case_allow)"
       done
     done
   fi

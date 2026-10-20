@@ -1,18 +1,14 @@
 ; A `Poller` and a key reader own their descriptors. Three hundred of
 ; each are made and dropped, and the process holds as many descriptors
-; afterwards as before, counted in /dev/fd. `scripts/check-handles.sh`
+; afterwards as before, counted by ResourceCount. `scripts/check-handles.sh`
 ; also runs this under `ulimit -n 256`, where a leak of one descriptor
 ; per poller would run out before the loop ends. A closed poller is
 ; dead: the last line's wait stops the program with status 85.
 (import IO)
+(import ResourceCount)
 (import Err)
 (import Vec)
 (import Tui.Term)
-
-(:: openCount Int)
-;@axiom:effect(io)
-(fn (openCount)
-  (vecLen (unwrapOr (listDir "/dev/fd") vecNew)))
 
 (:: pollers (-> Int Int))
 ;@axiom:effect(io)
@@ -56,6 +52,9 @@
 ;@axiom:effect(io)
 (fn (main)
   {
+    ; A pipe or console can keep one process-wide stdin reader. Prime
+    ; it before measuring the 300 subsequent owners, without reading.
+    (readers 1)
     (let before openCount)
     {
       (println (pollers 300))

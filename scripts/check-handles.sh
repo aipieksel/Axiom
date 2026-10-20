@@ -482,6 +482,13 @@ else
 fi
 ablate_file=codegen.ax
 
+echo "== portable resource counts: the ownership probes measure real handles =="
+if python3 "$repo_root/tests/platform/resource-count.py" --axiom "$axc"; then
+  ok "target-selected resource probes keep ownership goldens and refuse fabricated counts/errors"
+else
+  bad "portable resource-count probes"
+fi
+
 echo
 if (( failed > 0 )); then
   echo "check-handles: $failed failed, $checks passed"
