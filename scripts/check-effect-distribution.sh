@@ -169,6 +169,12 @@ have() { # have <got> <want> <what>
 # the table arm (IO,Unsafe to IO,Mut,Unsafe), the one new distinct row.
 # Comparing fd7df70b and this tree with the same compiler changes no
 # other row, and no row gains or loses IO.
+# The Windows thread lowering adds four compiler functions:
+# `emitParThreadWin` (Alloc,Mut), `parThreadsByDefault` (Alloc,IO,Mut,
+# it asks the target), and the pure `parPrimLowered` and `procAnyNamed`;
+# `parSpawnUnsupported` now asks the target too (pure to Alloc,IO,Mut).
+# Comparing 7c4dc4e7 and this tree with the same compiler changes no
+# other row; the stdlib view is untouched.
 # The full stdlib view also charges the closure factories fallibleCounting
 # (Mut to Alloc,Mut) and fallibleDefault (pure to Alloc).
 # Typed AST migration compared against 63883c3d with the same compiler:
@@ -196,8 +202,8 @@ echo "== compiler view: symbols --calls self_host/main.ax =="
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3212 "exactly Alloc,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 450 "Alloc,IO,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3213 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 452 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 188 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 114 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 20 "Alloc,IO"
@@ -231,7 +237,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2253 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2254 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 34 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 49 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 39 "effect-params rows"

@@ -77,6 +77,41 @@ unpermitted_imports() {
   LC_ALL=C comm -23 <(LC_ALL=C sort -u "$1") <(permitted_windows "$2")
 }
 
+# The C runtime DLLs no allowlist entry may name: a name from one of
+# these is a C library call whatever it is called.
+crt_dlls='msvcrt|ucrtbase[d]?|vcruntime[0-9]*[d]?|msvcp[0-9]*[d]?|api-ms-win-crt-[a-z0-9-]*'
+
+# A PE's imports by the DLL the loader resolves each from, as
+# `name@dll` with the DLL in lower case and without `.dll`, from the
+# same `--coff-imports` listing `imports_of` reads.
+pe_imports_by_dll() {
+  llvm-readobj --coff-imports "$1" 2>/dev/null \
+    | awk '/^ *Name: / {dll=tolower($2); sub(/\.dll$/, "", dll)} /^ *Symbol: / {print $2 "@" dll}' \
+    | LC_ALL=C sort -u || true
+}
+
+# The allowlist as `name@dll`: an entry without a suffix is kernel32's.
+permitted_windows_by_dll() {
+  grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep . \
+    | awk -F@ '{ if (NF == 1) print $1 "@kernel32"; else print $1 "@" tolower($2) }' | LC_ALL=C sort -u || true
+}
+
+# The imports of a linked PE that the allowlist permits by name but
+# from another DLL: `send@msvcrt` when the list says `send@ws2_32`, or
+# `CloseHandle@user32` when an unqualified entry means kernel32. This is
+# what makes a POSIX-spelled Winsock name in the list a checked claim
+# about the executable rather than a spelling. Nothing on success.
+misplaced_imports() {  # <exe> <allow-file>
+  local line name
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    name="${line%%@*}"
+    if permitted_windows "$2" | grep -qx -- "$name"; then
+      echo "$line"
+    fi
+  done < <(LC_ALL=C comm -23 <(pe_imports_by_dll "$1") <(permitted_windows_by_dll "$2"))
+}
+
 # Every symbol an IR module declares: its import surface before it is
 # linked, `dllimport` or not. The intrinsics the driver grounds in the
 # backend (`backendGroundedSym` in self_host/driver.ax) are left out:

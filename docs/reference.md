@@ -1988,8 +1988,9 @@ running the body. Declare `effect(io)`, `effect(spawn)` and
 `effect(block)`. Ordered answers do not order side effects.
 
 The default hosted lowering uses isolated processes. `--threads` selects
-threads on Linux and macOS. Captures remain restricted in both modes;
-process boundaries do not transfer general managed pointers.
+threads on Linux and macOS. Windows has no `fork`, so `parallel` runs on
+threads there without the flag. Captures remain restricted in both
+modes; process boundaries do not transfer general managed pointers.
 
 ### What a binding may capture
 

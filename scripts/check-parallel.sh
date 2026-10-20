@@ -36,12 +36,14 @@
 #      than the flag alone - and a program with no `parallel` built
 #      under `--threads` is byte-identical to the same program built
 #      without it, so the flag is inert where nothing spawns;
-#   4. the targets that cannot: `--threads` for freebsd-x86_64 is
-#      refused at build time as AX4006, before any IR is written, and
-#      the Windows targets - no `fork`, no pthread - EMIT the program with
-#      both primitives lowered to `@__axiom_par_unsupported`, which is
-#      what keeps every cross-target sweep green and the answer honest:
-#      the program links and dies at its first spawn saying why (79).
+#   4. the targets that cannot fork: `--threads` for freebsd-x86_64 is
+#      refused at build time as AX4006, before any IR is written; the
+#      Windows targets - no `fork`, but `CreateThread` - take the thread
+#      lowering for `parallel` without the flag, over kernel32 with a TLS
+#      directory of the module's own, and EMIT a process spawn with its
+#      primitives lowered to `@__axiom_par_unsupported`, which is what
+#      keeps every cross-target sweep green and the answer honest: the
+#      program links and dies at its first process spawn saying why (79).
 #      4b adds the build-time half of that second sentence: AX4007, a
 #      WARNING and not a refusal, so the module still emits and a
 #      program whose `parallel` is on a path it never takes still
@@ -339,16 +341,28 @@ if "$axc" --target=freebsd-x86_64 emit-llvm "$fx470" -o "$work/fbp.ll" > /dev/nu
 else
   bad "freebsd-x86_64 without the flag did not emit the process lowering"
 fi
-# Both Windows targets: neither has `fork` or a pthread, and the arm64
-# one reaches this through the same `targetHasSpawn`/`targetHasThreads`
-# answers, so each is asked rather than one standing for the other.
+# Both Windows targets: neither has `fork`, both have `CreateThread`, so
+# `parallel` takes the thread lowering there without the flag
+# (`parThreadsByDefault`): the thread half over kernel32, the runtime's
+# words `thread_local`, the TLS directory the loader reads
+# (`_tls_used`), and no syscall, pthread or process half anywhere in the
+# module. The arm64 one reaches this through the same
+# `targetHasSpawn`/`targetHasThreads` answers, so each is asked rather
+# than one standing for the other.
 for wt in windows-x86_64 windows-aarch64; do
   if "$axc" --target="$wt" emit-llvm "$fx470" -o "$work/win.ll" > /dev/null 2>&1; then
-    n_unsup="$(grep -c 'call i64 @__axiom_par_unsupported()' "$work/win.ll" || true)"
-    if [[ "$n_unsup" -gt 0 ]] && ! grep -q 'pthread\|__axiom_par_spawn_proc\|thread_local' "$work/win.ll"; then
-      ok "$wt: emits, with $n_unsup spawn/join site(s) lowered to the status-79 trap and no fork, pthread or thread_local"
+    n_thr="$(grep -c 'call i64 @__axiom_par_spawn_thread(' "$work/win.ll" || true)"
+    if [[ "$n_thr" -gt 0 ]] && grep -q '@CreateThread(' "$work/win.ll" && grep -q '@WaitForSingleObject(' "$work/win.ll" \
+       && grep -q 'thread_local(localexec)' "$work/win.ll" && grep -q '^@_tls_used = ' "$work/win.ll" \
+       && ! grep -q 'pthread\|__axiom_par_spawn_proc\|asm sideeffect "syscall\|asm sideeffect "svc' "$work/win.ll"; then
+      ok "$wt: emits the thread lowering ($n_thr spawn site(s)) over CreateThread with thread_local words and a TLS directory, and no fork, pthread or syscall"
     else
-      bad "$wt: expected only the unsupported trap ($n_unsup site(s))"
+      bad "$wt: expected the kernel32 thread lowering ($n_thr thread spawn site(s))"
+    fi
+    if grep -q 'call i64 @__axiom_par_unsupported()' "$work/win.ll"; then
+      bad "$wt: a parallel with no process primitive still reaches the status-79 trap"
+    else
+      ok "$wt: and no site of it is the status-79 trap"
     fi
     if llc -O0 -filetype=obj -o "$work/win.o" "$work/win.ll" 2> "$work/win.llc"; then
       ok "$wt: and the module assembles"
@@ -361,7 +375,29 @@ for wt in windows-x86_64 windows-aarch64; do
   set +e
   "$axc" --target="$wt" --threads emit-llvm "$fx470" -o "$work/wint.ll" > "$work/wint.log" 2>&1
   rc=$?
-  if [[ "$rc" != 0 ]] && grep -q 'AX4006' "$work/wint.log"; then ok "$wt --threads: refused as AX4006"; else bad "$wt --threads: expected AX4006, exit $rc"; fi
+  if [[ "$rc" == 0 ]] && cmp -s "$work/win.ll" "$work/wint.ll"; then ok "$wt --threads: accepted, and the same module as without the flag"; else bad "$wt --threads: expected the same module with exit 0, got exit $rc"; fi
+  # The process primitives have nothing to fork with there: the trap,
+  # and nothing else of the parallel runtime's process half.
+  cat > "$work/winproc.ax" <<'WINPROC'
+(import IO)
+
+(:: main ())
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  {
+    (let h (__proc_spawn (lambda (w) (+ w 1)) 41))
+    (println (__proc_join h))
+  })
+WINPROC
+  if "$axc" --target="$wt" emit-llvm "$work/winproc.ax" -o "$work/winproc.ll" > /dev/null 2>&1 \
+     && [[ "$(grep -c 'call i64 @__axiom_par_unsupported()' "$work/winproc.ll" || true)" -eq 2 ]] \
+     && ! grep -q '__axiom_par_spawn_proc\|thread_local' "$work/winproc.ll"; then
+    ok "$wt: a process spawn and its join are the status-79 trap, with no process half and no thread_local"
+  else
+    bad "$wt: expected exactly two status-79 sites for a process spawn and join"
+  fi
 done
 
 # --- 4b. and the DEFAULT lowering says so at build time too: AX4007 ---
@@ -382,13 +418,20 @@ done
 # spawn says NOTHING - the diagnostic follows the PROGRAM, exactly as
 # `cgThreads` does, not the target.
 for wt in windows-x86_64 windows-aarch64; do
-  "$axc" --target="$wt" --diagnostic-format=ai emit-llvm "$fx470" -o "$work/win4007.ll" > "$work/win4007.log" 2>&1
+  "$axc" --target="$wt" --diagnostic-format=ai emit-llvm "$work/winproc.ax" -o "$work/win4007.ll" > "$work/win4007.log" 2>&1
   rc=$?
-  if [[ "$rc" == 0 ]] && grep -q 'W AX4007' "$work/win4007.log" && [[ -s "$work/win4007.ll" ]]; then
-    ok "$wt: the default lowering warns AX4007 at build time, exit 0, and the IR is still written"
+  if [[ "$rc" == 0 ]] && grep -q 'W AX4007' "$work/win4007.log" && grep -q 'no process lowering' "$work/win4007.log" && [[ -s "$work/win4007.ll" ]]; then
+    ok "$wt: a process spawn warns AX4007 at build time, exit 0, and the IR is still written"
   else
-    bad "$wt: expected an AX4007 warning with exit 0 and IR written, got exit $rc"
+    bad "$wt: expected an AX4007 warning with exit 0 and IR written for a process spawn, got exit $rc"
     sed 's/^/     /' "$work/win4007.log" | head -5
+  fi
+  rm -f "$work/win4007.ll"
+  "$axc" --target="$wt" --diagnostic-format=ai emit-llvm "$fx470" -o "$work/win4007.ll" > "$work/win4007p.log" 2>&1
+  if grep -q 'AX4007' "$work/win4007p.log"; then
+    bad "$wt: a parallel, which runs on threads there, drew AX4007"
+  else
+    ok "$wt: and a parallel, which runs on threads there, draws nothing"
   fi
   rm -f "$work/win4007.ll"
   "$axc" --target="$wt" --diagnostic-format=ai emit-llvm "$work/plain.ax" -o "$work/winplain.ll" > "$work/winplain.log" 2>&1

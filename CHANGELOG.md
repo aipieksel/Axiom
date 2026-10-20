@@ -16,6 +16,17 @@ its changelog too.
 
 ## Unreleased
 
+- `parallel` runs on Windows, on threads. Windows has no `fork`, so the
+  thread lowering is the default there: `CreateThread` starts a binding,
+  `WaitForSingleObject` joins it, and the module carries the TLS
+  directory the loader needs for the runtime's thread-local words, with
+  no C runtime involved. `--threads` is accepted on both Windows targets.
+  `__proc_spawn` and its joins still compile there to the status-79 trap,
+  and `Task`'s pool, which spawns processes, is not yet available on
+  Windows. The Windows runner runs `tests/stdlib/470-parallel.ax` to its
+  golden. Tested by `scripts/check-parallel.sh` and
+  `scripts/check-windows-hello.sh`.
+
 - A `let` bound to a string literal in a function that loops by a self
   tail call no longer has a release emitted on the jump. The literal is
   static and the call freed nothing; `check-static-release.sh` counts

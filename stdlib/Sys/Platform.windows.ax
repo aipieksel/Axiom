@@ -2484,20 +2484,28 @@
 (fn (wsaFailed r)
   (== (& r 4294967295) 4294967295))
 
-; Whether a handle is a SOCKET: one answers `getsockopt(SO_TYPE)`, any
-; other handle answers WSAENOTSOCK, and before the first socket exists
-; Winsock answers WSANOTINITIALISED. The read, write and close of every
+; Whether a handle is a SOCKET. The read, write and close of every
 ; descriptor ask this, since a SOCKET and a file HANDLE share one
 ; number space and only `recv`, `send` and `closesocket` know a socket.
+; `getsockopt(SO_TYPE)` is asked with one fresh cell as both value and
+; length: a handle that is not a socket answers WSAENOTSOCK whatever the
+; length says, and before the first socket exists Winsock answers
+; WSANOTINITIALISED; a socket answers the type, or WSAEFAULT when the
+; cell's stale length is too short. No store is made, so the write path
+; stays free of `Mut` as it is on the POSIX targets: a `handle` body
+; that prints must not become AX3011 on this target alone.
 (:: winIsSocket (-> Int Bool))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (fn (winIsSocket h)
   {
-    (let kind winCell)
-    (let len winCell)
-    (__store64 len 0 4)
-    (== (& (winGetSockOpt h 65535 4104 kind len) 4294967295) 0)
+    (let cell winCell)
+    (if (wsaFailed (winGetSockOpt h 65535 4104 cell cell))
+      {
+        (let code (& winWSAGetLastError 4294967295))
+        (&& (!= code 10038) (!= code 10093))
+      }
+      true)
   })
 
 ; recv for a SOCKET under `platformReadFd`. A receive timeout

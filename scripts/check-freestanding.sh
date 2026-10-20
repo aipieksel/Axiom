@@ -82,8 +82,18 @@ win_allow="scripts/platform-allow.windows.txt"
 # The names an allowlist would launder: a libc name on it is refused
 # whatever the list says, as check-ffi.sh's `never_permitted` refuses a
 # manifest.
+# A libc name is laundered when the list permits it from kernel32 - an
+# entry with no `@dll`, and kernel32 exports no such name anyway - or
+# names a C runtime DLL at all. A name a Windows system DLL exports
+# under a POSIX spelling, `bind@ws2_32` or `send@ws2_32`, is that DLL's
+# and not libc's: the driver links each such name through that DLL's
+# own import library, and `check-windows-hello.sh` reads the linked
+# executable's import table back by DLL (`misplaced_imports`).
 manifest_launders() {
-  permitted_windows "$1" | grep -E "^($libc_names)$" || true
+  {
+    permitted_windows_for_dll "$1" kernel32 | grep -E "^($libc_names)$"
+    grep -vE '^\s*(#|$)' "$1" | sed 's/#.*//' | tr -d ' \t' | grep -E "@($crt_dlls)$"
+  } || true
 }
 
 status=0
@@ -145,6 +155,15 @@ if [[ ! -f "$win_allow" ]]; then
 else
   n_permitted_win="$(permitted_windows "$win_allow" | grep -c . || true)"
   laundered="$(manifest_launders "$win_allow")"
+  # The libc spellings the list permits from a Windows system DLL other
+  # than kernel32 (Winsock's `bind`, `send` and the rest) are that DLL's
+  # calls in a Windows module, so the IR scan there leaves them out.
+  dll_owned="$(grep -vE '^\s*(#|$)' "$win_allow" | sed 's/#.*//' | tr -d ' \t' | grep '@' | grep -vE "@($crt_dlls)$" | sed 's/@.*//' | LC_ALL=C sort -u || true)"
+  if [[ -n "$dll_owned" ]]; then
+    win_libc_names="$(tr '|' '\n' <<< "$libc_names" | grep -vxF -f <(printf '%s\n' "$dll_owned") | paste -sd'|' -)"
+  else
+    win_libc_names="$libc_names"
+  fi
   if (( n_permitted_win < 4 )); then
     echo "FAIL $win_allow permits only $n_permitted_win name(s); the runtime alone needs VirtualAlloc, GetStdHandle, WriteFile and ExitProcess"
     status=1
@@ -163,7 +182,7 @@ else
           status=1
           continue
         fi
-        if grep -nE "call[^\"]*@($libc_names)\(" "$wir" > "$work/$name.$wt.hits"; then
+        if grep -nE "call[^\"]*@($win_libc_names)\(" "$wir" > "$work/$name.$wt.hits"; then
           echo "FAIL $name [$wt]: generated IR calls libc"
           sed 's/^/    /' "$work/$name.$wt.hits"
           status=1
@@ -430,6 +449,30 @@ fi
 if [[ -n "$(manifest_launders "$win_allow")" ]]; then
   echo "FAIL negative probe: the real allowlist launders a libc name, so the probe above proves nothing"
   status=1
+fi
+# A C runtime DLL is refused by its name alone, and an unqualified
+# socket name is kernel32's and so a libc name - while the same name
+# from ws2_32 is Winsock's.
+{ cat "$win_allow"; printf 'malloc@ucrtbase\nconnect\n'; } > "$work/crt-allow.txt"
+if [[ "$(manifest_launders "$work/crt-allow.txt" | LC_ALL=C sort | tr '\n' ' ')" == "connect malloc@ucrtbase " ]]; then
+  echo "ok   negative probe: an allowlist naming a C runtime DLL, or permitting connect from kernel32, is refused"
+else
+  echo "FAIL negative probe: expected 'connect malloc@ucrtbase' to be refused, got '$(manifest_launders "$work/crt-allow.txt" | tr '\n' ' ')'"
+  status=1
+fi
+printf 'VirtualAlloc\nbind@ws2_32\n' > "$work/winsock-allow.txt"
+if grep -qx 'bind@ws2_32' <(grep -vE '^\s*(#|$)' "$win_allow" | sed 's/#.*//' | tr -d ' \t') && [[ -z "$(manifest_launders "$work/winsock-allow.txt")" ]]; then
+  echo "ok   negative probe: bind from ws2_32 is Winsock's, not a laundered libc name"
+else
+  echo "FAIL negative probe: bind@ws2_32 should be permitted as Winsock's"
+  status=1
+fi
+n_win_libc="$(tr '|' '\n' <<< "$win_libc_names" | grep -c . || true)"
+if (( n_win_libc < 25 )); then
+  echo "FAIL negative probe: the Windows IR scan kept only $n_win_libc libc names; the Winsock exception took too much"
+  status=1
+else
+  echo "ok   negative probe: the Windows IR scan still watches $n_win_libc libc names"
 fi
 
 exit "$status"

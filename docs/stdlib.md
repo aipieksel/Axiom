@@ -649,6 +649,9 @@ that recurses past its stack answers `Err` 86, "task out of stack",
 while its siblings go on. The stack is the task's own, so it's the same
 size wherever the pool started. Tested by
 `tests/stdlib/852-task-budgets.ax` and `tests/stdlib/920-task-stack.ax`.
+Not yet: the pool starts each task as a process, so `Task` is not
+available on Windows, where `parallel` runs on threads. See the
+[roadmap](roadmap.md).
 
 Cancellation is checked between every spawn attempt, including while a
 wide launch window is filling. An attempt already in progress can race

@@ -291,6 +291,10 @@ AX
           echo "FAIL hello.exe [$t] imports symbols $allow does not permit:"
           printf '%s\n' "$unexpected" | sed 's/^/    /'
           status=1
+        elif [[ -n "$(misplaced_imports "$w/hello.exe" "$allow")" ]]; then
+          echo "FAIL hello.exe [$t] imports a permitted name from another DLL than $allow says:"
+          misplaced_imports "$w/hello.exe" "$allow" | sed 's/^/    /'
+          status=1
         else
           echo "ok   hello.exe [$t] links ($(pe_machine "$t"), $(wc -c < "$w/hello.exe" | tr -d ' ') bytes) and imports only permitted names ($n_imports: $(tr '\n' ' ' < "$w/hello.imports"))"
         fi
@@ -377,8 +381,15 @@ AX
       echo "FAIL axiom.exe imports symbols $allow does not permit:"
       printf '%s\n' "$unexpected" | sed 's/^/    /'
       status=1
+    elif [[ -n "$(misplaced_imports "$w/axiom.exe" "$allow")" ]]; then
+      # A POSIX-spelled Winsock name is permitted from ws2_32 and no
+      # other DLL: this is where that `@dll` becomes a fact about the
+      # executable (`scripts/lib/imports.sh`, `misplaced_imports`).
+      echo "FAIL axiom.exe imports a permitted name from another DLL than $allow says:"
+      misplaced_imports "$w/axiom.exe" "$allow" | sed 's/^/    /'
+      status=1
     else
-      echo "ok   axiom.exe links ($(wc -c < "$w/axiom.exe" | tr -d ' ') bytes) and imports only permitted names ($(grep -c . "$w/axiom.imports"))"
+      echo "ok   axiom.exe links ($(wc -c < "$w/axiom.exe" | tr -d ' ') bytes) and imports only permitted names ($(grep -c . "$w/axiom.imports"), each from the DLL the list names)"
     fi
 
     if [[ "$mode" == "--run" && "$run_target" == windows-x86_64 ]]; then
@@ -429,7 +440,7 @@ AX
       # The clock, sleep, entropy, wait-words and memory, which the
       # platform module binds rather than a syscall. Each case prints its
       # own verdicts, and the golden is the one every POSIX target answers.
-      for case in 306-monotonic-clock 309-entropy 851-instant-sleep 495-wait-word 650-net-tcp 308-poll-readiness; do
+      for case in 306-monotonic-clock 309-entropy 851-instant-sleep 495-wait-word 650-net-tcp 308-poll-readiness 470-parallel; do
         set +e
         ( cd "$repo_root" && "$ax" build "tests/stdlib/$case.ax" -o "$w/$case.exe" ) > "$w/$case.build.log" 2>&1
         rc=$?

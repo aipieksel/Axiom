@@ -5782,17 +5782,20 @@
 ; have their own rules because thread arenas and non-atomic reference
 ; counts do not synchronise mutable payloads.
 ;
-; WHERE IT IS NOT AVAILABLE. Threads need a pthread and a local-exec
-; TLS a C runtime sets up for each new thread: darwin and linux have
-; both, measured; freebsd links against no `libthr` here and is not
-; measured, and windows has no `fork` and no pthread. So `--threads`
-; on freebsd or windows, and `__thread_spawn` on either, are refused
-; at build time (AX4006, `parThreadsRefused` below, reported by
-; `main.ax` before any IR is written); and on windows the process
-; lowering has nothing to fork with, so both primitives compile there
-; to `@__axiom_par_unsupported`, a trap that says so and exits 79 -
-; the program EMITS, which is what keeps every cross-target sweep
-; green, and dies at the first spawn with a sentence, which is what
+; WHERE IT IS NOT AVAILABLE. Threads need a way to start one and a
+; local-exec TLS set up for each new thread: darwin and linux have a
+; pthread and a C runtime's TLS, measured; windows has `CreateThread`
+; and a static TLS the loader sets up from the TLS directory the
+; module emits for itself (`emitWinRuntime`), so it has threads with no
+; C runtime at all; freebsd links against no `libthr` here and is not
+; measured. So `--threads` on freebsd, and `__thread_spawn` there, are
+; refused at build time (AX4006, `parThreadsRefused` below, reported
+; by `main.ax` before any IR is written). Windows has no `fork`, so
+; `parallel` takes the thread lowering there without the flag
+; (`parThreadsByDefault`), and `__proc_spawn` compiles there to
+; `@__axiom_par_unsupported`, a trap that says so and exits 79 - the
+; program EMITS, which is what keeps every cross-target sweep green,
+; and dies at the first process spawn with a sentence, which is what
 ; keeps the answer honest.
 ; ------------------------------------------------------------------
 (pub :: isParPrimName (-> String Bool))
@@ -5862,7 +5865,9 @@
     0
     (if (<= t 3)
       1
-      0)))
+      (if (|| (== t 6) (== t 8))
+        1
+        0))))
 
 ; Which targets can spawn AT ALL, which is the question `targetHasThreads`
 ; does not answer. The process lowering IS the syscall template - `fork`,
@@ -6130,13 +6135,22 @@
 
 ; Does the program want the THREAD lowering: `__thread_spawn` by name,
 ; or `__par_spawn` (every `parallel`) under `--threads`.
-(pub :: parThreadsWanted (-> (Vec ASTNode) Bool))
+; A target with threads and no `fork` lowers `parallel` to threads
+; without being asked: there is nothing else it could do with one.
+(pub :: parThreadsByDefault (-> Int Bool))
 ;@axiom:effect(io)
-(pub fn (parThreadsWanted decls)
+(pub fn (parThreadsByDefault t)
+  (&& (== (targetHasSpawn t) 0) (== (targetHasThreads t) 1)))
+
+(pub :: parThreadsWanted (-> (Vec ASTNode) Int Bool))
+;@axiom:effect(io)
+(pub fn (parThreadsWanted decls t)
   (if (== (declsNamePrim decls "__thread_spawn" 0) 1)
     true
     (if (== (declsNamePrim decls "__par_spawn" 0) 1)
-      (argHas "--threads" 1)
+      (if (argHas "--threads" 1)
+        true
+        (parThreadsByDefault t))
       false)))
 
 ; Wanted, on a target that has no thread runtime - the build refusal
@@ -6146,7 +6160,7 @@
 (pub fn (parThreadsRefused decls t)
   (if (== (targetHasThreads t) 1)
     false
-    (parThreadsWanted decls)))
+    (parThreadsWanted decls t)))
 
 (pub :: parAnyNamed (-> (Vec ASTNode) Int))
 (pub fn (parAnyNamed decls)
@@ -6187,10 +6201,23 @@
 ;     build time; this moves the process lowering's SURPRISE there,
 ;     without moving the refusal with it.
 (pub :: parSpawnUnsupported (-> (Vec ASTNode) Int Bool))
+;@axiom:effect(io)
 (pub fn (parSpawnUnsupported decls t)
   (if (== (targetHasSpawn t) 1)
     false
-    (== (parAnyNamed decls) 1)))
+    (if (== (targetHasThreads t) 1)
+      (== (procAnyNamed decls) 1)
+      (== (parAnyNamed decls) 1))))
+
+; The three process primitives by name: what a target with threads and
+; no `fork` still cannot lower.
+(pub :: procAnyNamed (-> (Vec ASTNode) Int))
+(pub fn (procAnyNamed decls)
+  (if (== (declsNamePrim decls "__proc_spawn" 0) 1)
+    1
+    (if (== (declsNamePrim decls "__proc_join" 0) 1)
+      1
+      (declsNamePrim decls "__proc_join_nr" 0))))
 
 ; The scan, once, before the allocator: slots 4 and 5 beside the pair
 ; state (`newCG` says why not two words of the record).
@@ -6205,11 +6232,13 @@
         (handleAnyNamed decls)))
     (pairSetSlot cg 10
       (if (&& (== (targetHasThreads (memGetWord cg 26)) 1)
-            (&& (== (declsNamePrim decls "__par_spawn" 0) 1) (argHas "--threads" 1)))
+            (&& (== (declsNamePrim decls "__par_spawn" 0) 1)
+              (|| (argHas "--threads" 1) (parThreadsByDefault (memGetWord cg 26)))))
         1
         0))
     (pairSetSlot cg 4
-      (if (&& (== (targetHasThreads (memGetWord cg 26)) 1) (parThreadsWanted decls))
+      (if (&& (== (targetHasThreads (memGetWord cg 26)) 1)
+            (parThreadsWanted decls (memGetWord cg 26)))
         1
         0))
     (pairSetSlot cg 19 (resRegistryWanted decls))
@@ -6320,6 +6349,17 @@
 ; the join, which releases it: a lambda built AT the call moves its
 ; birth share in, anything else is retained first - `emitPrimRecover`'s
 ; rule for its thunk, for the same reason.
+; Is this primitive lowered on this target, or is it the status-79
+; trap: everything where there is a `fork`; on a target with threads
+; and no `fork`, everything but the three process primitives.
+(pub :: parPrimLowered (-> Int String Int))
+(pub fn (parPrimLowered cg fnName)
+  (if (== (targetHasSpawn (memGetWord cg 26)) 1)
+    1
+    (if (&& (cgThreads cg) (! (strStartsWith fnName "__proc_")))
+      1
+      0)))
+
 (pub :: emitPrimParSpawn (-> String Nodes Int Int))
 ;@axiom:effect(io)
 (pub fn (emitPrimParSpawn fnName args cg)
@@ -6338,7 +6378,7 @@
             (let a (strDup (memGetWordStr cgA 2)))
             (let r (regStr (allocReg cgA)))
             {
-              (if (== (targetHasSpawn (memGetWord cgA 26)) 1)
+              (if (== (parPrimLowered cgA fnName) 1)
                 (emitLine cgA
                   (concat (concat "  " r)
                     (concat
@@ -6366,7 +6406,7 @@
         (let h (strDup (memGetWordStr cgH 2)))
         (let r (regStr (allocReg cgH)))
         {
-          (if (== (targetHasSpawn (memGetWord cgH 26)) 1)
+          (if (== (parPrimLowered cgH fnName) 1)
             (emitLine cgH
               (concat (concat "  " r)
                 (concat (concat " = call i64 " (concat (parRuntimeSym fnName "join" cgH) "(i64 "))
@@ -6398,7 +6438,7 @@
           (let c (strDup (memGetWordStr cgC 2)))
           (let r (regStr (allocReg cgC)))
           {
-            (if (== (targetHasSpawn (memGetWord cgC 26)) 1)
+            (if (== (parPrimLowered cgC fnName) 1)
               (emitLine cgC
                 (concat (concat "  " r)
                   (concat
@@ -6694,11 +6734,23 @@
           (emitParThread cg))
         cg
       }
-      {
-        (emitParUnsupported cg)
-        (emitParBorrowRuntime cg)
-        cg
-      })))
+      (if (cgThreads cg)
+        ; threads and no `fork`, which is Windows: the common half, the
+        ; thread half over kernel32, and the trap for the process
+        ; primitives, which have nothing to fork with.
+        {
+          (emitParTrap cg)
+          (emitParCommon cg)
+          (emitParBorrowRuntime cg)
+          (emitParThreadWin cg)
+          (emitParUnsupported cg)
+          cg
+        }
+        {
+          (emitParUnsupported cg)
+          (emitParBorrowRuntime cg)
+          cg
+        }))))
 
 ; A spawn's page gets its handle (MM-PAR-8), after the thunk and its
 ; word are on it and before any child exists: a table with no slot
@@ -7278,11 +7330,16 @@
       (emitLine cg "")
       (emitLine cg "define internal i64 @__axiom_par_page() #0 {")
       (emitLine cg "entry:")
-      (emitLine cg
-        (concat "  %addr = "
-          (parSys cg (fmtInt (targetMmapNum t))
-            (concat "i64 0, i64 4096, i64 3, i64 "
-              (concat (fmtInt (targetMapSharedFlags t)) ", i64 -1, i64 0")))))
+      ; MEM_COMMIT|MEM_RESERVE = 0x3000 = 12288, PAGE_READWRITE = 4,
+      ; where there is no syscall ABI; a failed `VirtualAlloc` answers 0,
+      ; which the test below reads as the mmap failure it stands for.
+      (if (== (targetHasSpawn t) 1)
+        (emitLine cg
+          (concat "  %addr = "
+            (parSys cg (fmtInt (targetMmapNum t))
+              (concat "i64 0, i64 4096, i64 3, i64 "
+                (concat (fmtInt (targetMapSharedFlags t)) ", i64 -1, i64 0")))))
+        (emitLine cg "  %addr = call i64 @VirtualAlloc(i64 0, i64 4096, i64 12288, i64 4)"))
       (emitLine cg "  %low = icmp ult i64 %addr, 4096")
       (emitLine cg "  %neg = icmp slt i64 %addr, 0")
       (emitLine cg "  %bad = or i1 %low, %neg")
@@ -7331,9 +7388,13 @@
       (emitLine cg "  br label %drop")
       (emitLine cg "drop:")
       (emitLine cg "  call void @axiom_release(i64 %fn)")
-      (emitLine cg
-        (concat "  "
-          (parSys cg (fmtInt (targetMunmapNum t)) "i64 %h, i64 4096, i64 0, i64 0, i64 0, i64 0")))
+      ; MEM_RELEASE = 0x8000 = 32768 where there is no syscall ABI.
+      (if (== (targetHasSpawn t) 1)
+        (emitLine cg
+          (concat "  "
+            (parSys cg (fmtInt (targetMunmapNum t))
+              "i64 %h, i64 4096, i64 0, i64 0, i64 0, i64 0")))
+        (emitLine cg "  %fr = call i64 @VirtualFree(i64 %h, i64 0, i64 32768)"))
       (emitLine cg "  ret i64 %res")
       (emitLine cg "}")
       (emitLine cg "")
@@ -7432,26 +7493,37 @@
       (emitLine cg "  %isthr = icmp eq i64 %kind, 2")
       (emitLine cg "  br i1 %isthr, label %thr, label %proc")
       (emitLine cg "proc:")
-      (emitLine cg
-        (concat "  %kr = "
-          (parSys cg (fmtInt (targetKillNum t)) "i64 %who, i64 9, i64 0, i64 0, i64 0, i64 0")))
-      (if (cgThreads cg)
-        (emitLine cg "  call void @__axiom_par_gunlink(i64 %h)"))
-      (emitLine cg "  %p4 = getelementptr i64, ptr %hp, i64 4")
-      (emitLine cg "  %st4 = ptrtoint ptr %p4 to i64")
-      (emitLine cg "  br label %wait")
-      (emitLine cg "wait:")
-      (emitLine cg
-        (concat "  %w = "
-          (parSys cg (fmtInt (targetWait4Num t)) "i64 %who, i64 %st4, i64 0, i64 0, i64 0, i64 0")))
-      (emitLine cg "  %intr = icmp eq i64 %w, -4")
-      (emitLine cg "  br i1 %intr, label %wait, label %fin")
+      (if (== (targetHasSpawn t) 1)
+        {
+          (emitLine cg
+            (concat "  %kr = "
+              (parSys cg (fmtInt (targetKillNum t)) "i64 %who, i64 9, i64 0, i64 0, i64 0, i64 0")))
+          (if (cgThreads cg)
+            (emitLine cg "  call void @__axiom_par_gunlink(i64 %h)"))
+          (emitLine cg "  %p4 = getelementptr i64, ptr %hp, i64 4")
+          (emitLine cg "  %st4 = ptrtoint ptr %p4 to i64")
+          (emitLine cg "  br label %wait")
+          (emitLine cg "wait:")
+          (emitLine cg
+            (concat "  %w = "
+              (parSys cg (fmtInt (targetWait4Num t))
+                "i64 %who, i64 %st4, i64 0, i64 0, i64 0, i64 0")))
+          (emitLine cg "  %intr = icmp eq i64 %w, -4")
+          (emitLine cg "  br i1 %intr, label %wait, label %fin")
+        }
+        ; no `fork` here, so no process child was ever linked
+        (emitLine cg "  unreachable"))
       (emitLine cg "thr:")
       (if (cgThreads cg)
-        {
-          (emitLine cg "  %tp = inttoptr i64 %who to ptr")
-          (emitLine cg "  %jr = call i32 @pthread_join(ptr %tp, ptr null)")
-        })
+        (if (== (targetHasSpawn t) 1)
+          {
+            (emitLine cg "  %tp = inttoptr i64 %who to ptr")
+            (emitLine cg "  %jr = call i32 @pthread_join(ptr %tp, ptr null)")
+          }
+          {
+            (emitLine cg "  %jw = call i64 @WaitForSingleObject(i64 %who, i64 4294967295)")
+            (emitLine cg "  %jc = call i64 @CloseHandle(i64 %who)")
+          }))
       (emitLine cg "  br label %fin")
       (emitLine cg "fin:")
       (emitLine cg "  %r = call i64 @__axiom_par_finish(i64 %h)")
@@ -8041,6 +8113,160 @@
       (emitLine cg "")
       cg
     }
+  })
+
+; The thread half over kernel32, for a target with threads and no
+; `fork`: `CreateThread` where the POSIX half names `pthread_create`,
+; `WaitForSingleObject` and `CloseHandle` where it names
+; `pthread_join`, `VirtualFree` where it unmaps. The entry routine is
+; the POSIX one's shape: a thread start routine answers a DWORD in the
+; result register, and `__axiom_par_entry`'s null is that. No kill list
+; here, since no process child can exist. The thread takes the image's
+; own stack reservation (`dwStackSize` 0), the one `--link-stack` set
+; for the main thread, and a failed `WaitForSingleObject` leaves the
+; page mapped for the reason the POSIX half's lost join gives.
+(pub :: emitParThreadWin (-> Int Int))
+(pub fn (emitParThreadWin cg)
+  {
+    (emitLine cg "declare dllimport i64 @CreateThread(i64, i64, i64, i64, i64, i64) #0")
+    (emitLine cg "declare dllimport i64 @WaitForSingleObject(i64, i64) #0")
+    (emitLine cg "declare dllimport i64 @CloseHandle(i64) #0")
+    (emitLine cg "declare dllimport i64 @GetLastError() #0")
+    (emitLine cg "declare dllimport i64 @VirtualFree(i64, i64, i64) #0")
+    (emitLine cg "")
+    (emitLine cg "define internal void @__axiom_arena_unmap_thread() #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %a0 = load i64, ptr @__axiom_chunk")
+    (emitLine cg "  br label %act")
+    (emitLine cg "act:")
+    (emitLine cg "  %c = phi i64 [ %a0, %entry ], [ %cn, %actstep ]")
+    (emitLine cg "  %cz = icmp eq i64 %c, 0")
+    (emitLine cg "  br i1 %cz, label %freel, label %actstep")
+    (emitLine cg "actstep:")
+    (emitLine cg "  %cp = inttoptr i64 %c to ptr")
+    (emitLine cg "  %cl = add i64 %c, 8")
+    (emitLine cg "  %clp = inttoptr i64 %cl to ptr")
+    (emitLine cg "  %cn = load i64, ptr %clp")
+    (emitLine cg "  %cu = call i64 @VirtualFree(i64 %c, i64 0, i64 32768)")
+    (emitLine cg "  br label %act")
+    (emitLine cg "freel:")
+    (emitLine cg "  %f0 = load i64, ptr @__axiom_free")
+    (emitLine cg "  br label %fre")
+    (emitLine cg "fre:")
+    (emitLine cg "  %f = phi i64 [ %f0, %freel ], [ %fnx, %frestep ]")
+    (emitLine cg "  %fz = icmp eq i64 %f, 0")
+    (emitLine cg "  br i1 %fz, label %done, label %frestep")
+    (emitLine cg "frestep:")
+    (emitLine cg "  %fp = inttoptr i64 %f to ptr")
+    (emitLine cg "  %fl = add i64 %f, 8")
+    (emitLine cg "  %flp = inttoptr i64 %fl to ptr")
+    (emitLine cg "  %fnx = load i64, ptr %flp")
+    (emitLine cg "  %fu = call i64 @VirtualFree(i64 %f, i64 0, i64 32768)")
+    (emitLine cg "  br label %fre")
+    (emitLine cg "done:")
+    (emitLine cg "  store i64 0, ptr @__axiom_chunk")
+    (emitLine cg "  store i64 0, ptr @__axiom_free")
+    (emitLine cg "  store i64 0, ptr @__axiom_bump")
+    (emitLine cg "  store i64 0, ptr @__axiom_bump_end")
+    (emitLine cg "  store i64 0, ptr @__axiom_high")
+    (emitLine cg "  ret void")
+    (emitLine cg "}")
+    (emitLine cg "")
+    (emitLine cg "define internal ptr @__axiom_par_entry(ptr %pg) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %p1 = getelementptr i64, ptr %pg, i64 1")
+    (emitLine cg "  %fn = load i64, ptr %p1")
+    (emitLine cg "  %p2 = getelementptr i64, ptr %pg, i64 2")
+    (emitLine cg "  %arg = load i64, ptr %p2")
+    (if (programStackOn cg)
+      {
+        (emitLine cg "  %budget = call i64 @__axiom_program_stack_bytes()")
+        (emitLine cg "  %code = ptrtoint ptr @__axiom_stack_call to i64")
+        (emitLine cg
+          "  %r = call i64 @__axiom_stack_run_code(i64 %budget, i64 %code, i64 %fn, i64 %arg)")
+      }
+      (emitLine cg "  %r = call i64 @__axiom_par_call(i64 %fn, i64 %arg)"))
+    (emitLine cg "  %p3 = getelementptr i64, ptr %pg, i64 3")
+    (emitLine cg "  store i64 %r, ptr %p3")
+    (emitLine cg "  call void @__axiom_par_sweep(i64 -1)")
+    (emitLine cg "  call void @__axiom_arena_unmap_thread()")
+    (if (stackRunOn cg)
+      (emitLine cg "  call void @__axiom_stack_disarm()"))
+    (emitLine cg "  ret ptr null")
+    (emitLine cg "}")
+    (emitLine cg "")
+    (emitLine cg "define internal i64 @__axiom_par_spawn_thread(i64 %fn, i64 %arg) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %page = call i64 @__axiom_par_page()")
+    (emitLine cg "  %hp = inttoptr i64 %page to ptr")
+    (emitLine cg "  %p1 = getelementptr i64, ptr %hp, i64 1")
+    (emitLine cg "  store i64 %fn, ptr %p1")
+    (emitLine cg "  %p2 = getelementptr i64, ptr %hp, i64 2")
+    (emitLine cg "  store i64 %arg, ptr %p2")
+    (emitParNameHandle cg 5)
+    (emitLine cg
+      "  %th = call i64 @CreateThread(i64 0, i64 0, i64 ptrtoint (ptr @__axiom_par_entry to i64), i64 %page, i64 0, i64 0)")
+    (emitLine cg "  store i64 %th, ptr %hp")
+    (emitLine cg "  %bad = icmp eq i64 %th, 0")
+    (emitLine cg "  br i1 %bad, label %fail, label %ok")
+    (emitLine cg "fail:")
+    (emitLine cg "  %dis = call i64 @__axiom_par_finish(i64 %page)")
+    (emitLine cg "  call i64 @__axiom_par_spawn_failed()")
+    (emitLine cg "  unreachable")
+    (emitLine cg "ok:")
+    (emitLine cg "  call void @__axiom_par_link(i64 %page, i64 2)")
+    (emitLine cg "  ret i64 %hw")
+    (emitLine cg "}")
+    (emitLine cg "")
+    (emitLine cg "define internal i64 @__axiom_par_join_thread(i64 %hw) #0 {")
+    (emitLine cg "entry:")
+    (emitParJoinPage cg 5)
+    (emitLine cg "  call void @__axiom_par_check_owner(i64 %h)")
+    (emitLine cg "  %hp = inttoptr i64 %h to ptr")
+    (emitLine cg "  %t = load i64, ptr %hp")
+    (emitLine cg "  %w = call i64 @WaitForSingleObject(i64 %t, i64 4294967295)")
+    (emitLine cg "  %w32 = and i64 %w, 4294967295")
+    (emitLine cg "  %bad = icmp ne i64 %w32, 0")
+    (emitLine cg "  br i1 %bad, label %gone, label %fine")
+    (emitLine cg "gone:")
+    (emitLine cg "  call void @__axiom_par_unlink(i64 %h)")
+    (emitLine cg "  call i64 @__axiom_par_join_lost()")
+    (emitLine cg "  unreachable")
+    (emitLine cg "fine:")
+    (emitLine cg "  %cl = call i64 @CloseHandle(i64 %t)")
+    (emitLine cg "  call void @__axiom_par_unlink(i64 %h)")
+    (emitLine cg "  %res = call i64 @__axiom_par_finish(i64 %h)")
+    (emitLine cg "  ret i64 %res")
+    (emitLine cg "}")
+    (emitLine cg "")
+    ; The non-raising join: the cell takes 0, or `GetLastError` after a
+    ; failed wait, which is the only failure it can report, as the POSIX
+    ; half says of `pthread_join`'s.
+    (emitLine cg "define internal i64 @__axiom_par_join_nr_thread(i64 %hw, i64 %cell) #0 {")
+    (emitLine cg "entry:")
+    (emitParJoinPage cg 5)
+    (emitLine cg "  call void @__axiom_par_check_owner(i64 %h)")
+    (emitLine cg "  %hp = inttoptr i64 %h to ptr")
+    (emitLine cg "  %t = load i64, ptr %hp")
+    (emitLine cg "  %w = call i64 @WaitForSingleObject(i64 %t, i64 4294967295)")
+    (emitLine cg "  %w32 = and i64 %w, 4294967295")
+    (emitLine cg "  %bad = icmp ne i64 %w32, 0")
+    (emitLine cg "  %le = call i64 @GetLastError()")
+    (emitLine cg "  %le32 = and i64 %le, 4294967295")
+    (emitLine cg "  %rc64 = select i1 %bad, i64 %le32, i64 0")
+    (emitLine cg "  %cellp = inttoptr i64 %cell to ptr")
+    (emitLine cg "  store i64 %rc64, ptr %cellp")
+    (emitLine cg "  call void @__axiom_par_unlink(i64 %h)")
+    (emitLine cg "  br i1 %bad, label %gone, label %fine")
+    (emitLine cg "gone:")
+    (emitLine cg "  ret i64 0")
+    (emitLine cg "fine:")
+    (emitLine cg "  %cl = call i64 @CloseHandle(i64 %t)")
+    (emitLine cg "  %res = call i64 @__axiom_par_finish(i64 %h)")
+    (emitLine cg "  ret i64 %res")
+    (emitLine cg "}")
+    (emitLine cg "")
+    cg
   })
 
 (pub :: argHas (-> String Int Bool))
@@ -10259,9 +10485,9 @@
 ; archive (`--emit-staticlib`) does not carry - so the list must say
 ; exactly what was written, or a program's own binding of one of them
 ; would be skipped and go undefined at the link.
-(pub :: runtimeDeclaredSyms (-> Int Strings))
+(pub :: runtimeDeclaredSyms (-> Int Bool Strings))
 ;@axiom:effect(io)
-(pub fn (runtimeDeclaredSyms t)
+(pub fn (runtimeDeclaredSyms t threads)
   {
     (let v vecNew)
     (if (== (targetUsesSyscallAsm t) 1)
@@ -10277,6 +10503,15 @@
             {
               (vecPush v "GetCommandLineW")
               (vecPush v "GetEnvironmentStringsW")
+            })
+          ; the thread half's (`emitParThreadWin`), when there is one
+          (if threads
+            {
+              (vecPush v "CreateThread")
+              (vecPush v "WaitForSingleObject")
+              (vecPush v "CloseHandle")
+              (vecPush v "GetLastError")
+              (vecPush v "VirtualFree")
             })
           v
         }))
@@ -10311,6 +10546,22 @@
     ; a real import. Measured 2026-08-29 on `010-hello`: `U _fltused`
     ; in the object without this line, `D _fltused` with it.
     (emitLine cg "@_fltused = global i32 1")
+    ; Static TLS without a C runtime, for the `thread_local(localexec)`
+    ; runtime globals of a module that spawns (MM-PAR-6): lld-link fills
+    ; the PE's TLS data directory from `_tls_used`; the loader gives
+    ; every thread, `CreateThread`'s included, a block the size of the
+    ; `.tls$` sections `_tls_start` and `_tls_end` bracket, and writes
+    ; the module's TLS index to `_tls_index`, which each access LLVM
+    ; emits reads beside the TEB's ThreadLocalStoragePointer. A module
+    ; that spawns no thread emits none of this, so its IR is what it was.
+    (if (cgThreads cg)
+      {
+        (emitLine cg "@_tls_start = global i8 0, section \".tls\"")
+        (emitLine cg "@_tls_end = global i8 0, section \".tls$ZZZ\"")
+        (emitLine cg "@_tls_index = global i32 0")
+        (emitLine cg
+          "@_tls_used = global { i64, i64, i64, i64, i32, i32 } { i64 ptrtoint (ptr @_tls_start to i64), i64 ptrtoint (ptr @_tls_end to i64), i64 ptrtoint (ptr @_tls_index to i64), i64 0, i32 0, i32 0 }, section \".rdata$T\"")
+      })
     (emitLine cg "@__axiom_win_written = internal global i64 0")
     (emitLine cg
       "@__axiom_nosys_msg = private unnamed_addr constant [37 x i8] c\"axiom: no syscall ABI on this target\\0A\"")
@@ -16472,7 +16723,7 @@
           (pruneDeadDefs
             (emitExternDeclares decls
               (emitRecoverSlotHelpers (emitEffectGlobals (emitStringGlobals nextCg 0) 0)) 0
-              (runtimeDeclaredSyms (memGetWord nextCg 26)))))
+              (runtimeDeclaredSyms (memGetWord nextCg 26) (cgThreads nextCg)))))
         (renderCG
           (emitAsmFiles
             (emitLine
