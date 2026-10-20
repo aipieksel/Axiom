@@ -1,0 +1,65 @@
+(import Task.Worker)
+(import Vec)
+(import Str)
+(import Sys)
+(import Err)
+(import IO)
+
+(:: run (-> String WorkerCancelToken Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (run endpoint token)
+  {
+    (let argv (vecNew))
+    (vecPush argv endpoint)
+    (let inputs (vecNew))
+    (vecPush inputs "cancel")
+    (vecPush inputs "stubborn")
+    (vecPush inputs "fresh")
+    (let answers
+      (workerMap argv inputs
+        (workerWithGrace (workerWithToken (workerOpts 2 32 32) token) 50000000)))
+    (let good
+      (&&
+        (match (vecGet answers 0)
+          ((Ok text) (strEq text "cancelled"))
+          ((Err _) false))
+        (&&
+          (match (vecGet answers 1)
+            ((Ok _) false)
+            ((Err e) (== (errCode e) 1002)))
+          (match (vecGet answers 2)
+            ((Ok _) false)
+            ((Err e) (== (errCode e) 1002))))))
+    (if good
+      0
+      1)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  (match workerTokenNew
+    ((Err error) 1)
+    ((Ok token)
+      {
+        (let endpoint (sysArg 1))
+        (parallel p (
+          (cancel {
+            (let _ (sysSleepNanos 100000000))
+            (workerCancel token)
+          })
+          (answer (run endpoint token))
+        )
+          {
+            (println
+              (if (== answer 0)
+                "ok   token propagates into cooperative and stubborn child lifetimes"
+                "FAIL token propagation"))
+            answer
+          })
+      }
+    )))

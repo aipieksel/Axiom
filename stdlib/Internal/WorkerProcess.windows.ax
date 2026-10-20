@@ -1,0 +1,226 @@
+;;! Internal.WorkerProcess - owned Windows mappings and executable workers.
+(import Internal.WindowsCommands)
+(import Str)
+(import Vec)
+(import Err)
+(import Fmt)
+
+(extern "kernel32"
+  (wpCreateFileMappingW :: (-> Int Int Int Int Int Int Int) (symbol "CreateFileMappingW"))
+  (wpMapViewOfFile :: (-> Int Int Int Int Int Int) (symbol "MapViewOfFile"))
+  (wpUnmapViewOfFile :: (-> Int Int) (symbol "UnmapViewOfFile"))
+  (wpCloseHandle :: (-> Int Int) (symbol "CloseHandle"))
+  (wpSetHandleInformation :: (-> Int Int Int Int) (symbol "SetHandleInformation"))
+  (wpGetLastError :: Int (symbol "GetLastError")))
+
+(struct WorkerMappingState
+  (mut handle : Int)
+  (mut address : Int)
+  (size : Int))
+
+(pub struct WorkerMapping sealed
+  (owner : Handle)
+  (state : WorkerMappingState))
+
+(:: wpLastError Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpLastError)
+  {
+    (let code (& wpGetLastError 4294967295))
+    (if (== code 6)
+        -9
+      (== code 5)
+        -13
+      (|| (== code 8) (== code 14))
+        -12
+      -5)
+  })
+
+(:: wpMappingDrop (-> WorkerMappingState Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMappingDrop state)
+  {
+    (let mut error 0)
+    (if (!= state.address 0)
+      {
+        (let address state.address)
+        (set state.address 0)
+        (if (== (& (wpUnmapViewOfFile address) 4294967295) 0)
+          (set error wpLastError))
+      })
+    (if (!= state.handle 0)
+      {
+        (let handle state.handle)
+        (set state.handle 0)
+        (if (== (& (wpCloseHandle handle) 4294967295) 0)
+          {
+            (let failed wpLastError)
+            (if (== error 0)
+              (set error failed))
+          })
+      })
+    error
+  })
+
+(:: wpMappingOwner (-> Int WorkerMapping))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMappingOwner size)
+  {
+    (let state (WorkerMappingState :handle 0 :address 0 :size size))
+    (WorkerMapping :owner (__resource_new (lambda (unused) (wpMappingDrop state)) 0) :state state)
+  })
+
+(:: wpMappingMap (-> WorkerMapping (Result WorkerMapping Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMappingMap mapping)
+  {
+    (let address (wpMapViewOfFile mapping.state.handle 6 0 0 mapping.state.size))
+    (if (== address 0)
+      {
+        (let _ (__resource_close mapping.owner))
+        (Err (mkError 12 "worker transport mapping failed"))
+      }
+      {
+        (set mapping.state.address address)
+        (Ok mapping)
+      })
+  })
+
+;; An unnamed page-file mapping; only the intended child inherits its handle.
+(pub :: workerMappingNew (-> Int (Result WorkerMapping Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerMappingNew size)
+  (if (< size 96)
+    (Err (mkError 22 "invalid worker transport size"))
+    {
+      (let mapping (wpMappingOwner size))
+      ; Create non-inheritable first; publish ownership before changing flags.
+      (let handle (wpCreateFileMappingW -1 0 4 (>> size 32) (& size 4294967295) 0))
+      (if (== handle 0)
+        {
+          (let _ (__resource_close mapping.owner))
+          (Err (mkError 12 "worker transport creation failed"))
+        }
+        {
+          (set mapping.state.handle handle)
+          (if (== (& (wpSetHandleInformation handle 1 1) 4294967295) 0)
+            {
+              (let error wpLastError)
+              (let _ (__resource_close mapping.owner))
+              (Err (mkError (- 0 error) "worker transport inheritance setup failed"))
+            }
+            (wpMappingMap mapping))
+        })
+    }))
+
+;; Adopt only a positive inherited handle and map the declared bounded view.
+(pub :: workerMappingOpen (-> String Int (Result WorkerMapping Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerMappingOpen descriptor size)
+  (match (strParseInt descriptor)
+    ((None) (Err (mkError 22 "invalid worker transport descriptor")))
+    ((Some handle)
+      (if (|| (<= handle 0) (< size 96))
+        (Err (mkError 22 "invalid worker transport descriptor"))
+        {
+          (let mapping (wpMappingOwner size))
+          (set mapping.state.handle handle)
+          (if (== (& (wpSetHandleInformation handle 1 0) 4294967295) 0)
+            {
+              (let _ (__resource_close mapping.owner))
+              (Err (mkError 9 "worker transport inheritance reset failed"))
+            }
+            (wpMappingMap mapping))
+        })
+    )))
+
+;; The endpoint's private descriptor, passed in its reserved argv suffix.
+(pub :: workerMappingDescriptor (-> WorkerMapping String))
+(pub fn (workerMappingDescriptor mapping)
+  (fmtInt (workerMappingHandle mapping)))
+
+;; A raw handle for the native launcher's explicit inheritance list.
+(pub :: workerMappingHandle (-> WorkerMapping Int))
+;@axiom:effect(unsafe)
+(pub fn (workerMappingHandle mapping)
+  {
+    (let _ (__resource_get mapping.owner))
+    mapping.state.handle
+  })
+
+;; The native view while its resource owner is open.
+(pub :: workerMappingAddress (-> WorkerMapping Int))
+;@axiom:effect(unsafe)
+(pub fn (workerMappingAddress mapping)
+  {
+    (let _ (__resource_get mapping.owner))
+    mapping.state.address
+  })
+
+;; Close the current process's mapping view and handle.
+(pub :: workerMappingClose (-> WorkerMapping Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerMappingClose mapping)
+  (__resource_close mapping.owner))
+
+(pub struct WorkerProcesses sealed
+  (commands : WindowsCommands))
+
+;; Prepare fixed slots and a private kill-on-close job before launch.
+(pub :: workerProcessesNew (-> Int (Result WorkerProcesses Error)))
+;@axiom:effect(io)
+(pub fn (workerProcessesNew width)
+  (match (windowsCommandsNew width)
+    ((Err error) (Err error))
+    ((Ok commands) (Ok (WorkerProcesses :commands commands)))))
+
+;; Publish the suspended child into its job-owned slot before it runs.
+(pub :: workerProcessesStart (-> WorkerProcesses Int String Int Int String WorkerMapping Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(spawn)
+(pub fn (workerProcessesStart pool index name argv envp path mapping)
+  {
+    (let _ (__resource_get mapping.owner))
+    ; WorkerMapping word1 owns its state. State word0 is the native handle.
+    ; The launcher reads this one-word list synchronously and never writes it.
+    (let handles (__load64 (as mapping Int) 1))
+    (windowsCommandsStartInherited pool.commands index name argv envp path handles 1)
+  })
+
+;; Observe exit without retiring the child handle.
+(pub :: workerProcessesPoll (-> WorkerProcesses Int Int Int))
+;@axiom:effect(io)
+(pub fn (workerProcessesPoll pool index scratch)
+  (windowsCommandsPoll pool.commands index))
+
+;; Request termination; join remains the owner of handle retirement.
+(pub :: workerProcessesKill (-> WorkerProcesses Int Int Int))
+;@axiom:effect(io)
+(pub fn (workerProcessesKill pool index code)
+  (windowsCommandsKill pool.commands index code))
+
+;; Join and close one child, answering its shell-style exit code.
+(pub :: workerProcessesJoin (-> WorkerProcesses Int Int))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(pub fn (workerProcessesJoin pool index)
+  (windowsCommandsJoin pool.commands index))
+
+;; Kill, join and retire every remaining child once.
+(pub :: workerProcessesClose (-> WorkerProcesses Int))
+;@axiom:effect(io)
+(pub fn (workerProcessesClose pool)
+  (windowsCommandsClose pool.commands))
+
+;; Exact guarded stack budgets require native Windows acceptance evidence.
+(pub :: workerBoundedStackAvailable Bool)
+(pub fn (workerBoundedStackAvailable)
+  false)

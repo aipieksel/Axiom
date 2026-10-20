@@ -1,0 +1,643 @@
+;;! Task.Worker - isolated executable workers with bounded byte messages.
+;;!
+;;! Build a separate executable whose main calls `workerServe handler`.
+;;! `workerMap` starts that executable afresh for every input. Strings are
+;;! binary messages: no closure or managed reference crosses the process.
+;;! Standard output and standard error remain ordinary side effects.
+(import Str)
+(import Vec)
+(import Err)
+(import Sys)
+(import Fmt)
+(import Internal.Raw)
+(import Internal.WorkerProcess)
+(import Internal.WorkerProtocol)
+(import Internal.CommandScratch)
+
+;; NativeStack uses the executable's ordinary stack. StackBytes requests
+;; a guarded usable stack budget; unsupported targets refuse it before launch.
+(pub data WorkerStack
+  (NativeStack)
+  (StackBytes Int))
+
+;; One process-local token shared by pools and cancellation callers.
+(pub struct WorkerCancelToken sealed shared
+  (owner : Handle))
+
+;; Width, per-message byte bounds, time in nanoseconds, cumulative kept
+;; result bytes, and additional arena bytes after the child installs input.
+;; Zero deadline, keep or memory means no bound. NativeStack is explicit.
+(pub struct WorkerOpts
+  (width : Int)
+  (inputLimit : Int)
+  (resultLimit : Int)
+  (deadline : Int)
+  (grace : Int)
+  (failFast : Bool)
+  (token : (Option WorkerCancelToken))
+  (keep : Int)
+  (memory : Int)
+  (stack : WorkerStack))
+
+;; Defaults: no deadline, 100 ms cancellation grace, no fail-fast or
+;; cumulative memory bound, a private token and the executable's native stack.
+(pub :: workerOpts (-> Int Int Int WorkerOpts))
+(pub fn (workerOpts width inputLimit resultLimit)
+  (WorkerOpts
+    :width width
+    :inputLimit inputLimit
+    :resultLimit resultLimit
+    :deadline 0
+    :grace 100000000
+    :failFast false
+    :token None
+    :keep 0
+    :memory 0
+    :stack NativeStack))
+
+(:: workerOptions
+  (-> WorkerOpts Int Int Bool (Option WorkerCancelToken) Int Int WorkerStack WorkerOpts))
+(fn (workerOptions o deadline grace failFast token keep memory stack)
+  (WorkerOpts
+    :width o.width
+    :inputLimit o.inputLimit
+    :resultLimit o.resultLimit
+    :deadline deadline
+    :grace grace
+    :failFast failFast
+    :token token
+    :keep keep
+    :memory memory
+    :stack stack))
+
+;; A per-invocation deadline, measured from its spawn.
+(pub :: workerWithDeadline (-> WorkerOpts Int WorkerOpts))
+(pub fn (workerWithDeadline o nanos)
+  (workerOptions o nanos o.grace o.failFast o.token o.keep o.memory o.stack))
+
+;; Grace after cancellation or deadline before forced termination and join.
+(pub :: workerWithGrace (-> WorkerOpts Int WorkerOpts))
+(pub fn (workerWithGrace o nanos)
+  (workerOptions o o.deadline nanos o.failFast o.token o.keep o.memory o.stack))
+
+;; Cancel the remaining pool when an invocation fails.
+(pub :: workerWithFailFast (-> WorkerOpts Bool WorkerOpts))
+(pub fn (workerWithFailFast o on)
+  (workerOptions o o.deadline o.grace on o.token o.keep o.memory o.stack))
+
+;; Share cancellation with another pool or caller in this process.
+(pub :: workerWithToken (-> WorkerOpts WorkerCancelToken WorkerOpts))
+(pub fn (workerWithToken o token)
+  (workerOptions o o.deadline o.grace o.failFast (Some token) o.keep o.memory o.stack))
+
+;; Bound the sum of retained successful result bytes; zero is unbounded.
+(pub :: workerWithKeep (-> WorkerOpts Int WorkerOpts))
+(pub fn (workerWithKeep o bytes)
+  (workerOptions o o.deadline o.grace o.failFast o.token bytes o.memory o.stack))
+
+;; Bound arena mappings added after the endpoint has copied its input.
+(pub :: workerWithMemory (-> WorkerOpts Int WorkerOpts))
+(pub fn (workerWithMemory o bytes)
+  (workerOptions o o.deadline o.grace o.failFast o.token o.keep bytes o.stack))
+
+;; Choose the executable's native stack or a supported guarded byte budget.
+(pub :: workerWithStack (-> WorkerOpts WorkerStack WorkerOpts))
+(pub fn (workerWithStack o stack)
+  (workerOptions o o.deadline o.grace o.failFast o.token o.keep o.memory stack))
+
+(:: workerTokenDrop (-> Int Int))
+;@axiom:effect(io)
+(fn (workerTokenDrop page)
+  (match (sysUnmapShared page 4096)
+    ((Ok zero) 0)
+    ((Err error) (- 0 (errCode error)))))
+
+;; Allocate a cancellation token; it starts unset and cannot be reset.
+(pub :: workerTokenNew (Result WorkerCancelToken Error))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerTokenNew)
+  (match (sysMapShared 4096)
+    ((Err error) (Err error))
+    ((Ok page) (Ok (WorkerCancelToken :owner (__resource_new workerTokenDrop page))))))
+
+;; Cancel every pool using this token. Running children observe it through
+;; their own WorkerContext when the parent next scans its running children.
+(pub :: workerCancel (-> WorkerCancelToken Int))
+;@axiom:effect(unsafe)
+(pub fn (workerCancel token)
+  {
+    (__atomic_store (__resource_get token.owner) 1)
+    0
+  })
+
+;; Whether this process-local token has been set.
+(pub :: workerTokenCancelled (-> WorkerCancelToken Bool))
+;@axiom:effect(unsafe)
+(pub fn (workerTokenCancelled token)
+  (!= (__atomic_load (__resource_get token.owner)) 0))
+
+;; A live endpoint invocation. Retaining it beyond workerServe does not
+;; extend the invocation: querying an expired context raises resource trap85.
+(pub struct WorkerContext sealed
+  (mapping : WorkerMapping))
+
+;; Poll a cooperative cancellation request without allocating.
+(pub :: workerCancelled (-> WorkerContext Bool))
+(pub fn (workerCancelled context)
+  (workerProtocolCancelled (workerMappingAddress context.mapping)))
+
+(:: workerCapArena (-> Int Int))
+(fn (workerCapArena bytes)
+  (if (> bytes 0)
+    {
+      (let baseline (__axiom_mem_stat 2))
+      (__axiom_arena_cap
+        (if (> bytes (- 9223372036854775807 baseline))
+          9223372036854775807
+          (+ baseline bytes)))
+    }
+    0))
+
+(:: workerServeMapped (-> (-> WorkerContext String String) WorkerMapping Int Int))
+;@axiom:effect(io)
+(fn (workerServeMapped handler mapping total)
+  {
+    (let address (workerMappingAddress mapping))
+    (let status
+      (match (workerProtocolInput address total)
+        ((Err error) (errCode error))
+        ((Ok input)
+          {
+            (let kind (workerProtocolStackKind address))
+            (if (&& (== kind 1) (! workerBoundedStackAvailable))
+              78
+              {
+                (let context (WorkerContext :mapping mapping))
+                (workerCapArena (workerProtocolMemory address))
+                (let answer
+                  (lambda (unused) (workerProtocolAnswer address total (handler context input))))
+                (let result
+                  (if (== kind 1)
+                    (__axiom_stack_run (workerProtocolStackBytes address) answer 0)
+                    (answer 0)))
+                (if (== result 1003)
+                  0
+                  result)
+              })
+          }
+        )))
+    (let closed (workerMappingClose mapping))
+    (if (&& (== status 0) (< closed 0))
+      (- 0 closed)
+      status)
+  })
+
+;; The main of a dedicated worker executable calls this once with its
+;; handler. The launcher supplies a reserved three-argument transport suffix.
+;; Invalid invocation answers64; malformed transport answers22.
+(pub :: workerServe (-> (-> WorkerContext String String) Int))
+;@axiom:effect(io)
+(pub fn (workerServe handler)
+  (if (|| (< sysArgc 4) (! (strEq (sysArg (- sysArgc 3)) "--axiom-worker-v1")))
+    64
+    (match (strParseInt (sysArg (- sysArgc 1)))
+      ((None) 22)
+      ((Some total)
+        (if (|| (< total 96) (> total 1099511627776))
+          22
+          (match (workerMappingOpen (sysArg (- sysArgc 2)) total)
+            ((Err error) (errCode error))
+            ((Ok mapping) (workerServeMapped handler mapping total))))
+      ))))
+
+(struct WorkerSlot
+  (mut mapping : (Option WorkerMapping))
+  (mut done : Bool)
+  (mut status : Int)
+  (mut reason : Int)
+  (mut deadline : Int)
+  (mut graceEnd : Int))
+
+(:: workerMicros (-> Int Int))
+(fn (workerMicros nanos)
+  (+ (/ nanos 1000)
+    (if (== (% nanos 1000) 0)
+      0
+      1)))
+
+(:: workerAfter (-> Int Int Int))
+(fn (workerAfter now step)
+  (if (> step (- 9223372036854775807 now))
+    9223372036854775807
+    (+ now step)))
+
+(:: workerRefuse (-> Int Int String (Vec (Result String Error))))
+(fn (workerRefuse count code message)
+  {
+    (let out (vecWithCapacity count))
+    (for i in 0..count
+      (vecPush out (Err (mkError code message))))
+    out
+  })
+
+(:: workerStackValid (-> WorkerStack Bool))
+(fn (workerStackValid stack)
+  (match stack
+    ((NativeStack) true)
+    ((StackBytes bytes) (&& (> bytes 0) (<= bytes 1099511627776)))))
+
+(:: workerOptionsCode (-> (Vec String) WorkerOpts Int))
+(fn (workerOptionsCode argv opts)
+  (if (|| (== (vecLen argv) 0)
+        (|| (< opts.width 1)
+          (|| (< opts.inputLimit 0)
+            (|| (< opts.resultLimit 0)
+              (|| (< opts.deadline 0)
+                (|| (< opts.grace 0)
+                  (|| (< opts.keep 0)
+                    (|| (< opts.memory 0)
+                      (|| (> opts.memory 1099511627776) (! (workerStackValid opts.stack)))))))))))
+    22
+    (if (|| (> (workerProtocolBytes opts.inputLimit opts.resultLimit) 1099511627776)
+          (< (workerProtocolBytes opts.inputLimit opts.resultLimit) 96))
+      22
+      (if (! sysHasMonotonic)
+        78
+        (match opts.stack
+          ((NativeStack) 0)
+          ((StackBytes bytes)
+            (if workerBoundedStackAvailable
+              0
+              78)
+          ))))))
+
+(:: workerStart
+  (-> WorkerProcesses Int WorkerSlot (Vec String) String WorkerOpts Int String WorkerCancelToken
+    CommandScratch Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+(fn (workerStart processes index slot argv input opts total path token scratch)
+  (if (> (strLen input) opts.inputLimit)
+    -1003
+    (match (workerMappingNew total)
+      ((Err error) (- 0 (errCode error)))
+      ((Ok mapping)
+        {
+          (set slot.mapping (Some mapping))
+          (let kind
+            (match opts.stack
+              ((NativeStack) 0)
+              ((StackBytes bytes) 1)))
+          (let bytes
+            (match opts.stack
+              ((NativeStack) 0)
+              ((StackBytes bytes) bytes)))
+          (let initialized
+            (workerProtocolInit (workerMappingAddress mapping) total opts.inputLimit
+              opts.resultLimit opts.memory kind bytes input))
+          (if (< initialized 0)
+            initialized
+            {
+              (let args (vecWithCapacity (+ (vecLen argv) 3)))
+              (for i in 0..(vecLen argv)
+                (vecPush args (vecGet argv i)))
+              (vecPush args "--axiom-worker-v1")
+              (vecPush args (workerMappingDescriptor mapping))
+              (vecPush args (fmtInt total))
+              (if (workerTokenCancelled token)
+                -1002
+                (workerProcessesStart processes index (vecGet argv 0)
+                  (commandScratchArgv scratch 0 args) sysEnvp path mapping))
+            })
+        }
+      ))))
+
+(:: workerFinished (-> WorkerSlot Bool))
+(fn (workerFinished slot)
+  (|| (== slot.status 0)
+    (&& (== slot.status 137) (|| (== slot.reason 1002) (== slot.reason sysTimedOut)))))
+
+(:: workerSlotValid (-> WorkerSlot Int WorkerOpts Bool))
+;@axiom:effect(unsafe)
+(fn (workerSlotValid slot total opts)
+  (match slot.mapping
+    ((None) false)
+    ((Some mapping)
+      {
+        (let address (workerMappingAddress mapping))
+        (&& (workerProtocolValidate address total)
+          (&& (== (__load64 address 2) opts.inputLimit) (== (__load64 address 4) opts.resultLimit)))
+      }
+    )))
+
+(:: workerSlotSuccess (-> WorkerSlot Int WorkerOpts Bool))
+;@axiom:effect(unsafe)
+(fn (workerSlotSuccess slot total opts)
+  (match slot.mapping
+    ((None) false)
+    ((Some mapping)
+      {
+        (let address (workerMappingAddress mapping))
+        (&& (workerFinished slot)
+          (&& (workerSlotValid slot total opts) (== (__atomic_load (+ address 48)) 1)))
+      }
+    )))
+
+(:: workerSlotResult (-> WorkerSlot Int WorkerOpts Int Int (Result String Error)))
+;@axiom:effect(unsafe)
+(fn (workerSlotResult slot total opts keep kept)
+  (match slot.mapping
+    ((None) (Err (mkError slot.status "worker was not started")))
+    ((Some mapping)
+      {
+        (let address (workerMappingAddress mapping))
+        (if (! (workerSlotValid slot total opts))
+          (Err (mkError 22 "worker changed its transport bounds"))
+          (if (workerSlotSuccess slot total opts)
+            (if (&& (> keep 0) (> (__load64 address 5) (- keep kept)))
+              (Err (mkError 1012 "worker results exceed the keep budget"))
+              (workerProtocolResult address total))
+            (if (&& (== slot.status 137) (> slot.reason 0))
+              (Err (mkError slot.reason "worker cancelled or past its deadline"))
+              (if (== slot.status 0)
+                (workerProtocolResult address total)
+                (Err
+                  (mkError
+                    (if (< slot.status 0)
+                      (- 0 slot.status)
+                      slot.status)
+                    "worker executable failed"))))))
+      }
+    )))
+
+(:: workerSlotsClose (-> (Vec WorkerSlot) Int))
+;@axiom:effect(io)
+(fn (workerSlotsClose slots)
+  {
+    (for i in 0..(vecLen slots)
+      {
+        (let slot (vecGet slots i))
+        (match slot.mapping
+          ((None) ())
+          ((Some mapping)
+            {
+              (let _ (workerMappingClose mapping))
+              ()
+            }
+          ))
+      })
+    0
+  })
+
+(:: workerPoisonSlots (-> (Vec WorkerSlot) Int Int Int Int))
+(fn (workerPoisonSlots slots head next code)
+  {
+    (for task in head..next
+      {
+        (let slot (vecGet slots (% task (vecLen slots))))
+        (if (! slot.done)
+          {
+            (set slot.status code)
+            (set slot.reason 0)
+            (set slot.done true)
+          })
+      })
+    0
+  })
+
+(:: workerSlotDone (-> (Vec WorkerSlot) Int Bool))
+(fn (workerSlotDone slots index)
+  {
+    (let slot (vecGet slots index))
+    slot.done
+  })
+
+(:: workerRun
+  (-> WorkerProcesses (Vec WorkerSlot) (Vec String) (Vec String) WorkerOpts WorkerCancelToken
+    CommandScratch (Vec (Result String Error))))
+;@axiom:effect(io)
+;@axiom:effect(block)
+;@axiom:effect(spawn)
+(fn (workerRun processes slots argv inputs opts token scratch)
+  {
+    (let count (vecLen inputs))
+    (let width (vecLen slots))
+    (let total (workerProtocolBytes opts.inputLimit opts.resultLimit))
+    (let clock (commandScratchBuffer scratch 1 16))
+    (let pollScratch (commandScratchBuffer scratch 2 sysChildPollBytes))
+    (let out (vecWithCapacity count))
+    (let path (sysEnv "PATH"))
+    (let mut next 0)
+    (let mut head 0)
+    (let mut kept 0)
+    (let mut cancelling false)
+    (while (< head count)
+      {
+        (if (workerTokenCancelled token)
+          (set cancelling true))
+        (while (&& (! cancelling) (&& (< next count) (< (- next head) width)))
+          {
+            (let index (% next width))
+            (let slot (vecGet slots index))
+            (set slot.done false)
+            (set slot.reason 0)
+            (set slot.graceEnd 0)
+            (set slot.deadline 0)
+            (let started
+              (workerStart processes index slot argv (vecGet inputs next) opts total path token
+                scratch))
+            (if (> started 0)
+              (set slot.deadline (if (== opts.deadline 0)
+                0
+                (workerAfter (sysTimeoutMicros clock) (workerMicros opts.deadline)))))
+            (if (<= started 0)
+              {
+                (set slot.status (if (== started 0)
+                  78
+                  (- 0 started)))
+                (set slot.done true)
+                (set cancelling true)
+              })
+            (set next (+ next 1))
+            (if (workerTokenCancelled token)
+              (set cancelling true))
+          })
+        (for task in head..next
+          {
+            (let index (% task width))
+            (let slot (vecGet slots index))
+            (if (! slot.done)
+              {
+                (let polled (workerProcessesPoll processes index pollScratch))
+                (if (!= polled 0)
+                  {
+                    (if (< polled 0)
+                      {
+                        (set slot.reason (- 0 polled))
+                        (let _ (workerProcessesKill processes index 137))
+                        ()
+                      })
+                    (set slot.status (workerProcessesJoin processes index))
+                    (set slot.done true)
+                    (if (< slot.status 0)
+                      {
+                        (let failure (- 0 slot.status))
+                        (let _ (workerProcessesClose processes))
+                        (workerPoisonSlots slots head next failure)
+                        (set cancelling true)
+                      })
+                    (if (&& opts.failFast (! (workerSlotSuccess slot total opts)))
+                      {
+                        (workerCancel token)
+                        (set cancelling true)
+                      })
+                  }
+                  {
+                    (let now (sysTimeoutMicros clock))
+                    (if (&& (== slot.reason 0)
+                          (|| cancelling (&& (!= slot.deadline 0) (>= now slot.deadline))))
+                      {
+                        (set slot.reason (if cancelling
+                          1002
+                          sysTimedOut))
+                        (set slot.graceEnd (workerAfter now (workerMicros opts.grace)))
+                        (match slot.mapping
+                          ((None) ())
+                          ((Some mapping)
+                            {
+                              (let _ (workerProtocolCancel (workerMappingAddress mapping)))
+                              ()
+                            }
+                          ))
+                      })
+                    (if (&& (!= slot.reason 0) (>= now slot.graceEnd))
+                      {
+                        (let _ (workerProcessesKill processes index 137))
+                        (set slot.status (workerProcessesJoin processes index))
+                        (set slot.done true)
+                        (if (< slot.status 0)
+                          {
+                            (let failure (- 0 slot.status))
+                            (let _ (workerProcessesClose processes))
+                            (workerPoisonSlots slots head next failure)
+                            (set cancelling true)
+                          })
+                        (if (&& opts.failFast (! (workerSlotSuccess slot total opts)))
+                          {
+                            (workerCancel token)
+                            (set cancelling true)
+                          })
+                      })
+                  })
+              })
+          })
+        (while (&& (< head next) (workerSlotDone slots (% head width)))
+          {
+            (let slot (vecGet slots (% head width)))
+            (let original (workerSlotResult slot total opts opts.keep kept))
+            (let closed
+              (match slot.mapping
+                ((None) 0)
+                ((Some mapping) (workerMappingClose mapping))))
+            (set slot.mapping None)
+            (let result
+              (if (< closed 0)
+                {
+                  (set cancelling true)
+                  (match original
+                    ((Ok bytes) (Err (mkError (- 0 closed) "worker transport cleanup failed")))
+                    ((Err error) original))
+                }
+                original))
+            (match result
+              ((Ok bytes)
+                (set kept (+ kept (strLen bytes)))
+              )
+              ((Err error)
+                (if (== (errCode error) 1012)
+                  (set cancelling true))
+              ))
+            (vecPush out result)
+            (set head (+ head 1))
+          })
+        (if (&& cancelling (== head next))
+          (while (< head count)
+            {
+              (vecPush out (Err (mkError 1002 "worker not started: pool cancelled")))
+              (set head (+ head 1))
+              (set next head)
+            }))
+        (if (< head next)
+          {
+            (let _ (sysSleepNanos 1000000))
+            ()
+          })
+      })
+    (let closed (workerProcessesClose processes))
+    (if (&& (< closed 0) (> (vecLen out) 0))
+      {
+        (let last (- (vecLen out) 1))
+        (match (vecGet out last)
+          ((Ok bytes)
+            {
+              (let _ (vecSet out last (Err (mkError (- 0 closed) "worker pool cleanup failed"))))
+              ()
+            }
+          )
+          ((Err error) ()))
+      })
+    (let _ (workerSlotsClose slots))
+    (let _ (commandScratchClose scratch))
+    out
+  })
+
+;; Start a fresh executable for every input, with at most width children.
+;; Answers preserve input order. Every child is joined before this returns;
+;; result publication alone never releases its slot. Cancellation is checked
+;; between launches and running-child scans, with a 1 ms sleep between scans.
+;; Grace expires before forced termination and join.
+(pub :: workerMap (-> (Vec String) (Vec String) WorkerOpts (Vec (Result String Error))))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (workerMap argv inputs opts)
+  {
+    (let count (vecLen inputs))
+    (let invalid (workerOptionsCode argv opts))
+    (if (!= invalid 0)
+      (workerRefuse count invalid "invalid or unsupported worker options")
+      (if (== count 0)
+        (vecNew)
+        {
+          (let width
+            (if (> opts.width count)
+              count
+              opts.width))
+          (let slots (vecWithCapacity width))
+          (for i in 0..width
+            (vecPush slots
+              (WorkerSlot :mapping None :done true :status 0 :reason 0 :deadline 0 :graceEnd 0)))
+          (let tokenResult
+            (match opts.token
+              ((Some token) (Ok token))
+              ((None) workerTokenNew)))
+          (match tokenResult
+            ((Err error)
+              (workerRefuse count (errCode error) "worker cancellation owner unavailable")
+            )
+            ((Ok token)
+              {
+                (let scratch (commandScratchNew 3))
+                (match (workerProcessesNew width)
+                  ((Err error)
+                    {
+                      (let _ (commandScratchClose scratch))
+                      (workerRefuse count (errCode error) "worker process owner unavailable")
+                    }
+                  )
+                  ((Ok processes) (workerRun processes slots argv inputs opts token scratch)))
+              }
+            ))
+        }))
+  })

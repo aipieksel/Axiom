@@ -1,0 +1,121 @@
+(import Task.Worker)
+(import Str)
+(import Vec)
+(import Sys)
+(import Fmt)
+(import IO)
+
+(:: deep (-> Int Int))
+(fn (deep depth)
+  (if (<= depth 0)
+    0
+    {
+      (let answer (deep (- depth 1)))
+      (if (> answer depth)
+        answer
+        (+ answer 1))
+    }))
+
+(:: corruptBounds (-> WorkerContext String))
+;@axiom:effect(unsafe)
+(fn (corruptBounds context)
+  {
+    ; Test-only raw access to the live private context/mapping/state records.
+    ; Repartition the same113-byte view: input7/result9 -> input0/result17.
+    (let mapping (__load64 (as context Int) 0))
+    (let state (__load64 mapping 1))
+    (let address (__load64 state 1))
+    (__store64 address 2 0)
+    (__store64 address 3 0)
+    (__store64 address 4 (- (__load64 address 1) 96))
+    "12345678901234567"
+  })
+
+(:: handler (-> (Vec Int) WorkerContext String String))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (handler state context input)
+  (if (strEq input "fresh")
+      {
+        (vecSet state 0 (+ 1 (vecGet state 0)))
+        (fmtInt (vecGet state 0))
+      }
+    (strEq input "corrupt")
+      (corruptBounds context)
+    (strEq input "slow")
+      {
+        (let _ (sysSleepNanos 80000000))
+        "slow"
+      }
+    (strEq input "cancel")
+      {
+        (while (! (workerCancelled context))
+          {
+            (let _ (sysSleepNanos 1000000))
+            ()
+          })
+        "cancelled"
+      }
+    (strEq input "cancel-grace")
+      {
+        (while (! (workerCancelled context))
+          {
+            (let _ (sysSleepNanos 1000000))
+            ()
+          })
+        (let _ (sysSleepNanos 50000000))
+        "grace"
+      }
+    (strEq input "cancel-trap")
+      {
+        (while (! (workerCancelled context))
+          {
+            (let _ (sysSleepNanos 1000000))
+            ()
+          })
+        (fmtInt (/ 1 (- (strLen input) 11)))
+      }
+    (strEq input "stubborn")
+      {
+        (while true
+          {
+            (let _ (sysSleepNanos 10000000))
+            ()
+          })
+        "unreachable"
+      }
+    (strEq input "huge")
+      "1234567890123456789012345678901234567890"
+    (strEq input "trap")
+      (fmtInt (/ 1 (- (strLen input) 4)))
+    (strEq input "oom")
+      (strAlloc 33554432)
+    (strEq input "stack")
+      (fmtInt (deep 50000))
+    (strEq input "pid")
+      (fmtInt sysPid)
+    (strEq input "side")
+      {
+        (println "worker stdout")
+        "side"
+      }
+    (concat input "!")))
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (main)
+  (if (strEq (sysArg 1) "--no-serve")
+    0
+    {
+      (let state (vecNew))
+      (vecPush state 7)
+      (let status (workerServe (lambda (context input) (handler state context input))))
+      (if (strEq (sysArg 1) "--stall-after")
+        (while true
+          {
+            (let _ (sysSleepNanos 10000000))
+            ()
+          }))
+      status
+    }))

@@ -1,0 +1,324 @@
+(import Task.Worker)
+(import Str)
+(import Vec)
+(import Err)
+(import IO)
+(import Sys)
+(import Fmt)
+(import Mem)
+
+(:: expect (-> String Bool Int))
+;@axiom:effect(io)
+(fn (expect label good)
+  {
+    (println
+      (concat
+        (if good
+          "ok   "
+          "FAIL ")
+        label))
+    (if good
+      0
+      1)
+  })
+
+(:: textIs (-> (Result String Error) String Bool))
+(fn (textIs result wanted)
+  (match result
+    ((Ok text) (strEq text wanted))
+    ((Err error) false)))
+
+(:: errorIs (-> (Result String Error) Int Bool))
+(fn (errorIs result wanted)
+  (match result
+    ((Ok text) false)
+    ((Err error) (== (errCode error) wanted))))
+
+(:: one (-> String (Vec String)))
+(fn (one text)
+  {
+    (let values (vecNew))
+    (vecPush values text)
+    values
+  })
+
+(:: load (-> String Int Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (load endpoint width)
+  {
+    (let inputs (vecNew))
+    (for i in 0..12
+      (vecPush inputs "slow"))
+    (let answers (workerMap (one endpoint) inputs (workerOpts width 32 32)))
+    (let mut bad 0)
+    (for i in 0..12
+      (if (! (textIs (vecGet answers i) "slow"))
+        (set bad (+ bad 1))))
+    bad
+  })
+
+(:: soak (-> String Int Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (soak endpoint rounds)
+  {
+    (let argv (one endpoint))
+    (let inputs (one "fresh"))
+    (let mut bad 0)
+    (for i in 0..rounds
+      (if (! (textIs (vecGet (workerMap argv inputs (workerOpts 1 32 32)) 0) "8"))
+        (set bad (+ bad 1))))
+    (let stats memStats)
+    (let held stats.heldBytes)
+    (let filed stats.filedBytes)
+    (let mapped stats.mappedBytes)
+    (println "held {held} filed {filed} mapped {mapped}")
+    bad
+  })
+
+(:: launchGrace (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (launchGrace endpoint)
+  {
+    (let inputs (one "cancel-grace"))
+    (vecPush inputs "dummy")
+    (let answers
+      (workerMap (one endpoint) inputs (workerWithGrace (workerOpts 2 32 32) 100000000)))
+    (let good (&& (textIs (vecGet answers 0) "grace") (errorIs (vecGet answers 1) 13)))
+    (println
+      (if good
+        "ok   slow refusal grants full observed cancellation grace"
+        "FAIL shortened launch grace"))
+    (if good
+      0
+      1)
+  })
+
+(:: joinFault (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (joinFault endpoint)
+  {
+    (let inputs (one "fresh"))
+    (vecPush inputs "stubborn")
+    (vecPush inputs "fresh")
+    (let answers (workerMap (one endpoint) inputs (workerOpts 2 32 32)))
+    (let good
+      (&& (errorIs (vecGet answers 0) 5)
+        (&& (errorIs (vecGet answers 1) 5) (errorIs (vecGet answers 2) 1002))))
+    (println
+      (if good
+        "ok   terminal join failure never reuses a closed owner"
+        "FAIL terminal join failure"))
+    (if good
+      0
+      1)
+  })
+
+(:: closeFault (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (closeFault endpoint)
+  {
+    (let inputs (one "fresh"))
+    (vecPush inputs "fresh")
+    (let answers (workerMap (one endpoint) inputs (workerOpts 2 32 32)))
+    (let good (&& (textIs (vecGet answers 0) "8") (errorIs (vecGet answers 1) 13)))
+    (println
+      (if good
+        "ok   pool cleanup failure is returned in the last slot"
+        "FAIL hidden cleanup failure"))
+    (if good
+      0
+      1)
+  })
+
+(:: boundsFault (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (boundsFault endpoint)
+  {
+    (let answers (workerMap (one endpoint) (one "corrupt") (workerOpts 1 7 9)))
+    (let good (errorIs (vecGet answers 0) 22))
+    (println
+      (if good
+        "ok   parent retains its immutable result bound"
+        "FAIL changed result bound"))
+    (if good
+      0
+      1)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  (if (strEq (sysArg 2) "load")
+      (load (sysArg 1)
+        (match (strParseInt (sysArg 3))
+          ((Some width) width)
+          ((None) 1)))
+    (strEq (sysArg 2) "bounds-fault")
+      (boundsFault (sysArg 1))
+    (strEq (sysArg 2) "close-fault")
+      (closeFault (sysArg 1))
+    (strEq (sysArg 2) "join-fault")
+      (joinFault (sysArg 1))
+    (strEq (sysArg 2) "launch-grace")
+      (launchGrace (sysArg 1))
+    (if (strEq (sysArg 2) "soak")
+      (soak (sysArg 1)
+        (match (strParseInt (sysArg 3))
+          ((Some rounds) rounds)
+          ((None) 1)))
+      {
+        (let mut bad 0)
+        (let argv (one (sysArg 1)))
+        (let opts (workerOpts 2 32 32))
+        (let inputs (vecNew))
+        (vecPush inputs "slow")
+        (vecPush inputs "fast")
+        (vecPush inputs "fresh")
+        (vecPush inputs "fresh")
+        (vecPush inputs "fresh")
+        (let ordered (workerMap argv inputs opts))
+        (set bad (+ bad
+                   (expect "width2 preserves submit order"
+                     (&& (textIs (vecGet ordered 0) "slow") (textIs (vecGet ordered 1) "fast!")))))
+        (set bad (+ bad
+                   (expect "fresh executable state for every invocation"
+                     (&& (textIs (vecGet ordered 2) "8")
+                       (&& (textIs (vecGet ordered 3) "8") (textIs (vecGet ordered 4) "8"))))))
+        (set bad (+ bad
+                   (expect "self-consistent repartition cannot enlarge the result bound"
+                     (errorIs (vecGet (workerMap argv (one "corrupt") (workerOpts 1 7 9)) 0) 22))))
+        (let binary (concat (strFromByte 0) "é"))
+        (set bad (+ bad
+                   (expect "binary input and output"
+                     (textIs (vecGet (workerMap argv (one binary) opts) 0) (concat binary "!")))))
+        (set bad (+ bad
+                   (expect "oversized input refuses"
+                     (errorIs (vecGet (workerMap argv (one "12345") (workerOpts 1 4 8)) 0) 1003))))
+        (set bad (+ bad
+                   (expect "oversized result refuses"
+                     (errorIs (vecGet (workerMap argv (one "huge") opts) 0) 1003))))
+        (set bad (+ bad
+                   (expect "empty argv refuses"
+                     (errorIs (vecGet (workerMap (vecNew) (one "a") opts) 0) 22))))
+        (set bad (+ bad
+                   (expect "negative bounds refuse"
+                     (errorIs (vecGet (workerMap argv (one "a") (workerOpts 1 -1 8)) 0) 22))))
+        (set bad (+ bad
+                   (expect "overflowing bounds refuse"
+                     (errorIs
+                       (vecGet (workerMap argv (one "a") (workerOpts 1 9223372036854775807 8)) 0)
+                       22))))
+        (set bad (+ bad
+                   (expect "missing executable refuses"
+                     (errorIs
+                       (vecGet (workerMap (one "/axiom-no-such-worker-executable") (one "a") opts)
+                         0)
+                       2))))
+        (let trapped (workerMap argv (one "trap") opts))
+        (set bad (+ bad (expect "child trap is a value" (errorIs (vecGet trapped 0) 72))))
+        (set bad (+ bad
+                   (expect "additional arena memory is bounded"
+                     (errorIs
+                       (vecGet (workerMap argv (one "oom") (workerWithMemory opts 1048576)) 0)
+                       70))))
+        (let deadline (workerWithGrace (workerWithDeadline opts 30000000) 20000000))
+        (set bad (+ bad
+                   (expect "deadline kills and joins stubborn child"
+                     (errorIs (vecGet (workerMap argv (one "stubborn") deadline) 0) sysTimedOut))))
+        (set bad (+ bad
+                   (expect "cooperative grace preserves an answer"
+                     (textIs (vecGet (workerMap argv (one "cancel") deadline) 0) "cancelled"))))
+        (let stalled (one (sysArg 1)))
+        (vecPush stalled "--stall-after")
+        (set bad (+ bad
+                   (expect "answer alone does not bypass exit deadline"
+                     (textIs (vecGet (workerMap stalled (one "a") deadline) 0) "a!"))))
+        (set bad (+ bad
+                   (expect "trap during cancellation grace keeps its status"
+                     (errorIs (vecGet (workerMap argv (one "cancel-trap") deadline) 0) 72))))
+        (let stalledInputs (one "a"))
+        (vecPush stalledInputs "b")
+        (let stalledAnswers
+          (workerMap stalled stalledInputs
+            (workerWithFailFast
+              (workerWithGrace (workerWithDeadline (workerOpts 1 32 32) 30000000) 20000000) true)))
+        (set bad (+ bad
+                   (expect "preserved deadline answer does not trigger fail-fast"
+                     (&& (textIs (vecGet stalledAnswers 0) "a!")
+                       (textIs (vecGet stalledAnswers 1) "b!")))))
+        (let noServe (one (sysArg 1)))
+        (vecPush noServe "--no-serve")
+        (set bad (+ bad
+                   (expect "endpoint without protocol is an error"
+                     (errorIs (vecGet (workerMap noServe (one "a") opts) 0) 22))))
+        (let failures (one "trap"))
+        (vecPush failures "fresh")
+        (let failed (workerMap argv failures (workerWithFailFast (workerOpts 1 32 32) true)))
+        (set bad (+ bad
+                   (expect "fail-fast preserves the first failure" (errorIs (vecGet failed 0) 72))))
+        (set bad (+ bad
+                   (expect "fail-fast starts no later invocation"
+                     (errorIs (vecGet failed 1) 1002))))
+        (let keptInputs (one "a"))
+        (vecPush keptInputs "b")
+        (vecPush keptInputs "c")
+        (let kept (workerMap argv keptInputs (workerWithKeep (workerOpts 1 32 32) 3)))
+        (set bad (+ bad
+                   (expect "keep admits only bounded result bytes"
+                     (&& (textIs (vecGet kept 0) "a!") (errorIs (vecGet kept 1) 1012)))))
+        (set bad (+ bad
+                   (expect "keep failure stops further starts" (errorIs (vecGet kept 2) 1002))))
+        (match workerTokenNew
+          ((Err error)
+            (set bad (+ bad (expect "token allocation" false)))
+          )
+          ((Ok token)
+            {
+              (workerCancel token)
+              (set bad (+ bad (expect "token cancellation persists" (workerTokenCancelled token))))
+              (set bad (+ bad
+                         (expect "pre-cancel starts no child"
+                           (errorIs
+                             (vecGet (workerMap argv (one "fresh") (workerWithToken opts token)) 0)
+                             1002))))
+            }
+          ))
+        (let stack (workerWithStack opts (StackBytes 262144)))
+        (set bad (+ bad
+                   (expect "guarded stack or explicit unsupported refusal"
+                     (errorIs (vecGet (workerMap argv (one "stack") stack) 0)
+                       (if (== usesSyscallAbi 0)
+                         78
+                         86)))))
+        (set bad (+ bad
+                   (expect "stack support is checked before executable launch"
+                     (errorIs
+                       (vecGet
+                         (workerMap (one "/axiom-no-such-worker-executable") (one "stack") stack) 0)
+                       (if (== usesSyscallAbi 0)
+                         78
+                         2)))))
+        (set bad (+ bad
+                   (expect "native stack mode remains explicit"
+                     (textIs
+                       (vecGet (workerMap argv (one "fresh") (workerWithStack opts NativeStack)) 0)
+                       "8"))))
+        (set bad (+ bad
+                   (expect "stdout remains an ordinary side effect"
+                     (textIs (vecGet (workerMap argv (one "side") opts) 0) "side"))))
+        bad
+      })))

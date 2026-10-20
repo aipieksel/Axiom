@@ -1,0 +1,178 @@
+;;! Internal.WorkerProtocol - bounded byte messages in a worker mapping.
+;
+; The caller supplies a live, eight-byte-aligned mapping of `total`
+; bytes. Its header and payloads contain integers and copied bytes,
+; never managed references. Only cancellation and completion change
+; concurrently; their aligned words use the runtime's atomic operations.
+; The parent reads a result after joining the child. It validates the
+; header against its own mapping length before copying any payload.
+(import Internal.Raw)
+(import Str)
+(import Err)
+
+(:: workerProtocolAligned (-> Int Int))
+(fn (workerProtocolAligned n)
+  (& (+ n 7) -8))
+
+;; The mapping size, or -22 if either bound or their sum cannot fit.
+(pub :: workerProtocolBytes (-> Int Int Int))
+(pub fn (workerProtocolBytes inputCap resultLimit)
+  (if (|| (< inputCap 0) (|| (< resultLimit 0) (> inputCap 9223372036854775704)))
+    -22
+    {
+      (let base (+ 96 (workerProtocolAligned inputCap)))
+      (if (> resultLimit (- 9223372036854775807 base))
+        -22
+        (+ base resultLimit))
+    }))
+
+;; Initialise an exclusive mapping. Input bytes are copied into it.
+;; Invalid bounds or options answer -22 before writing the header.
+(pub :: workerProtocolInit (-> Int Int Int Int Int Int Int String Int))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolInit addr total inputCap resultLimit memory stackKind stackBytes input)
+  (if (|| (<= addr 0)
+        (|| (!= (% addr 8) 0)
+          (|| (< total 96)
+            (|| (!= total (workerProtocolBytes inputCap resultLimit))
+              (|| (> (strLen input) inputCap)
+                (|| (< memory 0)
+                  (|| (&& (!= stackKind 0) (!= stackKind 1))
+                    (if (== stackKind 0)
+                      (!= stackBytes 0)
+                      (<= stackBytes 0)))))))))
+    -22
+    {
+      (__store64 addr 0 4708604902291)
+      (__store64 addr 1 total)
+      (__store64 addr 2 inputCap)
+      (__store64 addr 3 (strLen input))
+      (__store64 addr 4 resultLimit)
+      (__store64 addr 5 0)
+      (__atomic_store (+ addr 48) 0)
+      (__atomic_store (+ addr 56) 0)
+      (__store64 addr 8 memory)
+      (__store64 addr 9 stackKind)
+      (__store64 addr 10 stackBytes)
+      (__store64 addr 11 1)
+      (rawCopy (+ addr 96) (strData input) (strLen input))
+      0
+    }))
+
+;; Check the header against the caller's independently known length.
+(pub :: workerProtocolValidate (-> Int Int Bool))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolValidate addr total)
+  (if (|| (<= addr 0) (|| (!= (% addr 8) 0) (< total 96)))
+    false
+    {
+      (let inputCap (__load64 addr 2))
+      (let inputLen (__load64 addr 3))
+      (let resultLimit (__load64 addr 4))
+      (let resultLen (__load64 addr 5))
+      (let state (__atomic_load (+ addr 48)))
+      (let cancel (__atomic_load (+ addr 56)))
+      (let stackKind (__load64 addr 9))
+      (let stackBytes (__load64 addr 10))
+      (let headerOk
+        (&& (== (__load64 addr 0) 4708604902291)
+          (&& (== (__load64 addr 1) total) (== (__load64 addr 11) 1))))
+      (let inputOk
+        (&& (== (workerProtocolBytes inputCap resultLimit) total)
+          (&& (>= inputLen 0) (<= inputLen inputCap))))
+      (let resultOk (&& (>= resultLen 0) (<= resultLen resultLimit)))
+      (let stateOk (&& (>= state 0) (&& (<= state 2) (&& (>= cancel 0) (<= cancel 1)))))
+      (let stackOk
+        (if (== stackKind 0)
+          (== stackBytes 0)
+          (&& (== stackKind 1) (> stackBytes 0))))
+      (&& headerOk (&& inputOk (&& resultOk (&& stateOk (&& (>= (__load64 addr 8) 0) stackOk)))))
+    }))
+
+;; Copy the bounded input into the child's arena before setting its cap.
+(pub :: workerProtocolInput (-> Int Int (Result String Error)))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolInput addr total)
+  (if (workerProtocolValidate addr total)
+    {
+      (let n (__load64 addr 3))
+      (let text (strAlloc n))
+      (rawCopy (strData text) (+ addr 96) n)
+      (Ok text)
+    }
+    (Err (mkError 22 "invalid worker input header"))))
+
+;; Copy an answer and publish completion; an oversized answer publishes
+;; state 2 without copying any of its bytes. Answers 0, 1003 or 22.
+(pub :: workerProtocolAnswer (-> Int Int String Int))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolAnswer addr total result)
+  (if (! (workerProtocolValidate addr total))
+    22
+    (if (!= (__atomic_load (+ addr 48)) 0)
+      22
+      (if (> (strLen result) (__load64 addr 4))
+        {
+          (__store64 addr 5 0)
+          (__atomic_store (+ addr 48) 2)
+          1003
+        }
+        {
+          (rawCopy (+ addr (+ 96 (workerProtocolAligned (__load64 addr 2)))) (strData result)
+            (strLen result))
+          (__store64 addr 5 (strLen result))
+          (__atomic_store (+ addr 48) 1)
+          0
+        }))))
+
+;; Copy a completed answer after joining the child. Invalid or missing
+;; completion answers Err 22; an oversized answer answers Err 1003.
+(pub :: workerProtocolResult (-> Int Int (Result String Error)))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolResult addr total)
+  (if (! (workerProtocolValidate addr total))
+    (Err (mkError 22 "invalid worker result header"))
+    (match (__atomic_load (+ addr 48))
+      (1
+        {
+          (let n (__load64 addr 5))
+          (let text (strAlloc n))
+          (rawCopy (strData text) (+ addr (+ 96 (workerProtocolAligned (__load64 addr 2)))) n)
+          (Ok text)
+        }
+      )
+      (2 (Err (mkError 1003 "worker result exceeds its byte limit")))
+      (_ (Err (mkError 22 "worker exited without answering"))))))
+
+;; Publish cancellation in an already validated live mapping.
+(pub :: workerProtocolCancel (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolCancel addr)
+  {
+    (__atomic_store (+ addr 56) 1)
+    0
+  })
+
+;; Read cancellation from an already validated live mapping.
+(pub :: workerProtocolCancelled (-> Int Bool))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolCancelled addr)
+  (!= (__atomic_load (+ addr 56)) 0))
+
+;; The arena budget in an already validated live mapping.
+(pub :: workerProtocolMemory (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolMemory addr)
+  (__load64 addr 8))
+
+;; The stack kind in an already validated live mapping: 0 or 1.
+(pub :: workerProtocolStackKind (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolStackKind addr)
+  (__load64 addr 9))
+
+;; The stack budget in an already validated live mapping.
+(pub :: workerProtocolStackBytes (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (workerProtocolStackBytes addr)
+  (__load64 addr 10))

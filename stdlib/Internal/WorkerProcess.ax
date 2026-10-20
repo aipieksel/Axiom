@@ -1,0 +1,482 @@
+;;! Internal.WorkerProcess - owned POSIX mappings and executable workers.
+;
+; Transport files and directories are unlinked before launch. The parent
+; descriptor stays close-on-exec; only the fork child's own descriptor is
+; made inheritable before exec. The process runtime owns child retirement.
+(import Sys)
+(import Sys.Platform)
+(import Str)
+(import Vec)
+(import Err)
+(import Fmt)
+(import Internal.Raw)
+(import Internal.ProcessPath)
+(import Internal.WorkerExec)
+(import Internal.CommandScratch)
+
+(struct WorkerMappingState
+  (mut fd : Int)
+  (mut address : Int)
+  (mut mapped : Bool)
+  (mut named : Bool)
+  (mut directoryOwned : Bool)
+  (directory : String)
+  (path : String)
+  (size : Int))
+
+(pub struct WorkerMapping sealed
+  (owner : Handle)
+  (state : WorkerMappingState))
+
+(:: wpOpen (-> String Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpOpen path flags)
+  (if (== openNeedsDirFd 1)
+    (__syscall4 sysOpenNum atFdCwd (strCStr path) flags 384)
+    (__syscall3 sysOpenNum (strCStr path) flags 384)))
+
+(:: wpUnlink (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpUnlink path)
+  (if (== openNeedsDirFd 1)
+    (__syscall3 sysUnlinkNum atFdCwd (strCStr path) 0)
+    (__syscall1 sysUnlinkNum (strCStr path))))
+
+(:: wpMkdir (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMkdir path)
+  (if (== openNeedsDirFd 1)
+    (__syscall3 sysMkdirNum atFdCwd (strCStr path) 448)
+    (__syscall2 sysMkdirNum (strCStr path) 448)))
+
+(:: wpRmdir (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpRmdir path)
+  (if (== openNeedsDirFd 1)
+    (__syscall3 sysRmdirNum atFdCwd (strCStr path) 512)
+    (__syscall1 sysRmdirNum (strCStr path))))
+
+(:: wpMappingDrop (-> WorkerMappingState Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMappingDrop state)
+  {
+    (let mut error 0)
+    (if state.mapped
+      {
+        (set state.mapped false)
+        (let failed (__syscall2 sysMunmapNum state.address state.size))
+        (if (< failed 0)
+          (set error failed))
+      })
+    (if (>= state.fd 0)
+      {
+        (let fd state.fd)
+        (set state.fd -1)
+        (let failed (__syscall1 sysCloseNum fd))
+        (if (&& (< failed 0) (== error 0))
+          (set error failed))
+      })
+    (if state.named
+      {
+        (set state.named false)
+        (let failed (wpUnlink state.path))
+        (if (&& (< failed 0) (== error 0))
+          (set error failed))
+      })
+    (if state.directoryOwned
+      {
+        (set state.directoryOwned false)
+        (let failed (wpRmdir state.directory))
+        (if (&& (< failed 0) (== error 0))
+          (set error failed))
+      })
+    error
+  })
+
+(:: wpMappingOwner (-> String String Int WorkerMapping))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMappingOwner directory path size)
+  {
+    (let state
+      (WorkerMappingState
+        :fd -1
+        :address 0
+        :mapped false
+        :named false
+        :directoryOwned false
+        :directory directory
+        :path path
+        :size size))
+    (WorkerMapping :owner (__resource_new (lambda (unused) (wpMappingDrop state)) 0) :state state)
+  })
+
+(:: wpMappingMap (-> WorkerMapping (Result WorkerMapping Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpMappingMap mapping)
+  {
+    (let state mapping.state)
+    (let address (__syscall6 sysMmapNum 0 state.size 3 1 state.fd 0))
+    (if (< address 0)
+      {
+        (let _ (__resource_close mapping.owner))
+        (Err (mkError (- 0 address) "worker shared mapping failed"))
+      }
+      {
+        (set state.address address)
+        (set state.mapped true)
+        (Ok mapping)
+      })
+  })
+
+;; A bounded transport, unlinked before its descriptor is inherited.
+(pub :: workerMappingNew (-> Int (Result WorkerMapping Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerMappingNew size)
+  (if (|| (== usesSyscallAbi 0) (< size 96))
+    (Err (mkError 78 "worker mappings are unavailable on this target"))
+    {
+      (let clock (rawAlloc 16))
+      (__retain clock)
+      (let stamp (sysTimeoutMicros clock))
+      (__release clock)
+      (let nonce (concat (fmtInt sysPid) (concat "-" (fmtInt stamp))))
+      (let temp (sysEnv "TMPDIR"))
+      (let root
+        (if (== (strLen temp) 0)
+          "/tmp"
+          temp))
+      (let directory (concat root (concat "/axiom-worker-" nonce)))
+      (let path (concat directory "/transport"))
+      (let mapping (wpMappingOwner directory path size))
+      (let created (wpMkdir directory))
+      (if (< created 0)
+        {
+          (let _ (__resource_close mapping.owner))
+          (Err (mkError (- 0 created) "worker directory creation failed"))
+        }
+        {
+          (set mapping.state.directoryOwned true)
+          (let flags
+            (| oCloexec
+              (| (| oRdwr oCreat)
+                (if (== oCreat 64)
+                  128
+                  2048))))
+          (let fd (wpOpen path flags))
+          (if (< fd 0)
+            {
+              (let _ (__resource_close mapping.owner))
+              (Err (mkError (- 0 fd) "worker transport creation failed"))
+            }
+            {
+              (set mapping.state.fd fd)
+              (set mapping.state.named true)
+              (let removed (wpUnlink path))
+              (if (>= removed 0)
+                (set mapping.state.named false))
+              (let removedDir
+                (if (>= removed 0)
+                  (wpRmdir directory)
+                  removed))
+              (if (>= removedDir 0)
+                (set mapping.state.directoryOwned false))
+              (let resized
+                (if (< removedDir 0)
+                  removedDir
+                  (__syscall2 sysFtruncateNum fd size)))
+              (if (< resized 0)
+                {
+                  (let _ (__resource_close mapping.owner))
+                  (Err (mkError (- 0 resized) "worker transport sizing failed"))
+                }
+                (wpMappingMap mapping))
+            })
+        })
+    }))
+
+;; Adopt the one descriptor deliberately inherited by the fork child.
+(pub :: workerMappingOpen (-> String Int (Result WorkerMapping Error)))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerMappingOpen descriptor size)
+  (match (strParseInt descriptor)
+    ((None) (Err (mkError 22 "invalid worker transport descriptor")))
+    ((Some fd)
+      (if (|| (< fd 0) (< size 96))
+        (Err (mkError 22 "invalid worker transport descriptor"))
+        {
+          (let mapping (wpMappingOwner "" "" size))
+          (set mapping.state.fd fd)
+          (let length (__syscall3 sysLseekNum fd 0 2))
+          (if (!= length size)
+            {
+              (let _ (__resource_close mapping.owner))
+              (Err (mkError 22 "worker transport length mismatch"))
+            }
+            {
+              (let inherited (__syscall3 sysFcntlNum fd 2 1))
+              (if (< inherited 0)
+                {
+                  (let _ (__resource_close mapping.owner))
+                  (Err (mkError (- 0 inherited) "worker transport close-on-exec failed"))
+                }
+                (wpMappingMap mapping))
+            })
+        })
+    )))
+
+;; The endpoint's private descriptor.
+(pub :: workerMappingDescriptor (-> WorkerMapping String))
+(pub fn (workerMappingDescriptor mapping)
+  (fmtInt (workerMappingHandle mapping)))
+
+;; The native view while the mapping owner is open.
+(pub :: workerMappingAddress (-> WorkerMapping Int))
+;@axiom:effect(unsafe)
+(pub fn (workerMappingAddress mapping)
+  {
+    (let _ (__resource_get mapping.owner))
+    mapping.state.address
+  })
+
+;; The inheritable descriptor; never exposed by the public worker API.
+(pub :: workerMappingHandle (-> WorkerMapping Int))
+;@axiom:effect(unsafe)
+(pub fn (workerMappingHandle mapping)
+  {
+    (let _ (__resource_get mapping.owner))
+    mapping.state.fd
+  })
+
+;; Close this process's view and descriptor once.
+(pub :: workerMappingClose (-> WorkerMapping Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerMappingClose mapping)
+  (__resource_close mapping.owner))
+
+(struct WorkerProcessSlot
+  (mut handle : Int)
+  (status : Int))
+
+(pub struct WorkerProcesses sealed
+  (owner : Handle)
+  (slots : (Vec WorkerProcessSlot))
+  (scratch : CommandScratch))
+
+(:: wpHandle (-> Int Spawn))
+;@axiom:effect(unsafe)
+(fn (wpHandle handle)
+  (as handle Spawn))
+
+(:: wpJoin (-> WorkerProcessSlot Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(block)
+(fn (wpJoin slot)
+  {
+    (let handle slot.handle)
+    (set slot.handle 0)
+    (let word (__proc_join_nr (wpHandle handle) slot.status))
+    (let status (__load64 slot.status 0))
+    ; Exec/fcntl failure is the thunk's negative errno, with a normal exit.
+    (if (&& (== status 0) (< word 0))
+      (- 0 word)
+      status)
+  })
+
+(:: wpProcessesDrop (-> (Vec WorkerProcessSlot) Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(block)
+(fn (wpProcessesDrop slots)
+  {
+    (for i in 0..(vecLen slots)
+      {
+        (let slot (vecGet slots i))
+        (if (> slot.handle 0)
+          (if (== __resource_unwinding 1)
+            ; Recovery sweeps process handles before resetting resources.
+            (set slot.handle 0)
+            {
+              (let _ (__syscall2 sysKillNum (__spawn_pid (wpHandle slot.handle)) 9))
+              (let _ (wpJoin slot))
+              ()
+            }))
+      })
+    0
+  })
+
+;; Fixed process slots with kill-and-wait cleanup registered in advance.
+(pub :: workerProcessesNew (-> Int (Result WorkerProcesses Error)))
+;@axiom:effect(io)
+;@axiom:effect(block)
+;@axiom:effect(unsafe)
+(pub fn (workerProcessesNew width)
+  (if (|| (< width 1) (== usesSyscallAbi 0))
+    (Err (mkError 78 "executable workers are unavailable on this target"))
+    {
+      (let scratch (commandScratchNew width))
+      (let slots (vecWithCapacity width))
+      (for i in 0..width
+        (vecPush slots (WorkerProcessSlot :handle 0 :status (commandScratchBuffer scratch i 8))))
+      (Ok
+        (WorkerProcesses
+          :owner (__resource_new (lambda (unused) (wpProcessesDrop slots)) 0)
+          :slots slots
+          :scratch scratch))
+    }))
+
+(:: wpProbe (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpProbe path)
+  (if (== openNeedsDirFd 1)
+    (__syscall4 sysOpenNum atFdCwd path oRdonly 0)
+    (__syscall3 sysOpenNum path oRdonly 0)))
+
+(:: wpProbeClose (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpProbeClose fd)
+  (__syscall1 sysCloseNum fd))
+
+(:: wpExists (-> String Bool))
+;@axiom:effect(io)
+(fn (wpExists path)
+  {
+    (let fd (wpProbe (strCStr path)))
+    (if (< fd 0)
+      false
+      {
+        (let _ (wpProbeClose fd))
+        true
+      })
+  })
+
+(:: wpExec (-> Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (wpExec path argv envp fd)
+  {
+    ; F_SETFD changes only this fork child's descriptor table.
+    (let changed (__syscall3 sysFcntlNum fd 2 0))
+    (if (< changed 0)
+      changed
+      (__syscall3 workerExecveNum path argv envp))
+  })
+
+(:: wpLaunch (-> WorkerProcessSlot Int Int Int String Int))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+(fn (wpLaunch slot argv envp fd path)
+  {
+    (let rawPath (strCStr path))
+    (let probe (wpProbe rawPath))
+    (if (== probe -2)
+      probe
+      {
+        (if (>= probe 0)
+          {
+            (let _ (wpProbeClose probe))
+            ()
+          })
+        (let thunk (lambda (unused) (wpExec rawPath argv envp fd)))
+        (let handle
+          (region r
+            (__axiom_recover __axiom_arena_mark
+              (lambda (unused)
+                (as (__proc_spawn thunk 0) Int)
+              ))))
+        (if (< handle 65536)
+          (- 0 handle)
+          {
+            (set slot.handle handle)
+            (__spawn_pid (wpHandle handle))
+          })
+      })
+  })
+
+;; Fork solely to exec the explicit endpoint. The runtime registers the
+;; child before returning, so an unrecovered parent trap also retires it.
+(pub :: workerProcessesStart (-> WorkerProcesses Int String Int Int String WorkerMapping Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(spawn)
+(pub fn (workerProcessesStart pool index name argv envp path mapping)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (let fd (workerMappingHandle mapping))
+    (if (!= slot.handle 0)
+      -16
+      (processLaunchPath name path (lambda (candidate) (wpLaunch slot argv envp fd candidate))
+        wpExists))
+  })
+
+;; Observe exit without retiring the process or allowing PID reuse.
+(pub :: workerProcessesPoll (-> WorkerProcesses Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(block)
+(pub fn (workerProcessesPoll pool index scratch)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (match (sysChildExited (__spawn_pid (wpHandle slot.handle)) scratch)
+      ((Ok exited)
+        (if exited
+          1
+          0)
+      )
+      ((Err error) (- 0 (errCode error))))
+  })
+
+;; Force termination; join remains the sole owner of retirement.
+(pub :: workerProcessesKill (-> WorkerProcesses Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerProcessesKill pool index exitCode)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (__syscall2 sysKillNum (__spawn_pid (wpHandle slot.handle)) 9)
+  })
+
+;; Retire one ended slot and return its shell-style status.
+(pub :: workerProcessesJoin (-> WorkerProcesses Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(block)
+(pub fn (workerProcessesJoin pool index)
+  {
+    (let _ (__resource_get pool.owner))
+    (let slot (vecGet pool.slots index))
+    (wpJoin slot)
+  })
+
+;; Close the pool, killing and waiting for every remaining child.
+(pub :: workerProcessesClose (-> WorkerProcesses Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(pub fn (workerProcessesClose pool)
+  {
+    (let closed (__resource_close pool.owner))
+    (let scratchClosed (commandScratchClose pool.scratch))
+    (if (< closed 0)
+      closed
+      scratchClosed)
+  })
+
+;; Explicit stack budgets use the guarded POSIX runner.
+(pub :: workerBoundedStackAvailable Bool)
+(pub fn (workerBoundedStackAvailable)
+  (!= usesSyscallAbi 0))

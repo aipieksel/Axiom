@@ -11,7 +11,7 @@
 # this gate puts them under load, against the clock, against ablated
 # copies of the library, and checks the processes the pool leaves.
 #
-# THIRTEEN SECTIONS.
+# FIFTEEN SECTIONS.
 #
 #   1. Mutual exclusion. tests/litmus/sync-load.ax: four bindings,
 #      released together, add 1 to one PLAIN shared word N times each
@@ -1436,6 +1436,18 @@ else
   bad "per-spawn cancellation: controlled interleaving or ablation failed"
 fi
 
+echo "== 15. encoded executable workers =="
+if python3 "$repo_root/tests/platform/worker-pool.py" --axiom "$axc"; then
+  ok "encoded workers: byte limits, isolation, cancellation, budgets and both Windows ABIs"
+else
+  bad "encoded worker API, protocol or Windows cross-link checks failed"
+fi
+if python3 "$repo_root/tests/platform/worker-lifecycle.py" --axiom "$axc"; then
+  ok "encoded worker owners: normal, recovery and fatal cleanup with real POSIX children and Windows mapping mocks"
+else
+  bad "encoded worker lifecycle cleanup failed"
+fi
+
 echo
 if (( failed > 0 )); then
   echo "check-task: $failed failed, $checks passed"
@@ -1443,7 +1455,8 @@ if (( failed > 0 )); then
 fi
 echo "check-task: $checks checks - the mutex excludes in both lowerings, timed waits"
 echo "            keep time, every task failure is a value in its slot, no child"
-echo "            outlives the pool, memory is flat, ordered answers and float"
+echo "            outlives the pool, closure-task memory is flat, ordered answers and float"
 echo "            reductions are the sequential bits, a sleep keeps time on a clock"
 echo "            that never steps back, kept answers, task arenas and task stacks obey their budgets,"
+echo "            encoded-worker payloads and native lifetimes obey their bounds, parent allocator retention is reported,"
 echo "            and every ablation turns it red"
