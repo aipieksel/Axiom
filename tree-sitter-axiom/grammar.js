@@ -105,6 +105,9 @@ module.exports = grammar({
     // cannot see that far, to the parser, and this declares the
     // ambiguity it then has to resolve.
     [$.type_parameters, $.field_declaration],
+    // After the first name, a lowercase word can also be a field's
+    // type. Keep both parses until `)` or another parameter settles it.
+    [$.type_parameters, $._type],
     // `(data Foo (a))`: with lowercase constructor names admitted for the
     // rule-form splice (`(c)` rebuilt per element, MAC-LANG-16 v3), a
     // first group of lowercase names is a type-parameter list AND a
@@ -278,15 +281,21 @@ module.exports = grammar({
     // `'(' identifier ')'` and the generator rejects the grammar - and the
     // available workarounds, a precedence or a declared conflict, would
     // both guess at something the compiler decides by case.
-    // The parameters are spelled with `identifier` and aliased, not with
-    // the `type_variable` token, so that `(` + name is the *same* token
-    // sequence whether this turns out to be a type parameter list or a
-    // field declaration. As two distinct tokens the choice fell to the
-    // lexer, which cannot see the `:` two tokens ahead that actually
-    // decides it - so `(struct Point (x : Int))` committed to a type
-    // parameter list and failed on the `:`. One token lets the declared
-    // conflict below defer the decision to the parser, which can.
-    type_parameters: $ => seq('(', repeat(alias($.identifier, $.type_variable)), ')'),
+    // The first name uses `identifier`, as a field name does, so the
+    // parser can wait for the `:` in `(struct Point (x : Int))`.
+    // Later names also accept the `type_variable` token: a field's
+    // possible type makes the lexer choose that token for `b` in
+    // `(struct Pair (a b))`. Both parameter and field parses must be
+    // able to consume it; dynamic precedence chooses parameters when
+    // the group ends, and a third name excludes the field reading.
+    type_parameters: $ => seq(
+      '(',
+      optional(seq(
+        alias($.identifier, $.type_variable),
+        repeat(choice(alias($.identifier, $.type_variable), $.type_variable)),
+      )),
+      ')',
+    ),
 
     // A `data` declaration's parameters, which may also be the bare `a`
     // that `fmt` emits: `format_type_vars` parenthesises a list and
