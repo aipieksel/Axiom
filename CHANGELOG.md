@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- `main` may answer `(Result () Error)`: `(Ok ())` exits 0, and an
+  `Err` prints its sentence and exits 70, as the `Int` form does. A
+  `main` answering any other type than `Int`, `()` or those two is
+  AX3135. Before, a `String` or a struct reached the exit status as its
+  address. Tested by `tests/stdlib/493-main-result-unit.ax` and
+  `tests/diagnostics/1469-main-result-type.ax`.
+
 - CI runs `windows-x86_64` on a Windows runner. The compiler the
   `cross` job emits for it links there with an 8 MB stack, emits
   itself byte for byte, builds and runs the hello case, and reports

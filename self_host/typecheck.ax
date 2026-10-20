@@ -28104,6 +28104,68 @@
       })
   })
 
+; AX3135. `main` answers the process's exit status, and the wrapper
+; that calls it can turn four declared types into one: `Int`, `()`, and
+; Err's `(Result Int Error)` and `(Result () Error)`. Any other type
+; reached the wrapper as a machine word, and a reference's address
+; became the status.
+(pub :: checkMainResultType (-> Int (Vec ASTNode) Int))
+(pub fn (checkMainResultType tc decls)
+  {
+    (let d (entryMainDecl decls 0))
+    (if (nodeSame d nilNode)
+      0
+      {
+        (let ent (restrictOwnEnt tc d))
+        (if (== ent 0)
+          0
+          {
+            (let ty (tyResolve (readAstNode ent 1)))
+            (if (tcMainAnswerOk ty)
+              0
+              (emitMainResultType tc d ty))
+          })
+      })
+  })
+
+; A type `main` may answer. A type variable the declaration left open,
+; and poison another diagnostic already owns, are not this check's to
+; judge.
+(pub :: tcMainAnswerOk (-> ASTNode Bool))
+(pub fn (tcMainAnswerOk ty)
+  (if (|| (nodeSame ty nilNode) (|| (== (tyIsErr ty) 1) (== (nodeTag ty) TAG_T_VAR)))
+    true
+    (if (|| (tyIsUnit ty) (tcIsNamedCon ty "Int"))
+      true
+      (if (&& (== (nodeTag ty) TAG_T_CON) (strEq (nodeAName ty) "Err$Result"))
+        {
+          (let args (nodeBChildren ty))
+          (&& (== (vecLen args) 2)
+            (&& (|| (tyIsUnit (vecGet args 0)) (tcIsNamedCon (vecGet args 0) "Int"))
+              (tcIsNamedCon (vecGet args 1) "Err$Error")))
+        }
+        false))))
+
+; A constructor type named `name` with no arguments, after resolution.
+(pub :: tcIsNamedCon (-> ASTNode String Bool))
+(pub fn (tcIsNamedCon ty name)
+  {
+    (let r (tyResolve ty))
+    (if (nodeSame r nilNode)
+      false
+      (&& (== (nodeTag r) TAG_T_CON)
+        (&& (strEq (nodeAName r) name) (== (vecLen (nodeBChildren r)) 0))))
+  })
+
+(pub :: emitMainResultType (-> Int ASTNode ASTNode Int))
+(pub fn (emitMainResultType tc d ty)
+  (if (== (nodeSpan d) 0)
+    0
+    (emitDiag tc
+      (mkDiag SEV_ERROR "AX3135" "main-result-type" (nodeSpan d)
+        (concat (concat "`main` answers `" (tyRender ty)) "`, which is not an exit status") 0 0
+        "declare `main` as `Int`, `()`, `(Result Int Error)` or `(Result () Error)`, and print any other value before it returns"))))
+
 ; One row entry. A DEFINITE CUSTOM effect is exactly an entry that
 ; spells itself back: `c:Console` renders `Console` and `customEff`
 ; re-encodes it unchanged, where `b:IO` re-encodes to `c:IO`, the
@@ -31336,6 +31398,9 @@
         ; signatures as declared, and it is ABSENT - not silent - for a
         ; program whose signatures name no region (`rgnCheckAll`).
         (rgnCheckAll tc)
+        ; After every body: an unsigned `main`'s type is its body's,
+        ; which `tcCheckFn` writes back only once it has checked it.
+        (checkMainResultType tc allDecls)
         tc
       }
     }

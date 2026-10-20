@@ -52,12 +52,13 @@ status:
 
 ### Fallible main
 
-`main` may return `(Result Int Error)` instead. Import `Err`: `(Ok n)`
-exits with `n`; `(Err e)` prints `axiom: ` followed by `errorText e` and
-exits 70. These are `Err::Result`, `Err::Error` and Err's constructors;
+`main` may return `(Result Int Error)` or `(Result () Error)` instead.
+Import `Err`: `(Ok n)` exits with `n` and `(Ok ())` exits 0; `(Err e)`
+prints `axiom: ` followed by `errorText e` and exits 70. A `main` that
+answers any other type is AX3135, since a process exits with a number. These are `Err::Result`, `Err::Error` and Err's constructors;
 local declarations with those names keep their own meanings. Use `?` to propagate failures (below). See [error handling](stdlib.md#err-and-fallible).
 
-Tested by `tests/stdlib/490-main-result-ok.ax` and `tests/stdlib/491-main-result-err.ax`.
+Tested by `tests/stdlib/490-main-result-ok.ax` and `tests/stdlib/493-main-result-unit.ax`.
 
 ### Propagate an error with `?`
 
