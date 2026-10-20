@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- The handle table is mapped on Windows, so spawn, channel, mutex and
+  token handles exist there and `parallel` reaches its thread lowering;
+  before, every one of them was status 78. The Windows runner's skip
+  list follows its first full battery run: four cases leave it, the
+  POSIX-only ones join it with their reasons, and the remaining defects
+  are listed under the symptom the run showed.
+
 - The assurance page states the safety contract: what the compiler
   guarantees code with no `effect(unsafe)` declaration and no `extern`
   block, how each guarantee is enforced, a program it refuses and where

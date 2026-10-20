@@ -7054,7 +7054,30 @@
                     (concat (fmtInt handleTableBytes) ", i64 0, i64 0, i64 0, i64 0")))))
             (emitLine cg "  ret i64 %old")
           }
-          (emitLine cg "  br label %none"))
+          (if (|| (== t 6) (== t 8))
+            ; Windows: the same table from `VirtualAlloc`
+            ; (MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE), published by the
+            ; same compare-and-swap, the loser's released with
+            ; `VirtualFree(MEM_RELEASE)`. Bare metal keeps no table.
+            {
+              (emitLine cg
+                (concat "  %m = call i64 @VirtualAlloc(i64 0, i64 "
+                  (concat (fmtInt handleTableBytes) ", i64 12288, i64 4)")))
+              (emitLine cg "  %bad = icmp eq i64 %m, 0")
+              (emitLine cg "  br i1 %bad, label %none, label %install")
+              (emitLine cg "install:")
+              (emitHandleSalt cg t)
+              (emitLine cg "  %cx = cmpxchg ptr @__axiom_htab, i64 0, i64 %m seq_cst seq_cst")
+              (emitLine cg "  %won = extractvalue { i64, i1 } %cx, 1")
+              (emitLine cg "  br i1 %won, label %mine, label %lost")
+              (emitLine cg "mine:")
+              (emitLine cg "  ret i64 %m")
+              (emitLine cg "lost:")
+              (emitLine cg "  %old = extractvalue { i64, i1 } %cx, 0")
+              (emitLine cg "  %un = call i64 @VirtualFree(i64 %m, i64 0, i64 32768)")
+              (emitLine cg "  ret i64 %old")
+            }
+            (emitLine cg "  br label %none")))
         (emitLine cg "none:")
         (emitLine cg "  ret i64 0")
         (emitLine cg "done:")
@@ -8118,7 +8141,8 @@
 ; The thread half over kernel32, for a target with threads and no
 ; `fork`: `CreateThread` where the POSIX half names `pthread_create`,
 ; `WaitForSingleObject` and `CloseHandle` where it names
-; `pthread_join`, `VirtualFree` where it unmaps. The entry routine is
+; `pthread_join`, and the runtime's own `VirtualFree` where it unmaps.
+; The entry routine is
 ; the POSIX one's shape: a thread start routine answers a DWORD in the
 ; result register, and `__axiom_par_entry`'s null is that. No kill list
 ; here, since no process child can exist. The thread takes the image's
@@ -8132,7 +8156,6 @@
     (emitLine cg "declare dllimport i64 @WaitForSingleObject(i64, i64) #0")
     (emitLine cg "declare dllimport i64 @CloseHandle(i64) #0")
     (emitLine cg "declare dllimport i64 @GetLastError() #0")
-    (emitLine cg "declare dllimport i64 @VirtualFree(i64, i64, i64) #0")
     (emitLine cg "")
     (emitLine cg "define internal void @__axiom_arena_unmap_thread() #0 {")
     (emitLine cg "entry:")
@@ -10572,6 +10595,7 @@
         v
         {
           (vecPush v "VirtualAlloc")
+          (vecPush v "VirtualFree")
           (vecPush v "GetStdHandle")
           (vecPush v "WriteFile")
           (vecPush v "ExitProcess")
@@ -10587,7 +10611,6 @@
               (vecPush v "WaitForSingleObject")
               (vecPush v "CloseHandle")
               (vecPush v "GetLastError")
-              (vecPush v "VirtualFree")
             })
           v
         }))
@@ -10611,6 +10634,7 @@
   {
     (emitLine cg "; axiom-extern-lib kernel32")
     (emitLine cg "declare dllimport i64 @VirtualAlloc(i64, i64, i64, i64) #0")
+    (emitLine cg "declare dllimport i64 @VirtualFree(i64, i64, i64) #0")
     (emitLine cg "declare dllimport i64 @GetStdHandle(i64) #0")
     (emitLine cg "declare dllimport i64 @WriteFile(i64, i64, i64, i64, i64) #0")
     (emitLine cg "declare dllimport i64 @ExitProcess(i64) #0")
