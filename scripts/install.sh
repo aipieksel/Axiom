@@ -67,7 +67,7 @@ case "$os" in
   Linux)   os_name=linux ;;
   FreeBSD) os_name=freebsd ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    die "no Axiom release runs on Windows yet. The compiler EMITS for windows-x86_64 and windows-aarch64 (a Linux or macOS build links a .exe with --target=windows-x86_64 or --target=windows-aarch64), but hosting the compiler itself on Windows is a later phase of the Windows track: there is no Windows seed in bootstrap/ and nothing to install. README's Targets section says what is true today" ;;
+    die "Windows release binaries are not published, and this installer does not support Windows yet. See README's Targets section and docs/roadmap.md" ;;
   *) die "unsupported OS '$os'. Axiom targets darwin, linux and freebsd; build from source with scripts/bootstrap-from-seed.sh" ;;
 esac
 case "$arch" in

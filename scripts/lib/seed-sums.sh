@@ -30,10 +30,10 @@
 #   scripts/check-seed-supply-chain.sh   holds the five copies together
 #
 # `scripts/check-cross-targets.sh` keeps its own, longer list. It adds
-# `windows-x86_64` and `windows-aarch64`, which the compiler cross-emits
-# for but which have no seed, because the compiler does not run on
-# Windows. Targets the compiler emits and targets a clone can bootstrap
-# on are different facts, so one list cannot serve both.
+# `windows-x86_64` and `windows-aarch64`. Native Windows CI runs a compiler
+# built from cross-emitted IR, but neither target has a committed seed
+# or a local seed-bootstrap path. Cross-emission, native execution and
+# committed-seed bootstrap need separate target lists.
 seed_targets() {
   cat <<'TARGETS'
 darwin-aarch64

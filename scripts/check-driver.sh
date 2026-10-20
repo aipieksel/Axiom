@@ -755,8 +755,7 @@ src = open(sys.argv[1], encoding="utf-8").read()
 name, endre = sys.argv[2], sys.argv[3]
 m = re.search(r"\(pub fn \(" + re.escape(name) + r"[ )]", src)
 if not m:
-    print("NO DEFN " + name)
-    sys.exit(0)
+    sys.exit("missing definition: " + name)
 i, d, instr, esc = m.start(), 0, False, False
 buf = []
 n = len(src)
@@ -813,43 +812,61 @@ else:
     print(re.sub(r"\s+", "", body[:-1]))
 PY
 }
-drv_chain="$(argv_chain self_host/driver.ax flagArity '
-    1')"
-# See the comment above: the extractor keeps `flagArity`'s `(if`
-# wrapper, which the mirrored `valueFlag` never had. Strip exactly
-# that prefix before comparing, and nothing else.
-drv_chain="${drv_chain#(if}"
-code_chain="$(argv_chain self_host/codegen.ax valueFlag)"
-if [[ "$drv_chain" != "$code_chain" ]]; then
-  bad "valueFlag in codegen.ax differs from flagArity's arity-1 arm in driver.ax:"
-  diff <(printf '%s' "$drv_chain") <(printf '%s' "$code_chain") | sed 's/^/     /' | head -n 6
+# All source reads are rooted at the checkout: this gate is in $work.
+# Extraction errors must fail the check rather than comparing two empty
+# command substitutions, or counting an unreadable ablation as a mismatch.
+if ! drv_chain="$(argv_chain "$repo_root/self_host/driver.ax" flagArity '
+    1')" || ! code_chain="$(argv_chain "$repo_root/self_host/codegen.ax" valueFlag)"; then
+  bad "could not extract both value-flag chains"
 else
-  ok "codegen's valueFlag mirrors driver's value flags exactly"
+  # flagArity has an outer (if wrapper; valueFlag carries its condition.
+  drv_chain="${drv_chain#(if}"
+  if [[ "$drv_chain" != "$code_chain" ]]; then
+    bad "valueFlag in codegen.ax differs from flagArity's arity-1 arm in driver.ax:"
+    diff <(printf '%s' "$drv_chain") <(printf '%s' "$code_chain") | sed 's/^/     /' | head -n 6
+  else
+    ok "codegen's valueFlag mirrors driver's value flags exactly"
+  fi
 fi
-if [[ "$(argv_chain self_host/driver.ax isSubcommand)" != "$(argv_chain self_host/codegen.ax cgSubcommand)" ]]; then
+if ! drv_commands="$(argv_chain "$repo_root/self_host/driver.ax" isSubcommand)" \
+    || ! code_commands="$(argv_chain "$repo_root/self_host/codegen.ax" cgSubcommand)"; then
+  bad "could not extract both subcommand chains"
+elif [[ "$drv_commands" != "$code_commands" ]]; then
   bad "cgSubcommand in codegen.ax differs from isSubcommand in driver.ax:"
-  diff <(argv_chain self_host/driver.ax isSubcommand) <(argv_chain self_host/codegen.ax cgSubcommand) | sed 's/^/     /' | head -n 6
+  diff <(printf '%s' "$drv_commands") <(printf '%s' "$code_commands") | sed 's/^/     /' | head -n 6
 else
   ok "codegen's cgSubcommand mirrors driver's subcommands exactly"
 fi
-# The ablations: each list with one member renamed must be refused.
-# Renamed rather than deleted, so the extractor still reads the same
-# function body - deleting the whole one-line body would test the
-# range arithmetic instead of the comparison.
-cp self_host/driver.ax "$work/driver-abl.ax"
-sed 's/"--heap-ceiling"/"--no-such-flag"/' "$work/driver-abl.ax" > "$work/driver-abl2.ax"
-if [[ "$(argv_chain "$work/driver-abl2.ax" flagArity '
-    1')" != "$(argv_chain self_host/codegen.ax valueFlag)" ]]; then
+# Rename one member while keeping the definition intact. Apply the
+# same normalisation as the positive comparison to the value-flag arm.
+if cp "$repo_root/self_host/driver.ax" "$work/driver-abl.ax" \
+    && sed 's/"--heap-ceiling"/"--no-such-flag"/' "$work/driver-abl.ax" > "$work/driver-abl2.ax" \
+    && ablated_chain="$(argv_chain "$work/driver-abl2.ax" flagArity '
+    1')" \
+    && code_chain="$(argv_chain "$repo_root/self_host/codegen.ax" valueFlag)" \
+    && [[ "${ablated_chain#(if}" != "$code_chain" ]]; then
   ok "ablation: a value flag renamed on the driver's side is refused"
 else
-  bad "ablation: driver.ax with --heap-ceiling renamed still matched codegen's list"
+  bad "ablation: could not compare renamed --heap-ceiling, or it still matched codegen's list"
 fi
-cp self_host/codegen.ax "$work/codegen-abl.ax"
-sed 's/("lsp" true)/("xyzzy" true)/' "$work/codegen-abl.ax" > "$work/codegen-abl2.ax"
-if [[ "$(argv_chain self_host/driver.ax isSubcommand)" != "$(argv_chain "$work/codegen-abl2.ax" 'cgSubcommand')" ]]; then
+if cp "$repo_root/self_host/codegen.ax" "$work/codegen-abl.ax" \
+    && sed 's/("lsp" true)/("xyzzy" true)/' "$work/codegen-abl.ax" > "$work/codegen-abl2.ax" \
+    && drv_commands="$(argv_chain "$repo_root/self_host/driver.ax" isSubcommand)" \
+    && ablated_commands="$(argv_chain "$work/codegen-abl2.ax" cgSubcommand)" \
+    && [[ "$drv_commands" != "$ablated_commands" ]]; then
   ok "ablation: a subcommand renamed on codegen's side is refused"
 else
-  bad "ablation: codegen.ax with lsp renamed still matched the driver's list"
+  bad "ablation: could not compare renamed lsp, or it still matched the driver's list"
+fi
+if argv_chain "$work/no-argv-source.ax" flagArity > "$work/no-argv-source.out" 2>&1; then
+  bad "an absent argv-chain source was accepted"
+else
+  ok "an absent argv-chain source is refused"
+fi
+if argv_chain "$repo_root/self_host/driver.ax" noSuchArgvDefinition > "$work/no-argv-definition.out" 2>&1; then
+  bad "an absent argv-chain definition was accepted"
+else
+  ok "an absent argv-chain definition is refused"
 fi
 # `-o` is the short form of `--output` under `build` too. Only
 # `emit-llvm` read it, so `axiom build -o prog f.ax` consumed `prog` as
