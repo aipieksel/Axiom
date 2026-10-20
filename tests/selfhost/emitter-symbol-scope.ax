@@ -1,0 +1,273 @@
+; Symbol scratch headers are reused, truncated String shares retire, and
+; lambda descriptors and retained application snapshots stay independent.
+(import codegen)
+(import parser)
+(import lexer)
+(import core)
+(import raw)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: rc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (rc address)
+  (__load64 address -2))
+
+(:: slot (-> Int Int))
+(fn (slot index)
+  (if (== index 0)
+      6
+    (== index 1)
+      7
+    (== index 2)
+      16
+    20))
+
+(:: headers (-> Int (Vec Int)))
+(fn (headers cg)
+  {
+    (let out vecNew)
+    (for i in 0..4
+      (vecPush out (memGetWord cg (slot i))))
+    out
+  })
+
+(:: counts (-> (Vec Int) (Vec Int)))
+(fn (counts hs)
+  {
+    (let out vecNew)
+    (for i in 0..4
+      (vecPush out (rc (vecGet hs i))))
+    out
+  })
+
+(:: sameHeaders (-> Int (Vec Int) Bool))
+(fn (sameHeaders cg hs)
+  {
+    (let mut good true)
+    (for i in 0..4
+      (if (!= (memGetWord cg (slot i)) (vecGet hs i))
+        (set good false)))
+    good
+  })
+
+(:: sameCounts (-> (Vec Int) (Vec Int) Bool))
+(fn (sameCounts hs before)
+  {
+    (let mut good true)
+    (for i in 0..4
+      (if (!= (rc (vecGet hs i)) (vecGet before i))
+        (set good false)))
+    good
+  })
+
+(:: allLengths (-> Int Int Bool))
+(fn (allLengths cg n)
+  {
+    (let mut good true)
+    (for i in 0..4
+      (if (!= (memGetWord (memGetWord cg (slot i)) 0) n)
+        (set good false)))
+    good
+  })
+
+(:: regOf (-> Int String String))
+;@axiom:effect(unsafe)
+(fn (regOf cg name)
+  (as (__load64 (__load64 (__load64 cg 7) 2) (strIndexIn (memGetWordVec cg 6) name)) String))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: bindingChecks ())
+;@axiom:effect(io)
+(fn (bindingChecks)
+  {
+    (let cg newCG)
+    (let hs (headers cg))
+    (let before (counts hs))
+    (let name (strDup "growth"))
+    (let reg (strDup "%growth"))
+    (bindSym cg name reg 0 3)
+    (say 1 (sameHeaders cg hs))
+    (say 2 (sameCounts hs before))
+    (for i in 0..256
+      (bindSym cg name reg 0 3))
+    (say 3 (sameHeaders cg hs))
+    (say 4 (sameCounts hs before))
+    (say 5 (allLengths cg 257))
+    (symRestore cg 0)
+  })
+
+(:: scopeChecks ())
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (scopeChecks)
+  {
+    (let cg newCG)
+    (let root (strDup "x"))
+    (let rootReg (strDup "%root"))
+    (let inner (strDup "x"))
+    (let innerReg (strDup "%inner"))
+    (bindSym cg root rootReg 0 3)
+    (let mark (symMark cg))
+    (bindSym cg inner innerReg 1 4)
+    (say 6 (== mark 1))
+    (say 7 (strEq (as (lookupSym cg "x") String) "%inner"))
+    (say 8 (== (lookupSymFloat cg "x") 1))
+    (say 9 (== (lookupSymKind cg "x") 4))
+    (let nameBefore (rc (as inner Int)))
+    (let regBefore (rc (as innerReg Int)))
+    (symRestore cg mark)
+    (say 10 (strEq (as (lookupSym cg "x") String) "%root"))
+    (say 11 (== (lookupSymFloat cg "x") 0))
+    (say 12 (== (lookupSymKind cg "x") 3))
+    (say 13 (== (rc (as inner Int)) (- nameBefore 1)))
+    (say 14 (== (rc (as innerReg Int)) (- regBefore 1)))
+    (say 15 (allLengths cg 1))
+    (let rootBefore (rc (as root Int)))
+    (let rootRegBefore (rc (as rootReg Int)))
+    (symRestore cg 0)
+    (say 16 (allLengths cg 0))
+    (say 17 (== (rc (as root Int)) (- rootBefore 1)))
+    (say 18 (== (rc (as rootReg Int)) (- rootRegBefore 1)))
+  })
+
+(:: soakChecks ())
+;@axiom:effect(io)
+(fn (soakChecks)
+  {
+    (let cg newCG)
+    (let hs (headers cg))
+    (let beforeCounts (counts hs))
+    (let name (strDup "warm"))
+    (let reg (strDup "%warm"))
+    (bindSym cg name reg 0 3)
+    (symRestore cg 0)
+    (let nameBefore (rc (as name Int)))
+    (let regBefore (rc (as reg Int)))
+    (let before live)
+    (for i in 0..1000
+      {
+        (bindSym cg name reg 0 3)
+        (symRestore cg 0)
+      })
+    (let grew (- live before))
+    (say 19 (&& (>= grew 0) (<= grew 4096)))
+    (say 20 (sameHeaders cg hs))
+    (say 21 (sameCounts hs beforeCounts))
+    (say 22 (&& (== (rc (as name Int)) nameBefore) (== (rc (as reg Int)) regBefore)))
+  })
+
+(:: entryChecks ())
+;@axiom:effect(io)
+(fn (entryChecks)
+  {
+    (let cg newCG)
+    (let hs (headers cg))
+    (let name (strDup "stale-function"))
+    (let reg (strDup "%stale"))
+    (bindSym cg name reg 0 3)
+    (let before (rc (as name Int)))
+    (emitFnDef (mkDFnAt "fresh" vecNew (mkEInt 17) 0) cg)
+    (say 23 (sameHeaders cg hs))
+    (say 24 (&& (allLengths cg 0) (== (lookupSym cg name) 0)))
+    (say 25 (== (rc (as name Int)) (- before 1)))
+    (bindSym cg name reg 0 3)
+    (let lamBefore (rc (as name Int)))
+    (emitLamDef (mkLamDesc "empty_lam" vecNew (mkEInt 9) vecNew vecNew nilNode) cg)
+    (say 26 (sameHeaders cg hs))
+    (say 27 (== (lookupSym cg name) 0))
+    (say 28 (== (rc (as name Int)) (- lamBefore 1)))
+  })
+
+(:: nestedChecks ())
+;@axiom:effect(io)
+(fn (nestedChecks)
+  {
+    (let cg newCG)
+    (let hs (headers cg))
+    (bindSym cg (strDup "captured") "17" 0 0)
+    (let parsed (parseModule (lex "(fn (probe) (lambda (x) (lambda (y) (+ captured (+ x y)))))")))
+    (let outer (nodeCChild (vecGet (readAstNodes parsed 1) 0)))
+    (emitLambda outer cg)
+    (let d (vecPop (memGetWordVec cg 21)))
+    (let caps (memGetWordVec d 3))
+    (let flags (memGetWordVec d 4))
+    (say 29 (&& (!= (as caps Int) (memGetWord cg 6)) (!= (as flags Int) (memGetWord cg 16))))
+    (emitFnDef (mkDFnAt "between" vecNew (mkEInt 1) 0) cg)
+    (say 30 (&& (== (vecLen caps) 1) (strEq (vecGetStr caps 0) "captured")))
+    (emitLamDef d cg)
+    (say 31 (sameHeaders cg hs))
+    (let inner (vecPop (memGetWordVec cg 21)))
+    (let innerCaps (memGetWordVec inner 3))
+    (say 32
+      (&& (!= (as innerCaps Int) (memGetWord cg 6))
+        (&& (>= (strIndexIn innerCaps "x") 0) (>= (strIndexIn innerCaps "captured") 0))))
+    (say 33 (&& (== (vecLen caps) 1) (strEq (vecGetStr caps 0) "captured")))
+    (emitLamDef inner cg)
+    (say 34 (sameHeaders cg hs))
+    (say 35 (&& (>= (strIndexIn innerCaps "x") 0) (>= (strIndexIn innerCaps "captured") 0)))
+    (let ir (renderCG cg))
+    (say 36
+      (&& (== (strHasSub ir "define i64 @_lam_0(") 1) (== (strHasSub ir "define i64 @_lam_1(") 1)))
+  })
+
+(:: applicationChecks ())
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (applicationChecks)
+  {
+    (let cg newCG)
+    (vecPush (readAstNodes cg 5) (mkEInt 99))
+    (vecPush (memGetWordVec cg 45) 7)
+    ; These retained getter snapshots must survive replacement and nested
+    ; lowering with their original lengths and values, never be cleared.
+    (let args (readAstNodes cg 5))
+    (let evs (memGetWordVec cg 45))
+    (let beforeArgs (__load64 (as args Int) -2))
+    (let beforeEvs (__load64 (as evs Int) -2))
+    (emitApp (mkEApp (mkEApp (mkEVar "+") (mkEInt 2)) (mkEInt 3)) cg)
+    (say 37 (== (__load64 (as args Int) -2) (- beforeArgs 1)))
+    (say 38 (== (__load64 (as evs Int) -2) (- beforeEvs 1)))
+    (say 39 (&& (!= (as args Int) (memGetWord cg 5)) (!= (as evs Int) (memGetWord cg 45))))
+    (say 40
+      (if (== (vecLen args) 1)
+        (== (nodeA (vecGet args 0)) 99)
+        false))
+    (say 41
+      (if (== (vecLen evs) 1)
+        (== (vecGet evs 0) 7)
+        false))
+    (emitApp
+      (mkEApp (mkEApp (mkEVar "+") (mkEApp (mkEApp (mkEVar "+") (mkEInt 4)) (mkEInt 5))) (mkEInt 6))
+      cg)
+    (say 42 (&& (== (vecLen args) 1) (== (vecLen evs) 1)))
+    (let ir (renderCG cg))
+    (say 43 (&& (== (strHasSub ir " = add i64 2, 3") 1) (== (strHasSub ir " = add i64 4, 5") 1)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    bindingChecks
+    scopeChecks
+    soakChecks
+    entryChecks
+    nestedChecks
+    applicationChecks
+    0
+  })

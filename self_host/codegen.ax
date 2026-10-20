@@ -18981,10 +18981,10 @@
     {
       (let paramStr (emitParams params cg 0))
       (let _ (memSetWord cg 1 0))
-      (let _2 (memSetWord cg 6 vecNew))
-      (let _3 (memSetWord cg 7 vecNew))
-      (let _4 (memSetWord cg 16 vecNew))
-      (let _4b (memSetWord cg 20 vecNew))
+      (let _2 (vecClear (memGetWordVec cg 6)))
+      (let _3 (vecClear (memGetWordVec cg 7)))
+      (let _4 (vecClear (memGetWordVec cg 16)))
+      (let _4b (vecClear (memGetWordVec cg 20)))
       (let _5 (memSetWord cg 17 params))
       (let _5r (memSetWord cg 41 (borrowedTailLeaves cg name body params)))
       (let _5p (memSetWord cg 42 vecNew))
@@ -20743,10 +20743,10 @@
     {
       (let paramStr (emitParams lparams cg 0))
       (let _ (memSetWord cg 1 0))
-      (let _2 (memSetWord cg 6 vecNew))
-      (let _3 (memSetWord cg 7 vecNew))
-      (let _4 (memSetWord cg 16 vecNew))
-      (let _4b (memSetWord cg 20 vecNew))
+      (let _2 (vecClear (memGetWordVec cg 6)))
+      (let _3 (vecClear (memGetWordVec cg 7)))
+      (let _4 (vecClear (memGetWordVec cg 16)))
+      (let _4b (vecClear (memGetWordVec cg 20)))
       (let _5 (memSetWord cg 17 lparams))
       (let _6 (memSetWord cg 18 0))
       (let _6b (pairSetSlot cg 6 0))
@@ -21013,10 +21013,11 @@
 (pub :: bindSym (-> Int String String Int Int Int))
 (pub fn (bindSym cg name reg isFloat kind)
   {
-    (memSetWord cg 6 (vecPush (memGetWordVec cg 6) name))
-    (memSetWord cg 7 (vecPush (memGetWordVec cg 7) reg))
-    (memSetWord cg 16 (vecPush (memGetWordVec cg 16) isFloat))
-    (memSetWord cg 20 (vecPush (memGetWordVec cg 20) kind))
+    ; These scratch headers remain stable across growth and scopes.
+    (vecPush (memGetWordVec cg 6) name)
+    (vecPush (memGetWordVec cg 7) reg)
+    (vecPush (memGetWordVec cg 16) isFloat)
+    (vecPush (memGetWordVec cg 20) kind)
     cg
   })
 
@@ -21032,6 +21033,17 @@
 (pub :: symRestore (-> Int Int Int))
 (pub fn (symRestore cg mark)
   {
+    (let names (memGetWordVec cg 6))
+    (let regs (memGetWordVec cg 7))
+    (let mut i (vecLen names))
+    ; Replacing counted slots gives their shares back before the raw
+    ; length change hides them. Static empty strings need no storage.
+    (while (> i mark)
+      {
+        (vecSet names (- i 1) "")
+        (vecSet regs (- i 1) "")
+        (set i (- i 1))
+      })
     (memSetWord (memGetWord cg 6) 0 mark)
     (memSetWord (memGetWord cg 7) 0 mark)
     (memSetWord (memGetWord cg 16) 0 mark)
@@ -23089,10 +23101,17 @@
 ; ------------------------------------------------------------------
 (pub :: emitApp (-> ASTNode Int Int))
 ;@axiom:effect(io)
+;@axiom:effect(unsafe)
 (pub fn (emitApp node cg)
   {
+    (let oldArgs (memGetWord cg 5))
+    (let oldEvs (memGetWord cg 45))
+    ; Nested calls need fresh accumulators. Publish them before retiring
+    ; only the context's old shares; retained getter snapshots stay live.
     (memSetWord cg 5 nodesNew)
     (memSetWord cg 45 vecNew)
+    (__release oldArgs)
+    (__release oldEvs)
     (walkAppChain node cg node)
   })
 
