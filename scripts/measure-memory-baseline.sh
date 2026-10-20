@@ -122,7 +122,22 @@ emit_probe() {
             (set nn (- nn 1))
           }})
       (memGetWordVec cell 0)
-    }})' ;;
+    }})
+
+; The managed arm parks the live board in a raw cell across the reset,
+; which is the one thing the typed layer cannot do for it. The raw
+; layer is internal to the library, so the probe carries its own three
+; words of it, each a trusted encapsulation.
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc bytes) (__alloc bytes))
+(:: memSetWord (-> Int Int a Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord addr index value)
+  { (__retainref value) (__store64 addr index (as value Int)) addr })
+(:: memGetWordVec (-> Int Int (Vec a)))
+;@axiom:effect(unsafe)
+(fn (memGetWordVec addr index) (as (__load64 addr index) (Vec a)))' ;;
     ablated) advance='(:: advance (-> (Vec Int) Int (Vec Int)))
 ;@axiom:effect(unsafe)
 (fn (advance b n)

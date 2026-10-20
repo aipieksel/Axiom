@@ -84,8 +84,22 @@ emit_probe() {
   local probe="$1" variant="$2" n="$3" out="$4"
   case "$probe" in
     vec|big)
-      local push='vecPush' elems=32
-      [[ "$variant" == leaf ]] && push='vecPushStr'
+      local push='vecPush' elems=32 helper=''
+      # The leaf variant pushes each string AS A WORD, which is what
+      # keeps the buffer a leaf. That accessor is internal to the
+      # library now (`Internal.RawVec`), so the probe carries its own
+      # copy: a trusted encapsulation of the one `as` it needs.
+      if [[ "$variant" == leaf ]]; then
+        push='vecPushStr'
+        helper='
+(:: vecPushStr (-> (Vec a) String (Vec a)))
+;@axiom:effect(unsafe)
+(fn (vecPushStr v s)
+  {
+    (__retainref s)
+    (vecPush v (as s a))
+  })'
+      fi
       [[ "$probe" == big ]] && elems=16384
       cat > "$out" <<AX
 ; $n iterations, each building a $elems-element Vec of freshly duplicated
@@ -117,6 +131,7 @@ emit_probe() {
     (println (loop $n 0))
     0
   })
+$helper
 AX
       ;;
     pop)

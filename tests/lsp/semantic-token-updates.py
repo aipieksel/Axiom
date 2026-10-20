@@ -335,7 +335,10 @@ def run(compiler):
 
         # Multi-line comments and strings split at CR, LF and CRLF. Their
         # UTF-16 lengths never cross an editor line boundary.
-        multiline = '#| one\r\ntwo 😀\rthree |#\n(:: main String)\n(fn (main) "a\r\nb😀\rc")\n'
+        # The literal lives in a function of its own: `main` answers an
+        # exit status (AX3135), and a `String` is not one.
+        multiline = ('#| one\r\ntwo 😀\rthree |#\n(:: main Int)\n(fn (main) 0)\n'
+                     '(:: s String)\n(fn (s) "a\r\nb😀\rc")\n')
         change(multiline, 100)
         response = server.request("textDocument/semanticTokens/full/delta",
                                   {**document(uri), "previousResultId": current})
@@ -350,7 +353,7 @@ def run(compiler):
         strings = [(line, column, length) for line, column, length, kind, _ in decoded
                    if kind == types["string"]]
         assert comments == [(0, 0, 6), (1, 0, 6), (2, 0, 8)], comments
-        assert strings == [(4, 11, 2), (5, 0, 3), (6, 0, 2)], strings
+        assert strings == [(6, 8, 2), (7, 0, 3), (8, 0, 2)], strings
         checks += 1
         server.close()
         assert all(not [d for d in p["diagnostics"] if d["severity"] < 4]

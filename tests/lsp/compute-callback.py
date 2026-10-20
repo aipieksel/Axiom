@@ -18,7 +18,13 @@ def run(compiler):
     os.environ.setdefault("AXIOM_STDLIB", str(Path(__file__).resolve().parents[2] / "stdlib"))
     with tempfile.TemporaryDirectory(prefix="axiom-compute-callback-") as directory:
         path = Path(directory) / "Compute.ax"
-        source = """(import Mem)
+        # `memGetWord` is the program's own trusted reader, as the raw
+        # layer is internal to the library: the callback reaches
+        # `__load64` through a function that vouches for it, which is
+        # what the compute check has to see past.
+        source = """(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord addr index) (__load64 addr index))
 (:: applyKernel (-> (-> Int Int) Int Int))
 ;@axiom:compute(worker)
 (fn (applyKernel worker value) (worker value))
