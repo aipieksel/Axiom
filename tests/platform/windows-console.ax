@@ -36,6 +36,17 @@
       1)
   })
 
+(:: errorSay (-> String Error Int))
+;@axiom:effect(io)
+(fn (errorSay label e)
+  {
+    (let code e.code)
+    (let context e.context)
+    (let message e.message)
+    (eprintln "{label}: error {code}; message={message}; context={context}")
+    (say false label)
+  })
+
 ; With STARTF_USESTDHANDLES, AllocConsole can keep the CI runner's
 ; redirected stdin. Own a read/write CONIN$ handle for injection and
 ; bind the public stdin File to it before any reader starts. Process
@@ -258,8 +269,8 @@
     (set bad (+ bad (say (== (waitCount p 30) 0) "noise and modifiers produce no stream bytes")))
     (set bad (+ bad (say (isOk (termRestore guard)) "a mode change cancels a pending read")))
     (match (termRaw f false)
-      ((Err _)
-        (set bad (+ bad (say false "raw input restarts after mode cancellation")))
+      ((Err e)
+        (set bad (+ bad (errorSay "raw input restarts after mode cancellation" e)))
       )
       ((Ok next)
         {
@@ -289,8 +300,8 @@
                (say (&& (== (waitCount p 0) 1) (readIs f 16 "bc\r\n"))
                  "the cooked remainder is immediately ready and preserved")))
     (match (termRaw f false)
-      ((Err _)
-        (set bad (+ bad (say false "raw mode is enabled")))
+      ((Err e)
+        (set bad (+ bad (errorSay "raw mode is enabled" e)))
       )
       ((Ok guard)
         {
@@ -311,7 +322,7 @@
       ((Err _) (say false "a stdin poller is created"))
       ((Ok p)
         (match (termRaw first false)
-          ((Err _) (say false "stdin enters raw mode"))
+          ((Err e) (errorSay "stdin enters raw mode" e))
           ((Ok guard)
             {
               (let mut bad 0)
@@ -373,7 +384,7 @@
     ((Err _) (say false "an owned input File opens for its guard"))
     ((Ok f)
       (match (termRaw f false)
-        ((Err _) (say false "a guard is created before closing its File"))
+        ((Err e) (errorSay "a guard is created before closing its File" e))
         ((Ok guard)
           {
             (let mut bad 0)
@@ -415,8 +426,8 @@
     (let before (inputMode h))
     (let mut bad (guardAfterClose h before))
     (match guardAfterFileScope
-      ((Err _)
-        (set bad (+ bad (say false "a guard outlives its input File scope")))
+      ((Err e)
+        (set bad (+ bad (errorSay "a guard outlives its input File scope" e)))
       )
       ((Ok guard)
         {

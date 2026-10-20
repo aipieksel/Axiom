@@ -95,6 +95,25 @@ link_machine()    { case "$1" in windows-x86_64) echo x64 ;; windows-aarch64) ec
 pe_machine()      { case "$1" in windows-x86_64) echo IMAGE_FILE_MACHINE_AMD64 ;; windows-aarch64) echo IMAGE_FILE_MACHINE_ARM64 ;; esac; }
 triple_of()       { case "$1" in windows-x86_64) echo x86_64-pc-windows-msvc ;; windows-aarch64) echo aarch64-pc-windows-msvc ;; esac; }
 
+# Keep the actual result ahead of a bounded diff: a long omitted block
+# in a normal diff can otherwise hide every failed assertion and errno.
+console_failure() {  # <probe> <target> <exit> <expected> <stdout> <stderr>
+  local probe="$1" target="$2" rc="$3" expected="$4" actual="$5" errors="$6"
+  local saved="$dir/failures/$target/$probe"
+  mkdir -p "$saved"
+  cp "$expected" "$saved/expected.stdout"
+  cp "$actual" "$saved/actual.stdout"
+  cp "$errors" "$saved/actual.stderr"
+  printf '%s\n' "$rc" > "$saved/exit-status.txt"
+  echo "    actual stdout:"
+  sed 's/^/    /' "$actual"
+  echo "    actual stderr:"
+  sed 's/^/    /' "$errors"
+  echo "    expected/actual diff (first 80 lines):"
+  { diff -u "$expected" "$actual" || true; } | sed -n '1,80s/^/    /p'
+  echo "    failure logs: $saved"
+}
+
 # The tree the auditor reads, written the same way on every host: a
 # file with CRLF line ends that must not be translated, an empty file,
 # every byte value, a UTF-8 name, and two names whose byte order is not
@@ -421,7 +440,7 @@ AX
               echo "ok   $probe.exe [$t] EXECUTED: exit 0 and the expected console events"
             else
               echo "FAIL $probe.exe [$t]: exit $rc or console events differ from the expected result"
-              { diff "$src/$probe.out" "$w/$probe.stdout" || true; cat "$w/$probe.stderr"; } | head -10 | sed 's/^/    /'
+              console_failure "$probe" "$t" "$rc" "$src/$probe.out" "$w/$probe.stdout" "$w/$probe.stderr"
               status=1
             fi
           else
