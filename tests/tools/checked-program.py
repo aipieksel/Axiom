@@ -1,18 +1,73 @@
 #!/usr/bin/env python3
 """Exercise the final-check handoff through the CLI's production path."""
+import argparse
 from pathlib import Path
 import os
 import shutil
 import re
 import subprocess
-import sys
 import tempfile
 
 
+def handoff_lifetime(compiler, root, env, work):
+    """Observe snapshot retirement through the real sealed handoff API."""
+    source = (root / 'self_host/checked.ax').read_text()
+    getter = '''
+(pub :: checkedSnapshotCount (-> CheckedProgram Int))
+(pub fn (checkedSnapshotCount program) (vecLen program.syntax))
+'''
+    expected = ''.join(f'{i} true\n' for i in range(1, 12))
+
+    def probe(name, checked, level):
+        directory = work / name
+        directory.mkdir(exist_ok=True)
+        (directory / 'checked.ax').write_text(checked + getter)
+        environment = dict(env, AXIOM_PATH=os.pathsep.join(
+            (str(directory), str(root / 'self_host'), str(root / 'tests/selfhost'))))
+        output = directory / ('lifetime-O' + level)
+        built = subprocess.run(
+            [compiler, '--diagnostic-format=ai', 'build',
+             str(root / 'tests/tools/checked-handoff-lifetime.ax'),
+             '--opt', level, '--alloc-poison', '-o', str(output)],
+            cwd=work, env=environment, capture_output=True, text=True, timeout=180)
+        (directory / ('build-O' + level + '.log')).write_text(built.stdout + built.stderr)
+        assert built.returncode == 0, (name, level, built.stderr)
+        result = subprocess.run([str(output)], cwd=work, capture_output=True,
+                                text=True, timeout=30)
+        (directory / ('run-O' + level + '.out')).write_text(result.stdout)
+        (directory / ('run-O' + level + '.err')).write_text(result.stderr)
+        assert result.returncode == 0, (name, level, result.returncode, result.stderr)
+        return result.stdout
+
+    for level in ('0', '2'):
+        actual = probe('positive', source, level)
+        assert actual == expected, (level, 'handoff lifetime', actual)
+    seam = '    (vecClear program.syntax)\n'
+    assert source.count(seam) == 1, 'snapshot retirement seam changed'
+    actual = probe('no-clear-control', source.replace(seam, ''), '0')
+    failed = [line for line in actual.splitlines() if line.endswith(' false')]
+    assert failed == ['4 false'], ('snapshot retirement ablation', actual)
+    print('ok   checked handoff lifetime: 11 cases at O0/O2, no-clear ablation rejected')
+
+
 def main():
-    compiler = str(Path(sys.argv[1]).resolve())
+    args = argparse.ArgumentParser(description=__doc__)
+    args.add_argument('compiler')
+    args.add_argument('--lifetime-only', action='store_true')
+    args.add_argument('--work', type=Path, help='retain focused lifetime probe artifacts here')
+    options = args.parse_args()
+    compiler = str(Path(options.compiler).resolve())
     root = Path(__file__).resolve().parents[2]
     env = dict(os.environ, AXIOM_STDLIB=str(root / 'stdlib'))
+    if options.lifetime_only:
+        if options.work is not None:
+            work = options.work.resolve()
+            work.mkdir(parents=True, exist_ok=True)
+            handoff_lifetime(compiler, root, env, work)
+        else:
+            with tempfile.TemporaryDirectory(prefix='axiom-checked-lifetime-') as temporary:
+                handoff_lifetime(compiler, root, env, Path(temporary))
+        return
     cases = {
         'parse': ('(:: main Int) (fn (main)', 'AX2001'),
         'binding': ('(:: main Int) (fn (main) missing)', 'AX3001'),
@@ -28,6 +83,7 @@ def main():
     checks = 0
     with tempfile.TemporaryDirectory(prefix='axiom-checked-') as work:
         work = Path(work)
+        handoff_lifetime(compiler, root, env, work)
         for name, (source, code) in cases.items():
             path = work / (name + '.ax')
             path.write_text(source)

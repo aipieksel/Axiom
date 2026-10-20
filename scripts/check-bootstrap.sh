@@ -498,6 +498,11 @@ if (( corpus_failed > 0 )); then
 fi
 echo "ok   $swept conformance cases, built and run by stage3, answer what their source says ($distinct distinct statuses)"
 
+# Exercise the emitter's exact line-buffer ledger, including byte snapshots
+# and executable ownership ablations, with the compiler just reproduced.
+python3 "$repo_root/tests/selfhost/emitter-line-buffer.py" --axiom "$work/d3/axc" \
+  || fail "emitter line-buffer ownership regression"
+
 # And a program that PRINTS, because every case above communicates
 # through its exit status alone and a compiler can get those right with
 # its string handling entirely broken.

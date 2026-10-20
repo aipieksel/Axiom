@@ -1,0 +1,133 @@
+; The emitter snapshots mutable input, keeps its stable Vec header, and
+; retires the displaced CG slot separately from a getter's temporary share.
+(import codegen)
+(import raw)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+; Counted payloads put their reference count two words before the data.
+; Every address inspected here is a live, explicitly held allocation.
+(:: countOf (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (countOf address)
+  (__load64 address -2))
+
+(:: overwrite (-> String Int Int))
+;@axiom:effect(unsafe)
+(fn (overwrite text byte)
+  (__store8 (strData text) 0 byte))
+
+(:: scopedLine (-> Int Int))
+(fn (scopedLine cg)
+  {
+    (let text (concat "scope-" (fmtInt 73)))
+    (emitLine cg text)
+  })
+
+(:: getterCount (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (getterCount cg)
+  {
+    (let lines (memGetWordVec cg 0))
+    (__load64 (as lines Int) -2)
+  })
+
+(:: lineAt (-> Int Int String))
+;@axiom:effect(unsafe)
+(fn (lineAt cg index)
+  (as (__load64 (__load64 (__load64 cg 0) 2) index) String))
+
+(:: snapshotChecks ())
+;@axiom:effect(io)
+(fn (snapshotChecks)
+  {
+    (let cg newCG)
+    (let header (memGetWord cg 0))
+    (let initialCount (countOf header))
+    (let source (strDup "alpha"))
+    (emitLine cg source)
+    (overwrite source 88)
+    (say 1 (strEq (lineAt cg 0) "alpha"))
+    (say 2 (== (countOf header) initialCount))
+    (for i in 0..128
+      (emitLine cg (concat "grow-" (fmtInt i))))
+    (scopedLine cg)
+    (say 3 (== (memGetWord cg 0) header))
+    (say 4 (== (countOf header) initialCount))
+    (say 5 (strEq (lineAt cg 0) "alpha"))
+    (say 6 (strEq (lineAt cg 129) "scope-73"))
+    (let beforeGetter (countOf header))
+    (say 7 (== (getterCount cg) (+ beforeGetter 1)))
+    (say 8 (== (countOf header) beforeGetter))
+    (say 9 (== (strLen (renderCG cg)) (joinSize (memGetWordVec cg 0))))
+  })
+
+(:: allocaChecks ())
+;@axiom:effect(io)
+(fn (allocaChecks)
+  {
+    (let cg newCG)
+    (emitLine cg "define i64 @sample() #0 {")
+    (openAllocaMark cg)
+    (emitAlloca cg "%.a")
+    (emitAlloca cg "%.b")
+    (emitLine cg "  ret i64 0")
+    (say 10 (== (memGetWord (memGetWord cg 0) 3) 1))
+    (closeAllocaMark cg)
+    (say 11 (== (memGetWord (memGetWord cg 0) 3) 1))
+    (emitLine cg "}")
+    (say 12
+      (strEq (renderCG cg)
+        "define i64 @sample() #0 {\n  %.a = alloca i64\n  %.b = alloca i64\n  ret i64 0\n}\n"))
+  })
+
+(:: pruningChecks ())
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (pruningChecks)
+  {
+    (let cg newCG)
+    (emitLine cg "define i64 @main() #0 {")
+    (emitLine cg "  ret i64 17")
+    (emitLine cg "}")
+    (emitLine cg "define internal i64 @dead() #0 {")
+    (emitLine cg "  ret i64 99")
+    (emitLine cg "}")
+    (let old (memGetWord cg 0))
+    ; Keep one explicit share so observing the old header after replacement
+    ; is valid even when the CG slot and temporary getter both retire.
+    (__retain old)
+    (let removed (lineAt cg 4))
+    (let oldBefore (countOf old))
+    (pruneDeadDefs cg)
+    (say 13 (!= (memGetWord cg 0) old))
+    (say 14 (== (countOf old) (- oldBefore 1)))
+    ; Pruning may hold additional String views; measure only the share
+    ; released when the explicitly held old vector is finally destroyed.
+    (let removedBefore (countOf (as removed Int)))
+    (__release old)
+    (say 15 (== (countOf (as removed Int)) (- removedBefore 1)))
+    (say 16 (strEq removed "  ret i64 99"))
+    (say 17 (strEq (renderCG cg) "define i64 @main() #0 {\n  ret i64 17\n}\n"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    snapshotChecks
+    allocaChecks
+    pruningChecks
+    0
+  })

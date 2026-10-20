@@ -1,0 +1,49 @@
+; The runner appends a private test-only snapshot count accessor to the
+; actual checked module. The production handoff API remains unchanged.
+(import core)
+(import parser)
+(import checked)
+(import CheckedNested)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: emitStatus (-> CheckedProgram Int))
+;@axiom:effect(io)
+(fn (emitStatus program)
+  (__axiom_recover __axiom_arena_mark
+    (lambda (ignored) (strLen (emitCheckedProgram program vecNew vecNew 0 false)))))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source "(:: main Int) (fn (main) { 40 42 })")
+    (let example (nestedExample source))
+    (say 1 (> (checkedSnapshotCount example.program) 0))
+    (say 2 (checkedSyntaxUnchanged example.program))
+    (let ir (emitCheckedProgram example.program vecNew vecNew 0 false))
+    (say 3 (> (strLen ir) 0))
+    (say 4 (== (checkedSnapshotCount example.program) 0))
+    (say 5 (! (checkedSyntaxUnchanged example.program)))
+    (say 6 (== (emitStatus example.program) 80))
+    (let stale (nestedExample source))
+    (let snapshots (checkedSnapshotCount stale.program))
+    (say 7 (> snapshots 0))
+    (writeNodeWord (vecGet (nodeAChildren (nestedBody stale)) 1) 1 43)
+    (say 8 (! (checkedSyntaxUnchanged stale.program)))
+    (say 9 (== (emitStatus stale.program) 80))
+    (say 10 (== (checkedSnapshotCount stale.program) snapshots))
+    (say 11 (> (checkedSnapshotCount stale.program) 0))
+    0
+  })

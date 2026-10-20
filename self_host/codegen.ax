@@ -4427,11 +4427,12 @@
 (pub :: emitLine (-> Int String Int))
 (pub fn (emitLine cg line)
   {
-    (let updated (vecPush (memGetWordVec cg 0) (strDup line)))
-    {
-      (memSetWord cg 0 updated)
-      cg
-    }
+    ; vecPush keeps its header even when its data grows. The context
+    ; already owns that header; storing it again would retain another
+    ; share on every line. Keep the byte copy: callers may reuse their
+    ; mutable input after this snapshot has been appended.
+    (vecPush (memGetWordVec cg 0) (strDup line))
+    cg
   })
 
 (pub :: allocReg (-> Int Int))
@@ -15869,6 +15870,7 @@
 
 (pub :: pruneDeadDefs (-> Int Int))
 ;@axiom:effect(io)
+;@axiom:effect(unsafe)
 (pub fn (pruneDeadDefs cg)
   (if cgStaticlib
     cg
@@ -15928,7 +15930,12 @@
           ; bare function reference synthesises - all one token to this
           ; walk, which is the point of reading the IR.
           (pruneWalk ctx lines defStart defEnd)
+          ; Retire the context's displaced share, independently of the
+          ; retained getter share in `lines`. Survivors already have a
+          ; share in the rebuilt buffer before the old buffer can die.
+          (let oldLines (memGetWord cg 0))
           (memSetWord cg 0 (pruneRebuild lines defOf live))
+          (__release oldLines)
           cg
         }
       }
@@ -30902,8 +30909,8 @@
         (let hoisted (memGetWordVec cg 44))
         {
           (if (> (vecLen hoisted) 0)
-            (vecSet (memGetWordVec cg 0) mark (as (joinAllocas hoisted) Int))
-            (as 0 (Vec Int)))
+            (vecSet (memGetWordVec cg 0) mark (joinAllocas hoisted))
+            (as 0 (Vec String)))
           (memSetWord cg 43 (- 0 1))
           (memSetWord cg 44 vecNew)
           cg

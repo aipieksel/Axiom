@@ -159,15 +159,20 @@
             (set found true))))
       (if found
         false
-        {
-          (let values
-            (if (vecIsNull bucket)
-              vecNew
-              bucket))
-          (vecPush values node)
-          (mapInsert seen key values)
-          true
-        })
+        (if (vecIsNull bucket)
+          {
+            ; Most address hashes name one node. Keep the new bucket's
+            ; birth share local; the map takes its own share.
+            (let values (vecWithCapacity 1))
+            (vecPush values node)
+            (mapInsert seen key values)
+            true
+          }
+          {
+            ; Growth keeps the header already owned by the map.
+            (vecPush bucket node)
+            true
+          }))
     }))
 
 (:: checkedSnapshotNodes (-> Nodes Nodes (Vec CheckedSyntax) Int))
@@ -284,20 +289,23 @@
       }
     )))
 
-;; Whether snapshotted syntax nodes, child lists and name lists still
-;; have their accepted contents. Packed auxiliary metadata is not covered.
+;; Whether an available handoff's snapshotted syntax nodes, child lists
+;; and name lists still have their accepted contents. Consumed handoffs
+;; answer false. Packed auxiliary metadata is not covered.
 (pub :: checkedSyntaxUnchanged (-> CheckedProgram Bool))
 (pub fn (checkedSyntaxUnchanged program)
-  {
-    (let mut same true)
-    (let mut i 0)
-    (while (&& same (< i (vecLen program.syntax)))
-      {
-        (set same (checkedSyntaxSame (vecGet program.syntax i)))
-        (set i (+ i 1))
-      })
-    same
-  })
+  (if (! program.available)
+    false
+    {
+      (let mut same true)
+      (let mut i 0)
+      (while (&& same (< i (vecLen program.syntax)))
+        {
+          (set same (checkedSyntaxSame (vecGet program.syntax i)))
+          (set i (+ i 1))
+        })
+      same
+    }))
 
 (pub :: checkedProgramOf (-> CheckedResult CheckedProgram))
 ;@axiom:pre((isSome result.program))
@@ -329,6 +337,11 @@
 (pub fn (emitCheckedProgram program bares fulls target obscure)
   {
     (set program.available false)
+    ; All entry guards have accepted this one-shot handoff. Its exact
+    ; structural copies no longer serve a check; retire them before the
+    ; emitter builds its line buffer, while keeping accepted roots and
+    ; checked function facts alive.
+    (vecClear program.syntax)
     (emitResolvedMode program.declarations (checkedFunctionTypes program.functions) bares fulls
       target obscure)
   })
