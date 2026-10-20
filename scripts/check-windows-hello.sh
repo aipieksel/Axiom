@@ -497,9 +497,10 @@ AX
       #    `.err` exists, its stderr, each up to the backtrace marker,
       #    with its `.in` on fd 0 or nothing. `tests/stdlib/windows-skip.txt`
       #    names the cases this target cannot run yet, each with its
-      #    reason: a listed case that fails does not fail the leg, a
-      #    listed case that passes is reported so the list can shrink,
-      #    and an unlisted case that fails fails the leg. A floor on the
+      #    reason: a listed case that fails does not fail the leg and
+      #    is reported with the first lines of its difference, a listed
+      #    case that passes is reported so the list can shrink, and an
+      #    unlisted case that fails fails the leg. A floor on the
       #    count that ran keeps an empty battery from passing.
       skip_list="$repo_root/tests/stdlib/windows-skip.txt"
       [[ -f "$skip_list" ]] || { echo "FAIL $skip_list is missing"; exit 1; }
@@ -532,7 +533,15 @@ AX
         fi
         if [[ "$listed" -eq 1 ]]; then
           skipped=$((skipped + 1))
-          [[ "$good" -eq 1 ]] && passing_skips="$passing_skips $name"
+          if [[ "$good" -eq 1 ]]; then
+            passing_skips="$passing_skips $name"
+          else
+            # a listed failure does not fail the leg, and says what it
+            # did, so the reason beside its name can be checked
+            echo "note $name is listed and still fails on Windows: build exit $brc, run exit $rrc (want $want_exit)"
+            { diff "$repo_root/tests/stdlib/$name.out" "$w/bat-$name.stdout" 2>/dev/null || true; } | head -4 | sed 's/^/    /'
+            { cat "$w/bat-$name.build.log" "$w/bat-$name.stderr" 2>/dev/null || true; } | head -3 | sed 's/^/    /'
+          fi
         elif [[ "$good" -eq 1 ]]; then
           ran=$((ran + 1))
         else
