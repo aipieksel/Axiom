@@ -745,8 +745,7 @@ trade-off: safe code can still crash by passing one of them a bad
 address or handle, because an `Int` carries no proof of what it points
 at. State a condition the arguments can show as a `;@axiom:pre(...)`
 contract, which is checked on every call and traps 80, and describe
-the rest in a comment. A `;@axiom:precondition(...)` tag is refused as
-`AX3095`.
+the rest in a comment.
 
 `vecGetStr` and `vecGetVec` go further: they read any slot of any
 vector as a reference, so safe code can forge a `String` or a `Vec` out
@@ -769,7 +768,7 @@ address. Those are review obligations, and the trusted set is the list
 to review ([assurance.md](assurance.md#using-axiom-in-a-safety-related-system)).
 
 Tested by `tests/diagnostics/1040-forging-cast.ax` to
-`tests/diagnostics/1043-precondition-removed.ax`,
+`tests/diagnostics/1042-no-unsafe-indirect.ax`,
 `tests/diagnostics/1260-spawn-forging-cast.ax` and
 `tests/stdlib/707-library-pre.ax`. The accepted wrapper in
 `tests/selfhost/1010-trusted-wrapper.ax` and the ordinary workload in
@@ -790,9 +789,8 @@ way **MUST** be private to its module, so that only the module builds
 one or reads or sets a field. Another module can still name the type
 in a signature.
 
-*Withdrawn:* the precondition tag was removed, so a function that
-hands the kernel a caller's address is a trusted encapsulation like any
-other (`MM-EXEC-9d`). `sysRandomBytes`, `sysUnmapShared` and
+*Withdrawn:* a function that hands the kernel a caller's address is a
+trusted encapsulation like any other (`MM-EXEC-9d`). `sysRandomBytes`, `sysUnmapShared` and
 `sysWaitWord` take the address as an `Int`, `restrict(no-unsafe)`
 admits a call to each, and a bad address crashes the program. No
 public call takes a descriptor (`MM-EXEC-17a`). The typed calls' range
@@ -2654,7 +2652,6 @@ from it:
 
 ```scheme
 ; Word `i` at `a` must hold a live `String`.
-;@axiom:raw
 (:: getStr (-> Int Int String))
 ;@axiom:effect(unsafe)
 (fn (getStr a i)

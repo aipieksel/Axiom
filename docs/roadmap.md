@@ -110,7 +110,6 @@ integrator would still need.
 | Numeric conversions are explicit; mixed numeric operands and incompatible ADT parameters are refused | Done | `tests/diagnostics/1117-mixed-numeric-operands.ax`, `tests/diagnostics/1410-explicit-numeric-boundaries.ax` |
 | Explicit numeric conversions document rounding and range; exact conversions refuse value loss | Done | `tests/stdlib/947-exact-numeric-conversions.ax` |
 | Legacy CLI and syntax removed: `axiom FILE`, expression `fn`, keyword struct construction, format aliases | Done | `compat/BREAKING` |
-| The precondition tag removed; contracts are `pre` and `post` | Done | `AX3095` |
 | Macro hygiene has one implementation | Done | `MAC-HYG-10` |
 | Literal identifiers in macro patterns compare by binding, not spelling | Done | `MAC-HYG-9`, `tests/selfhost/1025-macro-literal-scopes.ax` |
 | Repeated macro pattern binders constrain equal syntax at one repetition depth | Done | `MAC-LANG-15`, `tests/selfhost/1026-macro-repeated-binders.ax` |

@@ -16,6 +16,14 @@ its changelog too.
 
 ## Unreleased
 
+- Remove the `;@axiom:raw` and `;@axiom:precondition(...)` tags.
+  `raw` no longer exempts a declaration from AX3040: return a concrete
+  word type and let callers write `as`, or make the function diverge.
+  AX3095, which refused `precondition`, is retired; state a condition
+  as a `;@axiom:pre(...)` contract or in a comment. Either spelling is
+  now an unknown key, recorded and never checked. Tested by
+  `scripts/check-diverging-tyvar.sh`.
+
 - Imported signature redeclarations retain their implementation's type
   and effects. Refuse incompatible types and ambiguous imports. Tested by
   `tests/diagnostics/1468-imported-signature-boundary.ax` and

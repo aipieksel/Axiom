@@ -15,10 +15,9 @@
 #      does not.
 #   3. Delegation is followed. `rethrow` and `sneak` have the same shape
 #      and opposite answers; only what they call separates them.
-#   4. `;@axiom:raw` still exempts, on either half of a declaration.
 #
 # Acceptance is easy to get by accident: an analysis that answered
-# "diverges" for everything would pass 2, 3 and 4. So the negative probe
+# "diverges" for everything would pass 2 and 3. So the negative probe
 # changes one word of the accepted program, turning the `(exit 70)` a
 # cast wraps into the literal `70`, and requires a refusal.
 set -uo pipefail
@@ -68,9 +67,9 @@ if (( rc == 1 )) && grep -q 'error\[AX3040\]' "$work/out"; then
 else
   bad "347-result-only-tyvar.ax exited $rc"; sed 's/^/     /' "$work/out" | head -6
 fi
-# Its two controls must draw nothing: `witnessed` (the variable is in a
-# parameter) and `declared` (tagged raw).
-for name in witnessed declared; do
+# Its control must draw nothing: `witnessed`, whose variable is in a
+# parameter.
+for name in witnessed; do
   if grep -q "\`$name\`" "$work/out"; then
     bad "347: $name was diagnosed, and it is a control"
   else
@@ -268,37 +267,6 @@ fi
 
 # --------------------------------------------------------------------
 echo
-echo "== the escape hatch, on either half of a declaration =="
-# --------------------------------------------------------------------
-# An AXTAG attaches to a declaration group, and a function is normally
-# two groups: its signature and its `fn`. A tag on either half must
-# exempt it, or a tagged program is refused.
-for where in sig fn; do
-  if [[ "$where" == sig ]]; then
-    printf ';@axiom:raw\n(:: rawGet (-> Int a))\n;@axiom:effect(unsafe)\n(fn (rawGet w) (as w a))\n\n(:: main Int)\n\n(fn (main) 0)\n' > "$work/raw.ax"
-  else
-    printf '(:: rawGet (-> Int a))\n\n;@axiom:raw\n;@axiom:effect(unsafe)\n(fn (rawGet w) (as w a))\n\n(:: main Int)\n\n(fn (main) 0)\n' > "$work/raw.ax"
-  fi
-  rc="$(check_of raw.ax)"
-  if (( rc == 0 )); then
-    ok "\`;@axiom:raw\` above the $where exempts it"
-  else
-    bad "\`;@axiom:raw\` above the $where did not exempt it (exit $rc)"
-  fi
-done
-# The tag is not a blanket: an untagged declaration in the same file is
-# still refused, so the exemption is per declaration.
-printf ';@axiom:raw\n(:: rawGet (-> Int a))\n;@axiom:effect(unsafe)\n(fn (rawGet w) (as w a))\n\n(:: alsoRaw (-> Int a))\n;@axiom:effect(unsafe)\n(fn (alsoRaw w) (as w a))\n\n(:: main Int)\n\n(fn (main) 0)\n' > "$work/raw2.ax"
-rc="$(check_of raw2.ax)"
-if (( rc == 1 )) && grep -q 'alsoRaw' "$work/out" && ! grep -q '`rawGet`' "$work/out"; then
-  ok "the tag exempts its own declaration and not its neighbour"
-else
-  bad "the per-declaration exemption is wrong (exit $rc)"
-  sed 's/^/     /' "$work/out" | head -6
-fi
-
-# --------------------------------------------------------------------
-echo
 echo "== the same unsoundness one level in: a callback's own parameter =="
 # --------------------------------------------------------------------
 # Everything above asks about the result. The same fabrication can
@@ -335,9 +303,8 @@ else
 fi
 # The controls. `witnessed` is the shape of ordinary higher-order code
 # (`b` on the right of the callback's arrow, `a` also a parameter), and
-# a rule that reported it would refuse `map`. `declared` is the escape
-# hatch on this arm.
-for name in witnessed declared; do
+# a rule that reported it would refuse `map`.
+for name in witnessed; do
   if grep -q "\`$name\`" "$work/out"; then
     bad "353: $name was diagnosed, and it is a control"
   else
@@ -464,28 +431,6 @@ if (( rc == 0 )) && (( run == 12 )); then
   ok "\`(-> (-> a b) a b)\` at two types: accepted, and answers $run"
 else
   bad "the higher-order control exited $rc and ran to $run (wanted 0 and 12)"
-fi
-
-# --------------------------------------------------------------------
-echo
-echo "== what the diagnostic is guarding, run rather than argued =="
-# --------------------------------------------------------------------
-# `;@axiom:raw` exempts a declaration from the report and changes no
-# code, so this program is what the rule guards against: it checks
-# clean, builds, and dies. A gate that only asserted "a diagnostic
-# appears" would pass just as well against a rule that refused correct
-# programs.
-printf '(import Str)\n\n;@axiom:raw\n(:: demand (-> (-> a Int) Int))\n;@axiom:effect(unsafe)\n(fn (demand f) (f (as 42 a)))\n\n(:: main Int)\n\n(fn (main) (demand strLen))\n' > "$work/boom.ax"
-rc="$(check_of boom.ax)"
-( cd "$work" && "$axc" run boom.ax ) >/dev/null 2>&1
-run=$?
-# `>= 128`, not `== 139`: only the arrival of a signal is portable, not
-# its number. On darwin-aarch64 it is SIGSEGV (139), 42 dereferenced as
-# a String pointer.
-if (( rc == 0 )) && (( run >= 128 )); then
-  ok "the exempted program checks clean, builds, and is killed by a signal ($run)"
-else
-  bad "the exempted program checked $rc and ran to $run (wanted 0, then a signal)"
 fi
 
 echo

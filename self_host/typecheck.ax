@@ -33,8 +33,7 @@
 ;     WHAT IS UNSOUND is narrower and is not this rule. A variable in
 ;     RESULT position that no parameter mentions is chosen by the
 ;     caller and witnessed by nothing, so the word comes back as
-;     whatever they name - see AX3040, and `;@axiom:raw` for the
-;     fourteen declarations here that are deliberately that.
+;     whatever they name - see AX3040.
 ;
 ;   * Function types come from signatures, authoritatively. A `fn`
 ;     with no signature gets a placeholder `_fn_N` type variable and
@@ -8496,12 +8495,9 @@
 ; String. The same shape through `vecGet` does the same thing, which is
 ; how a `Vec` holding an Int reads back as a String.
 ;
-; Fourteen declarations in this tree have it, and every one is a raw
-; word read: `memGetWord`, `vecGet`, `nodeA`. They are the language's
-; unsafe layer. `;@axiom:raw` is how a declaration says so, and the
-; point of the tag is not permission - it is that the layer becomes
-; FINITE and greppable, `axiom symbols FILE --diagnostic-format ai |
-; grep '#raw'`, where before it was invisible.
+; No declaration in this tree has it. A raw word read is an accessor
+; whose declared result says what the word is, and a cast inside it
+; says `effect(unsafe)`.
 ; THE PROMOTION, AND WHAT IT WAITED FOR. This was a WARNING from the
 ; day it was written, on a stated ground: the rule conflates two
 ; signatures and only one of them is unsound.
@@ -8515,9 +8511,7 @@
 ; `panic` runs correctly and exits with the status it chose. A check
 ; that reports the same thing about a segfault and a correct program
 ; is not yet a check. Promoting it as it stood would have refused
-; `panic`, and the help it printed would have told that author to tag
-; a diverging function `;@axiom:raw` - polluting the one enumeration
-; that tag exists to keep exact.
+; `panic`.
 ;
 ; SO THE ANALYSIS IS THE PROMOTION'S PREREQUISITE, and in this
 ; language it is exact rather than approximate. A function whose
@@ -8543,11 +8537,6 @@
 ; the question being asked. Starting from "diverges" and shrinking
 ; answers it; starting from "returns" and growing would never admit
 ; a self-call and would refuse every diverging function there is.
-;
-; `;@axiom:raw` still exempts a declaration from the REPORT, and it
-; counts as struck out for everyone else's fixpoint - so a function
-; that gets its `a` by delegating to the unsafe layer is refused
-; rather than inheriting the exemption.
 ;
 ; THE SECOND SHAPE, closed 2026-08-25. Everything above asks about the
 ; RESULT, and that question misses the same unsoundness one level in:
@@ -8693,28 +8682,6 @@
       nilNode
       (nodeCChild d))
   })
-
-; Is this declaration in the unsafe layer - the tag on EITHER half?
-;
-; An AXTAG attaches to a declaration group, and a function is normally
-; two of them: the `::` signature and the `fn`. The check reads the
-; signature, so `;@axiom:raw` written above the `fn` was invisible to
-; it. That cost nothing while this was a warning - the tag was
-; ignored and the warning printed - and it costs a refused program
-; now. A tag one declaration out of place must not be the difference
-; between a build and a failure, so both halves are asked. Measured
-; 2026-08-25: the `fn`-placed spelling checked clean before this
-; change and errored after it, which is what sent this here.
-(pub :: rawTagged (-> (Vec ASTNode) ASTNode Int))
-(pub fn (rawTagged decls d)
-  (if (== (declHasAxtag d "raw") 1)
-    1
-    {
-      (let f (findFnDecl decls (bareOf (nodeAName d))))
-      (if (nodeSame f nilNode)
-        0
-        (declHasAxtag f "raw"))
-    }))
 
 ; The name at the bottom of an application spine, or "" when the head
 ; is not a plain name. Spelled `divHeadName` and not `spineHeadName`
@@ -8915,32 +8882,16 @@
     }
   })
 
-; Every signature with a result-only type variable that has not opted
-; into the unsafe layer.
+; Every signature with a result-only type variable.
 (pub :: resultOnlyCandidates (-> (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (resultOnlyCandidates decls out i)
   (if (>= i (vecLen decls))
     out
-    ; ORDER, not nesting: `&&` short-circuits (measured - a call in
-    ; its right operand does not run), so what matters is which
-    ; question comes first. This chain used to ask `rawTagged`
-    ; before `resultOnlyVarOf`, which scans `decls` once per
-    ; signature - about 2,400 scans for an answer that is `no` for
-    ; every declaration in this repository. Asking the type walk
-    ; first costs nothing and skips the scan. Written as nested
-    ; `if`s because the order is the point and a flat `&&` chain
-    ; hides it.
     {
       (let d (vecGet decls i))
       {
-        (if (== (nodeTag d) TAG_D_SIG)
-          (if (> (strLen (resultOnlyVarOf d)) 0)
-            (if (== (rawTagged decls d) 0)
-              (vecPush out d)
-              (as 0 (Vec Int)))
-            (as 0 (Vec Int)))
-          (as 0 (Vec Int)))
+        (if (&& (== (nodeTag d) TAG_D_SIG) (> (strLen (resultOnlyVarOf d)) 0))
+          (vecPush out d))
         (resultOnlyCandidates decls out (+ i 1))
       }
     }))
@@ -8985,8 +8936,8 @@
 (pub :: emitTyvarFor (-> Int (Vec ASTNode) (Vec a) ASTNode Int))
 (pub fn (emitTyvarFor tc decls div d)
   ; THE CHEAP TEST FIRST, and it is a performance rule rather than a
-  ; style one. Both lookups below - `rawTagged` and `findFnBody` -
-  ; reach `findFnDecl`, which scans `decls` linearly, and this
+  ; style one. The lookup below, `findFnBody`, reaches
+  ; `findFnDecl`, which scans `decls` linearly, and this
   ; function is called for every signature in the program. `findFnBody`
   ; used to be the OUTER test here, behind no guard at all, which made
   ; the pass O(n^2) over a tree with ~2,400 declarations: measured
@@ -9000,47 +8951,45 @@
     (let dv (demandedVarOf d))
     (if (== (+ (strLen rv) (strLen dv)) 0)
       0
-      (if (== (rawTagged decls d) 1)
+      ; A signature with NO definition is `AX3015`, which says the
+      ; real thing. Reporting this one too would be a cascade from
+      ; one mistake, which the diagnostics document forbids.
+      (if (nodeSame (findFnBody decls (bareOf (nodeAName d))) nilNode)
         0
-        ; A signature with NO definition is `AX3015`, which says the
-        ; real thing. Reporting this one too would be a cascade from
-        ; one mistake, which the diagnostics document forbids.
-        (if (nodeSame (findFnBody decls (bareOf (nodeAName d))) nilNode)
-          0
+        {
+          (let diverges (strInVec div (bareOf (nodeAName d)) 0))
           {
-            (let diverges (strInVec div (bareOf (nodeAName d)) 0))
-            {
-              (if (> (strLen rv) 0)
-                ; It diverges. `for all a` is honest here and there is
-                ; nothing to report.
-                (if (! (== diverges 1))
-                  {
-                    (memSetWord tc 16 (nodeModule d))
-                    (emitResultOnlyVar tc d rv)
-                  }))
-              ; THE DEMANDED ARM YIELDS ONLY WHEN THE ARM ABOVE
-              ; ACTUALLY SPOKE, AND ABOUT THE SAME VARIABLE. Two
-              ; conditions, and both are load-bearing:
-              ;
-              ;   same variable - `(-> (-> a Int) b)` fabricates an `a`
-              ;   for the callback and a `b` for its caller, which are
-              ;   two mistakes and draw two diagnostics;
-              ;
-              ;   actually spoke - if the result arm went silent
-              ;   because the function DIVERGES, nothing has been said
-              ;   about the `a` handed to the callback, and a
-              ;   divergence that happens after the call does not
-              ;   unmake it.
-              (if (> (strLen dv) 0)
-                (if (&& (strEq dv rv) (== diverges 0))
-                  0
-                  {
-                    (memSetWord tc 16 (nodeModule d))
-                    (emitDemandedVar tc d dv)
-                  })
-                0)
-            }
-          })))
+            (if (> (strLen rv) 0)
+              ; It diverges. `for all a` is honest here and there is
+              ; nothing to report.
+              (if (! (== diverges 1))
+                {
+                  (memSetWord tc 16 (nodeModule d))
+                  (emitResultOnlyVar tc d rv)
+                }))
+            ; THE DEMANDED ARM YIELDS ONLY WHEN THE ARM ABOVE
+            ; ACTUALLY SPOKE, AND ABOUT THE SAME VARIABLE. Two
+            ; conditions, and both are load-bearing:
+            ;
+            ;   same variable - `(-> (-> a Int) b)` fabricates an `a`
+            ;   for the callback and a `b` for its caller, which are
+            ;   two mistakes and draw two diagnostics;
+            ;
+            ;   actually spoke - if the result arm went silent
+            ;   because the function DIVERGES, nothing has been said
+            ;   about the `a` handed to the callback, and a
+            ;   divergence that happens after the call does not
+            ;   unmake it.
+            (if (> (strLen dv) 0)
+              (if (&& (strEq dv rv) (== diverges 0))
+                0
+                {
+                  (memSetWord tc 16 (nodeModule d))
+                  (emitDemandedVar tc d dv)
+                })
+              0)
+          }
+        }))
   })
 
 ; Walk the arrow spine: every left side is a parameter, the last right
@@ -9230,7 +9179,7 @@
             v)
           "`, which no parameter supplies: it occurs inside a function-typed parameter, on the side this function fills in, so the caller chooses the type and an `as` conversion fabricates the value")
         0 0
-        "making the function diverge does not answer this one - the value is fabricated before it returns, or fails to; name a concrete word type in the callback's parameter and let callers write `as`, or tag the declaration `;@axiom:raw` to put it in the unsafe layer on purpose"))))
+        "making the function diverge does not answer this one - the value is fabricated before it returns, or fails to; name a concrete word type in the callback's parameter and let callers write `as`"))))
 
 (pub :: emitResultOnlyVar (-> Int ASTNode String Int))
 (pub fn (emitResultOnlyVar tc d v)
@@ -9241,7 +9190,7 @@
         (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` returns type variable `") v)
           "`, which no parameter mentions, and its body produces that result rather than never returning: the caller chooses the type and an `as` conversion fabricates the value")
         0 0
-        "three ways out: return a concrete word type and let callers write `as`; or make it DIVERGE, so every path ends in a call that never returns, which is what makes `for all a` honest; or tag the declaration `;@axiom:raw` to put it in the unsafe layer on purpose"))))
+        "two ways out: return a concrete word type and let callers write `as`; or make it DIVERGE, so every path ends in a call that never returns, which is what makes `for all a` honest"))))
 
 ; Does this declaration carry `;@axiom:<key>` exactly?
 (pub :: declHasAxtag (-> ASTNode String Int))
@@ -9266,8 +9215,8 @@
   (axtagValueFrom (nodeAxtagsWords d) key 0))
 
 ; A tag's word 1 is the WHOLE text - `deprecated(use vecLen)`, not the
-; bare key - which is why `declHasAxtag` works for `raw` and `pure`
-; (they take no value) and silently answers 0 for any key that does.
+; bare key - which is why `declHasAxtag` works only for a key that
+; takes no value and silently answers 0 for any key that does.
 ; Measured the hard way: the tag reached AXSYM as
 ; `#deprecated=use%20vecLen` while the lookup here saw nothing.
 (pub :: axtagKeyOf (-> Int String))
@@ -28310,7 +28259,7 @@
 
 ; AX3077: a key the compiler checks, on a declaration it can't check it
 ; on. A tag belongs to the declaration after it, and `restrict(...)`,
-; `effect(...)`, `pure`, `raw`, `pre`, `post` and `isr` are checked on
+; `effect(...)`, `pure`, `pre`, `post` and `isr` are checked on
 ; a function alone, `unhandled` on an `effect` alone, and `deprecated`
 ; on any declaration with a symbol row. Above a `data`,
 ; a `struct`, an import, a macro or an alias, the claim was recorded
@@ -28355,9 +28304,7 @@
               (&& (!= (nodeTag d) TAG_D_EFFECT) (== (axtagKeyFits (nodeTag d) "effect") 0)))
           (emitAxtagPureSpelling tc d key)
           (if (&& (== (axtagKnownKey key) 1) (== (axtagKeyFits (nodeTag d) key) 0))
-            (emitAxtagStray tc d key)
-            (if (== (axtagIsPrecondition d key) 1)
-              (emitPreconditionRemoved tc d))))
+            (emitAxtagStray tc d key)))
       }
       (strayAxtagsOf tc d tags (+ i 1))
     }))
@@ -28438,30 +28385,6 @@
           "the tag was recorded and nothing read it, so the claim it looks like was never made; an unrecognised key is still legal metadata")
         "tag not checked here"))))
 
-; AX3095: `;@axiom:precondition(...)`, a tag that was removed. It is
-; refused wherever it stands, the way AX3078 refuses `pure`: read as
-; open metadata it would still look like a claim, and nothing checks
-; it. A declaration-macro invocation hands its tags to what it
-; generates, so its own are answered there.
-(pub :: axtagIsPrecondition (-> ASTNode String Int))
-(pub fn (axtagIsPrecondition d key)
-  (if (|| (== (nodeTag d) TAG_D_MACROCALL) (== (nodeTag d) TAG_D_SYNFOR))
-    0
-    (strEqCI key "precondition")))
-
-(pub :: emitPreconditionRemoved (-> Int ASTNode Int))
-(pub fn (emitPreconditionRemoved tc d)
-  (if (== (nodeSpan d) 0)
-    0
-    (emitDiag tc
-      (diagSetLabel
-        (mkDiagNote SEV_ERROR "AX3095" "precondition-removed" (nodeSpan d)
-          (concat (concat "`" (bareOf (nodeAName d)))
-            "` carries `;@axiom:precondition(...)`, a tag that was removed")
-          0 0 "state a checkable condition with `;@axiom:pre(...)`, or describe it in a comment"
-          "`;@axiom:pre(...)` already states a condition, and checks it on every call; a function whose body performs an unsafe operation says `;@axiom:effect(unsafe)` and is a trusted encapsulation, whose callers owe nothing the compiler checks")
-        "removed tag"))))
-
 (pub :: checkEffectDeclTags (-> Int ASTNode Ints Int Int))
 (pub fn (checkEffectDeclTags tc d tags i)
   (if (== (as tags Int) 0)
@@ -28537,7 +28460,7 @@
 ; AN ERROR, like AX3052, AX3054 and AX3039. The argument is
 ; AX3052's verbatim: accepting it would let a tag read like a
 ; guarantee and buy silence. `restrict`, `pure`, `effect`, `pre`,
-; `post`, `unhandled` and `raw` are the author's to write and are not
+; `post` and `unhandled` are the author's to write and are not
 ; here - they are CHECKED, which is the difference.
 (pub :: axtagReservedKey (-> String Int))
 (pub fn (axtagReservedKey key)
@@ -28620,36 +28543,34 @@
       1
     (strEq key "compute")
       1
-    (if (strEq key "raw")
+    (if (strEq key "pre")
       1
-      (if (strEq key "pre")
+      (if (strEq key "post")
         1
-        (if (strEq key "post")
+        (if (strEq key "restrict")
           1
-          (if (strEq key "restrict")
+          (if (strEq key "unhandled")
             1
-            (if (strEq key "unhandled")
+            ; `isr` is checked (an implied `no-alloc` plus an
+            ; arity rule), so a near miss of it is a guarantee
+            ; that buys silence, exactly as for the others.
+            (if (strEq key "isr")
               1
-              ; `isr` is checked (an implied `no-alloc` plus an
-              ; arity rule), so a near miss of it is a guarantee
-              ; that buys silence, exactly as for the others.
-              (if (strEq key "isr")
+              ; `syscall(...)` seeds a syscall number's own effect
+              ; row (`syscallTagEffects`), so a slip of it would
+              ; drop an effect every caller of the number owes.
+              (if (strEq key "syscall")
                 1
-                ; `syscall(...)` seeds a syscall number's own effect
-                ; row (`syscallTagEffects`), so a slip of it would
-                ; drop an effect every caller of the number owes.
-                (if (strEq key "syscall")
+                ; `ct(...)` is checked (AX3092), so a slip of it
+                ; would publish a constant-time promise nobody
+                ; checked.
+                (if (strEq key "ct")
                   1
-                  ; `ct(...)` is checked (AX3092), so a slip of it
-                  ; would publish a constant-time promise nobody
-                  ; checked.
-                  (if (strEq key "ct")
+                  ; `result(owned)` is read by codegen (MM-LIFE-2n), so
+                  ; a slip of it would leak every call silently.
+                  (if (strEq key "result")
                     1
-                    ; `result(owned)` is read by codegen (MM-LIFE-2n), so
-                    ; a slip of it would leak every call silently.
-                    (if (strEq key "result")
-                      1
-                      0)))))))))))
+                    0))))))))))
 
 (pub :: axtagNearMiss (-> String String))
 (pub fn (axtagNearMiss key)
@@ -28663,25 +28584,23 @@
       "deprecated"
     (if (== (axtagSlip key "effect") 1)
       "effect"
-      (if (== (axtagSlip key "raw") 1)
-        "raw"
-        (if (== (axtagSlip key "pre") 1)
-          "pre"
-          (if (== (axtagSlip key "post") 1)
-            "post"
-            (if (== (axtagSlip key "restrict") 1)
-              "restrict"
-              (if (== (axtagSlip key "unhandled") 1)
-                "unhandled"
-                (if (== (axtagSlip key "isr") 1)
-                  "isr"
-                  (if (== (axtagSlip key "syscall") 1)
-                    "syscall"
-                    (if (== (axtagSlip key "ct") 1)
-                      "ct"
-                      (if (== (axtagSlip key "result") 1)
-                        "result"
-                        ""))))))))))))
+      (if (== (axtagSlip key "pre") 1)
+        "pre"
+        (if (== (axtagSlip key "post") 1)
+          "post"
+          (if (== (axtagSlip key "restrict") 1)
+            "restrict"
+            (if (== (axtagSlip key "unhandled") 1)
+              "unhandled"
+              (if (== (axtagSlip key "isr") 1)
+                "isr"
+                (if (== (axtagSlip key "syscall") 1)
+                  "syscall"
+                  (if (== (axtagSlip key "ct") 1)
+                    "ct"
+                    (if (== (axtagSlip key "result") 1)
+                      "result"
+                      "")))))))))))
 
 (pub :: axtagSlip (-> String String Int))
 (pub fn (axtagSlip key known)

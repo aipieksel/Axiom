@@ -1139,7 +1139,7 @@ first. Three rules keep the numbering straight:
 - A new code takes the next number above the highest one in use, the
   *free end*, and never a number from the reserved block.
 - A retired number **MUST NOT** be reused. `AX3008`, `AX3032`,
-  `AX3061`, `AX3063`, `AX3075`, `AX3079`, `AX3080` and `AX3096` are retired. `AX3081`, `AX3082`,
+  `AX3061`, `AX3063`, `AX3075`, `AX3079`, `AX3080`, `AX3095` and `AX3096` are retired. `AX3081`, `AX3082`,
   `AX3083`, `AX3087` and `AX3088` were skipped and never assigned, and
   the same rule covers them.
 
@@ -1200,7 +1200,6 @@ This section records the codes below. All of them are built, and
 | `AX3089` `signature-needed` | a function with no signature, called from inside its own body or from a declaration above it, before its type is known | An error. `tests/diagnostics/1032-signature-needed.ax` |
 | `AX3090` `recover-thunk-unseen` | a recovery point's thunk that isn't a lambda written at the call or a top-level function, so the region check can't walk it | An error. `tests/diagnostics/1033-recover-escape.ax` |
 | `AX3091` `inline-asm` | an `asm` form the compiler can't lower: an unknown architecture, operand kind or option, a second arm for one architecture, a template naming no operand or defining a named label, a second answered output, a `const` it can't fold, a `sym` with no symbol, or a register an arm can't name | An error, where the form is written. `tests/diagnostics/1044-inline-asm.ax`, `tests/diagnostics/1280-inline-asm-forms.ax` |
-| `AX3095` `precondition-removed` | a `;@axiom:precondition(...)` tag, which the language no longer has | An error wherever the tag stands. `tests/diagnostics/1043-precondition-removed.ax` |
 | `AX3123` `propagate-position` | a `?` with no tail to propagate to: inside a branch, a `let` body, a loop, a region or a handler whose value an expression around it still uses | `tests/diagnostics/1300-propagate-position.ax` |
 | `AX3124` `type-argument-arity` | a type used with a different number of arguments from its declaration | `tests/diagnostics/1420-generic-alias-arity.ax` |
 | `AX3125` `type-parameter` | an invalid, repeated or undeclared type parameter, or an unused alias parameter | `tests/diagnostics/1421-generic-alias-parameters.axbad` |
@@ -1297,9 +1296,7 @@ anything but a string literal has no interned bytes behind it.
 declaration must say `effect(unsafe)`, and that makes it a trusted
 wrapper: its caller inherits no unsafe obligation. A condition a caller
 must meet is a `;@axiom:pre(...)` contract when the arguments can show
-it, and a comment otherwise. `AX3095` refuses the removed
-`;@axiom:precondition(...)` tag, and its old checks `AX3079` and
-`AX3080` are retired.
+it, and a comment otherwise.
 
 `AX3075` (`scope-divergence`) is retired too. It reported the macro
 expander's scope records disagreeing with a second binder table, and
