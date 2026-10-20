@@ -417,6 +417,28 @@ done
 # is still written, and a windows build of a program that names no
 # spawn says NOTHING - the diagnostic follows the PROGRAM, exactly as
 # `cgThreads` does, not the target.
+cat > "$work/winunusedtask.ax" <<'UNUSEDTASK'
+(import Task)
+(:: main Int)
+(fn (main) 0)
+UNUSEDTASK
+cat > "$work/windeadproc.ax" <<'DEADPROC'
+(:: unused Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (unused)
+  { (let h (__proc_spawn (lambda (w) (+ w 1)) 41)) (__proc_join h) })
+(:: main Int)
+(fn (main) 0)
+DEADPROC
+cat > "$work/wintraptext.ax" <<'TRAPTEXT'
+(import Task)
+(import IO)
+(:: main Int)
+;@axiom:effect(io)
+(fn (main) { (println "\ndefine internal i64 @__axiom_par_unsupported()") 0 })
+TRAPTEXT
 for wt in windows-x86_64 windows-aarch64; do
   "$axc" --target="$wt" --diagnostic-format=ai emit-llvm "$work/winproc.ax" -o "$work/win4007.ll" > "$work/win4007.log" 2>&1
   rc=$?
@@ -440,6 +462,17 @@ for wt in windows-x86_64 windows-aarch64; do
   else
     ok "$wt: and a program that names no spawn draws nothing"
   fi
+  for fixture in winunusedtask windeadproc wintraptext; do
+    if "$axc" --target="$wt" --diagnostic-format=ai emit-llvm "$work/$fixture.ax" \
+         -o "$work/$fixture.ll" > "$work/$fixture.log" 2>&1 \
+       && ! grep -q 'AX4007' "$work/$fixture.log" \
+       && ! grep -q '^define internal i64 @__axiom_par_unsupported()' "$work/$fixture.ll"; then
+      ok "$wt: $fixture has no reachable process trap and draws no AX4007"
+    else
+      bad "$wt: $fixture must emit without a process trap or AX4007"
+      head -5 "$work/$fixture.log" | sed 's/^/     /'
+    fi
+  done
 done
 # The hosts that CAN spawn never see it, whatever they build.
 if "$axc" --diagnostic-format=ai emit-llvm "$fx470" -o "$work/host4007.ll" > "$work/host4007.log" 2>&1 \

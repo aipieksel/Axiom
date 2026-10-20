@@ -16,6 +16,11 @@ its changelog too.
 
 ## Unreleased
 
+- Windows builds report AX4007 only when a process trap survives in the
+  emitted program. Importing `Task` or declaring an unused process
+  function no longer warns. Live unsupported calls still warn and emit
+  their status-79 trap. Tested by `scripts/check-parallel.sh`.
+
 - Windows CI can package its executed compiler as a preview ZIP with
   its standard library, docs, source commit and SHA-256 inventory.
   `scripts/install.ps1` verifies a local preview, probes its compiler

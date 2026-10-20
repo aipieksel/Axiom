@@ -839,24 +839,26 @@
                                           ""
                                         }
                                       }
-                                      ; A spawn with no lowering on the target - a process
-                                      ; primitive on Windows, which has threads but no
-                                      ; `fork`, or any spawn where there is neither - is a
-                                      ; WARNING and not a refusal, AX4007. The module still
-                                      ; emits, with each such spawn and join lowered to
-                                      ; `@__axiom_par_unsupported`; what changes is WHEN the
-                                      ; program is told. Before this, the only notice was
-                                      ; status 79 at the first spawn at run time, on the
-                                      ; DEFAULT lowering - and a program whose `parallel` sits
-                                      ; on a path it never takes builds and runs there, which
-                                      ; is why an error would be wrong. `parSpawnUnsupported`
-                                      ; is codegen's own predicate, asked here for AX4006's
-                                      ; reason: the emitter cannot report a diagnostic and the
-                                      ; driver can.
+                                      ; AX4007 follows the finished IR. Imported Task
+                                      ; declarations may name process primitives even when
+                                      ; this program uses only a native command pool. The
+                                      ; pruner removes the unsupported trap when no live
+                                      ; call reaches it, just as it removes device markers
+                                      ; before AX4008 is reported.
                                       {
                                         (let ir
                                           {
-                                            (if (parSpawnUnsupported allDecls tcode)
+                                            (let emitted
+                                              (refuseDeviceIr
+                                                (emitBinaryIr (checkedProgramOf checked) bares
+                                                  fulls tcode)
+                                                dfmt units))
+                                            (if (&& (parSpawnUnsupported allDecls tcode)
+                                                  (>=
+                                                    (strFindSub emitted
+                                                      "\ndefine internal i64 @__axiom_par_unsupported()"
+                                                      0)
+                                                    0))
                                               (writeStderrStr
                                                 (renderDiagsFormat dfmt
                                                   {
@@ -875,10 +877,7 @@
                                                     }
                                                   }
                                                   units)))
-                                            (refuseDeviceIr
-                                              (emitBinaryIr (checkedProgramOf checked) bares fulls
-                                                tcode)
-                                              dfmt units)
+                                            emitted
                                           })
                                         {
                                           (if (&& (== needMain 0)
