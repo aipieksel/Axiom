@@ -30047,7 +30047,7 @@
 ; met, so a `let` of n bindings each built by a
 ; call took time cubic in n (AN-54: 1,000 bindings took 11 s to reach
 ; LLVM IR).
-(pub :: escapes (-> Int String ASTNode Int Int Int))
+(pub :: escapes (-> Int String ASTNode Int BinderSummary Int))
 (pub fn (escapes cg name e vp bound)
   (if (nodeSame e nilNode)
     0
@@ -30204,7 +30204,7 @@
                                 (mentions name e)))))))))))))
       })))
 
-(pub :: escapesSeq (-> Int String Nodes Int Int Int Int))
+(pub :: escapesSeq (-> Int String Nodes Int Int BinderSummary Int))
 (pub fn (escapesSeq cg name v vp i bound)
   (if (== (as v Int) 0)
     0
@@ -30222,7 +30222,7 @@
 
 ; A match arm's word 2 is its body, and it inherits the position.
 ; An arm PATTERN cannot mention an outer binding as a value.
-(pub :: escapesArms (-> Int String (Vec ASTNode) Int Int Int Int))
+(pub :: escapesArms (-> Int String (Vec ASTNode) Int Int BinderSummary Int))
 (pub fn (escapesArms cg name v vp i bound)
   (if (== (as v Int) 0)
     0
@@ -30254,7 +30254,7 @@
 ; iteration, and so did the `let`-bound spelling; a match whose arms
 ; bind NOTHING grew 0. The 32 bytes were the `Result` block, and the
 ; only thing holding it was `v`, an `Int`.
-(pub :: escapesViaBinders (-> Int (Vec ASTNode) Int Int Int Int))
+(pub :: escapesViaBinders (-> Int (Vec ASTNode) Int Int BinderSummary Int))
 (pub fn (escapesViaBinders cg arms vp i bound)
   (if (== (as arms Int) 0)
     0
@@ -30272,7 +30272,7 @@
         }
       })))
 
-(pub :: escapesAny (-> Int Names ASTNode Int Int Int Int))
+(pub :: escapesAny (-> Int Names ASTNode Int Int BinderSummary Int))
 (pub fn (escapesAny cg names body vp i bound)
   (if (>= i (vecLen names))
     0
@@ -30284,7 +30284,7 @@
 ; a reference into the block? Anything that mentions it may, except
 ; the shapes that can only answer a word: a literal, an operator or
 ; primitive applied to anything, and a read of a scalar field.
-(pub :: mayAlias (-> Int String ASTNode Int Int))
+(pub :: mayAlias (-> Int String ASTNode BinderSummary Int))
 (pub fn (mayAlias cg name init bound)
   (if (== (mentions name init) 0)
     0
@@ -30302,7 +30302,7 @@
           1))
     }))
 
-(pub :: mayAliasArgs (-> Int String ASTNode Int Int Int Int))
+(pub :: mayAliasArgs (-> Int String ASTNode Int BinderSummary Int Int))
 (pub fn (mayAliasArgs cg name e n_ bound i)
   (if (>= i n_)
     0
@@ -30323,7 +30323,7 @@
 ; argument it is given escapes. A raw store's value escapes; a
 ; constructor's arguments are judged below, field by field, by the
 ; walk (a word field takes a `cast`, which escapes on its own).
-(pub :: callEscapesArg (-> Int ASTNode String Int Int Int))
+(pub :: callEscapesArg (-> Int ASTNode String Int BinderSummary Int))
 (pub fn (callEscapesArg cg e name vp bound)
   {
     (let hd (spineHead e))
@@ -30405,7 +30405,7 @@
 ; reading it as the binding kept every scrutinee's payload - 96 to 128
 ; bytes an iteration, measured over a `match` whose arm built an
 ; `Option Int` from a `String` binder.
-(pub :: ctorWordFieldsMention (-> Int Int String ASTNode Int Int Int Int))
+(pub :: ctorWordFieldsMention (-> Int Int String ASTNode Int Int BinderSummary Int))
 (pub fn (ctorWordFieldsMention cg entry name e n_ i bound)
   (if (>= i n_)
     0
@@ -30423,7 +30423,7 @@
 ; masks say (`callEscapesArg` in value position), so `(strLen a)` is a
 ; length; a scalar field is a number; any other shape that mentions
 ; the name may be it.
-(pub :: wordArgAliases (-> Int String ASTNode Int Int))
+(pub :: wordArgAliases (-> Int String ASTNode BinderSummary Int))
 (pub fn (wordArgAliases cg name arg bound)
   (if (== (mentions name arg) 0)
     0
@@ -30516,26 +30516,47 @@
 ; signature. `(boundIn name (binderSummary e))` is the question.
 ; It mirrors `mentions`, for binders instead of references.
 ;
-; The summary is a four-word block: word 0 that flag, word 1 the
-; Intern of binders, and words 2 and 3 `headIsLocal`'s memo, an Intern
-; of the call heads asked about and a Vec of their answers by id.
-(pub :: binderSummary (-> ASTNode Int))
+; The counted summary owns the binder interner, call-head memo and
+; answers. The synchronous walks borrow it while the symbol table and
+; parameters stay unchanged.
+(pub struct BinderSummary sealed
+  (unknown : Int)
+  (binders : InternState)
+  (heads : InternState)
+  (answers : Ints))
+
+(pub :: binderSummary (-> ASTNode BinderSummary))
 (pub fn (binderSummary e)
   {
-    (let set internNew)
+    (let set internNewTyped)
+    (let unknown (binderCollect (internWordOf set) e))
+    (BinderSummary :unknown unknown :binders set :heads internNewTyped :answers vecNew)
+  })
+
+; Return only scalar facts across emission: bit 0 owns the slot, and
+; bit 1 releases its value at the scope end. The summary stays scoped
+; to these two walks and is not carried through the raw pending record.
+(:: slotOwnershipFacts (-> Int ASTNode Int Int Int Int))
+(fn (slotOwnershipFacts cg node tail cls kept)
+  (if (&& (== cls 2) (== kept 0))
     {
-      (let unknown (binderCollect set e))
-      {
-        (let blk (memAlloc 32))
-        {
-          (memSetWord blk 0 unknown)
-          (memSetWord blk 1 set)
-          (memSetWord blk 2 internNew)
-          (memSetWord blk 3 (as (:: vecNew Ints) Int))
-          blk
-        }
-      }
+      (let bound (binderSummary (nodeCChild node)))
+      (let own (slotOwns cg node bound))
+      (if (== own 1)
+        (+ 1 (* 2 (slotReleasesAtEnd cg node tail bound)))
+        0)
     }
+    0))
+
+; Alias collection still runs after the initial store. On an accepted
+; slot, the intervening emission only appends output lines: lookupSym
+; names/registers and current parameters are unchanged. A fresh memo
+; therefore sees the same facts; the pending record stores only a Bool.
+(:: slotAliasUnknown (-> Int Names ASTNode Bool))
+(fn (slotAliasUnknown cg aliases body)
+  {
+    (let bound (binderSummary body))
+    (== (slotAliases cg aliases body bound) 1)
   })
 
 ; Is call head `n` a function VALUE rather than a signed global: a
@@ -30545,11 +30566,11 @@
 ; it reads can't change while one summary is in use, and a `let` of n
 ; bindings built by one constructor asks `lookupSym`'s linear scan once
 ; per binding instead of once per call (AN-54).
-(pub :: headIsLocal (-> Int String Int Int))
+(pub :: headIsLocal (-> Int String BinderSummary Int))
 (pub fn (headIsLocal cg n bound)
   {
-    (let memo (memGetWord bound 2))
-    (let answers (memGetWordVec bound 3))
+    (let memo (internWordOf bound.heads))
+    (let answers bound.answers)
     (match (internFind memo n)
       ((Some id) (vecGet answers id))
       ((None)
@@ -30568,11 +30589,11 @@
       ))
   })
 
-(pub :: boundIn (-> String Int Int))
+(pub :: boundIn (-> String BinderSummary Int))
 (pub fn (boundIn name sum)
-  (if (== (memGetWord sum 0) 1)
+  (if (== sum.unknown 1)
     1
-    (match (internFind (memGetWord sum 1) name)
+    (match (internFind (internWordOf sum.binders) name)
       ((Some _) 1)
       ((None) 0))))
 
@@ -30659,17 +30680,60 @@
       {
         (let arm (vecGet v i))
         {
-          (let bs (patBindersCg (nodeAChild arm) vecNew))
-          (if (== (as bs Int) 0)
+          (let unknown (binderCollectPattern set (nodeAChild arm)))
+          (if (== unknown 1)
             1
-            {
-              (binderCollectNames set bs 0)
-              (if (== (binderCollect set (nodeBChild arm)) 1)
-                1
-                (binderCollectArms set v (+ i 1)))
-            })
+            (if (== (binderCollect set (nodeBChild arm)) 1)
+              1
+              (binderCollectArms set v (+ i 1))))
         }
       })))
+
+; Mirror patBindersCg's pattern cases directly into the interner. The
+; summary needs membership, so it need not build a temporary name list.
+(:: binderCollectPattern (-> Int ASTNode Int))
+(fn (binderCollectPattern set pat)
+  (if (nodeSame pat nilNode)
+    0
+    {
+      (let tag (nodeTag pat))
+      (if (|| (== tag TAG_E_INT)
+            (|| (== tag TAG_E_FLT)
+              (|| (== tag TAG_E_STR) (|| (== tag TAG_E_CHAR) (== tag TAG_P_CON0)))))
+        0
+        (if (== tag TAG_E_VAR)
+          {
+            (internIntern set (nodeAName pat))
+            0
+          }
+          (if (== tag TAG_E_APP)
+            (if (== (binderCollectPattern set (nodeBChild pat)) 1)
+              1
+              (binderCollectPatternHead set (nodeAChild pat)))
+            (if (== tag TAG_P_CONNAMED)
+              (if (== (nodeC pat) 0)
+                0
+                (binderCollectPatternVec set (nodeCChildren pat) 0))
+              1))))
+    }))
+
+(:: binderCollectPatternHead (-> Int ASTNode Int))
+(fn (binderCollectPatternHead set pat)
+  (if (== (nodeTag pat) TAG_E_APP)
+    (if (== (binderCollectPattern set (nodeBChild pat)) 1)
+      1
+      (binderCollectPatternHead set (nodeAChild pat)))
+    0))
+
+; The caller checked the optional raw child-list word before taking
+; this typed view, so recursive reads need no nullable vector cast.
+(:: binderCollectPatternVec (-> Int Nodes Int Int))
+(fn (binderCollectPatternVec set subs i)
+  (if (>= i (vecLen subs))
+    0
+    (if (== (binderCollectPattern set (vecGet subs i)) 1)
+      1
+      (binderCollectPatternVec set subs (+ i 1)))))
 
 ; A function may return an arrow. Peel only its declared parameters,
 ; so a nullary function returning a closure still has a reference result.
@@ -31105,19 +31169,10 @@
                 4
                 1))
             {
-              (let bound
-                (if (== cls 2)
-                  (binderSummary body)
-                  0))
-              (let own
-                (if (&& (== cls 2) (== kept 0))
-                  (slotOwns cg1 node bound)
-                  0))
+              (let facts (slotOwnershipFacts cg1 node tail cls kept))
+              (let own (& facts 1))
               {
-                (let relEnd
-                  (if (== own 1)
-                    (slotReleasesAtEnd cg1 node tail bound)
-                    0))
+                (let relEnd (>> facts 1))
                 {
                   ; a refused slot is storage only, and the stores its
                   ; walks registered (`slotStoreCounts`) protected a
@@ -31151,7 +31206,10 @@
                                 (vecPush aliases name)
                                 (memSetWord rec 0 ar)
                                 (memSetWord rec 1 name)
-                                (memSetWord rec 3 (slotAliases cg1 aliases body bound))
+                                (memSetWord rec 3
+                                  (if (slotAliasUnknown cg1 aliases body)
+                                    1
+                                    0))
                                 (memSetWord rec 2 aliases)
                                 (vecPush pend rec)
                               }
@@ -31329,7 +31387,7 @@
 ; slot 18), and the answer doesn't depend on which of two sibling
 ; slots was declared first. A slot that only stores keeps that share:
 ; the leak direction.
-(pub :: slotStoreCounts (-> Int ASTNode Int Int))
+(pub :: slotStoreCounts (-> Int ASTNode BinderSummary Int))
 (pub fn (slotStoreCounts cg e bound)
   {
     (let target (nodeAName e))
@@ -31352,7 +31410,7 @@
 
 ; `bound` is `binderSummary` of the body, shared with
 ; `slotReleasesAtEnd`: nothing is emitted between the two.
-(pub :: slotOwns (-> Int ASTNode Int Int))
+(pub :: slotOwns (-> Int ASTNode BinderSummary Int))
 (pub fn (slotOwns cg node bound)
   {
     (let name (nodeAName node))
@@ -31374,7 +31432,7 @@
 ; retained before the scope end (event 2's `tailRetain`) or is a
 ; share of its own. Inside a lambda the leaf retain must be the
 ; unconditional one.
-(pub :: slotReleasesAtEnd (-> Int ASTNode Int Int Int))
+(pub :: slotReleasesAtEnd (-> Int ASTNode Int BinderSummary Int))
 (pub fn (slotReleasesAtEnd cg node tail bound)
   {
     (let name (nodeAName node))
@@ -31583,7 +31641,7 @@
 ; Bit 0: a `(set name ...)` is under `e`. Bit 1: a value that may alias
 ; the slot is still held when one runs (`slotHolds`). An unknown tag
 ; answers both.
-(pub :: slotScan (-> Int String ASTNode Int Int))
+(pub :: slotScan (-> Int String ASTNode BinderSummary Int))
 (pub fn (slotScan cg name e bound)
   (if (nodeSame e nilNode)
     0
@@ -31635,7 +31693,7 @@
 ; holds nothing across its parts. A `let` reading the slot bare takes
 ; a share of its own (`emitLetAt`), and so does a lambda capturing the
 ; slot (`captureCounted`), so neither holds anything either.
-(pub :: slotHolds (-> Int String ASTNode Int Int Int Int Int))
+(pub :: slotHolds (-> Int String ASTNode Int Int Int BinderSummary Int))
 (pub fn (slotHolds cg name e n mask total bound)
   {
     (let tg (nodeTag e))
@@ -31686,7 +31744,7 @@
 ; `mayAlias`, less a lambda written in place: what it captures of the
 ; slot it holds a share of. A capture of a borrowed alias is that
 ; alias's binding's hazard, and `slotHolds` meets it there.
-(pub :: slotMayAlias (-> Int String ASTNode Int Int))
+(pub :: slotMayAlias (-> Int String ASTNode BinderSummary Int))
 (pub fn (slotMayAlias cg name e bound)
   (if (== (nodeTag e) TAG_E_LAM)
     0
@@ -31748,7 +31806,7 @@
 ; initialiser may alias one, and every binder of a `match` whose
 ; scrutinee may. Answers 1 on a tag the walks don't know, or a pattern
 ; whose binders can't be listed.
-(pub :: slotAliases (-> Int Names ASTNode Int Int))
+(pub :: slotAliases (-> Int Names ASTNode BinderSummary Int))
 (pub fn (slotAliases cg names e bound)
   (if (nodeSame e nilNode)
     0
@@ -31774,7 +31832,7 @@
         })
     }))
 
-(pub :: slotAliasBinders (-> Int Names ASTNode Int Int))
+(pub :: slotAliasBinders (-> Int Names ASTNode BinderSummary Int))
 (pub fn (slotAliasBinders cg names e bound)
   {
     (let tg (nodeTag e))
@@ -31800,7 +31858,7 @@
       1
       (slotArmAliases names arms (+ i 1)))))
 
-(pub :: namesMayAlias (-> Int Names ASTNode Int Int Int))
+(pub :: namesMayAlias (-> Int Names ASTNode BinderSummary Int Int))
 (pub fn (namesMayAlias cg names e bound i)
   (if (>= i (vecLen names))
     0

@@ -7,11 +7,12 @@
 ; integer comparisons instead of byte-by-byte ones, and every later table
 ; can be keyed by a dense `Int` - which is what `Map` wants.
 ;
-; An `Intern` is the address of a three-word header:
+; An `Intern` is the address of a four-word header:
 ;
 ;     word 0 : strs  - a `Vec` of `Str` handles, indexed by id
 ;     word 1 : cap   - table slots, always a power of two
 ;     word 2 : table - address of cap words, each holding `id + 1`
+;     word 3 : identity - this header's address, a nonowning scalar
 ;
 ; WHY SLOTS HOLD `id + 1`. Ids are dense and start at 0, so 0 is a valid
 ; id and cannot double as "empty". Storing `id + 1` makes 0 mean empty,
@@ -135,6 +136,26 @@
 ; ------------------------------------------------------------------
 ; Construction
 ; ------------------------------------------------------------------
+; The slot allocation is a counted leaf with `cap` words. Its first
+; word has the same scalar representation as every subsequent slot.
+(struct InternWords sealed
+  (first : Int))
+
+;; An owning interner. Its raw handle is borrowed through `internWordOf`.
+;; Keep this owner alive while that handle is used.
+(pub struct InternState sealed
+  (strings : Strings)
+  (mut capacity : Int)
+  (mut slots : InternWords)
+  (identity : Int))
+
+; The raw allocator starts the leaf at count zero. The counted return
+; supplies the one share stored by the interner's ordinary field store.
+(:: internWordsNew (-> Int InternWords))
+;@axiom:effect(unsafe)
+(fn (internWordsNew cap)
+  (as (rawAlloc (* cap 8)) InternWords))
+
 ; Slots in a fresh interner. 64 rather than `Map`'s 8: an interner is a
 ; single long-lived table per compilation rather than one of thousands of
 ; small ones, so the interesting cost is rehashing a table that is going
@@ -151,6 +172,19 @@
 (pub :: internNew Int)
 (pub fn (internNew)
   (internAllocTable internDefaultCap))
+
+;; An empty owning interner with `internDefaultCap` slots.
+;; Scope cleanup releases its strings and slot allocation.
+(pub :: internNewTyped InternState)
+(pub fn (internNewTyped)
+  (internAllocTableTyped internDefaultCap))
+
+;; Borrow the raw handle of a live owning interner.
+;; The returned word remains valid only while `owner` is alive.
+;; It carries no ownership share; do not pass it to `internFree`.
+(pub :: internWordOf (-> InternState Int))
+(pub fn (internWordOf owner)
+  owner.identity)
 
 ;; An interner sized so `want` distinct strings fit without rehashing.
 ;
@@ -173,8 +207,12 @@
 ; the one structure here that survives a rehash untouched, so sizing it
 ; generously costs one allocation and saves a growth step.
 (:: internAllocTable (-> Int Int))
-;@axiom:effect(unsafe)
 (fn (internAllocTable cap)
+  (as (internAllocTableTyped cap) Int))
+
+(:: internAllocTableTyped (-> Int InternState))
+;@axiom:effect(unsafe)
+(fn (internAllocTableTyped cap)
   ; Words 0 and 2 are the map (5 = bits 0 and 2): the `Vec` and
   ; the slot table. Word 1 is `cap`, a number, and is not in it.
   ; The `Vec` owns the strings pushed into it, so the header's
@@ -182,16 +220,15 @@
   ; of an interner being freeable at all, since it is the structure
   ; that holds every identifier a compilation ever saw.
   {
-    (let it (rawAllocMapped 24 5))
+    (let it (rawAllocMapped 32 5))
     (let strs (vecWithCapacity cap))
-    (let tbl (rawAlloc (* cap 8)))
+    (let tbl (internWordsNew cap))
     {
-      (__retain it)
-      (__retain tbl)
       (rawSetWord it 0 strs)
       (rawSetWord it 1 cap)
       (rawSetWord it 2 tbl)
-      it
+      (rawSetWord it 3 it)
+      (as it InternState)
     }
   })
 

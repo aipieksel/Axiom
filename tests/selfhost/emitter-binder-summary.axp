@@ -1,0 +1,605 @@
+; The runner appends private typed probes to its copied codegen module.
+(import Intern)
+(import codegen)
+(import parser)
+(import lexer)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: word (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (word address index)
+  (__load64 address index))
+
+(:: countOf (-> Int Int))
+(fn (countOf address)
+  (word address (- 0 2)))
+
+(:: shapeOf (-> Int Int))
+(fn (shapeOf address)
+  (word address (- 0 1)))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: ownedAlias (-> InternState InternState))
+(fn (ownedAlias state)
+  state)
+
+(:: findId (-> Int String Int))
+(fn (findId state text)
+  (match (internFind state text)
+    ((Some id) id)
+    ((None) (- 0 1))))
+
+(:: factoryChecks ())
+;@axiom:effect(io)
+(fn (factoryChecks)
+  {
+    (let state internNewTyped)
+    (let raw (internWordOf state))
+    (let strings (word raw 0))
+    (let slots (word raw 2))
+    (say 1 (== (countOf raw) 1))
+    (say 2 (&& (== (internCap raw) 64) (== (internCount raw) 0)))
+    (say 3 (== (word raw 3) raw))
+    (say 4 (== (shapeOf raw) 327688))
+    (say 5 (== (countOf strings) 1))
+    (say 6 (== (countOf slots) 1))
+    (say 7 (&& (== (word strings 0) 0) (== (word strings 1) 64)))
+    (say 8 (== (shapeOf strings) 262152))
+    (say 9 (== (shapeOf slots) 128))
+    (say 10 (== (countOf (word strings 2)) 1))
+    (say 11 (&& (== (word slots 0) 0) (== (word slots 63) 0)))
+    (say 12 (== (internIntern raw "alpha") 0))
+    (say 13 (== (internIntern raw "beta") 1))
+    (say 14 (&& (== (internIntern raw "alpha") 0) (== (internCount raw) 2)))
+    (say 15 (strEq (internLookup raw 1) "beta"))
+    (say 16 (&& (== (findId raw "alpha") 0) (== (findId raw "absent") (- 0 1))))
+    (say 17 (== (shapeOf (word strings 2)) 4227200))
+    (let before (countOf raw))
+    {
+      (let alias (ownedAlias state))
+      (say 18 (== (internWordOf alias) raw))
+      (say 19 (== (countOf raw) (+ before 1)))
+      0
+    }
+    (say 20 (== (countOf raw) before))
+    (for i in 0..130
+      (internIntern raw (concat "grow-" (fmtInt i))))
+    (say 21 (== (internCount raw) 132))
+    (say 22 (== (internCap raw) 512))
+    (say 23 (&& (== (internWordOf state) raw) (== (word raw 3) raw)))
+    (say 24 (== (word raw 0) strings))
+    (say 25 (&& (!= (word raw 2) slots) (== (countOf (word raw 2)) 1)))
+    (let mut matches true)
+    (for i in 0..130
+      (if (!= (findId raw (concat "grow-" (fmtInt i))) (+ i 2))
+        (set matches false)))
+    (say 26 matches)
+    (say 27 (&& (strEq (internLookup raw 2) "grow-0") (strEq (internLookup raw 131) "grow-129")))
+  })
+
+(:: legacyChecks ())
+;@axiom:effect(io)
+(fn (legacyChecks)
+  {
+    (let raw internNew)
+    (say 28 (&& (== (countOf raw) 1) (== (internCap raw) 64)))
+    (say 29 (== (shapeOf raw) 327688))
+    (say 30 (&& (== (internIntern raw "legacy") 0) (== (internCount raw) 1)))
+    (say 31 (&& (== (word raw 3) raw) (== (internFree raw) 0)))
+  })
+
+(:: stringOwnerChecks ())
+;@axiom:effect(io)
+(fn (stringOwnerChecks)
+  {
+    (let value (strDup "externally-held-name"))
+    ; The test keeps this String live throughout both interner lifetimes.
+    ; Its raw address observes each interner's independently owned share.
+    (let address (as value Int))
+    (let before (countOf address))
+    {
+      (let state internNewTyped)
+      (internIntern (internWordOf state) value)
+      (say 32 (== (countOf address) (+ before 1)))
+      0
+    }
+    (say 33 (== (countOf address) before))
+    (let legacy internNew)
+    (internIntern legacy value)
+    (say 34 (== (countOf address) (+ before 1)))
+    (say 35 (== (internFree legacy) 0))
+    (say 36 (== (countOf address) before))
+  })
+
+(:: typedRoundtrip Int)
+(fn (typedRoundtrip)
+  {
+    (let state internNewTyped)
+    (let raw (internWordOf state))
+    (internIntern raw "soak-a")
+    (internIntern raw "soak-b")
+    (internCount raw)
+  })
+
+(:: legacyRoundtrip Int)
+(fn (legacyRoundtrip)
+  {
+    (let raw internNew)
+    (internIntern raw "soak-a")
+    (internIntern raw "soak-b")
+    (let size (internCount raw))
+    (internFree raw)
+    size
+  })
+
+(:: soakChecks ())
+;@axiom:effect(io)
+(fn (soakChecks)
+  {
+    (typedRoundtrip)
+    (legacyRoundtrip)
+    (let typedBefore live)
+    (let mut typedSum 0)
+    (for i in 0..1000
+      (set typedSum (+ typedSum typedRoundtrip)))
+    (let typedGrowth (- live typedBefore))
+    (say 37 (== typedSum 2000))
+    (say 38 (== typedGrowth 0))
+    (let legacyBefore live)
+    (let mut legacySum 0)
+    (for i in 0..1000
+      (set legacySum (+ legacySum legacyRoundtrip)))
+    (let legacyGrowth (- live legacyBefore))
+    (say 39 (&& (== legacySum 2000) (== legacyGrowth 0)))
+    (writeStr stderr
+      (concat "factory-soak-growth "
+        (concat (fmtInt typedGrowth) (concat " " (concat (fmtInt legacyGrowth) "\n")))))
+  })
+
+(:: parseFn (-> String ASTNode))
+(fn (parseFn source)
+  (vecGet (readAstNodes (parseModule (lex source)) 1) 0))
+
+(:: summaryAlias (-> BinderSummary BinderSummary))
+(fn (summaryAlias summary)
+  summary)
+
+(:: keptSummary (-> ASTNode BinderSummary))
+(fn (keptSummary tree)
+  {
+    (let summary (binderSummary tree))
+    (summaryAlias summary)
+  })
+
+(:: keptBinders (-> ASTNode InternState))
+(fn (keptBinders tree)
+  {
+    (let summary (binderSummary tree))
+    (probeSummaryBinders summary)
+  })
+
+(:: keptHeads (-> Int ASTNode InternState))
+(fn (keptHeads cg tree)
+  {
+    (let summary (binderSummary tree))
+    (headIsLocal cg "x" summary)
+    (probeSummaryHeads summary)
+  })
+
+(:: keptAnswers (-> Int ASTNode Ints))
+(fn (keptAnswers cg tree)
+  {
+    (let summary (binderSummary tree))
+    (headIsLocal cg "x" summary)
+    (probeSummaryAnswers summary)
+  })
+
+(:: summaryChecks ())
+;@axiom:effect(io)
+(fn (summaryChecks)
+  {
+    (let cg newCG)
+    (let tree (mkELetAt "x" (mkEInt 1) (mkEVar "x") 0))
+    (let nested
+      (nodeCChild
+        (parseFn
+          "(fn (probe) { (let outer 1) (lambda (p) (match (Some p) ((Some arm) { (let nested arm) nested }) ((None) outer))) })")))
+    (let empty (binderSummary nilNode))
+    (say 40 (&& (== (probeSummaryUnknown empty) 0) (== (boundIn "absent" empty) 0)))
+    (let summary (binderSummary tree))
+    (say 41
+      (&& (== (probeSummaryUnknown summary) 0)
+        (&& (== (boundIn "x" summary) 1) (== (boundIn "missing" summary) 0))))
+    (let nestedSummary (binderSummary nested))
+    (say 42
+      (&& (== (probeSummaryUnknown nestedSummary) 0)
+        (&& (== (boundIn "outer" nestedSummary) 1)
+          (&& (== (boundIn "p" nestedSummary) 1)
+            (&& (== (boundIn "arm" nestedSummary) 1) (== (boundIn "nested" nestedSummary) 1))))))
+    (let unknown (binderSummary (mkDFnAt "not-an-expression" vecNew (mkEInt 0) 0)))
+    (say 43 (&& (== (probeSummaryUnknown unknown) 1) (== (boundIn "any-name" unknown) 1)))
+    (let binders (internWordOf (probeSummaryBinders summary)))
+    (let heads (internWordOf (probeSummaryHeads summary)))
+    (say 44 (== (countOf binders) 1))
+    (say 45 (== (countOf heads) 1))
+    (say 46
+      (&& (== (vecLen (probeSummaryAnswers summary)) 0)
+        (! (vecOwnsRefs (probeSummaryAnswers summary)))))
+    (say 47
+      (&& (== (headIsLocal cg "global" summary) 0)
+        (&& (== (internCount heads) 1) (== (vecLen (probeSummaryAnswers summary)) 1))))
+    (say 48
+      (&& (== (headIsLocal cg "global" summary) 0)
+        (&& (== (internCount heads) 1) (== (vecLen (probeSummaryAnswers summary)) 1))))
+    (say 49
+      (&& (== (headIsLocal cg "x" summary) 1)
+        (&& (== (headIsLocal cg "x" summary) 1)
+          (&& (== (vecGet (probeSummaryAnswers summary) 0) 0)
+            (== (vecGet (probeSummaryAnswers summary) 1) 1)))))
+    (say 50
+      (&& (== (headIsLocal cg "another-global" summary) 0)
+        (&& (== (internCount heads) 3) (== (vecLen (probeSummaryAnswers summary)) 3))))
+    (let kept (keptSummary tree))
+    (say 51 (&& (== (boundIn "x" kept) 1) (== (headIsLocal cg "x" kept) 1)))
+    (let retainedBinders (keptBinders tree))
+    (let retainedWord (internWordOf retainedBinders))
+    (say 52 (&& (== (countOf retainedWord) 1) (== (findId retainedWord "x") 0)))
+    (let retainedHeads (keptHeads cg tree))
+    (say 53
+      (&& (== (countOf (internWordOf retainedHeads)) 1)
+        (== (findId (internWordOf retainedHeads) "x") 0)))
+    (let retainedAnswers (keptAnswers cg tree))
+    (say 54 (&& (== (vecLen retainedAnswers) 1) (== (vecGet retainedAnswers 0) 1)))
+    (let name (strDup "held-binder"))
+    (let namedTree (mkELetAt name (mkEInt 1) (mkEInt 2) 0))
+    (let nameAddress (as name Int))
+    (let nameBefore (countOf nameAddress))
+    {
+      (let named (binderSummary namedTree))
+      (say 55 (&& (== (boundIn "held-binder" named) 1) (== (countOf nameAddress) (+ nameBefore 1))))
+      0
+    }
+    (say 56 (== (countOf nameAddress) nameBefore))
+  })
+
+(:: summaryRoundtrip (-> Int ASTNode Int))
+(fn (summaryRoundtrip cg tree)
+  {
+    (let summary (binderSummary tree))
+    (+ (boundIn "x" summary)
+      (+ (headIsLocal cg "global" summary)
+        (+ (headIsLocal cg "x" summary) (vecLen (probeSummaryAnswers summary)))))
+  })
+
+(:: nestedSummaryRoundtrip (-> Int ASTNode Int))
+(fn (nestedSummaryRoundtrip cg tree)
+  {
+    (let summary (binderSummary tree))
+    (+ (boundIn "outer" summary) (+ (headIsLocal cg "p" summary) (headIsLocal cg "global" summary)))
+  })
+
+(:: unknownSummaryRoundtrip (-> Int ASTNode Int))
+(fn (unknownSummaryRoundtrip cg tree)
+  {
+    (let summary (binderSummary tree))
+    (+ (boundIn "any-name" summary)
+      (+ (headIsLocal cg "unknown-head" summary) (vecLen (probeSummaryAnswers summary))))
+  })
+
+(:: summarySoakChecks ())
+;@axiom:effect(io)
+(fn (summarySoakChecks)
+  {
+    ; ASTs and the CG context precede every storage measurement.
+    (let cg newCG)
+    (let tree (mkELetAt "x" (mkEInt 1) (mkEVar "x") 0))
+    (let nested
+      (nodeCChild
+        (parseFn
+          "(fn (probe) { (let outer 1) (lambda (p) (match (Some p) ((Some arm) { (let nested arm) nested }) ((None) outer))) })")))
+    (let unknown (mkDFnAt "not-an-expression" vecNew (mkEInt 0) 0))
+    (summaryRoundtrip cg tree)
+    (nestedSummaryRoundtrip cg nested)
+    (unknownSummaryRoundtrip cg unknown)
+    (let before live)
+    (let mut total 0)
+    (for i in 0..1000
+      (set total (+ total (summaryRoundtrip cg tree))))
+    (let growth (- live before))
+    (say 57 (== total 4000))
+    (say 58 (== growth 0))
+    (let nestedBefore live)
+    (let mut nestedTotal 0)
+    (for i in 0..1000
+      (set nestedTotal (+ nestedTotal (nestedSummaryRoundtrip cg nested))))
+    (let nestedGrowth (- live nestedBefore))
+    (say 59 (== nestedTotal 2000))
+    (say 60 (== nestedGrowth 0))
+    (let unknownBefore live)
+    (let mut unknownTotal 0)
+    (for i in 0..1000
+      (set unknownTotal (+ unknownTotal (unknownSummaryRoundtrip cg unknown))))
+    (let unknownGrowth (- live unknownBefore))
+    (say 61 (== unknownTotal 3000))
+    (say 62 (== unknownGrowth 0))
+    (writeStr stderr
+      (concat "summary-soak-growth "
+        (concat (fmtInt growth)
+          (concat " "
+            (concat (fmtInt nestedGrowth) (concat " " (concat (fmtInt unknownGrowth) "\n")))))))
+  })
+
+(:: mutableSlotChecks ())
+;@axiom:effect(io)
+(fn (mutableSlotChecks)
+  {
+    (let scalarCG newCG)
+    (let scalarBody (nodeCChild (parseFn "(fn (scalar) { (let mut x 7) 9 })")))
+    (let scalar
+      (if (== (nodeTag scalarBody) TAG_E_BEGIN)
+        (vecGet (nodeAChildren scalarBody) 0)
+        scalarBody))
+    (setNodeBinderTyChild scalar (mkTCon "Int" vecNew))
+    (say 63 (&& (== (nodeTag scalar) TAG_E_LETM) (== (slotClassOf scalarCG scalar) 0)))
+    (emitLetMAt scalar scalarCG 0)
+    (say 64 (== (strHasSub (renderCG scalarCG) "store i64 7, ptr ") 1))
+    (let countedCG newCG)
+    (let countedBody (nodeCChild (parseFn "(fn (counted) { (let mut x (strDup \"fixed\")) 9 })")))
+    (let counted
+      (if (== (nodeTag countedBody) TAG_E_BEGIN)
+        (vecGet (nodeAChildren countedBody) 0)
+        countedBody))
+    (setNodeBinderTyChild counted (mkTCon "String" vecNew))
+    (say 65 (&& (== (nodeTag counted) TAG_E_LETM) (== (slotClassOf countedCG counted) 2)))
+    (emitLetMAt counted countedCG 0)
+    (say 66 (== (strHasSub (renderCG countedCG) "call void @axiom_release(i64 ") 1))
+  })
+
+(:: slotSummaryRoundtrip (-> Int ASTNode Names Int))
+(fn (slotSummaryRoundtrip cg node names)
+  {
+    (let summary (binderSummary (nodeCChild node)))
+    (+ (slotOwns cg node summary)
+      (+ (slotReleasesAtEnd cg node 0 summary) (slotAliases cg names (nodeCChild node) summary)))
+  })
+
+(:: optionalSummaryRoundtrip (-> Int ASTNode Int Int))
+(fn (optionalSummaryRoundtrip cg tree cls)
+  (probeSlotSummaryRoundtrip cg tree cls))
+
+(:: slotSummarySoakChecks ())
+;@axiom:effect(io)
+(fn (slotSummarySoakChecks)
+  {
+    (let cg newCG)
+    (let body (nodeCChild (parseFn "(fn (counted) { (let mut x \"fixed\") 9 })")))
+    (let node
+      (if (== (nodeTag body) TAG_E_BEGIN)
+        (vecGet (nodeAChildren body) 0)
+        body))
+    (setNodeBinderTyChild node (mkTCon "String" vecNew))
+    (let names vecNew)
+    (vecPush names "x")
+    (let tree (mkELetAt "x" (mkEInt 1) (mkEVar "x") 0))
+    (slotSummaryRoundtrip cg node names)
+    (optionalSummaryRoundtrip cg tree 2)
+    (optionalSummaryRoundtrip cg tree 0)
+    (let before live)
+    (let mut total 0)
+    (for i in 0..1000
+      (set total (+ total (slotSummaryRoundtrip cg node names))))
+    (let growth (- live before))
+    (say 67 (== total 2000))
+    (say 68 (== growth 0))
+    (let someBefore live)
+    (let mut someTotal 0)
+    (for i in 0..1000
+      (set someTotal (+ someTotal (optionalSummaryRoundtrip cg tree 2))))
+    (let someGrowth (- live someBefore))
+    (let noneBefore live)
+    (let mut noneTotal 0)
+    (for i in 0..1000
+      (set noneTotal (+ noneTotal (optionalSummaryRoundtrip cg tree 0))))
+    (let noneGrowth (- live noneBefore))
+    (say 69 (&& (== someTotal 1000) (== noneTotal 0)))
+    (say 70 (&& (== someGrowth 0) (== noneGrowth 0)))
+    (writeStr stderr
+      (concat "slot-summary-soak-growth "
+        (concat (fmtInt growth)
+          (concat " "
+            (concat (fmtInt someGrowth) (concat " " (concat (fmtInt noneGrowth) "\n")))))))
+  })
+
+(:: expectedNames (-> String String Names))
+(fn (expectedNames first second)
+  {
+    (let names vecNew)
+    (if (! (strEq first ""))
+      (vecPush names first))
+    (if (! (strEq second ""))
+      (vecPush names second))
+    names
+  })
+
+(:: checkPattern (-> Int ASTNode Int Names ()))
+;@axiom:effect(io)
+(fn (checkPattern index pat unknown names)
+  {
+    (let state internNewTyped)
+    (let actual (probePatternCollect state pat))
+    (let raw (internWordOf state))
+    (let mut same (&& (== actual unknown) (probePatternAgreement pat)))
+    (if (== unknown 0)
+      {
+        (if (!= (internCount raw) (vecLen names))
+          (set same false))
+        (for i in 0..(vecLen names)
+          (match (internFind raw (vecGet names i))
+            ((Some _) 0)
+            ((None)
+              (set same false)
+            )))
+      })
+    (say index same)
+  })
+
+(:: patternChecks ())
+;@axiom:effect(io)
+(fn (patternChecks)
+  {
+    (checkPattern 71 nilNode 0 vecNew)
+    (checkPattern 72 (mkEInt 7) 0 vecNew)
+    (checkPattern 73 (nodeBuildEFlt 0 0 0 0) 0 vecNew)
+    (checkPattern 74 (nodeBuildEStr "literal" 0 0 0) 0 vecNew)
+    (checkPattern 75 (nodeBuildEChar 65 0 0 0) 0 vecNew)
+    (checkPattern 76 (nodeBuildPCon0 "None" 0 0 0) 0 vecNew)
+    (checkPattern 77 (mkEVar "x") 0 (expectedNames "x" ""))
+    (checkPattern 78 (mkEApp (mkEVar "Some") (mkEVar "x")) 0 (expectedNames "x" ""))
+    (checkPattern 79 (mkEApp (mkEApp (mkEVar "Pair") (mkEVar "x")) (mkEVar "y")) 0
+      (expectedNames "x" "y"))
+    (checkPattern 80 (mkEApp (mkEVar "Some") (mkEApp (mkEVar "Some") (mkEVar "nested"))) 0
+      (expectedNames "nested" ""))
+    (let emptyNamed (nodeWireEmpty TAG_P_CONNAMED))
+    (checkPattern 81 emptyNamed 0 vecNew)
+    (checkPattern 82 (nodeBuildPConnamed "Empty" vecNew vecNew 0) 0 vecNew)
+    (let fields vecNew)
+    (vecPush fields (mkEVar "left"))
+    (vecPush fields (mkEApp (mkEVar "Some") (mkEVar "right")))
+    (checkPattern 83 (nodeBuildPConnamed "Pair" vecNew fields 0) 0 (expectedNames "left" "right"))
+    (let unknown (mkDFnAt "unsupported-pattern" vecNew (mkEInt 0) 0))
+    (checkPattern 84 unknown 1 vecNew)
+    (checkPattern 85 (mkEApp (mkEVar "Some") unknown) 1 vecNew)
+    ; Constructor heads are not binders, even when the head has another tag.
+    (checkPattern 86 (mkEApp unknown (mkEVar "payload")) 0 (expectedNames "payload" ""))
+    (let unknownFields vecNew)
+    (vecPush unknownFields (mkEVar "known"))
+    (vecPush unknownFields unknown)
+    (checkPattern 87 (nodeBuildPConnamed "Pair" vecNew unknownFields 0) 1 vecNew)
+    (checkPattern 88 (mkEApp (mkEApp (mkEVar "Pair") (mkEVar "same")) (mkEVar "same")) 0
+      (expectedNames "same" ""))
+    (checkPattern 89 (mkEApp (mkEVar "Constructor") (mkEInt 3)) 0 vecNew)
+    (checkPattern 90 (mkEApp (mkEApp (mkEVar "Pair") unknown) (mkEVar "known")) 1 vecNew)
+  })
+
+(:: slotNode (-> String ASTNode))
+(fn (slotNode source)
+  {
+    (let body (nodeCChild (parseFn source)))
+    (let node
+      (if (== (nodeTag body) TAG_E_BEGIN)
+        (vecGet (nodeAChildren body) 0)
+        body))
+    (setNodeBinderTyChild node (mkTCon "String" vecNew))
+    node
+  })
+
+(:: checkOwnershipFacts (-> Int String Int ()))
+;@axiom:effect(io)
+(fn (checkOwnershipFacts index source tail)
+  {
+    (let node (slotNode source))
+    (let directCG newCG)
+    (let factsCG newCG)
+    (bindSym directCG "x" "s0" 0 4)
+    (bindSym factsCG "x" "s0" 0 4)
+    (let summary (binderSummary (nodeCChild node)))
+    (let own (slotOwns directCG node summary))
+    (let release
+      (if (== own 1)
+        (slotReleasesAtEnd directCG node tail summary)
+        0))
+    (let facts (probeOwnershipFacts factsCG node tail 2 0))
+    (say index
+      (&& (== (& facts 1) own) (&& (== (>> facts 1) release) (== facts (+ own (* 2 release))))))
+  })
+
+(:: checkAliasFlag (-> Int String ()))
+;@axiom:effect(io)
+(fn (checkAliasFlag index source)
+  {
+    (let body (nodeCChild (parseFn source)))
+    (let directCG newCG)
+    (let factsCG newCG)
+    (bindSym directCG "x" "s0" 0 4)
+    (bindSym factsCG "x" "s0" 0 4)
+    (let directNames (expectedNames "x" ""))
+    (let factsNames (expectedNames "x" ""))
+    (let summary (binderSummary body))
+    (let direct (slotAliases directCG directNames body summary))
+    (let flag (probeAliasUnknown factsCG factsNames body))
+    (let mut same
+      (&&
+        (==
+          (if flag
+            1
+            0)
+          direct)
+        (== (vecLen factsNames) (vecLen directNames))))
+    (for i in 0..(vecLen directNames)
+      (if (! (strEq (vecGet directNames i) (vecGet factsNames i)))
+        (set same false)))
+    (say index same)
+  })
+
+(:: scalarFactsChecks ())
+;@axiom:effect(io)
+(fn (scalarFactsChecks)
+  {
+    (checkOwnershipFacts 91 "(fn (probe) { (let mut x \"fixed\") 9 })" 0)
+    (checkOwnershipFacts 92 "(fn (probe) { (let mut x \"fixed\") x })" 0)
+    (checkOwnershipFacts 93 "(fn (probe) { (let mut x \"fixed\") x })" 1)
+    (checkOwnershipFacts 94 "(fn (probe) { (let mut x \"fixed\") (sink x) })" 0)
+    (checkOwnershipFacts 95 "(fn (probe) { (let mut x \"fixed\") (let x 3) x })" 0)
+    (checkOwnershipFacts 96 "(fn (probe) { (let mut x \"fixed\") (set x \"next\") 9 })" 0)
+    (checkOwnershipFacts 97 "(fn (probe) { (let mut x \"fixed\") (lambda () x) })" 0)
+    (checkOwnershipFacts 98 "(fn (probe) { (let mut x \"fixed\") (let y x) (set x \"next\") y })" 0)
+    (checkAliasFlag 99 "(fn (probe) 9)")
+    (checkAliasFlag 100 "(fn (probe) { (let y x) y })")
+    (checkAliasFlag 101 "(fn (probe) { (let y x) (let z y) z })")
+    (checkAliasFlag 102 "(fn (probe) (match x ((Some arm) arm) ((None) 0)))")
+    (checkAliasFlag 103
+      "(fn (probe) (match x ((Some arm) { (let nested arm) nested }) ((None) 0)))")
+    (let node (slotNode "(fn (probe) { (let mut x \"fixed\") 9 })"))
+    (let cg newCG)
+    (let before (__axiom_mem_stat 0))
+    (let a (probeOwnershipFacts cg node 0 0 0))
+    (let b (probeOwnershipFacts cg node 0 1 0))
+    (let c (probeOwnershipFacts cg node 0 2 1))
+    (let d (probeOwnershipFacts cg node 0 0 1))
+    (let e (probeOwnershipFacts cg node 0 1 1))
+    (let unchanged (== (__axiom_mem_stat 0) before))
+    (say 104 (&& unchanged (== (+ a (+ b (+ c (+ d e)))) 0)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (factoryChecks)
+    (legacyChecks)
+    (stringOwnerChecks)
+    (soakChecks)
+    (summaryChecks)
+    (summarySoakChecks)
+    (mutableSlotChecks)
+    (slotSummarySoakChecks)
+    (patternChecks)
+    (scalarFactsChecks)
+    0
+  })

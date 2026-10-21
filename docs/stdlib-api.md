@@ -1676,14 +1676,17 @@ IO - files, standard streams, terminals, readiness and sockets.
 
 ## `Intern`
 
-`stdlib/Intern.ax` — 9 public names
+`stdlib/Intern.ax` — 12 public names
 
 Intern - a string interner, in Axiom.
 
 | Name | Kind | Type | Effects | Contracts | Summary |
 |---|---|---|---|---|---|
 | `internSlotOf` | value | `(-> String Int Int)` |  |  | The slot `s` probes first, in [0, cap). |
+| `InternState` | struct |  |  |  | An owning interner. Its raw handle is borrowed through `internWordOf`. Keep this owner alive while that handle is used. |
 | `internNew` | value | `Int` | `Alloc,Mut` |  | An empty interner with `internDefaultCap` slots. |
+| `internNewTyped` | value | `InternState` | `Alloc,Mut` |  | An empty owning interner with `internDefaultCap` slots. Scope cleanup releases its strings and slot allocation. |
+| `internWordOf` | value | `(-> InternState Int)` |  |  | Borrow the raw handle of a live owning interner. The returned word remains valid only while `owner` is alive. It carries no ownership share; do not pass it to `internFree`. |
 | `internWithCapacity` | value | `(-> Int Int)` | `Alloc,Mut` |  | An interner sized so `want` distinct strings fit without rehashing. |
 | `internFree` | value | `(-> Int Int)` | `Unsafe` |  | Hand `it` back: the slot table, the `Vec`, and one share of every string in it. Answers 0. `it` must be a live interner owning this share. Its raw Int handle and any unretained views into it must not be used after release. |
 | `internCap` | value | `(-> Int Int)` |  |  | How many strings the table can hold before it grows. |
