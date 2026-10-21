@@ -234,13 +234,18 @@ echo "--- 1. user-level cast count does not grow ---"
 # and four form the private raw-storage ablation. The owner stays live
 # during every read; the ablation's two erasures are its tested defect
 # (MM-VAL-23). Production compiler conversions fall by eleven.
+# Baseline 1235 adds ten source forms in effect-totality.py's oracle
+# tests. They prove local Unsafe forging casts and reject scalar,
+# nonparameter, block, quoted, custom-owner, selective-import and duplicate
+# counterexamples. The conversions are the effect-classification subjects
+# (MM-VAL-23); production and example counts are unchanged.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1225 ]; then
-  ok "user-level (cast count $cast_count <= 1225)"
+elif [ "$cast_count" -le 1235 ]; then
+  ok "user-level (cast count $cast_count <= 1235)"
 else
-  bad "user-level (cast count $cast_count > 1225): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1235): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
