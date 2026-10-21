@@ -46,7 +46,20 @@ function Zip-Package([string]$Folder) {
     [void][IO.Directory]::CreateDirectory($directory)
     $zip = Join-Path $directory ($name + '.zip')
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::CreateFromDirectory($Folder, $zip)
+    # Framework compatibility modes can make CreateFromDirectory write
+    # backslashes. Use the same canonical member names as package-windows.py.
+    $members = @(Get-AxiomFiles $Folder | Sort-Object)
+    $stream = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($member in $members) {
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($stream, (Join-Path $Folder $member), $member)
+        }
+    } finally { $stream.Dispose() }
+    $stream = [IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $actual = @($stream.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+        if (($actual -join "`n") -cne ($members -join "`n")) { throw 'Fixture ZIP member names differ from the package inventory.' }
+    } finally { $stream.Dispose() }
     Update-Sum $zip
     return $zip
 }
@@ -77,6 +90,7 @@ function Move-AxiomItem([string]$Source, [string]$Destination) {
 
 try {
     $zip = Zip-Package (Make-Package 'first')
+    Check $true 'fixture ZIP members match the canonical package inventory'
     $prefix = Join-Path $testRoot 'installation with spaces'
     Install-AxiomArchive $zip $prefix '' $commit | Out-Null
     Check ((Test-Path -LiteralPath (Join-Path $prefix 'bin/axiom.exe')) -and $script:probes -eq 2) 'staged and installed layouts are probed'
@@ -128,6 +142,16 @@ try {
     [void]$stream.CreateEntry("$name/../escape")
     $stream.Dispose()
     Refuses { Expand-AxiomArchive $unsafeZip (Join-Path $testRoot 'extract') $name } 'unsafe path' 'ZIP traversal is refused'
+    Remove-Item -LiteralPath $unsafeZip
+    $stream = [IO.Compression.ZipFile]::Open($unsafeZip, [IO.Compression.ZipArchiveMode]::Create)
+    [void]$stream.CreateEntry("$name\docs\reference.md")
+    $stream.Dispose()
+    Refuses { Expand-AxiomArchive $unsafeZip (Join-Path $testRoot 'backslash') $name } 'unsafe path' 'backslash ZIP members are refused'
+    Remove-Item -LiteralPath $unsafeZip
+    $stream = [IO.Compression.ZipFile]::Open($unsafeZip, [IO.Compression.ZipArchiveMode]::Create)
+    [void]$stream.CreateEntry("$name/docs\..\escape")
+    $stream.Dispose()
+    Refuses { Expand-AxiomArchive $unsafeZip (Join-Path $testRoot 'mixed-traversal') $name } 'unsafe path' 'mixed-separator ZIP traversal is refused'
     Remove-Item -LiteralPath $unsafeZip
     $stream = [IO.Compression.ZipFile]::Open($unsafeZip, [IO.Compression.ZipArchiveMode]::Create)
     [void]$stream.CreateEntry("$name/bin/AXIOM.exe")

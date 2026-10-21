@@ -44,6 +44,8 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(filename, archive.name)
         with zipfile.ZipFile(archive) as stream:
             prefix = "axiom-0.7.8-windows-x86_64/"
+            self.assertTrue(all(name.startswith(prefix) and "\\" not in name
+                                for name in stream.namelist()))
             payload = {name[len(prefix):]: stream.read(name) for name in stream.namelist()}
         inventory = dict((path, sha) for sha, path in (line.split("  ") for line in payload["SHA256SUMS"].decode().splitlines()))
         self.assertEqual(set(inventory), set(payload) - {"SHA256SUMS"})
