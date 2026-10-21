@@ -146,8 +146,9 @@ restriction_lines() {
 #
 # A declaration that already carries a `;@axiom:restrict` tag - above
 # its `(::`, or between its `(::` and its `(fn` - is left alone, so the
-# sweep never adds a second field to its AXSYM row. The full annotation
-# block after the signature is checked, regardless of tag ordering.
+# sweep never adds a second field to its AXSYM row. Tags between the
+# signature and its matching function are checked through comments and
+# blank lines, regardless of tag ordering.
 tag_every_fn() {
   python3 "$repo_root/scripts/lib/restriction-tags.py" "$1" "$2"
 }

@@ -55,6 +55,47 @@ class RestrictionTags(unittest.TestCase):
                   '(:: second Int)\n;@axiom:restrict(no-io)\n(fn (second) 2)\n')
         self.check(source, TAG + source)
 
+    def test_trivia_between_attached_annotations(self):
+        for trivia in (';; docs\n', '; note\n', '\n',
+                       '#| block comment\n  #| nested |#\n|#\n'):
+            with self.subTest(trivia=trivia):
+                source = ('\n(:: kept Int)\n;@axiom:effect(pure)\n' + trivia
+                          + ';@axiom:restrict(no-io)\n(fn (kept) 1)\n')
+                self.check(source, source)
+
+    def test_restriction_on_a_different_declaration_is_not_inherited(self):
+        for following in ('(:: second Int)\n(fn (second) 2)', '(fn (second) 2)'):
+            with self.subTest(following=following):
+                source = ('\n(:: first Int)\n;@axiom:effect(pure)\n'
+                          '\n;@axiom:restrict(no-io)\n' + following + '\n')
+                self.check(source, TAG + source)
+
+    def test_restriction_quoted_in_a_block_comment_is_not_attached(self):
+        source = ('\n(:: tagged Int)\n#|\n;@axiom:restrict(no-io)\n'
+                  '#| nested |#\n|#\n(fn (tagged) 1)\n')
+        self.check(source, TAG + source)
+
+    def test_trivia_after_tags_above_a_signature_or_unsigned_function(self):
+        for declaration in ('(:: kept Int)\n(fn (kept) 1)', '(fn (kept) 1)'):
+            with self.subTest(declaration=declaration):
+                source = (';@axiom:restrict(no-io)\n;; docs\n\n'
+                          + declaration + '\n')
+                self.check(source, source)
+
+    def test_matching_signature_and_function_are_one_injection_target(self):
+        source = '\n(:: kept Int)\n\n(fn (kept) 1)\n'
+        self.check(source, TAG + source)
+        # A signature with no injectable blank can still be covered at fn.
+        source = '(:: kept Int)\n\n(fn (kept) 1)\n'
+        self.check(source, source.replace('\n\n(fn', f'\n{TAG}\n(fn'))
+
+    def test_signature_restriction_also_covers_a_separated_function(self):
+        for trivia in ('', '\n;; docs\n'):
+            with self.subTest(trivia=trivia):
+                source = (';@axiom:restrict(no-io)\n' + trivia
+                          + '(:: kept Int)\n\n(fn (kept) 1)\n')
+                self.check(source, source)
+
     def test_multiline_signature(self):
         source = ('\n(pub :: kept\n  (-> Int\n    Int))\n;@axiom:effect(pure)\n'
                   ';@axiom:restrict(no-io)\n(pub fn (kept n) n)\n')
