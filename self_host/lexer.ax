@@ -118,10 +118,10 @@
 (pub :: skipWhitespace (-> String Int Int Int))
 ; A loop rather than a recursion, and `skipLineComment` returns to it
 ; rather than calling back, for the reason `lexTokens` below is a loop:
-; the two used to call each other in tail position, one frame per byte
-; of a comment-and-whitespace run, and stage1's tail-call rewrite fires
-; only for a SELF call. `skipLineComment` is self-recursive, so that
-; one it does flatten.
+; mutual tail calls would hold one frame per byte of a comment-and-
+; whitespace run, because the tail-call rewrite fires only for a self
+; call. `skipLineComment` is self-recursive, so its recursion is
+; flattened.
 (pub fn (skipWhitespace src pos len)
   {
     (let mut p pos)
@@ -145,8 +145,7 @@
   })
 
 ; The position just past the newline that ends this comment, or `len`.
-; It used to continue into `skipWhitespace` itself; the caller's loop
-; does that now, which is the same walk without the mutual recursion.
+; The caller's loop continues the walk, so there is no mutual recursion.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: skipLineComment (-> String Int Int Int))
 (pub fn (skipLineComment src pos len)
@@ -268,13 +267,10 @@
 (pub fn (scanStringEnd src pos len)
   ; Terminated answers one past the closing quote; UNTERMINATED
   ; answers the negative of the stop position, minus one so stop 0
-  ; survives the sign. The old contract answered a bare position
-  ; both ways and let the caller infer termination from `ep < len`,
-  ; which misreads the one input whose closing quote is the LAST
-  ; byte - impossible in a module file, where a string always has a
-  ; `)` or whitespace after it, and the first thing the REPL fed the
-  ; lexer: a line that IS a string lexed as TK_ERROR while stage0
-  ; answered String (probed 2026-08-07).
+  ; survives the sign. Inferring termination from `ep < len` would
+  ; misread the one input whose closing quote is the last byte: never
+  ; a module file, where a string always has a `)` or whitespace after
+  ; it, but exactly a REPL line that is a string.
   (if (>= pos len)
     (- 0 (+ pos 1))
     {
@@ -283,15 +279,10 @@
         (scanStringEnd src (+ pos 2) len)
         (if (== ch 34)
           (+ pos 1)
-          ; A newline is an ORDINARY character inside a string literal.
-          ; This used to stop the scan, so `"one<newline>two"` - which
-          ; stage0 lexes as one string containing a line break
-          ; (axiom-lexer/src/lib.rs:498, whose loop has no newline case)
-          ; - was refused by this compiler. It was refused before the
-          ; lexical diagnostics landed too, just less legibly: the
-          ; TK_ERROR reached the parser and came out as
-          ; `AX2001 expected expression, found "one`. Measured against
-          ; a stage1 built from 61ed4e8.
+          ; A newline is an ORDINARY character inside a string literal:
+          ; `"one<newline>two"` is one string containing a line break,
+          ; as stage0 lexes it (axiom-lexer/src/lib.rs:498, whose loop
+          ; has no newline case).
           ;
           ; AX1002 fires at end of input only: a line break inside the
           ; string is legal input, not a terminator. Banning the line
@@ -404,17 +395,10 @@
 ; The token loop is a `while`, and that is a correctness property
 ; rather than a style choice.
 ;
-; `lexTokens` and `dispatchChar` used to call each other in tail
-; position - one frame pair per token, never released until EOF - and
-; stage1's tail-call rewrite fires only for a SELF call, so a compiler
-; built BY STAGE1 grew a frame per token of its input. Measured: the
-; stage1-built `300-pipeline` died between 96 KB and 146 KB of source
-; while the same program built by stage0, whose `opt` run flattens
-; mutual tail calls, read 396 KB without trouble. The compiler's own
-; `codegen.ax` sat just under the line, so the ceiling arrived exactly
-; the way the `Mem` byte loops' did: as an unrelated-looking
-; conformance failure after an unrelated change made the source
-; longer.
+; A pair of functions calling each other in tail position would hold one
+; frame pair per token until EOF, because the tail-call rewrite fires
+; only for a self call: the stack would cap the size of a source file
+; the compiler can read, at around 100 KB.
 ;
 ; Each branch of `stepToken` pushes its token and answers the next
 ; position, so the loop owns the only frame. Every branch advances by
@@ -476,8 +460,8 @@
               (let ep0 (scanStringEnd src (+ pos 1) len))
               (if (< ep0 0)
                 ; Unterminated: the error spans from the opening quote to
-                ; where the scan stopped, which - since a newline no longer
-                ; stops it - is the end of the source, exactly as stage0's
+                ; where the scan stopped, which - since a newline does not
+                ; stop it - is the end of the source, exactly as stage0's
                 ; `span(start)` at axiom-lexer/src/lib.rs:541 is.
                 {
                   (let stop
@@ -492,10 +476,10 @@
                     stop
                   }
                 }
-                ; Terminated, but stage0 also rejects an escape outside its
-                ; set - and this lexer used to pass one through, changing
-                ; the string's BYTES rather than refusing (`"A\qB"` built
-                ; and printed `AqB`). The error spans the two characters of
+                ; Terminated, but an escape outside the set is refused, as
+                ; stage0 refuses it, rather than passed through: `"A\qB"`
+                ; would otherwise change the string's bytes to `AqB`. The
+                ; error spans the two characters of
                 ; the escape; lexing resumes past the whole literal, so one
                 ; bad escape does not cascade.
                 {
@@ -633,9 +617,7 @@
 ;
 ;   `'\q'`  the escape is not one of the seven -> AX1005, spanning the
 ;           BACKSLASH and the character after it, which is what makes
-;           `lexErrDiag` read the code off the first byte. This lexer
-;           used to accept it, so `'\q'` compiled to whatever the
-;           width arithmetic below happened to skip.
+;           `lexErrDiag` read the code off the first byte.
 ;   `'a`    no closing quote -> AX1003. The span ends one past the
 ;           character, NOT at the position the missing quote would
 ;           have taken: stage0's span ends where its scan stopped.
@@ -747,10 +729,8 @@
             (emitToken TK_INT numStart ep tokens src)
             ep
           }
-          ; Out of i64 range. This used to lex as an ordinary TK_INT
-          ; and wrap silently: stage0 refuses
-          ; `99999999999999999999999`, this compiler built it and
-          ; printed 200376420520689663.
+          ; Out of i64 range: refused, as stage0 refuses it, rather than
+          ; lexed as an ordinary TK_INT that wraps silently.
           {
             (emitToken TK_ERROR numStart ep tokens src)
             ep
@@ -816,24 +796,14 @@
             ; An IDENTIFIER, consumed whole, and it has to come before the
             ; char-literal arm. `'` is an identifier character (39 is in
             ; `isIdentChar`, and only there - it cannot START one), so
-            ; `f'` is one token to `lexTokens`. This scanner had no
-            ; identifier arm at all, so it met the `'` of `f'` with no
-            ; context, took it for the opening quote of a char literal,
-            ; and `skipCharBody` ran to the next `'` in the file or to
-            ; EOF - swallowing every `;@axiom:` line in between.
+            ; `f'` is one token to `lexTokens`. Without this arm the scanner
+            ; would meet the `'` of `f'` with no context, take it for the
+            ; opening quote of a char literal, and run `skipCharBody` to the
+            ; next `'` in the file or to EOF, swallowing every `;@axiom:`
+            ; line in between: one apostrophe would silently delete the
+            ; checking those tags ask for.
             ;
-            ; Measured on this repository's own AXTAG fixture: prepending
-            ; the single line `(fn (poison' n) n)` to
-            ; `tests/diagnostics/330-axtag-mismatch.ax` takes it from five
-            ; `AX3010`s to `OK` with none - and since 2026-08-25 those
-            ; are ERRORS, so one apostrophe turns a refused build into a
-            ; clean one. AXTAGs are
-            ; compiler-checked metadata - a `pure` claim, an `effect(io)`
-            ; claim - so what one apostrophe deletes is the checking, in
-            ; silence, with `fmt` still preserving both the name and the
-            ; now-inert tag.
-            ;
-            ; This arm is the version that cannot drift again: it asks
+            ; This arm cannot drift from the lexer: it asks
             ; `isIdentStart`/`skipIdent`, the same two functions
             ; `stepIdentToken` asks, rather than restating the rule.
             (if (isIdentStart ch)

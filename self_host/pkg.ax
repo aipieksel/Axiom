@@ -1,132 +1,58 @@
 ; pkg.ax - `axiom.pkg`, the project manifest.
 ;
-; WHAT A DEPENDENCY WAS BEFORE THIS. A directory on `$AXIOM_PATH`, a
-; colon-separated environment variable. That is a real mechanism and it
-; stays - but nothing records what a program depends on, so nothing
-; travels with the project, nothing can be checked, and two directories
-; providing a module of the same name resolve first-wins by environment
-; order, silently, with the loser's declarations compiled against
-; nobody. It is the value-namespace twin of the type collision `AX3044`
-; closed on 2026-08-24, and it had the same failure mode: a wrong
-; answer at exit 0.
-;
-; THE MANIFEST. `axiom.pkg`, at or above the entry file's directory, is
-; a line-based file - `#` comments, blank lines ignored, one
-; `key value` pair per line:
+; A manifest records what a program depends on, so it travels with the
+; project and can be checked. `axiom.pkg`, at or above the entry file's
+; directory, is a line-based file: `#` comments, blank lines ignored,
+; one `key value` pair per line, split on any run of whitespace:
 ;
 ;     # axiom.pkg
 ;     name     myapp
 ;     version  0.1.0
 ;     depend   vendor/axiom-json
 ;     depend   ../shared/modules
-;
-; `depend` names a DIRECTORY of modules, resolved against the
-; manifest's own directory so the project relocates, and each one joins
-; the module search path after the entry file's directory and before
-; `$AXIOM_PATH`. `version` is recorded and read by nothing yet; it is
-; here because a manifest that cannot say what package it describes is
-; a search path with extra steps, and because it is what a registry
-; would key on if there is ever one.
-;
-; `name` IS READ, since 2026-08-31: it is the file `axiom build` writes
-; when neither `--output` nor `-o` says otherwise, in place of the
-; literal `output` every project shared before. A manifest key that
-; nothing reads is a key nobody can tell from a typo, which is the
-; other half of this file's job - see below.
-;
-; A MANIFEST LINE THAT MEANS NOTHING IS REFUSED. Three shapes used to
-; be read as silence, measured on the 0.6.1 binary before this changed:
-;
-;     $ printf 'name\tprobe\ndepend\tvendor/lib\n' > axiom.pkg
-;     $ axiom check app.ax
-;     error[AX5001]: cannot resolve import `Widget`      # exit 1
-;
-; a TAB between key and value - the split was `strStartsWith t "depend "`,
-; one literal space - and the same wall of missing modules for a
-; misspelled key (`dependd vendor/lib`) and for a key with no value at
-; all (`depend` alone on its line). In every case the manifest that
-; caused it was never named. `pkgCheckLines` now walks the file once
-; and refuses an unknown key, a key with no value, a second `name` or
-; `version`, and a `name` that is not a file name - each at
-; `axiom.pkg:LINE`, before a byte is compiled - and the key/value split
-; is any run of whitespace rather than one space.
-;
-; `crate` NAMES A NATIVE DEPENDENCY, since 2026-09-03. `depend` names
-; a directory of `.ax` and nothing else, so a package whose whole
-; reason to exist is a Rust archive could not be declared: the shell
-; could say it - `AXIOM_PATH=vendor/greeter/axiom axiom build app.ax`
-; linked and ran - and the manifest could not. Measured on 0.7.3, one
-; source tree, one `libaxiom_greeter.a` already on disk, two ways of
-; declaring it: through `$AXIOM_PATH`, exit 0 and the program's answer;
-; through `depend vendor/greeter/axiom`, exit 4 with
-; `error[AX4004]: no archive is linked`. That is the exact inversion of
-; what a manifest is for - the environment could describe the project
-; and the project could not.
-;
 ;     crate    vendor/axiom-greeter
 ;
-; names a CRATE DIRECTORY: a `Cargo.toml` beside an `axiom/` holding
-; the generated binding module. It joins the module search path in
-; `depend`'s slot, as `DIR/axiom/`, and its `target/release` - and its
-; workspace's, one and two levels up - joins the link search path.
+; `depend` names a directory of modules, resolved against the manifest's
+; own directory so the project relocates, or a git URL that `axiom
+; fetch` checks out. Each joins the module search path after the entry
+; file's directory and before `$AXIOM_PATH`. `name` is the file `axiom
+; build` writes when neither `--output` nor `-o` names one. `version` is
+; recorded and read by nothing yet.
 ;
-; A MANIFEST `crate` NEVER RUNS CARGO, and that is the decision this
-; key is built around rather than an omission. `--crate DIR` on the
-; command line does: measured on 0.7.3 against a crate with no
-; `target/`, `axiom build app.ax --crate mycrate` printed
-; `axiom: building crate `axiom-greeter` with cargo (no archive
-; found)`, cargo ran, and `mycrate/target/` appeared. A COMMAND LINE
-; is a person asking; a manifest is a checked-in file that arrives with
-; a clone. `docs/reference.md` says the compiler executes no code from
-; a source file, and a key that let a cloned repository spawn another
-; project's build system would make that sentence false for the one
-; file whose whole job is to be trusted. So an unbuilt archive stays
-; `AX4004`, whose help already names `--link-lib`, `--link-search` and
-; the `target/release` it looked in; the user runs `cargo build
-; --release` (or one `axiom build --crate DIR`) once, and the manifest
-; is enough from then on.
+; A line that means nothing is refused at `axiom.pkg:LINE` before a byte
+; is compiled: an unknown key, a key with no value, a second `name` or
+; `version`, and a `name` that is not a file name (`pkgCheckLines`). A
+; key nothing reads is a key nobody can tell from a typo.
 ;
-; WHAT THIS IS NOT, said out loud so nobody has to discover it: there
-; is no registry, no lockfile, no version constraint and no fetching.
-; A dependency is a path on this machine - a `crate` too. Every one of
-; those is a policy decision that wants a maintainer to make it, and
-; shipping a half-made one is worse than shipping the mechanism it
-; would rest on. A lockfile in particular is not a step toward a
-; fetcher: with every dependency a path the user already controls, a
-; digest over it closes no surface and changes on every edit of their
-; own vendored code. It becomes meaningful when code starts arriving
-; from elsewhere, and not before.
+; `crate` names a crate directory: a `Cargo.toml` beside an `axiom/`
+; holding the generated binding module. `DIR/axiom/` joins the module
+; search path in `depend`'s slot, and its `target/release`, and its
+; workspace's one and two levels up, join the link search path.
 ;
-; TWO DEPENDENCIES MAY NOT PROVIDE ONE MODULE. That is the property
-; that makes this more than `$AXIOM_PATH`, and `pkgVerify` refuses it
+; A manifest `crate` never runs cargo, though `--crate DIR` on the
+; command line does: a command line is a person asking, and a manifest
+; is a file that arrives with a clone. `docs/reference.md` says the
+; compiler executes no code from a source file, and a key that let a
+; cloned repository spawn another project's build system would make that
+; false. An unbuilt archive stays AX4004, whose help names `--link-lib`,
+; `--link-search` and the `target/release` it looked in.
+;
+; There is no registry index, no lockfile and no version constraint.
+;
+; Two dependencies may not provide one module, at any depth the resolver
+; looks (`pkgModules` walks three levels), and `pkgVerify` refuses it
 ; before a byte is compiled, naming both files and the manifest. It is
-; checked at the MANIFEST rather than per-import on purpose: the fault
-; is in the project's configuration, and reporting it only for the
-; imports that happen to be ambiguous would let a program build today
-; and stop building when somebody adds an import.
+; checked at the manifest rather than per import: the fault is in the
+; project's configuration, and reporting it only for the imports that
+; happen to be ambiguous would let a program build today and stop
+; building when somebody adds an import.
 ;
-; ...AND THE PROPERTY WAS TOP-LEVEL ONLY until 2026-09-03. `depend a`
-; and `depend b` each holding `Sub/Widget.ax` - the file
-; `(import Sub.Widget)` resolves to - built and exited with `a`'s
-; answer, silently, because `pkgFirstShared` did one directory read and
-; never descended. The gate could not see it either: its fixture
-; helper only ever wrote top-level modules. `pkgModules` now walks a
-; dependency three levels deep, the same depth the resolver's own
-; nested lookup is documented at, and the refusal names the module by
-; the dotted name an `import` would spell.
-;
-; A DEPENDENCY MAY NOT PROVIDE A STANDARD-LIBRARY MODULE. Same fault,
-; same silence, one directory further down the ladder: `depend` sits
-; ABOVE the standard library in the search order, so a dependency
-; carrying a `Fmt.ax` replaced the real one for the whole program.
-; Measured on 0.7.3 - a vendored copy of `stdlib/Fmt.ax` with `fmtInt`
-; rewritten to answer `"HIJACKED"` made the program print HIJACKED at
-; exit 0, no diagnostic. That is a supply-chain surface wearing a
-; search path, and it is refused now. The refusal lives in
-; `codegen.ax`, beside the search order it is about, because this file
-; cannot see one: `codegen` imports `pkg`, not the other way round.
-; The ENTRY FILE'S own directory is untouched and still shadows a
-; library module, because that is documented, intended, and is a file
+; A dependency may not provide a standard-library module either:
+; `depend` sits above the standard library in the search order, so a
+; vendored `Fmt.ax` would replace the real one for the whole program.
+; The refusal lives in `codegen.ax`, beside the search order, because
+; `codegen` imports `pkg` and not the other way round. The entry file's
+; own directory still shadows a library module, because that is a file
 ; the author wrote rather than one that arrived with a dependency.
 (import core (Ints Strings IntRows StringRows))
 (import Str)
@@ -139,8 +65,8 @@
 
 ; The manifest's file name. One place, because three functions here
 ; and one message all say it.
-(pub :: pkgManifestName String)
-(pub fn (pkgManifestName)
+(:: pkgManifestName String)
+(fn (pkgManifestName)
   "axiom.pkg")
 
 ; The nearest `axiom.pkg` at or above `dir`, or "".
@@ -160,9 +86,9 @@
       (pathWithSlash dir))
     0))
 
-(pub :: pkgFindManifestFrom (-> String Int String))
+(:: pkgFindManifestFrom (-> String Int String))
 ;@axiom:effect(io)
-(pub fn (pkgFindManifestFrom dir depth)
+(fn (pkgFindManifestFrom dir depth)
   (if (> depth 8)
     ""
     {
@@ -203,9 +129,9 @@
   })
 
 ; Every value of `key`, in file order.
-(pub :: pkgValues (-> String String Ints))
+(:: pkgValues (-> String String Ints))
 ;@axiom:effect(unsafe)
-(pub fn (pkgValues text key)
+(fn (pkgValues text key)
   {
     (let lines (strSplit text 10))
     (let out vecNew)
@@ -235,11 +161,9 @@
 ; manifest format with no way to write a comment is a manifest format
 ; nobody annotates.
 ;
-; THE TOKEN IS TAKEN, NOT MATCHED. This used to ask
-; `strStartsWith t (concat key " ")` - the key followed by one
-; literal space - which read `depend<TAB>vendor/lib` as no line at all
-; and reported it as every module the directory would have provided
-; going missing. `pkgKeyOf` splits on any whitespace, so a tab-aligned
+; THE TOKEN IS TAKEN, NOT MATCHED. Matching the key followed by one
+; literal space would read `depend<TAB>vendor/lib` as no line at all.
+; `pkgKeyOf` splits on any whitespace, so a tab-aligned
 ; manifest means what it looks like, and the token it returns is what
 ; `pkgCheckLines` refuses when it is not a key.
 (pub :: pkgLineValue (-> String String String))
@@ -284,14 +208,14 @@
     (|| (strEq k "version")
       (|| (strEq k "depend") (|| (strEq k "crate") (|| (strEq k "opt") (strEq k "main")))))))
 
-(pub :: pkgUncomment (-> String String))
-(pub fn (pkgUncomment line)
+(:: pkgUncomment (-> String String))
+(fn (pkgUncomment line)
   (match (strFindByte line 35 0)
     ((None) line)
     ((Some at) (strSlice line 0 at))))
 
-(pub :: pkgTrim (-> String String))
-(pub fn (pkgTrim s)
+(:: pkgTrim (-> String String))
+(fn (pkgTrim s)
   {
     (let n (strLen s))
     (let mut a 0)
@@ -347,9 +271,9 @@
 
 ; The shared body of the two above: every value of `key`, resolved
 ; against the manifest's directory, each with a trailing slash.
-(pub :: pkgDirsFor (-> String String Ints))
+(:: pkgDirsFor (-> String String Ints))
 ;@axiom:effect(io)
-(pub fn (pkgDirsFor entryDir key)
+(fn (pkgDirsFor entryDir key)
   {
     (let mf (pkgFindManifest entryDir))
     (if (== (strLen mf) 0)
@@ -366,8 +290,8 @@
 ; URL is where the dependency lives, the checkout is where it is
 ; read from, and `pkgVerify` refuses the latter with the clone that
 ; fills it when it is not there.
-(pub :: pkgDirsIn (-> String String String Ints))
-(pub fn (pkgDirsIn text base key)
+(:: pkgDirsIn (-> String String String Ints))
+(fn (pkgDirsIn text base key)
   {
     (let raw (pkgValues text key))
     {
@@ -385,15 +309,15 @@
     }
   })
 
-(pub :: pkgResolveDep (-> String String String String String))
-(pub fn (pkgResolveDep text base key v)
+(:: pkgResolveDep (-> String String String String String))
+(fn (pkgResolveDep text base key v)
   (if (&& (strEq key "depend") (pkgIsUrl v))
     (pkgDepCheckout base v)
     (pathWithSlash (pkgResolve base v))))
 
 ; `DIR/axiom/` for each directory in `dirs`.
-(pub :: pkgAxiomSub (-> Ints Ints))
-(pub fn (pkgAxiomSub dirs)
+(:: pkgAxiomSub (-> Ints Ints))
+(fn (pkgAxiomSub dirs)
   {
     (let out vecNew)
     (let mut i 0)
@@ -435,8 +359,8 @@
 
 ; A manifest path against the manifest's own directory. An absolute
 ; path is taken as it stands.
-(pub :: pkgResolve (-> String String String))
-(pub fn (pkgResolve base p)
+(:: pkgResolve (-> String String String))
+(fn (pkgResolve base p)
   (if (pathIsAbsolute p)
     p
     (concat (pathWithSlash base) p)))
@@ -448,8 +372,8 @@
 ; `file://` names a local repository and exists so the fetch is
 ; testable with no network: a gate builds a repository in a scratch
 ; directory and depends on it through its own path.
-(pub :: pkgIsUrl (-> String Bool))
-(pub fn (pkgIsUrl v)
+(:: pkgIsUrl (-> String Bool))
+(fn (pkgIsUrl v)
   (|| (strStartsWith v "https://")
     (|| (strStartsWith v "http://")
       (|| (strStartsWith v "git@")
@@ -461,12 +385,12 @@
 ; `[A-Za-z0-9._-]` a `-`. Flat by construction - no `/` survives, so
 ; the segment cannot escape the directory that holds it - and stable,
 ; so two manifests naming one URL name one checkout.
-(pub :: pkgDepSlug (-> String String))
-(pub fn (pkgDepSlug url)
+(:: pkgDepSlug (-> String String))
+(fn (pkgDepSlug url)
   (pkgSlugBytes (pkgStripDotGit (pkgStripSlash (pkgStripScheme url))) 0))
 
-(pub :: pkgStripScheme (-> String String))
-(pub fn (pkgStripScheme url)
+(:: pkgStripScheme (-> String String))
+(fn (pkgStripScheme url)
   (if (strStartsWith url "https://")
     (strSlice url 8 (- (strLen url) 8))
     (if (strStartsWith url "http://")
@@ -487,14 +411,14 @@
     (strSlice s 0 (- (strLen s) 1))
     s))
 
-(pub :: pkgStripDotGit (-> String String))
-(pub fn (pkgStripDotGit s)
+(:: pkgStripDotGit (-> String String))
+(fn (pkgStripDotGit s)
   (if (&& (> (strLen s) 4) (strEq (strSlice s (- (strLen s) 4) 4) ".git"))
     (strSlice s 0 (- (strLen s) 4))
     s))
 
-(pub :: pkgSlugBytes (-> String Int String))
-(pub fn (pkgSlugBytes s i)
+(:: pkgSlugBytes (-> String Int String))
+(fn (pkgSlugBytes s i)
   (if (>= i (strLen s))
     ""
     {
@@ -506,21 +430,17 @@
         (pkgSlugBytes s (+ i 1)))
     }))
 
-(pub :: pkgIsSlugByte (-> Int Bool))
-(pub fn (pkgIsSlugByte b)
+(:: pkgIsSlugByte (-> Int Bool))
+(fn (pkgIsSlugByte b)
   (|| (strIsAlpha b) (|| (strIsDigit b) (|| (== b 46) (|| (== b 45) (== b 95))))))
 
 ; ------------------------------------------------------------------
 ; The checkout KEY, and the hash inside it.
 ;
-; `pkgDepSlug` alone was the checkout directory until 2026-09-26, and
-; it is not injective: every byte outside `[A-Za-z0-9._-]` becomes `-`,
-; so `file:///repos/a/b` and `file:///repos/a-b` both named
-; `.axiom/deps/repos-a-b/`. An audit fetched the first (its `Widget.answer`
-; is 11), pointed the manifest at the second (22), and `axiom fetch`
-; printed `present` and exited 0 - the program still answered 11,
-; compiled against a repository the manifest no longer named. Changing a
-; dependency silently kept the old one.
+; `pkgDepSlug` alone is not injective: every byte outside
+; `[A-Za-z0-9._-]` becomes `-`, so `file:///repos/a/b` and
+; `file:///repos/a-b` would share `.axiom/deps/repos-a-b/`, and changing
+; a dependency would silently keep the old checkout.
 ;
 ; So the key is the slug, cut to 64 bytes for a readable prefix, then a
 ; `-`, then the first 32 hex digits (128 bits) of the SHA-256 of the
@@ -736,8 +656,8 @@
   })
 
 ; The SHA-256 of `s`'s bytes, as 64 lower-case hex digits.
-(pub :: pkgSha256Hex (-> String String))
-(pub fn (pkgSha256Hex s)
+(:: pkgSha256Hex (-> String String))
+(fn (pkgSha256Hex s)
   {
     (let m (pkgShaPad s))
     (let k pkgShaK)
@@ -765,12 +685,8 @@
           (pkgShaBlock m (* i 64) k h w)
           (set i (+ i 1))
         })
-      (set i 0)
-      (while (< i 8)
-        {
-          (set out (concat out (fmtPadZerosLeft (fmtHex (vecGet h i)) 8)))
-          (set i (+ i 1))
-        })
+      (for i in 0..8
+        (set out (concat out (fmtPadZerosLeft (fmtHex (vecGet h i)) 8))))
       out
     }
   })
@@ -795,10 +711,8 @@
 ; THIS IS WHAT A CHECKOUT IS, for `fetch` and for `build` alike: a
 ; directory whose `.git/config` says it was cloned from the URL the
 ; manifest names. A directory that merely EXISTS at the key's path is
-; not one - until 2026-09-26 `fetch` answered `present` for any
-; directory there, including the empty one its own failed clone had
-; left behind (next fetch: exit 0, nothing checked out), and including
-; one cloned from a different URL with the same slug. Reading git's own
+; not one: it may be the empty directory a failed clone left behind, or
+; a clone of a different URL with the same slug. Reading git's own
 ; record rather than a file of ours means a checkout made by hand with
 ; the `git clone` the build's hint prints is as good as one `fetch`
 ; made, and one made from the wrong URL is not, whoever made it.
@@ -810,8 +724,8 @@
 ; The `url` of the `[remote "origin"]` section of git config text, or
 ; "": the first `url = VALUE` line after that section header and before
 ; the next one, whitespace trimmed and one pair of quotes removed.
-(pub :: pkgOriginIn (-> String String))
-(pub fn (pkgOriginIn text)
+(:: pkgOriginIn (-> String String))
+(fn (pkgOriginIn text)
   {
     (let mut at 0)
     (let mut inOrigin 0)
@@ -846,8 +760,8 @@
     }
   })
 
-(pub :: pkgUnquote (-> String String))
-(pub fn (pkgUnquote v)
+(:: pkgUnquote (-> String String))
+(fn (pkgUnquote v)
   (if (&& (>= (strLen v) 2) (&& (== (strByte v 0) 34) (== (strByte v (- (strLen v) 1)) 34)))
     (strSlice v 1 (- (strLen v) 2))
     v))
@@ -863,9 +777,9 @@
 ; Every URL dependency's checkout was cloned from that URL - the build's
 ; half of what `pkgOrigin` says. Called after `pkgVerify` has refused a
 ; checkout that is not there at all, so each one here exists.
-(pub :: pkgCheckOrigins (-> Ints String String Int Int))
+(:: pkgCheckOrigins (-> Ints String String Int Int))
 ;@axiom:effect(io)
-(pub fn (pkgCheckOrigins urls base mf i)
+(fn (pkgCheckOrigins urls base mf i)
   (if (>= i (vecLen urls))
     0
     {
@@ -893,9 +807,9 @@
 (pub fn (pkgFetchUrls text)
   (pkgFetchUrlsFrom (pkgValues text "depend") 0 vecNew))
 
-(pub :: pkgFetchUrlsFrom (-> Ints Int Ints Ints))
+(:: pkgFetchUrlsFrom (-> Ints Int Ints Ints))
 ;@axiom:effect(unsafe)
-(pub fn (pkgFetchUrlsFrom vs i out)
+(fn (pkgFetchUrlsFrom vs i out)
   (if (>= i (vecLen vs))
     out
     {
@@ -911,12 +825,12 @@
 ; The hint a missing dependency directory carries when it is a URL
 ; dependency's checkout: the URL and the clone that fills it.
 ; Answers "" for a plain directory, so the refusal reads as before.
-(pub :: pkgUrlHint (-> String String String String))
-(pub fn (pkgUrlHint text base dir)
+(:: pkgUrlHint (-> String String String String))
+(fn (pkgUrlHint text base dir)
   (pkgUrlHintVals (pkgValues text "depend") base dir 0))
 
-(pub :: pkgUrlHintVals (-> Ints String String Int String))
-(pub fn (pkgUrlHintVals vs base dir i)
+(:: pkgUrlHintVals (-> Ints String String Int String))
+(fn (pkgUrlHintVals vs base dir i)
   (if (>= i (vecLen vs))
     ""
     {
@@ -953,8 +867,8 @@
 ; An `opt` value is one byte, `0` through `3`: the same four levels
 ; `--opt` honours, refused in the same words. Single byte, so no
 ; multi-digit value and no flag spelling can reach the emitter.
-(pub :: pkgOptOk (-> String Bool))
-(pub fn (pkgOptOk s)
+(:: pkgOptOk (-> String Bool))
+(fn (pkgOptOk s)
   (if (== (strLen s) 1)
     {
       (let c (strByte s 0))
@@ -1015,8 +929,8 @@
       false
       (pkgNameBytesOk s 0))))
 
-(pub :: pkgNameBytesOk (-> String Int Bool))
-(pub fn (pkgNameBytesOk s i)
+(:: pkgNameBytesOk (-> String Int Bool))
+(fn (pkgNameBytesOk s i)
   (if (>= i (strLen s))
     true
     (if (pkgIsNameByte (strByte s i))
@@ -1024,16 +938,16 @@
       false)))
 
 ; `.` is 46, `-` is 45, `_` is 95.
-(pub :: pkgIsNameByte (-> Int Bool))
-(pub fn (pkgIsNameByte b)
+(:: pkgIsNameByte (-> Int Bool))
+(fn (pkgIsNameByte b)
   (|| (strIsAlpha b) (|| (strIsDigit b) (|| (== b 46) (|| (== b 45) (== b 95))))))
 
 ; `error: axiom.pkg:LINE: `, the prefix every line-level refusal here
 ; shares. The line number is 1-based and counts blank and comment lines
 ; like every editor does, because the reader's next move is to open the
 ; file at it.
-(pub :: pkgAt (-> String Int String))
-(pub fn (pkgAt mf line)
+(:: pkgAt (-> String Int String))
+(fn (pkgAt mf line)
   (concat "error: " (concat mf (concat ":" (concat (fmtInt line) (concat ": " ""))))))
 
 ; Walk the manifest once and refuse every line that cannot mean what it
@@ -1274,12 +1188,8 @@
           (vecPush out (as (vecGetStr a i) Int))
           (set i (+ i 1))
         })
-      (set i 0)
-      (while (< i (vecLen b))
-        {
-          (vecPush out (as (vecGetStr b i) Int))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen b)
+        (vecPush out (as (vecGetStr b i) Int)))
       out
     }
   })
@@ -1288,9 +1198,9 @@
 ; fail to be. The messages name the DIRECTORY and what was looked for
 ; inside it, because "crate directory" is a shape the reader has to be
 ; told, not one they can infer from a path.
-(pub :: pkgCheckCrates (-> Ints String Int Int))
+(:: pkgCheckCrates (-> Ints String Int Int))
 ;@axiom:effect(io)
-(pub fn (pkgCheckCrates dirs mf i)
+(fn (pkgCheckCrates dirs mf i)
   (if (>= i (vecLen dirs))
     0
     {
@@ -1327,9 +1237,9 @@
 ; Every pair of dependency directories, checked for a module both
 ; provide. Quadratic in the number of dependencies and linear in their
 ; contents, which is the right shape for a list a human typed.
-(pub :: pkgCheckOverlap (-> Ints String Int Int))
+(:: pkgCheckOverlap (-> Ints String Int Int))
 ;@axiom:effect(io)
-(pub fn (pkgCheckOverlap dirs mf i)
+(fn (pkgCheckOverlap dirs mf i)
   (if (>= i (vecLen dirs))
     0
     {
@@ -1337,9 +1247,9 @@
       (pkgCheckOverlap dirs mf (+ i 1))
     }))
 
-(pub :: pkgCheckPair (-> Ints String Int Int Int))
+(:: pkgCheckPair (-> Ints String Int Int Int))
 ;@axiom:effect(io)
-(pub fn (pkgCheckPair dirs mf i j)
+(fn (pkgCheckPair dirs mf i j)
   (if (>= j (vecLen dirs))
     0
     {
@@ -1409,16 +1319,16 @@
     }
   })
 
-(pub :: pkgWalkModules (-> Ints String String Int Int))
+(:: pkgWalkModules (-> Ints String String Int Int))
 ;@axiom:effect(io)
-(pub fn (pkgWalkModules out root rel depth)
+(fn (pkgWalkModules out root rel depth)
   (if (> depth 2)
     0
     (pkgWalkEntries out root rel (unwrapOr (listDir (concat root rel)) vecNew) 0 depth)))
 
-(pub :: pkgWalkEntries (-> Ints String String Strings Int Int Int))
+(:: pkgWalkEntries (-> Ints String String Strings Int Int Int))
 ;@axiom:effect(io)
-(pub fn (pkgWalkEntries out root rel entries i depth)
+(fn (pkgWalkEntries out root rel entries i depth)
   (if (>= i (vecLen entries))
     0
     {
@@ -1450,8 +1360,8 @@
       rel)
     0))
 
-(pub :: pkgDotSlashes (-> String Int String))
-(pub fn (pkgDotSlashes s i)
+(:: pkgDotSlashes (-> String Int String))
+(fn (pkgDotSlashes s i)
   (if (>= i (strLen s))
     s
     (if (== (strByte s i) 47)

@@ -265,26 +265,28 @@
 ; `%0, %1, %2` - the one place a register list is spelled, so the
 ; parameter list, the call arguments and the block arguments cannot
 ; disagree about the separator.
-(pub :: mirRegList (-> Ints Int String String))
-(pub fn (mirRegList v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (mirRegList v (+ i 1)
-      (concat
-        (if (== i 0)
-          acc
-          (concat acc ", "))
-        (mirReg (vecGet v i))))))
+(:: mirRegList (-> Ints String))
+(fn (mirRegList v)
+  {
+    (let b strBuilderNew)
+    (for (r i) in v
+      {
+        (if (> i 0)
+          (strBuilderPush b ", "))
+        (strBuilderPush b (mirReg r))
+      })
+    (strBuilderFinish b)
+  })
 
 ; A `condbr` successor: bare when the argument list is empty, applied
 ; when it is not. `br` keeps its own spelling - it always prints its
 ; parentheses, empty or not, and the goldens pin that - so this is
 ; `condbr`'s alone, and the two successors share the one list.
-(pub :: mCondTarget (-> Int Ints String))
-(pub fn (mCondTarget b args)
+(:: mCondTarget (-> Int Ints String))
+(fn (mCondTarget b args)
   (if (== (vecLen args) 0)
     (mirBB b)
-    (concat (mirBB b) (concat "(" (concat (mirRegList args 0 "") ")")))))
+    (concat (mirBB b) (concat "(" (concat (mirRegList args) ")")))))
 
 (pub :: mirInst (-> MInst String))
 (pub fn (mirInst n)
@@ -296,12 +298,11 @@
           (concat (mirReg n.a) (concat ", " (mirReg n.b)))))
       (if (== n.op MO_CALL)
         (concat (concat "  " (mirReg n.dst))
-          (concat (concat " = call " (concat n.name "(")) (concat (mirRegList n.args 0 "") ")")))
+          (concat (concat " = call " (concat n.name "(")) (concat (mirRegList n.args) ")")))
         (if (== n.op MT_RET)
           (concat "  ret " (mirReg n.a))
           (if (== n.op MT_BR)
-            (concat "  br "
-              (concat (mirBB n.tgt) (concat "(" (concat (mirRegList n.args 0 "") ")"))))
+            (concat "  br " (concat (mirBB n.tgt) (concat "(" (concat (mirRegList n.args) ")"))))
             (if (== n.op MT_CONDBR)
               (concat (concat "  condbr " (concat (mirReg n.a) ", "))
                 (concat (mCondTarget n.tgt n.args) (concat ", " (mCondTarget n.alt n.args))))
@@ -314,23 +315,29 @@
                     (concat "  trap " n.name))
                   (concat "  <unknown op " (concat (fmtInt n.op) ">")))))))))))
 
-(pub :: mirInsts (-> (Vec MInst) Int String String))
-(pub fn (mirInsts v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (mirInsts v (+ i 1) (concat acc (concat (mirInst (vecGet v i)) "\n")))))
+(:: mirInsts (-> (Vec MInst) String))
+(fn (mirInsts v)
+  {
+    (let b strBuilderNew)
+    (for n in v
+      {
+        (strBuilderPush b (mirInst n))
+        (strBuilderPush b "\n")
+      })
+    (strBuilderFinish b)
+  })
 
-(pub :: mirBlock (-> MBlock String))
-(pub fn (mirBlock b)
+(:: mirBlock (-> MBlock String))
+(fn (mirBlock b)
   (concat
     (concat (mirBB b.id)
       (concat
         (if (== (vecLen b.params) 0)
           ""
-          (concat "(" (concat (mirRegList b.params 0 "") ")")))
+          (concat "(" (concat (mirRegList b.params) ")")))
         ":\n"))
     (concat
-      (mirInsts b.instrs 0 "")
+      (mirInsts b.instrs)
       (if (== (vecLen b.term) 0)
         ; A block with no terminator is a broken block, and the printer
         ; says so rather than printing nothing: a silently short block
@@ -339,16 +346,19 @@
         "  <missing terminator>\n"
         (concat (mirInst (vecGet b.term 0)) "\n")))))
 
-(pub :: mirBlocks (-> (Vec MBlock) Int String String))
-(pub fn (mirBlocks v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (mirBlocks v (+ i 1) (concat acc (mirBlock (vecGet v i))))))
+(:: mirBlocks (-> (Vec MBlock) String))
+(fn (mirBlocks v)
+  {
+    (let b strBuilderNew)
+    (for blk in v
+      (strBuilderPush b (mirBlock blk)))
+    (strBuilderFinish b)
+  })
 
 (pub :: mirFunc (-> MFunc String))
 (pub fn (mirFunc f)
-  (concat (concat "fn " (concat f.name (concat "(" (concat (mirRegList f.params 0 "") ") {\n"))))
-    (concat (mirBlocks f.blocks 0 "") "}\n")))
+  (concat (concat "fn " (concat f.name (concat "(" (concat (mirRegList f.params) ") {\n"))))
+    (concat (mirBlocks f.blocks) "}\n")))
 
 ; ------------------------------------------------------------------
 ; The lowering.
@@ -402,8 +412,8 @@
 
 ; A new block, numbered by its position, appended and answered. The
 ; caller decides when `cur` moves to it.
-(pub :: mlcBlock (-> MLC Ints MBlock))
-(pub fn (mlcBlock lc ps)
+(:: mlcBlock (-> MLC Ints MBlock))
+(fn (mlcBlock lc ps)
   {
     (let b (MBlock :id (vecLen lc.blocks) :params ps :instrs vecNew :term vecNew))
     {
@@ -412,8 +422,8 @@
     }
   })
 
-(pub :: mlcEmit (-> MLC MInst Int))
-(pub fn (mlcEmit lc n)
+(:: mlcEmit (-> MLC MInst Int))
+(fn (mlcEmit lc n)
   {
     (vecPush lc.cur.instrs n)
     n.dst
@@ -433,8 +443,8 @@
       0
     }))
 
-(pub :: mSingleton (-> Int Ints))
-(pub fn (mSingleton r)
+(:: mSingleton (-> Int Ints))
+(fn (mSingleton r)
   {
     (let v vecNew)
     {
@@ -443,8 +453,8 @@
     }
   })
 
-(pub :: mEnvLook (-> (Vec MBind) String Int Int))
-(pub fn (mEnvLook env name i)
+(:: mEnvLook (-> (Vec MBind) String Int Int))
+(fn (mEnvLook env name i)
   (if (< i 0)
     (- 0 1)
     {
@@ -454,8 +464,8 @@
         (mEnvLook env name (- i 1)))
     }))
 
-(pub :: mEnvFind (-> (Vec MBind) String Int))
-(pub fn (mEnvFind env name)
+(:: mEnvFind (-> (Vec MBind) String Int))
+(fn (mEnvFind env name)
   (mEnvLook env name (- (vecLen env) 1)))
 
 ; The innermost binding's mutability: 1 for a `mut` binding, 0 for
@@ -463,8 +473,8 @@
 ; reads this, not the register: storing through a `let` would be a
 ; program the checker refused, and the subset refuses it here rather
 ; than rebinding a name that cannot change.
-(pub :: mEnvLookMut (-> (Vec MBind) String Int Int))
-(pub fn (mEnvLookMut env name i)
+(:: mEnvLookMut (-> (Vec MBind) String Int Int))
+(fn (mEnvLookMut env name i)
   (if (< i 0)
     (- 0 1)
     {
@@ -474,16 +484,16 @@
         (mEnvLookMut env name (- i 1)))
     }))
 
-(pub :: mEnvMut (-> (Vec MBind) String Int))
-(pub fn (mEnvMut env name)
+(:: mEnvMut (-> (Vec MBind) String Int))
+(fn (mEnvMut env name)
   (mEnvLookMut env name (- (vecLen env) 1)))
 
 ; Pop the environment back to `n` bindings. `while` binds its
 ; carried `mut`s three times over - header, body, exit - and the
 ; body's own `let`s die with it; the truncation is what restores the
 ; entry's bindings before the exit's are pushed.
-(pub :: mEnvTrunc (-> (Vec MBind) Int Int))
-(pub fn (mEnvTrunc env n)
+(:: mEnvTrunc (-> (Vec MBind) Int Int))
+(fn (mEnvTrunc env n)
   (if (<= (vecLen env) n)
     0
     {
@@ -498,8 +508,8 @@
 ; and a truncation eats the store's binding too, which must OUTLIVE
 ; the `let` when it names an outer `mut`. The store persists past
 ; the scope that made it; only the `let`'s own name dies with it.
-(pub :: mEnvDropScan (-> (Vec MBind) String Int Int Int))
-(pub fn (mEnvDropScan env nm i keep)
+(:: mEnvDropScan (-> (Vec MBind) String Int Int Int))
+(fn (mEnvDropScan env nm i keep)
   (if (>= i (vecLen env))
     keep
     {
@@ -512,13 +522,13 @@
         })
     }))
 
-(pub :: mEnvDropName (-> (Vec MBind) String Int Int))
-(pub fn (mEnvDropName env nm base)
+(:: mEnvDropName (-> (Vec MBind) String Int Int))
+(fn (mEnvDropName env nm base)
   (mEnvTrunc env (mEnvDropScan env nm base base)))
 
 ; String membership over a `Vec`, innermost-first callers' seen-set.
-(pub :: mStrMem (-> Strings String Int Bool))
-(pub fn (mStrMem v nm i)
+(:: mStrMem (-> Strings String Int Bool))
+(fn (mStrMem v nm i)
   (if (>= i (vecLen v))
     false
     (if (strEq (vecGet v i) nm)
@@ -621,8 +631,8 @@
 ; left-nested with one argument per node, so `(f a b)` is
 ; `((f a) b)`; `parser.ax`'s `spineArgVec` flattens the arguments and
 ; this walks to the function.
-(pub :: mSpineHead (-> ASTNode ASTNode))
-(pub fn (mSpineHead e)
+(:: mSpineHead (-> ASTNode ASTNode))
+(fn (mSpineHead e)
   (if (== (nodeTag e) TAG_E_APP)
     (mSpineHead (nodeAChild e))
     e))
@@ -631,8 +641,8 @@
 ; moment one of them leaves the subset - and the caller then refuses
 ; the whole function, so the half-lowered instructions already in the
 ; block are discarded with it.
-(pub :: mLowArgs (-> MLC (Vec MBind) Nodes Int Ints Bool))
-(pub fn (mLowArgs lc env args i out)
+(:: mLowArgs (-> MLC (Vec MBind) Nodes Int Ints Bool))
+(fn (mLowArgs lc env args i out)
   (if (>= i (vecLen args))
     true
     {
@@ -734,8 +744,8 @@
 ; when it names an outer `mut` - while the body's stores to the
 ; `let`'s own name (a `mut` re-stored) die with it, or a use past
 ; the scope would read a register no live binding answers.
-(pub :: mLowerLet (-> MLC (Vec MBind) ASTNode Int Int))
-(pub fn (mLowerLet lc env e mut)
+(:: mLowerLet (-> MLC (Vec MBind) ASTNode Int Int))
+(fn (mLowerLet lc env e mut)
   {
     (let rv (mLower lc env (nodeBChild e)))
     (let base (vecLen env))
@@ -765,8 +775,8 @@
 ; past the join with a register the other arm never defines - the
 ; dominance violation, refused at the store rather than reported at
 ; the use.
-(pub :: mLowerSet (-> MLC (Vec MBind) ASTNode Int))
-(pub fn (mLowerSet lc env e)
+(:: mLowerSet (-> MLC (Vec MBind) ASTNode Int))
+(fn (mLowerSet lc env e)
   (if (!= lc.cond 0)
     (- 0 1)
     {
@@ -792,8 +802,8 @@
 ; second one for the same name not a second parameter. An immutable
 ; shadowing a `mut` carries nothing - the loop reads the `let`'s
 ; register, which dominates the whole loop already.
-(pub :: mCarryLoop (-> (Vec MBind) Int Strings Strings Ints Int))
-(pub fn (mCarryLoop env i seen names regs)
+(:: mCarryLoop (-> (Vec MBind) Int Strings Strings Ints Int))
+(fn (mCarryLoop env i seen names regs)
   (if (< i 0)
     0
     {
@@ -812,8 +822,8 @@
     }))
 
 ; `n` fresh registers onto `v`.
-(pub :: mFreshN (-> MLC Ints Int Int))
-(pub fn (mFreshN lc v n)
+(:: mFreshN (-> MLC Ints Int Int))
+(fn (mFreshN lc v n)
   (if (<= n 0)
     0
     {
@@ -836,8 +846,8 @@
 
 ; The registers the carried names hold NOW - after the body's `set`s
 ; - in carry order. These are the back-edge's arguments.
-(pub :: mCurRegs (-> (Vec MBind) Strings Int Ints Ints))
-(pub fn (mCurRegs env names i out)
+(:: mCurRegs (-> (Vec MBind) Strings Int Ints Ints))
+(fn (mCurRegs env names i out)
   (if (>= i (vecLen names))
     out
     {
@@ -1043,8 +1053,8 @@
 ; one has no value to answer, so it refuses rather than inventing a
 ; zero - `last` starts negative and that is the answer if the loop
 ; never runs.
-(pub :: mLowerSeq (-> MLC (Vec MBind) (Vec ASTNode) Int Int Int))
-(pub fn (mLowerSeq lc env v i last)
+(:: mLowerSeq (-> MLC (Vec MBind) (Vec ASTNode) Int Int Int))
+(fn (mLowerSeq lc env v i last)
   (if (>= i (vecLen v))
     last
     {
@@ -1086,8 +1096,8 @@
 ; and `mSuccs` answers empty for `MT_TRAP` as it already does for
 ; `MT_RET` - so dominance, reachability and the one-terminator rule all
 ; cover the guard without a new case in any of them.
-(pub :: mLowerDivGuard (-> MLC String Int Int Int))
-(pub fn (mLowerDivGuard lc bop dividend divisor)
+(:: mLowerDivGuard (-> MLC String Int Int Int))
+(fn (mLowerDivGuard lc bop dividend divisor)
   (if (mIsDivOp bop)
     {
       (let bt (mlcBlock lc vecNew))
@@ -1124,13 +1134,13 @@
 ; One constant / one binary instruction, answering the fresh register.
 ; The guards below are unreadable without them (seven nested lets
 ; each already).
-(pub :: mEmitConst (-> MLC Int Int))
-(pub fn (mEmitConst lc v)
+(:: mEmitConst (-> MLC Int Int))
+(fn (mEmitConst lc v)
   (mlcEmit lc
     (MInst :op MO_CONST :dst (mlcFresh lc) :a v :b 0 :name "" :args vecNew :tgt 0 :alt 0)))
 
-(pub :: mEmitBin (-> MLC String Int Int Int))
-(pub fn (mEmitBin lc bop a b)
+(:: mEmitBin (-> MLC String Int Int Int))
+(fn (mEmitBin lc bop a b)
   (mlcEmit lc (MInst :op MO_BIN :dst (mlcFresh lc) :a a :b b :name bop :args vecNew :tgt 0 :alt 0)))
 
 ; MM-VAL-3b's first corner in the IR: trap when the dividend is
@@ -1140,8 +1150,8 @@
 ; builder is left on the second continuation, so the division that
 ; follows is emitted there. `INT_MIN` is computed, not spelled: the
 ; literal does not parse (`stdlib/Err.ax`'s `intMin` says the same).
-(pub :: mLowerDivOverflow (-> MLC Int Int Int))
-(pub fn (mLowerDivOverflow lc dividend divisor)
+(:: mLowerDivOverflow (-> MLC Int Int Int))
+(fn (mLowerDivOverflow lc dividend divisor)
   {
     (let kMin (mEmitConst lc (- (- 0 9223372036854775807) 1)))
     {
@@ -1193,14 +1203,14 @@
     }
   })
 
-(pub :: mIsShiftOp (-> String Bool))
-(pub fn (mIsShiftOp bop)
+(:: mIsShiftOp (-> String Bool))
+(fn (mIsShiftOp bop)
   (|| (strEq bop "shl") (strEq bop "ashr")))
 
 ; MM-VAL-3b's second corner in the IR: trap when the amount is below 0
 ; or above 63. Same shape as the overflow guard above.
-(pub :: mLowerShiftGuard (-> MLC String Int Int))
-(pub fn (mLowerShiftGuard lc bop amount)
+(:: mLowerShiftGuard (-> MLC String Int Int))
+(fn (mLowerShiftGuard lc bop amount)
   (if (mIsShiftOp bop)
     {
       (let k0 (mEmitConst lc 0))
@@ -1467,8 +1477,8 @@
         })
     }))
 
-(pub :: mBindParams (-> MLC (Vec MBind) Strings Int Ints Int))
-(pub fn (mBindParams lc env ps i out)
+(:: mBindParams (-> MLC (Vec MBind) Strings Int Ints Int))
+(fn (mBindParams lc env ps i out)
   (if (>= i (vecLen ps))
     0
     {
@@ -1585,8 +1595,8 @@
 ; the matrix, with the predecessor lists it rebuilt for every row on
 ; every pass, held 13 GB for `Crypto.Sha2` alone.
 ; ------------------------------------------------------------------
-(pub :: mFill (-> Ints Int Int Ints))
-(pub fn (mFill v n x)
+(:: mFill (-> Ints Int Int Ints))
+(fn (mFill v n x)
   (if (<= n 0)
     v
     {
@@ -1599,8 +1609,8 @@
 ; that block 0 does not reach. Such a block is dominated by every block,
 ; which is the answer the dominator equations give it, so its uses are
 ; left to check 8.
-(pub :: mDomAt (-> Ints Int Int Int Int))
-(pub fn (mDomAt dom n y x)
+(:: mDomAt (-> Ints Int Int Int Int))
+(fn (mDomAt dom n y x)
   (if (< (vecGet dom y) 0)
     1
     (if (< (vecGet dom x) 0)
@@ -1609,8 +1619,8 @@
         1
         0))))
 
-(pub :: mSuccs (-> MBlock Ints Ints))
-(pub fn (mSuccs b out)
+(:: mSuccs (-> MBlock Ints Ints))
+(fn (mSuccs b out)
   (if (== (vecLen b.term) 0)
     out
     {
@@ -1633,8 +1643,8 @@
 
 ; Mark every block reachable from `b`, depth first. `seen` is one
 ; word per block.
-(pub :: mReach (-> MFunc Ints Int Int))
-(pub fn (mReach f seen b)
+(:: mReach (-> MFunc Ints Int Int))
+(fn (mReach f seen b)
   (if (|| (< b 0) (>= b (vecLen f.blocks)))
     0
     (if (== (vecGet seen b) 1)
@@ -1644,8 +1654,8 @@
         (mReachSuccs f seen (mSuccs (vecGet f.blocks b) vecNew) 0)
       })))
 
-(pub :: mReachSuccs (-> MFunc Ints Ints Int Int))
-(pub fn (mReachSuccs f seen ss i)
+(:: mReachSuccs (-> MFunc Ints Ints Int Int))
+(fn (mReachSuccs f seen ss i)
   (if (>= i (vecLen ss))
     0
     {
@@ -1655,8 +1665,8 @@
 
 ; Every block's predecessors, computed once. A branch to a block that
 ; does not exist names no predecessor: check 5 reports it.
-(pub :: mPredsAll (-> MFunc IntRows))
-(pub fn (mPredsAll f)
+(:: mPredsAll (-> MFunc IntRows))
+(fn (mPredsAll f)
   {
     (let n (vecLen f.blocks))
     (let preds vecNew)
@@ -1680,8 +1690,8 @@
 ; The blocks reached from `b`, in depth-first postorder, onto `post`.
 ; `seen` is one word per block, and a branch to a block that does not
 ; exist is skipped, as `mReach` skips it.
-(pub :: mPostOrder (-> MFunc Ints Ints Int Int))
-(pub fn (mPostOrder f seen post b)
+(:: mPostOrder (-> MFunc Ints Ints Int Int))
+(fn (mPostOrder f seen post b)
   (if (|| (< b 0) (>= b (vecLen f.blocks)))
     0
     (if (== (vecGet seen b) 1)
@@ -1699,8 +1709,8 @@
 
 ; The nearest block that dominates both `a` and `b`: climb from
 ; whichever has the lower postorder number until the two meet.
-(pub :: mDomIntersect (-> Ints Ints Int Int Int))
-(pub fn (mDomIntersect idom po a b)
+(:: mDomIntersect (-> Ints Ints Int Int Int))
+(fn (mDomIntersect idom po a b)
   (if (== a b)
     a
     (if (< (vecGet po a) (vecGet po b))
@@ -1712,8 +1722,8 @@
 ; predecessors that already have an immediate dominator; one that
 ; block 0 does not reach never gets one, so it never takes part.
 ; Answers how many blocks moved.
-(pub :: mIdomPass (-> IntRows Ints Ints Ints Int))
-(pub fn (mIdomPass preds post idom po)
+(:: mIdomPass (-> IntRows Ints Ints Ints Int))
+(fn (mIdomPass preds post idom po)
   {
     (let mut moved 0)
     (let mut k (- (vecLen post) 2))
@@ -1744,8 +1754,8 @@
     }
   })
 
-(pub :: mIdomFix (-> IntRows Ints Ints Ints Int Int))
-(pub fn (mIdomFix preds post idom po fuel)
+(:: mIdomFix (-> IntRows Ints Ints Ints Int Int))
+(fn (mIdomFix preds post idom po fuel)
   (if (<= fuel 0)
     0
     (if (== (mIdomPass preds post idom po) 0)
@@ -1755,8 +1765,8 @@
 ; Number the dominator tree below `x` from `clock`: the entry number
 ; into `dom[x]`, the exit number into `dom[n + x]`. Answers the next
 ; free number.
-(pub :: mDomNumber (-> IntRows Ints Int Int Int Int))
-(pub fn (mDomNumber kids dom n x clock)
+(:: mDomNumber (-> IntRows Ints Int Int Int Int))
+(fn (mDomNumber kids dom n x clock)
   {
     (let ks (vecGet kids x))
     (let mut c (+ clock 1))
@@ -1770,8 +1780,8 @@
   })
 
 ; The numbered dominator tree `mDomAt` reads.
-(pub :: mDominators (-> MFunc Ints))
-(pub fn (mDominators f)
+(:: mDominators (-> MFunc Ints))
+(fn (mDominators f)
   {
     (let n (vecLen f.blocks))
     (let preds (mPredsAll f))
@@ -1807,15 +1817,15 @@
 ; instruction of the SAME block, or the defining block strictly
 ; dominates the using one.
 ; ------------------------------------------------------------------
-(pub :: mvSay (-> Strings String Int))
-(pub fn (mvSay out s)
+(:: mvSay (-> Strings String Int))
+(fn (mvSay out s)
   {
     (vecPush out s)
     0
   })
 
-(pub :: mvDefine (-> Ints Ints Strings String Int Int Int Int))
-(pub fn (mvDefine defBlk defIdx out what r blk idx)
+(:: mvDefine (-> Ints Ints Strings String Int Int Int Int))
+(fn (mvDefine defBlk defIdx out what r blk idx)
   (if (|| (< r 0) (>= r (vecLen defBlk)))
     (mvSay out (concat what (concat " defines out-of-range register " (mirReg r))))
     (if (>= (vecGet defBlk r) 0)
@@ -1829,8 +1839,8 @@
         0
       })))
 
-(pub :: mvUse (-> MFunc Ints Ints Ints Strings String Int Int Int Int))
-(pub fn (mvUse f dom defBlk defIdx out what r blk idx)
+(:: mvUse (-> MFunc Ints Ints Ints Strings String Int Int Int Int))
+(fn (mvUse f dom defBlk defIdx out what r blk idx)
   (if (|| (< r 0) (>= r (vecLen defBlk)))
     (mvSay out (concat what (concat " uses out-of-range register " (mirReg r))))
     {
@@ -1850,12 +1860,12 @@
                     (concat (mirBB db) " does not dominate the use"))))))))
     }))
 
-(pub :: mvWhere (-> Int String))
-(pub fn (mvWhere b)
+(:: mvWhere (-> Int String))
+(fn (mvWhere b)
   (concat (mirBB b) ":"))
 
-(pub :: mvCollectDefs (-> MFunc Ints Ints Strings Int Int))
-(pub fn (mvCollectDefs f defBlk defIdx out i)
+(:: mvCollectDefs (-> MFunc Ints Ints Strings Int Int))
+(fn (mvCollectDefs f defBlk defIdx out i)
   (if (>= i (vecLen f.blocks))
     0
     {
@@ -1867,8 +1877,8 @@
       }
     }))
 
-(pub :: mvDefsParams (-> Ints Ints Strings Ints Int Int Int))
-(pub fn (mvDefsParams defBlk defIdx out ps blk i)
+(:: mvDefsParams (-> Ints Ints Strings Ints Int Int Int))
+(fn (mvDefsParams defBlk defIdx out ps blk i)
   (if (>= i (vecLen ps))
     0
     {
@@ -1876,8 +1886,8 @@
       (mvDefsParams defBlk defIdx out ps blk (+ i 1))
     }))
 
-(pub :: mvDefsInsts (-> Ints Ints Strings (Vec MInst) Int Int Int))
-(pub fn (mvDefsInsts defBlk defIdx out insts blk i)
+(:: mvDefsInsts (-> Ints Ints Strings (Vec MInst) Int Int Int))
+(fn (mvDefsInsts defBlk defIdx out insts blk i)
   (if (>= i (vecLen insts))
     0
     {
@@ -1888,8 +1898,8 @@
       }
     }))
 
-(pub :: mvUseList (-> MFunc Ints Ints Ints Strings String Ints Int Int Int Int))
-(pub fn (mvUseList f dom defBlk defIdx out what rs blk idx i)
+(:: mvUseList (-> MFunc Ints Ints Ints Strings String Ints Int Int Int Int))
+(fn (mvUseList f dom defBlk defIdx out what rs blk idx i)
   (if (>= i (vecLen rs))
     0
     {
@@ -1897,8 +1907,8 @@
       (mvUseList f dom defBlk defIdx out what rs blk idx (+ i 1))
     }))
 
-(pub :: mvCheckInst (-> MFunc Ints Ints Ints Strings MInst Int Int Int))
-(pub fn (mvCheckInst f dom defBlk defIdx out n blk idx)
+(:: mvCheckInst (-> MFunc Ints Ints Ints Strings MInst Int Int Int))
+(fn (mvCheckInst f dom defBlk defIdx out n blk idx)
   {
     (let what (mvWhere blk))
     (if (== n.op MO_BIN)
@@ -1931,8 +1941,8 @@
               (concat " holds opcode " (concat (fmtInt n.op) ", which is not an instruction")))))))
   })
 
-(pub :: mvCheckInsts (-> MFunc Ints Ints Ints Strings (Vec MInst) Int Int Int))
-(pub fn (mvCheckInsts f dom defBlk defIdx out insts blk i)
+(:: mvCheckInsts (-> MFunc Ints Ints Ints Strings (Vec MInst) Int Int Int))
+(fn (mvCheckInsts f dom defBlk defIdx out insts blk i)
   (if (>= i (vecLen insts))
     0
     {
@@ -1940,8 +1950,8 @@
       (mvCheckInsts f dom defBlk defIdx out insts blk (+ i 1))
     }))
 
-(pub :: mvBlockAt (-> MFunc Int Int))
-(pub fn (mvBlockAt f id)
+(:: mvBlockAt (-> MFunc Int Int))
+(fn (mvBlockAt f id)
   (if (|| (< id 0) (>= id (vecLen f.blocks)))
     (- 0 1)
     {
@@ -1949,8 +1959,8 @@
       (vecLen b.params)
     }))
 
-(pub :: mvCheckTerm (-> MFunc Ints Ints Ints Strings MBlock Int))
-(pub fn (mvCheckTerm f dom defBlk defIdx out b)
+(:: mvCheckTerm (-> MFunc Ints Ints Ints Strings MBlock Int))
+(fn (mvCheckTerm f dom defBlk defIdx out b)
   (if (!= (vecLen b.term) 1)
     (mvSay out
       (concat (mvWhere b.id)
@@ -2004,8 +2014,8 @@
 ; arguments it is passed - `want` of them. The complaint mirrors
 ; `br`'s arity message, because it is the same rule: one list, and
 ; the target declares what the list lands in.
-(pub :: mvCondTarget (-> MFunc Strings String Int Int Int))
-(pub fn (mvCondTarget f out what id want)
+(:: mvCondTarget (-> MFunc Strings String Int Int Int))
+(fn (mvCondTarget f out what id want)
   {
     (let np (mvBlockAt f id))
     (if (< np 0)
@@ -2018,8 +2028,8 @@
         0))
   })
 
-(pub :: mvCheckBlocks (-> MFunc Ints Ints Ints Ints Strings Int Int))
-(pub fn (mvCheckBlocks f dom defBlk defIdx seen out i)
+(:: mvCheckBlocks (-> MFunc Ints Ints Ints Ints Strings Int Int))
+(fn (mvCheckBlocks f dom defBlk defIdx seen out i)
   (if (>= i (vecLen f.blocks))
     0
     {
