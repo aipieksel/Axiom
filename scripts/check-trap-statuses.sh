@@ -124,8 +124,12 @@ run_exit() { # <file> -> prints exit status
 
 # Inline probes for the three traps with no dedicated stdlib fixture:
 # division by zero (72), a violated pre (80) and a stack overflow (86).
+# The divisor is a function's answer, because a literal zero divisor is
+# refused at compile time (AX3140).
 cat > "$work/div-zero.ax" <<'AX'
-(fn (main) (/ 10 0))
+(:: z Int)
+(fn (z) 0)
+(fn (main) (/ 10 z))
 AX
 cat > "$work/pre-violated.ax" <<'AX'
 ;@axiom:pre((> n 0))

@@ -866,9 +866,13 @@ cat > "$work/divtrap.ax" <<'AX'
 ;@axiom:effect(io)
 (fn (main)
   {
-    (println (/ 10 0))
+    (println (/ 10 z))
   }
 )
+
+; A function's zero: a literal zero divisor is refused (AX3140).
+(:: z Int)
+(fn (z) 0)
 AX
 prob=0
 # Trap writes per emitted module, by target. On the six syscall targets

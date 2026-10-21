@@ -745,7 +745,7 @@
     (let ents vecNew)
     {
       (prefixCloneInto prefix ents 0)
-      (vecPush ents (as (SEnt :name name :mutable 0 :bsp 0 :ty ty) Int))
+      (vecPush ents (as (SEnt :name name :mutable 0 :bsp 0 :ty ty :used 0) Int))
       ents
     }
   })
@@ -1010,7 +1010,8 @@
                   :name (memGetWordStr ent 0)
                   :mutable (memGetWord ent 1)
                   :bsp (memGetWord ent 2)
-                  :ty (sEntTy ent)) Int)))
+                  :ty (sEntTy ent)
+                  :used (memGetWord ent 4)) Int)))
         (deferResolveCaps tc acc ents (+ i 1))
       }
     }))
@@ -9545,12 +9546,13 @@
   (name : String)
   (mutable : Int)
   (bsp : Int)
-  (ty : ASTNode))
+  (ty : ASTNode)
+  (used : Int))
 
 (pub :: pushScope (-> Ints String Int Int ASTNode Int))
 (pub fn (pushScope scope name mutFlag bsp ty)
   {
-    (vecPush scope (as (SEnt :name name :mutable mutFlag :bsp bsp :ty ty) Int))
+    (vecPush scope (as (SEnt :name name :mutable mutFlag :bsp bsp :ty ty :used 0) Int))
     0
   })
 
@@ -10794,6 +10796,18 @@
                                   (checkExprH tc (nodeCChild e) 0)
                                 })
                               {
+                                (if (&& (== tag TAG_E_LET)
+                                      (&& (== (isDiscardedResultTy initTy) 1)
+                                        (&& (!= (strByte (nodeAName e) 0) 95)
+                                          (== (memGetWord (vecGet (tcScopeVec tc) mark) 4) 0))))
+                                  (emitDiag tc
+                                    (diagSetLabel
+                                      (mkDiag SEV_ERROR "AX3046" "discarded-result" (nodeSpan e)
+                                        (concat (concat "a `Result` bound to `" (nodeAName e))
+                                          "` is never read")
+                                        0 ""
+                                        "match on it, propagate it with `?`, or give it a name starting with `_` if the discard is deliberate")
+                                      "unused `Result`")))
                                 (flushScopePending tc mark)
                                 (scopeTrunc (tcScopeVec tc) mark)
                                 bodyTy
@@ -11758,6 +11772,7 @@
             ; honest self-recursion), and anything else answers the
             ; node itself - the use grounds it.
             {
+              (memSetWord fr 4 1)
               (let ety (sEntTy fr))
               (if (== (isPendingNode ety) 0)
                 ety
@@ -13268,6 +13283,83 @@
             "not a literal")))
     }))
 
+; A trap the checker can see from the literals alone: division or
+; remainder by a literal zero, a negative literal index into a `Vec`,
+; and a literal outside the bounds of the subtype a parameter
+; declares. Each traps on every run, so answering it at run time
+; would only delay the same refusal. Only literal operands are
+; judged; a computed operand is the run-time check's business.
+(pub :: checkCertainTrap (-> Int ASTNode String Int))
+(pub fn (checkCertainTrap tc e hname)
+  {
+    (let args (spineArgVec e vecNew))
+    (if (|| (strEq hname "/") (strEq hname "%"))
+      (if (&& (>= (vecLen args) 2)
+            (&& (== (nodeTag (vecGet args 1)) TAG_E_INT) (== (nodeA (vecGet args 1)) 0)))
+        (emitDiag tc
+          (diagSetLabel
+            (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf (vecGet args 1))
+              "this operation always traps: its divisor is the literal 0" 0 0
+              "divide by a value that can be nonzero, or handle the zero case first"
+              "division and remainder by zero trap with status 72 on every run, so the trap is part of what this expression means")
+            "always traps"))
+        0)
+      (if (strEq (bareOf hname) "vecGet")
+        (if (&& (>= (vecLen args) 2)
+              (&& (== (nodeTag (vecGet args 1)) TAG_E_INT) (< (nodeA (vecGet args 1)) 0)))
+          (emitDiag tc
+            (diagSetLabel
+              (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf (vecGet args 1))
+                "this `vecGet` always traps: its index is a negative literal" 0 0
+                "index with a value from 0 to the vector's length"
+                "`vecGet` traps with status 77 on an index outside the vector, and a negative index is outside every vector")
+              "always traps"))
+          0)
+        (checkSubtypeLiteralTrap tc args hname 0)))
+  })
+
+(pub :: checkSubtypeLiteralTrap (-> Int (Vec ASTNode) String Int Int))
+(pub fn (checkSubtypeLiteralTrap tc args hname i)
+  {
+    (let ent (fnEntExact tc hname))
+    (if (== ent 0)
+      0
+      (checkSubtypeLiteralArgs tc args (readAstNode ent 1) 0))
+  })
+
+; Each literal argument against the subtype its parameter declares.
+; `ty` is the callee's arrow, walked one parameter per argument.
+(pub :: checkSubtypeLiteralArgs (-> Int (Vec ASTNode) ASTNode Int Int))
+(pub fn (checkSubtypeLiteralArgs tc args ty i)
+  (if (|| (>= i (vecLen args)) (|| (nodeSame ty nilNode) (!= (nodeTag ty) TAG_T_ARR)))
+    0
+    {
+      (let param (nodeAChild ty))
+      (let arg (vecGet args i))
+      {
+        (if (== (nodeTag arg) TAG_E_INT)
+          {
+            (let bounds (tySubtypeBounds tc param))
+            (if (&& (! (vecIsNull bounds))
+                  (&& (> (vecLen bounds) 0)
+                    (&& (== (nodeTag (vecGet bounds 0)) TAG_E_INT)
+                      (|| (< (nodeA arg) (nodeA (vecGet bounds 0)))
+                        (&& (== (vecLen bounds) 2)
+                          (&& (== (nodeTag (vecGet bounds 1)) TAG_E_INT)
+                            (>= (nodeA arg) (nodeA (vecGet bounds 1)))))))))
+              (emitDiag tc
+                (diagSetLabel
+                  (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf arg)
+                    (concat (concat "this value always traps: the literal " (fmtInt (nodeA arg)))
+                      (concat " is outside the range of `" (concat (tyRender param) "`")))
+                    0 0 "pass a value inside the subtype's range"
+                    "a value outside a subtype's range traps with status 80 on every run, so the trap is part of what this call means")
+                  "always traps")))
+          })
+        (checkSubtypeLiteralArgs tc args (nodeBChild ty) (+ i 1))
+      }
+    }))
+
 (pub :: checkApp (-> Int ASTNode Int ASTNode))
 (pub fn (checkApp tc e inHead)
   ; The hole rewrite happens FIRST: if the head is `format#`, the
@@ -13343,6 +13435,10 @@
               (let _rec
                 (if (&& (== headIsVar 1) (strEq hname "__axiom_recover"))
                   (memSetWord tc 39 1)
+                  0))
+              (let _trap
+                (if (&& (== inHead 0) (== headIsVar 1))
+                  (checkCertainTrap tc e hname)
                   0))
               (if (&& (== inHead 0) (&& (== headIsVar 1) (== (checkSaturation tc e head hname) 1)))
                 (nodeBuildTErrPlain 0 0 0)
@@ -15511,6 +15607,16 @@
                 {
                   (let targetTy (castTargetTy tc (vecGet args 0)))
                   {
+                    (if (&& (>= (vecLen args) 2) (|| (tyIsUnit targetTy) (tyIsUnit srcTy)))
+                      (emitDiag tc
+                        (diagSetLabel
+                          (mkDiagNote SEV_ERROR "AX3139" "unit-cast" (spanOf (vecGet args 1))
+                            (if (tyIsUnit targetTy)
+                              "`as` cannot convert to `()`: it has one value and carries no information"
+                              "`as` cannot convert from `()`: it has one value and carries no information")
+                            0 0 "convert a value that carries information, or drop the cast"
+                            "a cast through `()` answers the unit word 0 whatever the value was, so the conversion could only lose what it was given")
+                          "a cast through `()`")))
                     (let subBase
                       (if (&& (! (nodeSame targetTy nilNode)) (== (nodeTag targetTy) TAG_T_CON))
                         (tySubtypeBase tc targetTy)
@@ -20218,6 +20324,145 @@
     }
     0))
 
+; The binder nodes of one pattern, in walk order. The wildcard and
+; the two literal names are left out, because neither binds. This is
+; `patBinders` over nodes instead of names, so a repeated binder can
+; be reported at its own span.
+(pub :: patBinderNodes (-> ASTNode (Vec ASTNode) Int))
+(pub fn (patBinderNodes pat acc)
+  (if (nodeSame pat nilNode)
+    0
+    {
+      (let tag (nodeTag pat))
+      (if (== tag TAG_E_VAR)
+        {
+          (let name (nodeAName pat))
+          {
+            (if (&& (! (strEq name "_")) (&& (! (strEq name "true")) (! (strEq name "false"))))
+              (vecPush acc pat))
+            0
+          }
+        }
+        (if (== tag TAG_E_APP)
+          {
+            (patBinderNodesHead (nodeAChild pat) acc)
+            (patBinderNodes (nodeBChild pat) acc)
+          }
+          (if (== tag TAG_P_CONNAMED)
+            (patBinderNodesVec (nodeCChildren pat) 0 acc)
+            0)))
+    }))
+
+(pub :: patBinderNodesVec (-> (Vec ASTNode) Int (Vec ASTNode) Int))
+(pub fn (patBinderNodesVec pats i acc)
+  (if (>= i (vecLen pats))
+    0
+    {
+      (patBinderNodes (vecGet pats i) acc)
+      (patBinderNodesVec pats (+ i 1) acc)
+    }))
+
+(pub :: patBinderNodesHead (-> ASTNode (Vec ASTNode) Int))
+(pub fn (patBinderNodesHead pat acc)
+  (if (== (nodeTag pat) TAG_E_APP)
+    {
+      (patBinderNodes (nodeBChild pat) acc)
+      (patBinderNodesHead (nodeAChild pat) acc)
+    }
+    0))
+
+; How many of `nodes`' first `end` entries bind `name`.
+(pub :: patBinderCountBefore (-> (Vec ASTNode) String Int Int Int))
+(pub fn (patBinderCountBefore nodes name i end)
+  (if (>= i end)
+    0
+    (+
+      (if (strEq (nodeAName (vecGet nodes i)) name)
+        1
+        0)
+      (patBinderCountBefore nodes name (+ i 1) end))))
+
+; The first node in `nodes` that binds `name`, or the empty node.
+(pub :: patBinderFirst (-> (Vec ASTNode) String Int ASTNode))
+(pub fn (patBinderFirst nodes name i)
+  (if (>= i (vecLen nodes))
+    nilNode
+    (if (strEq (nodeAName (vecGet nodes i)) name)
+      (vecGet nodes i)
+      (patBinderFirst nodes name (+ i 1)))))
+
+; A bare binder that starts with a capital letter reads as a
+; constructor test and is not one: it binds every value the scrutinee
+; can take, so the arm it opens matches everything and any arm after
+; it is dead. A constructor test is written `(Name)` or `(Name ...)`.
+; Reported per binder, at the binder.
+(pub :: checkUpperPatBinders (-> Int ASTNode Int))
+(pub fn (checkUpperPatBinders tc pat)
+  {
+    (let nodes vecNew)
+    {
+      (patBinderNodes pat nodes)
+      (checkUpperPatBindersAt tc nodes 0)
+    }
+  })
+
+(pub :: checkUpperPatBindersAt (-> Int (Vec ASTNode) Int Int))
+(pub fn (checkUpperPatBindersAt tc nodes i)
+  (if (>= i (vecLen nodes))
+    0
+    {
+      (let node (vecGet nodes i))
+      (let name (nodeAName node))
+      {
+        (if (&& (> (strLen name) 0) (&& (>= (strByte name 0) 65) (<= (strByte name 0) 90)))
+          (emitDiag tc
+            (diagSetLabel
+              (mkDiagNote SEV_ERROR "AX3137" "uppercase-pattern-binder" (nodeSpan node)
+                (concat (concat "pattern binder `" name) "` starts with a capital letter") 0 0
+                "rename the binder in lowercase to bind, or write `(Name)` or `(Name ...)` to test a constructor"
+                "a bare name in pattern position binds every value, whatever its case, so this arm matches everything and the arms after it are dead; a constructor test needs the parentheses")
+              (concat (concat "`" name) "` binds every value here"))))
+        (checkUpperPatBindersAt tc nodes (+ i 1))
+      }
+    }))
+
+; One pattern binds each name once. A second binding of the same name
+; shadows the first, so the arm body could only ever read one of the
+; two values, and which one is a scope detail rather than part of the
+; pattern's meaning. Reported once per repeated name, at its second
+; binder, with the first as the related span.
+(pub :: checkDupPatBinders (-> Int ASTNode Int))
+(pub fn (checkDupPatBinders tc pat)
+  {
+    (let nodes vecNew)
+    {
+      (patBinderNodes pat nodes)
+      (checkDupPatBindersAt tc nodes 0)
+    }
+  })
+
+(pub :: checkDupPatBindersAt (-> Int (Vec ASTNode) Int Int))
+(pub fn (checkDupPatBindersAt tc nodes i)
+  (if (>= i (vecLen nodes))
+    0
+    {
+      (let node (vecGet nodes i))
+      (let name (nodeAName node))
+      {
+        (if (== (patBinderCountBefore nodes name 0 i) 1)
+          (emitDiag tc
+            (diagSetLabel
+              (mkDiagNote SEV_ERROR "AX3136" "duplicate-pattern-binder" (nodeSpan node)
+                (concat (concat "duplicate binder `" name) "` in one pattern")
+                (nodeSpan (patBinderFirst nodes name 0))
+                (concat (concat "first binder `" name) "`")
+                "give each binder in the pattern its own name"
+                "one pattern binds each name once; the second binding shadows the first, so the arm body could only ever read one of the two values")
+              (concat (concat "`" name) "` is bound twice in this pattern"))))
+        (checkDupPatBindersAt tc nodes (+ i 1))
+      }
+    }))
+
 ; ------------------------------------------------------------------
 ; The fixpoint. Monotone: every round can only add, and one round per
 ; function suffices because each round propagates at least one
@@ -22590,6 +22835,8 @@
           (let mark (vecLen (tcScopeVec tc)))
           {
             (recordCoverage (nodeAChild arm) covered catchall)
+            (checkDupPatBinders tc (nodeAChild arm))
+            (checkUpperPatBinders tc (nodeAChild arm))
             (checkPatternTyped tc (nodeAChild arm) scrutTy fitTy)
             ; An arm's value is dropped when the match's is.
             {
@@ -28125,22 +28372,38 @@
         (if (< op 0)
           ""
           (strSlice content (+ op 1) (- (axtagCloseAt content) (+ op 1)))))
-      (if (strEq key "effect")
-        (if (strEq val "pure")
-          (axtagContradicted tc d "`effect(pure)` claim" eff)
-          {
-            (let names (effTagWords val))
-            (if (> (vecLen names) 1)
-              (emitEffectTagList tc d val names)
-              (axtagUnsupported tc d val eff eparams lex))
-          })
-        (if (strEq key "result")
-          (checkResultTag tc d val lex)
-          (if (strEq key "scoped")
-              (checkScopedTag tc d val)
-            (strEq key "compute")
-              (checkComputeTag tc d val)
-            (axtagKeyTypo tc d key))))
+      (let trail
+        (if (< op 0)
+          ""
+          (strTrimBlanks
+            (strSlice content (+ (axtagCloseAt content) 1)
+              (- (strLen content) (+ (axtagCloseAt content) 1))))))
+      (if (> (strLen trail) 0)
+        (emitDiag tc
+          (diagSetLabel
+            (mkDiagNote SEV_ERROR "AX3138" "axtag-trailing-text" (nodeSpan d)
+              (concat
+                (concat "text after the closing `)` of this `;@axiom:` tag is not read: `" trail)
+                "`")
+              0 0 "move the text inside the parentheses, or onto its own comment line"
+              "every reader of a tag stops at the last `)`, so a word after it changes nothing the compiler checks; a misspelt `strict` there would silently weaken the claim")
+            "this text is not read"))
+        (if (strEq key "effect")
+          (if (strEq val "pure")
+            (axtagContradicted tc d "`effect(pure)` claim" eff)
+            {
+              (let names (effTagWords val))
+              (if (> (vecLen names) 1)
+                (emitEffectTagList tc d val names)
+                (axtagUnsupported tc d val eff eparams lex))
+            })
+          (if (strEq key "result")
+            (checkResultTag tc d val lex)
+            (if (strEq key "scoped")
+                (checkScopedTag tc d val)
+              (strEq key "compute")
+                (checkComputeTag tc d val)
+              (axtagKeyTypo tc d key)))))
     }
   })
 

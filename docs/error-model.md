@@ -762,8 +762,8 @@ divided by zero
 
 | The trap | Alternative | Answers |
 |---|---|---|
-| `(/ a 0)`: fd 2, exit 72 | `(divChecked a b)` | `(Err DivideByZero)` |
-| `(% a 0)`: the same | `(remChecked a b)` | `(Err DivideByZero)` |
+| `(/ a b)` with `b` zero: fd 2, exit 72 | `(divChecked a b)` | `(Err DivideByZero)` |
+| `(% a b)` with `b` zero: the same | `(remChecked a b)` | `(Err DivideByZero)` |
 | `INT_MIN / -1`: fd 2, exit 83 | `divChecked` | `(Err Overflow)` |
 | `(<< 1 100)`, `(>> x 64)`: fd 2, exit 84 | `shlChecked`, `shrChecked` | `(Err ShiftTooWide)` |
 
@@ -1211,6 +1211,11 @@ This section records the codes below. All of them are built, and
 | `AX3133` `macro-pattern-head` | a macro rule pattern that does not open with the macro's own name | `tests/diagnostics/613-macro-pattern-head.axbad` |
 | `AX3134` `unreachable-arm` | a match arm an earlier arm already covers | A warning. `tests/diagnostics/1456-unreachable-arm.ax` |
 | `AX3135` `main-result-type` | the entry file's `main` answers a type other than `Int`, `()`, `(Result Int Error)` or `(Result () Error)` | `tests/diagnostics/1469-main-result-type.ax` |
+| `AX3136` `duplicate-pattern-binder` | one pattern binds the same name twice, at any depth | `tests/diagnostics/1489-duplicate-pattern-binder.ax` |
+| `AX3137` `uppercase-pattern-binder` | a bare pattern binder that starts with a capital letter, which binds every value instead of testing a constructor | `tests/diagnostics/1490-uppercase-pattern-binder.ax` |
+| `AX3138` `axtag-trailing-text` | text after the closing `)` of a `;@axiom:` tag, which no reader sees | `tests/diagnostics/1491-axtag-trailing-text.ax` |
+| `AX3139` `unit-cast` | `as` converting from or to `()` | `tests/diagnostics/1492-as-unit.ax` |
+| `AX3140` `certain-trap` | division or remainder by a literal zero, a negative literal `vecGet` index, or a literal outside a parameter's subtype range | `tests/diagnostics/1493-certain-trap.ax` |
 | `AX3116` `result-claim` | a `result(...)` claim the compiler cannot read: a value other than `owned`, or the claim on a function that is not a trusted encapsulation | `tests/diagnostics/1259-result-claim.ax` |
 | `AX3110` `axtag-never-checked` | an `effect(div)` claim, which names an effect nothing infers | An error, because no body can ever support it. `tests/diagnostics/359-div-not-inferred.ax` |
 | `AX3117` `inline-asm-rejected` | a line of an `asm` template the assembler rejects, or whose operands the register allocator can't place | An error when the program is built, at the template line, with status 1. `tests/embedded/asm-rejected.ax` |

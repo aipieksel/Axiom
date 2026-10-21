@@ -16,6 +16,23 @@ its changelog too.
 
 ## Unreleased
 
+- The checker refuses six shapes it used to accept in silence. A name
+  bound twice in one pattern is AX3136, and a bare pattern binder that
+  starts with a capital letter is AX3137, because it binds every value
+  rather than testing the constructor it reads as. Text after an
+  AXTAG's closing parenthesis is AX3138, a cast from or to `()` is
+  AX3139, and a trap the literals make certain (division by a literal
+  zero, a negative literal `vecGet` index, a literal outside a
+  subtype's range) is AX3140. A `Result` bound by `let` and never read
+  is AX3046, as a discarded one in statement position already was.
+  Tested by `tests/diagnostics/1489-duplicate-pattern-binder.ax`
+  through `tests/diagnostics/1494-unused-result-let.ax`.
+
+- `axiom fmt` keeps text after an AXTAG's closing parenthesis. It used
+  to delete it, so formatting `;@axiom:restrict(no-recursion) strict`
+  silently dropped the `strict`. The checker refuses that text as
+  AX3138. Tested by `tests/diagnostics/1491-axtag-trailing-text.ax`.
+
 - `Str` has a string builder. Push strings, bytes and, through
   `utf8PushChar`, UTF-8 characters into a `StrBuilder`, then finish it
   into a `String`; its storage doubles as it fills, so building is

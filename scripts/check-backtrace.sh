@@ -654,11 +654,13 @@ echo "--- 7e. nullary calls mark too: a bare reference is still a call ---"
 # other call site. A regression prints a bare `at wrap`.
 cat > "$work/nullary.ax" <<'PROBE'
 (:: boom Int)
-(fn (boom) (/ 1 0))
+(fn (boom) (/ 1 z))
 (:: wrap Int)
 (fn (wrap) (+ (boom) 1))
 (:: main Int)
 (fn (main) (+ (wrap) 1))
+(:: z Int)
+(fn (z) 0)
 PROBE
 "$axc" build --input "$work/nullary.ax" --output "$work/nullary" --opt 0 >"$work/build.log" 2>&1 \
   || { bad "the nullary probe would not build"; sed 's/^/    /' "$work/build.log" | head -6; }

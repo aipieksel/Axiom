@@ -37,7 +37,7 @@ export const STATS: Stat[] = [
   },
   {
     key: 'codes',
-    n: '120',
+    n: '125',
     label: 'diagnostic codes, each with a written explanation',
     evidence: 'axiom explain --list',
   },
