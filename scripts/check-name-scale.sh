@@ -468,15 +468,15 @@ n = s.count(old)
 if n != 1:
     sys.exit("the headIsLocal ablation matched %d times, wanted 1" % n)
 s = s.replace(old, new)
-anchor = "(pub :: boundIn (-> String Int Int))"
+anchor = "(pub :: boundIn (-> String BinderSummary Int))"
 if s.count(anchor) != 1:
     sys.exit("the boundIn anchor matched %d times, wanted 1" % s.count(anchor))
-scan = """(pub :: boundInScan (-> String Int Int))
+scan = """(pub :: boundInScan (-> String BinderSummary Int))
 (pub fn (boundInScan name sum)
-  (if (== (memGetWord sum 0) 1)
+  (if (== sum.unknown 1)
     1
     {
-      (let set (memGetWord sum 1))
+      (let set (internWordOf sum.binders))
       (let mut i 0)
       (let mut hit 0)
 
