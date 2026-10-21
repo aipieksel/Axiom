@@ -442,8 +442,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # A same-compiler comparison removes mirParamOps' one text erasure and
 # mirEmitInsts' three; the typed operand table introduces none.
 # Typed records and string vectors in the driver, REPL, highlighter,
-# history, completion, AXIR and nolint modules leave 666.
-erasure_pin=666
+# history, completion, AXIR and nolint modules leave 666; the LSP's
+# typed navigation, highlight and lint records leave 646.
+erasure_pin=646
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
