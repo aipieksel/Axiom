@@ -1521,6 +1521,7 @@ jobs:
           fi
 
       - name: Bootstrap the Windows x86_64 compiler from its committed seed
+        id: seed
         run: |
           set -euo pipefail
           target=windows-x86_64
@@ -1533,6 +1534,7 @@ jobs:
           unset AXIOM_PATH
           "$seeded/axiom.exe" --diagnostic-format=ai --target="$target" emit-llvm self_host/main.ax -o "$seeded/current.ll"
           cmp "$seeded/current.ll" "windows-hello/selfhost/axiom-$target.ll"
+          printf 'compiler=%s\n' "$(cygpath -m "$seeded/axiom.exe")" >> "$GITHUB_OUTPUT"
 
       - name: Run the Windows hello, the compiler and the tree audit
         run: ./scripts/check-windows-hello.sh --run windows-hello windows-x86_64
@@ -1546,10 +1548,15 @@ jobs:
           if-no-files-found: ignore
 
       - name: Package and install the Windows x86_64 CI preview
+        id: install
+        if: ${{ !cancelled() && steps.seed.outcome == 'success' }}
         shell: pwsh
-        run: ./scripts/check-windows-install.ps1 -Compiler "$PWD/.axiom-bin/axiom.exe" -Target windows-x86_64 -Output "$env:RUNNER_TEMP/windows-preview"
+        env:
+          AXIOM_SEEDED_COMPILER: ${{ steps.seed.outputs.compiler }}
+        run: ./scripts/check-windows-install.ps1 -Compiler "$env:AXIOM_SEEDED_COMPILER" -Target windows-x86_64 -Output "$env:RUNNER_TEMP/windows-preview"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         with:
           name: windows-preview-x86_64
           path: |
@@ -1618,6 +1625,7 @@ jobs:
       # case, the compiler built for this architecture from the IR the
       # cross job emitted, the tree audit and the battery.
       - name: Bootstrap the Windows aarch64 compiler from its committed seed
+        id: seed
         run: |
           set -euo pipefail
           target=windows-aarch64
@@ -1630,6 +1638,7 @@ jobs:
           unset AXIOM_PATH
           "$seeded/axiom.exe" --diagnostic-format=ai --target="$target" emit-llvm self_host/main.ax -o "$seeded/current.ll"
           cmp "$seeded/current.ll" "windows-hello/selfhost/axiom-$target.ll"
+          printf 'compiler=%s\n' "$(cygpath -m "$seeded/axiom.exe")" >> "$GITHUB_OUTPUT"
 
       - name: Run the Windows aarch64 hello, the compiler and the tree audit
         run: ./scripts/check-windows-hello.sh --run windows-hello windows-aarch64
@@ -1643,10 +1652,15 @@ jobs:
           if-no-files-found: ignore
 
       - name: Package and install the Windows aarch64 CI preview
+        id: install
+        if: ${{ !cancelled() && steps.seed.outcome == 'success' }}
         shell: pwsh
-        run: ./scripts/check-windows-install.ps1 -Compiler "$PWD/.axiom-bin/axiom.exe" -Target windows-aarch64 -Output "$env:RUNNER_TEMP/windows-preview"
+        env:
+          AXIOM_SEEDED_COMPILER: ${{ steps.seed.outputs.compiler }}
+        run: ./scripts/check-windows-install.ps1 -Compiler "$env:AXIOM_SEEDED_COMPILER" -Target windows-aarch64 -Output "$env:RUNNER_TEMP/windows-preview"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         with:
           name: windows-preview-aarch64
           path: |

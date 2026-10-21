@@ -23,6 +23,8 @@ RUNNERS = {
     'windows-2025': ('windows-x86_64', 'AMD64'),
     'windows-11-arm': ('windows-aarch64', 'ARM64'),
 }
+COMPILER_OUTPUT = ['printf', r'compiler=%s\n',
+                   '$(cygpath -m $seeded/axiom.exe)', '>>', '$GITHUB_OUTPUT']
 
 
 class StrictReader(reader.Reader):
@@ -159,8 +161,79 @@ def prove_recipe(run, target, machine):
          'self_host/main.ax', '-o', '$seeded/current.ll'],
         ['cmp', '$seeded/current.ll', 'windows-hello/selfhost/axiom-$target.ll'],
     ]
-    if actual != expected:
+    exports_compiler = actual == expected + [COMPILER_OUTPUT]
+    if actual != expected and not exports_compiler:
         raise ValueError('not the ordered, failure-preserving native seed/PE/emission/comparison recipe')
+    return exports_compiler
+
+
+def after_success(condition, dependency, outcomes, cancelled=False):
+    """Accept only the explicit status guard used by independent previews."""
+    expected = "${{ !cancelled() && steps." + dependency + ".outcome == 'success' }}"
+    if ' '.join(str(condition).split()) != expected:
+        raise ValueError('not the cancellation-aware ' + dependency + ' success guard')
+    return not cancelled and outcomes.get(dependency) == 'success'
+
+
+def installation_chain(document, job_name):
+    """Prove a preview uses the verified compiler despite later runtime failure."""
+    job = document['jobs'][job_name]
+    target, machine = RUNNERS[job['runs-on']]
+    if not unconditional(job) or reader.continues_on_error(job.get('continue-on-error')):
+        raise ValueError('native job is guarded or advisory')
+    dependencies(document['jobs'], job_name)
+    steps = job['steps']
+    if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+        raise ValueError('steps must be a literal sequence of mappings')
+    ids = [step['id'] for step in steps if 'id' in step]
+    if len(ids) != len(set(ids)):
+        raise ValueError('step identifiers must be unique')
+
+    def one(predicate):
+        found = [(index, step) for index, step in enumerate(steps) if predicate(step)]
+        if len(found) != 1:
+            raise ValueError('expected exactly one step in the installer chain')
+        return found[0]
+
+    seed_index, seed = one(lambda step: step.get('id') == 'seed')
+    runtime_index, runtime = one(lambda step: 'check-windows-hello.sh --run' in str(step.get('run', '')))
+    install_index, install = one(lambda step: step.get('id') == 'install')
+    suffix = 'x86_64' if target == 'windows-x86_64' else 'aarch64'
+    upload_index, upload = one(lambda step: isinstance(step.get('with'), dict)
+                              and step['with'].get('name') == 'windows-preview-' + suffix)
+    if not seed_index < runtime_index < install_index < upload_index:
+        raise ValueError('bootstrap/runtime/installer/upload order changed')
+    for step in (seed, runtime, install, upload):
+        if reader.continues_on_error(step.get('continue-on-error')):
+            raise ValueError('installer chain contains an advisory step')
+    for step in (seed, runtime):
+        if (not unconditional(step) or shell_for(document, job, step) != 'bash'
+                or any(key in step or key in job for key in ('env', 'working-directory', 'container'))
+                or 'uses' in step):
+            raise ValueError('bootstrap/runtime execution context changed')
+    if not prove_recipe(seed.get('run'), target, machine):
+        raise ValueError('verified bootstrap compiler is not exported after comparison')
+    if commands(runtime.get('run')) != [
+            ['./scripts/check-windows-hello.sh', '--run', 'windows-hello', target]]:
+        raise ValueError('runtime failure is not preserved')
+    if (shell_for(document, job, install) != 'pwsh'
+            or any(key in install for key in ('working-directory', 'container', 'uses'))
+            or install.get('env') != {'AXIOM_SEEDED_COMPILER': '${{ steps.seed.outputs.compiler }}'}):
+        raise ValueError('installer does not consume only the verified compiler output')
+    expected_install = ('./scripts/check-windows-install.ps1 '
+                        '-Compiler "$env:AXIOM_SEEDED_COMPILER" -Target ' + target
+                        + ' -Output "$env:RUNNER_TEMP/windows-preview"')
+    if str(install.get('run', '')).strip() != expected_install:
+        raise ValueError('not the direct, failure-preserving preview installer invocation')
+    after_success(install.get('if'), 'seed', {'seed': 'success'})
+    after_success(upload.get('if'), 'install', {'install': 'success'})
+    if (not str(upload.get('uses', '')).startswith('actions/upload-artifact@')
+            or 'run' in upload or upload['with'].get('if-no-files-found') != 'error'
+            or upload['with'].get('path', '').strip() !=
+            '${{ runner.temp }}/windows-preview/axiom-*.zip\n'
+            '${{ runner.temp }}/windows-preview/axiom-*.zip.sha256'):
+        raise ValueError('preview artifact is not required after a successful installer')
+    return {'seed': seed, 'runtime': runtime, 'install': install, 'upload': upload}
 
 
 def native_seeds(document):

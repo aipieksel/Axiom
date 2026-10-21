@@ -148,5 +148,116 @@ class NativeSeedTests(unittest.TestCase):
                     proof.parse(text)
 
 
+class IndependentInstallerTests(unittest.TestCase):
+    def test_both_previews_use_the_verified_seed_output(self):
+        for name in ('windows', 'windows-arm'):
+            with self.subTest(job=name):
+                chain = proof.installation_chain(DOCUMENT, name)
+                self.assertEqual(chain['seed']['id'], 'seed')
+                self.assertEqual(chain['install']['env']['AXIOM_SEEDED_COMPILER'],
+                                 '${{ steps.seed.outputs.compiler }}')
+                self.assertTrue(proof.after_success(chain['install']['if'], 'seed',
+                                                    {'seed': 'success'}))
+
+    def test_console_failure_does_not_skip_install_or_make_job_successful(self):
+        for name in ('windows', 'windows-arm'):
+            for install_status in ('success', 'failure'):
+                with self.subTest(job=name, installer=install_status):
+                    chain = proof.installation_chain(DOCUMENT, name)
+                    outcomes = {'seed': 'success', 'runtime': 'failure'}
+                    self.assertTrue(proof.after_success(chain['install']['if'], 'seed', outcomes))
+                    outcomes['install'] = install_status
+                    self.assertEqual(proof.after_success(chain['upload']['if'], 'install', outcomes),
+                                     install_status == 'success')
+                    # A later independently guarded step cannot clear an
+                    # earlier failing step without continue-on-error.
+                    failed = any(outcome == 'failure' and not proof.reader.continues_on_error(
+                        chain[step].get('continue-on-error')) for step, outcome in outcomes.items())
+                    self.assertTrue(failed)
+
+    def test_failed_skipped_cancelled_seed_never_installs(self):
+        for name in ('windows', 'windows-arm'):
+            chain = proof.installation_chain(DOCUMENT, name)
+            for seed_status in ('failure', 'skipped', 'cancelled'):
+                with self.subTest(job=name, seed=seed_status):
+                    self.assertFalse(proof.after_success(chain['install']['if'], 'seed',
+                                                         {'seed': seed_status}))
+            self.assertFalse(proof.after_success(chain['install']['if'], 'seed',
+                                                 {'seed': 'success'}, cancelled=True))
+
+    def test_failed_skipped_cancelled_installer_never_uploads(self):
+        for name in ('windows', 'windows-arm'):
+            chain = proof.installation_chain(DOCUMENT, name)
+            for status in ('failure', 'skipped', 'cancelled'):
+                with self.subTest(job=name, installer=status):
+                    self.assertFalse(proof.after_success(chain['upload']['if'], 'install',
+                                                         {'install': status}))
+            self.assertFalse(proof.after_success(chain['upload']['if'], 'install',
+                                                 {'install': 'success'}, cancelled=True))
+
+    def test_chain_refusals(self):
+        controls = {
+            'job advisory': lambda job, chain: job.update({'continue-on-error': 'true'}),
+            'seed guarded': lambda job, chain: chain['seed'].update({'if': 'false'}),
+            'seed advisory': lambda job, chain: chain['seed'].update({'continue-on-error': 'true'}),
+            'duplicate step id': lambda job, chain: chain['runtime'].update({'id': 'seed'}),
+            'runtime advisory': lambda job, chain: chain['runtime'].update({'continue-on-error': 'true'}),
+            'runtime ignored': lambda job, chain: chain['runtime'].update({'run': chain['runtime']['run'] + ' || true'}),
+            'runtime conditional': lambda job, chain: chain['runtime'].update({'if': '${{ always() }}'}),
+            'installer advisory': lambda job, chain: chain['install'].update({'continue-on-error': 'true'}),
+            'installer missing explicit condition': lambda job, chain: chain['install'].pop('if'),
+            'installer ignores seed failure': lambda job, chain: chain['install'].update({'if': '${{ !cancelled() }}'}),
+            'installer implicit success condition': lambda job, chain: chain['install'].update({'if': "steps.seed.outcome == 'success'"}),
+            'installer always condition': lambda job, chain: chain['install'].update({'if': "${{ always() && steps.seed.outcome == 'success' }}"}),
+            'installer wrong compiler': lambda job, chain: chain['install']['env'].update({'AXIOM_SEEDED_COMPILER': '${{ steps.other.outputs.compiler }}'}),
+            'installer default compiler': lambda job, chain: chain['install'].update({'run': chain['install']['run'].replace('$env:AXIOM_SEEDED_COMPILER', '$PWD/.axiom-bin/axiom.exe')}),
+            'installer ignores failure': lambda job, chain: chain['install'].update({'run': chain['install']['run'] + '; exit 0'}),
+            'upload advisory': lambda job, chain: chain['upload'].update({'continue-on-error': 'true'}),
+            'upload default condition': lambda job, chain: chain['upload'].pop('if'),
+            'upload on failed installer': lambda job, chain: chain['upload'].update({'if': "${{ !cancelled() && steps.seed.outcome == 'success' }}"}),
+            'upload ignores missing files': lambda job, chain: chain['upload']['with'].update({'if-no-files-found': 'ignore'}),
+        }
+        for name in ('windows', 'windows-arm'):
+            for label, mutate in controls.items():
+                with self.subTest(job=name, control=label):
+                    document = copy.deepcopy(DOCUMENT)
+                    chain = proof.installation_chain(document, name)
+                    mutate(document['jobs'][name], chain)
+                    with self.assertRaises(ValueError):
+                        proof.installation_chain(document, name)
+
+    def test_compiler_output_is_only_after_the_exact_seed_proof(self):
+        def move_before_compare(run):
+            lines = run.splitlines()
+            output = next(line for line in lines if "printf 'compiler=" in line)
+            lines.remove(output)
+            compare = next(i for i, line in enumerate(lines) if line.startswith('cmp '))
+            lines.insert(compare, output)
+            return '\n'.join(lines)
+
+        controls = {
+            'missing output': lambda run: '\n'.join(line for line in run.splitlines()
+                                                     if "printf 'compiler=" not in line),
+            'output before comparison': move_before_compare,
+            'wrong compiler output': lambda run: run.replace('cygpath -m "$seeded/axiom.exe"',
+                                                             'cygpath -m "$PWD/.axiom-bin/axiom.exe"'),
+            'wrong output name': lambda run: run.replace('compiler=%s', 'other=%s'),
+            'environment instead of output': lambda run: run.replace('$GITHUB_OUTPUT', '$GITHUB_ENV'),
+            'missing PE validation': lambda run: '\n'.join(line for line in run.splitlines()
+                                                           if not line.startswith('llvm-readobj ')),
+            'ignored equality failure': lambda run: run.replace(
+                'cmp "$seeded/current.ll" "windows-hello/selfhost/axiom-$target.ll"',
+                'cmp "$seeded/current.ll" "windows-hello/selfhost/axiom-$target.ll" || true'),
+        }
+        for name in ('windows', 'windows-arm'):
+            for label, mutate in controls.items():
+                with self.subTest(job=name, control=label):
+                    document = copy.deepcopy(DOCUMENT)
+                    step = bootstrap(document['jobs'][name])
+                    step['run'] = mutate(step['run'])
+                    with self.assertRaises(ValueError):
+                        proof.installation_chain(document, name)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
