@@ -104,7 +104,7 @@
     {
       (while (< i (vecLen names))
         {
-          (if (strEq (as (vecGet names i) String) n)
+          (if (strEq (vecGet names i) n)
             (set found true))
           (set i (+ i 1))
         })
@@ -173,7 +173,7 @@
     1
     0))
 
-; 1 when `t` is a `Vec`: `(Vec Int)`, `(Vec String)`, `(Vec (Vec Int))`.
+; 1 when `t` is a `Vec`: `(Vec Int)`, `Names`, `(Vec (Vec Int))`.
 ;
 ; A `Vec` crosses as its HANDLE WORD and nothing else, whatever it
 ; holds - the element type is Axiom's business, and the host builds and
@@ -190,7 +190,7 @@
 ; 1 when `t` is exactly `(Vec Int)`: the one `Vec` the binding types.
 ; Its elements are words and every word is a valid `Int`, so a host can
 ; build one from any slice of `i64` without being able to break it -
-; which is not true of a `(Vec String)`, whose every element Axiom will
+; which is not true of a `Names`, whose every element Axiom will
 ; dereference. Every other `Vec` crosses as the raw word it was.
 (:: rbIsIntVec (-> ASTNode Int))
 (fn (rbIsIntVec t)
@@ -291,11 +291,16 @@
     }
     0))
 
-; The constructors of the data type `t` (an instantiation), each a
-; 3-slot Vec: [name, Vec of field types (instantiated), Vec of field
-; names or 0]. `Option`, `Result` and the entry's declarations.
-(:: rbCtorsOf (-> (Vec ASTNode) ASTNode IntRows))
-;@axiom:effect(unsafe)
+; One constructor of a data type: its name, its field types
+; (instantiated) and, when its fields are named, their names.
+(struct RbCtor
+  (name : String)
+  (tys : (Vec ASTNode))
+  (fields : (Option Names)))
+
+; The constructors of the data type `t` (an instantiation): `Option`,
+; `Result` and the entry's declarations.
+(:: rbCtorsOf (-> (Vec ASTNode) ASTNode (Vec RbCtor)))
 (fn (rbCtorsOf decls t)
   {
     (let n (nodeAName t))
@@ -304,13 +309,13 @@
     {
       (if (strEq n "Option")
         {
-          (vecPush out (rbCtor "None" vecNew (as 0 Names)))
-          (vecPush out (rbCtor "Some" (rbVec1 (vecGet args 0)) (as 0 Names)))
+          (vecPush out (rbCtor "None" vecNew None))
+          (vecPush out (rbCtor "Some" (rbVec1 (vecGet args 0)) None))
         }
         (if (strEq n "Err$Result")
           {
-            (vecPush out (rbCtor "Ok" (rbVec1 (vecGet args 0)) (as 0 Names)))
-            (vecPush out (rbCtor "Err" (rbVec1 (vecGet args 1)) (as 0 Names)))
+            (vecPush out (rbCtor "Ok" (rbVec1 (vecGet args 0)) None))
+            (vecPush out (rbCtor "Err" (rbVec1 (vecGet args 1)) None))
           }
           {
             (let d (rbDataDecl decls n))
@@ -329,7 +334,7 @@
                         (vecPush names (nodeAName (vecGet fs i)))
                         (set i (+ i 1))
                       })
-                    (vecPush out (rbCtor n tys names))
+                    (vecPush out (rbCtor n tys (Some names)))
                   }
                 }
                 {
@@ -342,7 +347,7 @@
                         (let c (vecGet cs i))
                         (vecPush out
                           (rbCtor (nodeAName c) (rbSubstAll (nodeTyChildren c) vars args)
-                            (nodeFieldNamesNames c)))
+                            (rbFieldNames c)))
                       }
                       (set i (+ i 1))
                     })
@@ -352,30 +357,32 @@
     }
   })
 
-(:: rbCtor (-> String (Vec ASTNode) Names Ints))
-(fn (rbCtor name tys names)
+(:: rbCtor (-> String (Vec ASTNode) (Option Names) RbCtor))
+(fn (rbCtor name tys fields)
+  (RbCtor :name name :tys tys :fields fields))
+
+; A declared constructor's field names, or `None` when its fields are
+; positional, which the parser answers as a null vector.
+(:: rbFieldNames (-> ASTNode (Option Names)))
+(fn (rbFieldNames c)
   {
-    (let v vecNew)
-    {
-      (vecPushStr v name)
-      (vecPushVec v tys)
-      (vecPushVec v names)
-      v
-    }
+    (let names (nodeFieldNamesNames c))
+    (if (== (as names Int) 0)
+      None
+      (Some names))
   })
 
-(:: rbCtorName (-> Ints String))
-;@axiom:effect(unsafe)
+(:: rbCtorName (-> RbCtor String))
 (fn (rbCtorName c)
-  (as (vecGet c 0) String))
+  c.name)
 
-(:: rbCtorTys (-> Ints (Vec ASTNode)))
+(:: rbCtorTys (-> RbCtor (Vec ASTNode)))
 (fn (rbCtorTys c)
-  (vecGetVec c 1))
+  c.tys)
 
-(:: rbCtorNames (-> Ints Ints))
+(:: rbCtorNames (-> RbCtor (Option Names)))
 (fn (rbCtorNames c)
-  (vecGetVec c 2))
+  c.fields)
 
 (:: rbVec1 (-> ASTNode (Vec ASTNode)))
 (fn (rbVec1 x)
@@ -441,7 +448,7 @@
       {
         (while (< i (vecLen names))
           {
-            (if (&& (< at 0) (strEq (as (vecGet names i) String) n))
+            (if (&& (< at 0) (strEq (vecGet names i) n))
               (set at i))
             (set i (+ i 1))
           })
@@ -541,7 +548,6 @@
 ; so every `pub fn` mentioning the type becomes a `//` note instead of
 ; a wrapper.
 (:: rbTypeNamesSpellable (-> (Vec ASTNode) ASTNode Int))
-;@axiom:effect(unsafe)
 (fn (rbTypeNamesSpellable decls t)
   (if (rbIsRustIdent (rbCarrierName (nodeAName t)))
     {
@@ -556,19 +562,13 @@
               {
                 (if (! (rbIsRustIdent (rbCtorName c)))
                   (set ok 0))
-                {
-                  (let fnames (rbCtorNames c))
-                  (if (! (== (as fnames Int) 0))
-                    {
-                      (let mut k 0)
-                      (while (< k (vecLen fnames))
-                        {
-                          (if (! (rbIsRustIdent (as (vecGet fnames k) String)))
-                            (set ok 0))
-                          (set k (+ k 1))
-                        })
-                    })
-                }
+                (match (rbCtorNames c)
+                  ((Some fnames)
+                    (for n in fnames
+                      (if (! (rbIsRustIdent n))
+                        (set ok 0)))
+                  )
+                  (_ ()))
               }
             }
             (set i (+ i 1))
@@ -590,7 +590,7 @@
       (while (&& (< i (vecLen names)) (== (strLen bad) 0))
         {
           {
-            (let n (as (vecGet names i) String))
+            (let n (vecGet names i))
             (if (! (rbIsRustIdent n))
               (set bad n))
           }
@@ -800,7 +800,6 @@
     name))
 
 (:: rbShimsFor (-> (Vec ASTNode) ASTNode String))
-;@axiom:effect(unsafe)
 (fn (rbShimsFor decls t)
   ; the tag
   {
@@ -883,7 +882,11 @@
                             (concat m
                               (concat (concat "_" (concat cn (concat "_" (fmtInt k))))
                                 (concat " v) v."
-                                  (concat (as (vecGet (rbCtorNames c) k) String) ")\n"))))))
+                                  (concat
+                                    (match (rbCtorNames c)
+                                      ((Some names) (vecGet names k))
+                                      (_ ""))
+                                    ")\n"))))))
                         (strBuilderPush out
                           (concat "(pub fn (axh_"
                             (concat m
@@ -1023,25 +1026,19 @@
 ; at or above 128 are left alone: a UTF-8 file name is legal in a Rust
 ; comment and is not an escape.
 (:: rbCommentSafe (-> String String))
-;@axiom:effect(unsafe)
 (fn (rbCommentSafe s)
   {
-    (let n (strLen s))
-    (let out (strAlloc (strLen s)))
-    (let mut i 0)
+    (let out (strBuilderWithCapacity (strLen s)))
     {
-      (while (< i n)
+      (for i in 0..(strLen s)
         {
-          {
-            (let b (strByte s i))
-            (__store8 (strData out) i
-              (if (|| (< b 32) (== b 127))
-                63
-                b))
-          }
-          (set i (+ i 1))
+          (let b (strByte s i))
+          (strBuilderPushByte out
+            (if (|| (< b 32) (== b 127))
+              63
+              b))
         })
-      (strSlice out 0 n)
+      (strBuilderFinish out)
     }
   })
 
@@ -1068,7 +1065,7 @@
 ; `rust/examples/host/src/hostlib.rs` against a fresh generation byte
 ; for byte, so that file is regenerated in the same commit as this
 ; line; the gate is what makes the pair a pair.
-(:: rbRawBlock (-> Ints String))
+(:: rbRawBlock (-> Names String))
 (fn (rbRawBlock raws)
   (concat "mod raw {\n    unsafe extern \"C\" {\n" (concat (rbJoin raws) "    }\n}\n\n")))
 
@@ -1096,15 +1093,14 @@
 ; name cannot end the line early. Do not turn these into `/* */`
 ; comments, and do not wrap a group of them in one: that would hand
 ; back exactly the opener `rbIsRustIdent` was added to take away.
-(:: rbNotes (-> Ints String))
+(:: rbNotes (-> Names String))
 (fn (rbNotes notes)
   (if (== (vecLen notes) 0)
     ""
     (concat "// Not bound - call these through the archive by hand, or change the type:\n"
       (rbJoin notes))))
 
-(:: rbJoin (-> Ints String))
-;@axiom:effect(unsafe)
+(:: rbJoin (-> Names String))
 (fn (rbJoin v)
   {
     (let out strBuilderNew)
@@ -1112,7 +1108,7 @@
     {
       (while (< i (vecLen v))
         {
-          (strBuilderPush out (as (vecGet v i) String))
+          (strBuilderPush out (vecGet v i))
           (set i (+ i 1))
         })
       (strBuilderFinish out)
@@ -1135,7 +1131,7 @@
 ; This also covers the synthesised `axh_*` shims below, whose names
 ; embed a type's and a constructor's, though `rbTypeNamesSpellable`
 ; has already stopped a poisoned type reaching `rbShimSource` at all.
-(:: rbOneFn (-> (Vec ASTNode) ASTNode Ints Ints Ints Int))
+(:: rbOneFn (-> (Vec ASTNode) ASTNode Names Names Names Int))
 (fn (rbOneFn decls f raws wraps notes)
   {
     (let name (nodeAName f))
@@ -1149,8 +1145,7 @@
         (if (nodeSame ty nilNode)
           {
             (vecPush notes
-              (as (concat "// `"
-                    (concat name "`: no `(pub :: name Type)` signature to bind it by\n")) Int))
+              (concat "// `" (concat name "`: no `(pub :: name Type)` signature to bind it by\n")))
             0
           }
           {
@@ -1159,7 +1154,7 @@
             (let names (nodeBNames f))
             (if (strStartsWith name "axh_")
               {
-                (vecPush raws (as (rbRawDecl name params) Int))
+                (vecPush raws (rbRawDecl name params))
                 0
               }
               {
@@ -1167,19 +1162,17 @@
                 (if (> (strLen bad) 0)
                   {
                     (vecPush notes
-                      (as (concat "// `"
-                            (concat name
-                              (concat "`: `"
-                                (concat (rbSpellType ty)
-                                  (concat "` names " (concat bad "\n")))))) Int))
+                      (concat "// `"
+                        (concat name
+                          (concat "`: `"
+                            (concat (rbSpellType ty) (concat "` names " (concat bad "\n")))))))
                     0
                   }
                   (if (!= (vecLen params) (vecLen names))
                     {
                       (vecPush notes
-                        (as (concat "// `"
-                              (concat name
-                                "`: the signature and the definition disagree on arity\n")) Int))
+                        (concat "// `"
+                          (concat name "`: the signature and the definition disagree on arity\n")))
                       0
                     }
                     ; The BINDERS are interpolated too, and by the same
@@ -1194,15 +1187,15 @@
                       (if (> (strLen badParam) 0)
                         {
                           (vecPush notes
-                            (as (concat "// `"
-                                  (concat name
-                                    (concat "`: its parameter `"
-                                      (concat badParam "` is not a Rust identifier\n")))) Int))
+                            (concat "// `"
+                              (concat name
+                                (concat "`: its parameter `"
+                                  (concat badParam "` is not a Rust identifier\n")))))
                           0
                         }
                         {
-                          (vecPush raws (as (rbRawDecl name params) Int))
-                          (vecPush wraps (as (rbWrapper decls name ty params res names) Int))
+                          (vecPush raws (rbRawDecl name params))
+                          (vecPush wraps (rbWrapper decls name ty params res names))
                           0
                         })
                     }))
@@ -1210,10 +1203,9 @@
           })
         {
           (vecPush notes
-            (as (concat "// `"
-                  (concat name
-                    "`: not a Rust identifier, so no `extern \"C\"` declaration can name it\n"))
-              Int))
+            (concat "// `"
+              (concat name
+                "`: not a Rust identifier, so no `extern \"C\"` declaration can name it\n")))
           0
         })
     }
@@ -1472,7 +1464,7 @@
   })
 
 ; `pub struct T { pub f0: .. }` or `pub enum T { C0(..), C1 }`.
-(:: rbTypeDecl (-> (Vec ASTNode) ASTNode IntRows String))
+(:: rbTypeDecl (-> (Vec ASTNode) ASTNode (Vec RbCtor) String))
 (fn (rbTypeDecl decls t cs)
   {
     (let rn (rbRustDataName decls t))
@@ -1584,20 +1576,20 @@
           }))
     }))
 
-(:: rbFieldName (-> Ints Int String))
-;@axiom:effect(unsafe)
+(:: rbFieldName (-> RbCtor Int String))
 (fn (rbFieldName c k)
-  {
-    (let names (rbCtorNames c))
-    (if (|| (== (as names Int) 0) (>= k (vecLen names)))
-      (concat "f" (fmtInt k))
-      (rbSnake (as (vecGet names k) String)))
-  })
+  (match c.fields
+    ((Some names)
+      (if (< k (vecLen names))
+        (rbSnake (vecGet names k))
+        (concat "f" (fmtInt k)))
+    )
+    (_ (concat "f" (fmtInt k)))))
 
 ; `fn __from_M(word: AxWord) -> T`: read the tag, read each field of
 ; the live constructor (an owned word each) into a local, build the
 ; value, release the word.
-(:: rbFromFn (-> (Vec ASTNode) ASTNode IntRows String String))
+(:: rbFromFn (-> (Vec ASTNode) ASTNode (Vec RbCtor) String String))
 (fn (rbFromFn decls t cs rn)
   {
     (let m (rbMangle t))
@@ -1684,7 +1676,7 @@
 
 ; How a constructor is written in Rust: `Pair { a: .., b: .. }`,
 ; `Shape::Rect(..)`, `Some(..)`, `Err(..)`, `None`.
-(:: rbCtorExpr (-> (Vec ASTNode) ASTNode Ints String String String))
+(:: rbCtorExpr (-> (Vec ASTNode) ASTNode RbCtor String String String))
 (fn (rbCtorExpr decls t c rn args)
   {
     (let n (nodeAName t))
@@ -1704,7 +1696,7 @@
 ; `fn __to_M(v: &T) -> AxWord`: build the word through the
 ; constructor shim, releasing the owned words of data-typed fields
 ; afterwards (the constructor retained what it kept).
-(:: rbToFn (-> (Vec ASTNode) ASTNode IntRows String String))
+(:: rbToFn (-> (Vec ASTNode) ASTNode (Vec RbCtor) String String))
 (fn (rbToFn decls t cs rn)
   {
     (let m (rbMangle t))
@@ -1796,7 +1788,7 @@
     }
   })
 
-(:: rbCtorPat (-> (Vec ASTNode) ASTNode Ints String String String))
+(:: rbCtorPat (-> (Vec ASTNode) ASTNode RbCtor String String String))
 (fn (rbCtorPat decls t c rn pat)
   {
     (let n (nodeAName t))
@@ -1864,8 +1856,7 @@
   (if (>= i (vecLen params))
     ""
     (concat
-      (concat (rbParamName (as (vecGet names i) String))
-        (concat ": " (rbRustType decls (vecGet params i) 0)))
+      (concat (rbParamName (vecGet names i)) (concat ": " (rbRustType decls (vecGet params i) 0)))
       (concat
         (if (< (+ i 1) (vecLen params))
           ", "
@@ -1880,7 +1871,7 @@
     ""
     {
       (let t (vecGet params i))
-      (let pn (rbParamName (as (vecGet names i) String)))
+      (let pn (rbParamName (vecGet names i)))
       (concat
         (if (== (rbIsString t) 1)
           (concat "    let __a"
@@ -1908,7 +1899,7 @@
     ""
     {
       (let t (vecGet params i))
-      (let pn (rbParamName (as (vecGet names i) String)))
+      (let pn (rbParamName (vecGet names i)))
       (concat
         (if (== (rbIsString t) 1)
           (concat "__a" (concat (fmtInt i) ".as_word()"))
@@ -1953,39 +1944,26 @@
 ; the emitted set, neither of which exists yet; the `-` arm is left
 ; here as the start of that work, not as a licence to open the gate.
 (:: rbSnake (-> String String))
-;@axiom:effect(unsafe)
 (fn (rbSnake s)
   {
-    (let out (strAlloc (* 2 (strLen s))))
-    (let mut i 0)
-    (let mut o 0)
+    (let out (strBuilderWithCapacity (* 2 (strLen s))))
     {
-      (while (< i (strLen s))
+      (for i in 0..(strLen s)
         {
-          {
-            (let b (strByte s i))
-            (if (&& (>= b 65) (<= b 90))
-              {
-                (if (> i 0)
-                  {
-                    (__store8 (strData out) o 95)
-                    (set o (+ o 1))
-                  })
-                (__store8 (strData out) o (+ b 32))
-                (set o (+ o 1))
-              }
-              {
-                (__store8 (strData out) o
-                  (if (== b 45)
-                    95
-                    b))
-                (set o (+ o 1))
-              })
-          }
-          (set i (+ i 1))
+          (let b (strByte s i))
+          (if (&& (>= b 65) (<= b 90))
+            {
+              (if (> i 0)
+                (strBuilderPushByte out 95))
+              (strBuilderPushByte out (+ b 32))
+            }
+            (strBuilderPushByte out
+              (if (== b 45)
+                95
+                b)))
         })
       {
-        (let r (strSlice out 0 o))
+        (let r (strBuilderFinish out))
         (if (rbIsKeyword r)
           (concat r "_")
           r)
