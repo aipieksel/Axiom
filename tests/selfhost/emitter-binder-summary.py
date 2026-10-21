@@ -229,35 +229,36 @@ def check_summary_ir(path):
 
 
 def public_raw_effects(axiom, repo, source_root, work, env, current):
-    old = subprocess.check_output(['git', 'show', 'a9c00b49:stdlib/Intern.ax'],
-                                  cwd=repo, text=True)
-    public = re.findall(r'^\(pub fn \(([^ )]+)', old, re.M)
+    # Independently recorded from the pre-migration API. CI checkouts may
+    # contain one commit, so the reference must travel with the test.
+    expected = json.loads((repo / 'tests/selfhost/emitter-binder-raw-api.json').read_text())
+    public = set(expected)
+    if len(public) != 9:
+        raise RuntimeError('the legacy raw API reference must cover all nine functions')
     fixture = work / 'raw-api.ax'
     fixture.write_text('(import Intern)\n(:: main Int)\n(fn (main) 0)\n')
-    results = {}
-    for label, source in (('raw-api-old', old), ('raw-api-current', current)):
-        stdlib = private_stdlib(work / (label + '-stdlib'), source_root, source)
-        local = dict(env, AXIOM_STDLIB=str(stdlib), AXIOM_STDLIB_PATH=str(stdlib))
-        output = work / (label + '.axsym')
-        run_checked([str(axiom), '--diagnostic-format=ai', 'symbols', str(fixture)],
-                    env=local, stdout=output, stderr=work / (label + '.stderr'))
-        rows = {}
-        for line in output.read_text().splitlines():
-            if not line.startswith('F '):
-                continue
-            parts = shlex.split(line)
-            if parts[1] not in public or '/Intern.ax:' not in parts[2]:
-                continue
-            rows[parts[1]] = {'type': parts[3],
-                              'effects': [x for x in parts[4:]
-                                          if x.startswith(('#effects=', '#unsafe='))]}
-        if set(rows) != set(public):
-            raise RuntimeError(f'{label}: incomplete public raw API census {sorted(set(public)-set(rows))}')
-        results[label] = rows
-    deltas = {name: {'old': results['raw-api-old'][name],
-                     'current': results['raw-api-current'][name]}
+    stdlib = private_stdlib(work / 'raw-api-current-stdlib', source_root, current)
+    local = dict(env, AXIOM_STDLIB=str(stdlib), AXIOM_STDLIB_PATH=str(stdlib))
+    output = work / 'raw-api-current.axsym'
+    run_checked([str(axiom), '--diagnostic-format=ai', 'symbols', str(fixture)],
+                env=local, stdout=output, stderr=work / 'raw-api-current.stderr')
+    rows = {}
+    for line in output.read_text().splitlines():
+        if not line.startswith('F '):
+            continue
+        parts = shlex.split(line)
+        if parts[1] not in public or '/Intern.ax:' not in parts[2]:
+            continue
+        if parts[1] in rows:
+            raise RuntimeError('duplicate public raw API row: ' + parts[1])
+        rows[parts[1]] = {'type': parts[3],
+                          'effects': [x for x in parts[4:]
+                                      if x.startswith(('#effects=', '#unsafe='))]}
+    if set(rows) != public:
+        raise RuntimeError(f'incomplete public raw API census {sorted(public-set(rows))}')
+    deltas = {name: {'old': expected[name], 'current': rows[name]}
               for name in public
-              if results['raw-api-old'][name] != results['raw-api-current'][name]}
+              if expected[name] != rows[name]}
     if deltas:
         raise RuntimeError('legacy public raw API type/effect changed: ' + json.dumps(deltas, sort_keys=True))
     return {'unchanged_public_raw_api': len(public), 'deltas': deltas}
