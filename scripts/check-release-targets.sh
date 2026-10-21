@@ -23,10 +23,9 @@
 #   unsupported + shipped    refused: an untested binary looks supported
 #
 # A source-only target has no archive and no Tests leg, and builds from
-# the seed. It needs a `Bootstrap from seed (<target>)` leg in ci.yml, or
-# a README sentence naming it that says no runner builds it
-# (darwin-x86_64, baremetal-aarch64) or the compiler doesn't run there
-# (windows-*).
+# the seed. It needs a bootstrap matrix leg or a proved native seed
+# recipe in ci.yml, or a README sentence explaining why no runner builds
+# it (darwin-x86_64, baremetal-aarch64).
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
@@ -227,7 +226,9 @@ echo "== a source-only target is built from the seed in CI, and nothing more =="
 # README's `Source-only:` line names the targets with no archive and no
 # Tests leg. Each must be off the supported list and the release matrix.
 # CI must build the compiler there from the seed: a `bootstrap-no-rust`
-# row `- name: <target>`, or a job named `Bootstrap from seed (<target>)`.
+# row `- name: <target>`, a job named `Bootstrap from seed (<target>)`,
+# or native Windows steps that install, verify and execute the committed
+# seed and compare its current-source emission with the matching host IR.
 # The exception is a README sentence naming the target that says no
 # runner builds it or the compiler doesn't run there. A missing
 # `Source-only:` line fails.
@@ -236,16 +237,28 @@ source_only="$(sed -n '/^### Targets/,/^## /p' "$readme" \
   | tr '\n' ' ' \
   | sed -n 's/.*Source-only: \([^.]*\)\..*/\1/p' \
   | tr ',' '\n' | tr -d ' `' | grep -E '^[a-z0-9_]+-[a-z0-9_]+$' | sort -u)"
+if python3 "$repo_root/tests/ci/native-seeds.py"; then
+  ok "native Windows seed evidence rejects skipped, advisory and mismatched recipes"
+else
+  bad "native Windows seed evidence failed its source-contract controls"
+fi
+native_boot_legs=""
+if native_boot_legs="$(python3 "$repo_root/scripts/lib/ci-native-seeds.py" "$ci_yml")"; then
+  :
+else
+  bad "ci.yml's native seed recipes could not be read safely"
+fi
 boot_legs="$( { awk '
     /^  bootstrap-no-rust:/ { on = 1; next }
     on && /^  [a-z]/ { exit }
     on { if (match($0, /^ *- name: [a-z0-9_]+-[a-z0-9_]+ *$/)) { sub(/^ *- name: /, ""); sub(/ *$/, ""); print } }
   ' "$ci_yml"
-  sed -n 's/^ *name: Bootstrap from seed (\([a-z0-9_]*-[a-z0-9_]*\)) *$/\1/p' "$ci_yml"; } | sort -u)"
+  sed -n 's/^ *name: Bootstrap from seed (\([a-z0-9_]*-[a-z0-9_]*\)) *$/\1/p' "$ci_yml"
+  printf '%s\n' "$native_boot_legs"; } | sed '/^$/d' | sort -u)"
 if [[ -z "$source_only" ]]; then
   bad "could not read README's \`Source-only:\` line under ### Targets - the checks below would pass vacuously"
 elif [[ -z "$boot_legs" ]]; then
-  bad "ci.yml's bootstrap-no-rust matrix yielded no targets - no source-only target could have its leg"
+  bad "ci.yml's bootstrap matrix and native seed recipes yielded no targets - no source-only target could have its leg"
 else
   ok "README lists source-only: $(printf '%s ' $source_only)"
   for t in $source_only; do
@@ -259,7 +272,7 @@ else
          | grep -F -- "\`$t\`" | grep -qiE "no runner|doesn't run on"; then
       ok "$t: not supported, not shipped, and README says why no CI leg builds it"
     else
-      bad "$t is source-only, ci.yml has no Bootstrap from seed ($t) leg, and README doesn't say why - nothing checks the build it promises"
+      bad "$t is source-only, ci.yml has no proved seed bootstrap leg, and README doesn't say why - nothing checks the build it promises"
     fi
   done
 fi
