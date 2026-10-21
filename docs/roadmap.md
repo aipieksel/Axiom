@@ -235,12 +235,12 @@ work; they do not claim full feature parity.
 | Windows clock conversions check overflow, finite sleeps retain their duration, and large stack frames link with page probing | Done; `tests/platform/windows-time.py` and `scripts/check-recover.sh` |
 | Windows path roots, closed-poller checks and exclusive listener addresses | Done; `tests/stdlib/980-path-roots.ax`, `tests/stdlib/981-poller-closed.ax` and `tests/stdlib/843-net-stream.ax` |
 | Every standard-library case runs on Windows; arbitrary captured-closure `Task` calls and the POSIX cases in `tests/stdlib/windows-skip.txt` remain unsupported | In progress |
-| Explicit encoded executable workers preserve process isolation, bounded messages, deadlines and cancellation | Native Windows x64 validated by `tests/platform/worker-pool.py`; ARM64 validation pending |
+| Explicit encoded executable workers preserve process isolation, bounded messages, deadlines and cancellation | Native Windows x64 and ARM64 validated by `tests/platform/worker-pool.py` |
 | Guarded usable-byte stack budgets for Windows executable workers | Not yet; `NativeStack` is explicit and `StackBytes` is refused before launch |
 | Parent allocator bookkeeping stays flat across repeated executable-worker calls | Not yet; repeated calls can retain bookkeeping despite retired native resources |
-| Windows command pools launch native processes at a bounded width, preserve submit order and own their cleanup | Native Windows x64 validated by `tests/stdlib/987-command-pools.ax`; ARM64 validation pending |
-| Windows pollers watch terminal input, pipes, Ctrl-C and Ctrl-Break without losing buffered bytes or retaining closed files | Control events validated on Windows x64; raw mode requires a read/write handle and its native validation is pending |
-| Windows seeds and an installer bootstrap the compiler locally | Native Windows x64 seed bootstrap validated; ARM64 bootstrap and transactional preview installation validation pending |
+| Windows command pools launch native processes at a bounded width, preserve submit order and own their cleanup | Native Windows x64 and ARM64 validated by `tests/stdlib/987-command-pools.ax` |
+| Windows pollers watch terminal input, pipes, Ctrl-C and Ctrl-Break without losing buffered bytes or retaining closed files | Native x64 and ARM64 control events and raw-mode restoration pass; the later-key stream assertion still fails after mode cancellation |
+| Windows seeds and an installer bootstrap the compiler locally | Native Windows x64 and ARM64 seed bootstraps reach the fixpoint; transactional preview installation validation is pending |
 | The embedded checks run on a named board | Not started |
 | Compatibility rules enforced at 1.0 (`COMPAT-6`) | Planned |
 
