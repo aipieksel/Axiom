@@ -8864,13 +8864,10 @@
   })
 
 ; Declaration Vec for module `name`; a module that cannot be read or
-; parsed is a fatal diagnostic, never a 0 this returns.
-(pub :: parseModuleOrDie (-> String Int String Int Int Nodes))
-
-; As `parseModuleOrDie`, and additionally records the module in the
-; UNIT TABLE - the path a diagnostic about this module renders
-; against, its text, and its name so the checker can find the index
-; from a declaration's `module` stamp.
+; parsed is a fatal diagnostic, never a 0 this returns. It also records
+; the module in the UNIT TABLE - the path a diagnostic about this module
+; renders against, its text, and its name so the checker can find the
+; index from a declaration's `module` stamp.
 (pub :: parseModuleOrDieUnit (-> String Int String Ints String ASTNode FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
 (pub fn (parseModuleOrDieUnit name tcode entryDir units parentName site cache)
@@ -9184,25 +9181,6 @@
       (sysExitWith 1)
       0
     }
-  })
-
-;@axiom:effect(io)
-(pub fn (parseModuleOrDie name tcode entryDir parent span)
-  {
-    (let srcOpt (readModuleSrc name tcode entryDir))
-    (match srcOpt
-      ((None)
-        {
-          (dieImportDiag name tcode entryDir parent span)
-          vecNew
-        }
-      )
-      ; `parseModuleWith`, not `parseModule`: an imported module's
-      ; AXTAGs have to attach to its declarations exactly as the
-      ; entry file's do, or `symbols` prints `#effects=IO` beside a
-      ; missing `#effect=io` claim and every tag check on imported
-      ; code silently never runs.
-      ((Some src) (parseModuleSourceOrDie name tcode entryDir parent span src)))
   })
 
 ; Parse the source already recorded in the unit table. Editor clients
@@ -24508,7 +24486,7 @@
     (emitAtomicPtr cg addr)
   })
 
-; `if address % 8 != 0 then trap 82` - `emitDivGuard`'s shape. A
+; `if address % 8 != 0 then trap 82` - `emitDivGuardWidth`'s shape. A
 ; misaligned atomic was a different program on each architecture: an
 ; alignment fault on AArch64 (SIGBUS, exit 138, measured) and, on
 ; x86-64, a split-lock access that is atomic but slow, or #AC where
@@ -26275,10 +26253,7 @@
 ; only by `/` and `%`, which already pay the first branch. Each trap
 ; block ends `unreachable`, so nothing downstream has to know either
 ; is there.
-(pub :: emitDivGuard (-> String String Int ASTNode Int))
-(pub fn (emitDivGuard a b cg snode)
-  (emitDivGuardWidth a b cg snode 64 false false))
-
+;
 ; `isRem` skips the overflow trap: a remainder by -1 is 0 for every
 ; dividend, so the caller rewrites that divisor to 1 and `srem` never
 ; sees its one overflowing pair. `/` keeps the trap (AX83).
