@@ -22,6 +22,11 @@ With `--install DIR`, the script copies the verified `stage3` to
 `DIR/axiom`, or `DIR/axiom.exe` on Windows.
 
 Windows links use the reviewed import allowlist and an 8 MiB stack.
+Bootstrap selects the native Windows architecture with
+[`IsWow64Process2`](https://learn.microsoft.com/en-us/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2),
+including when Git Bash runs under x64 emulation on ARM64.
+The small host probe uses the same LLVM tools and requires Windows 10
+version 1709 or later. A failed or unsupported query stops bootstrap.
 The script checks each PE's architecture and imports before running
 it, and uses deterministic headers for the fixpoint comparison.
 

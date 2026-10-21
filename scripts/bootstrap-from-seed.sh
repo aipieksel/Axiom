@@ -128,8 +128,10 @@ optimised() {
   fi
 }
 
-# The target is selected before invoking the toolchain. A missing seed
-# is a missing coordinated input, rather than a reason to download or
+# The target is selected before assembling any seed. Windows first runs
+# a small LLVM-built host probe, so emulated shells cannot select x64
+# for an ARM64 host. A missing seed is a missing coordinated input,
+# rather than a reason to download or
 # substitute a compiler from another target.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

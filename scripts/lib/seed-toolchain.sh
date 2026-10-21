@@ -1,4 +1,4 @@
-# The seed bootstrap's host and native linker boundary. No compiler,
+# The seed bootstrap's host and native linker boundary. No Axiom compiler,
 # network or repository history is read here. The caller sources
 # imports.sh first, then selects its host and prepares one link directory.
 
@@ -11,10 +11,10 @@ seed_host_target() {
     MINGW*|MSYS*|CYGWIN*|Windows_NT) seed_os=windows ;;
     *) echo "unsupported OS $system" >&2; return 1 ;;
   esac
-  # Git Bash can itself be an x64 process on Windows ARM64. The native
-  # architecture, when Windows supplies it, chooses the seed to execute.
+  # Git Bash and its PROCESSOR_* variables can describe an emulated x64
+  # process on Windows ARM64. Ask Windows for the native machine instead.
   if [[ "$seed_os" == windows ]]; then
-    machine="${PROCESSOR_ARCHITEW6432:-${PROCESSOR_ARCHITECTURE:-$machine}}"
+    machine="$(seed_windows_native_arch "$machine")" || return 1
   fi
   case "$machine" in
     arm64|aarch64|ARM64) seed_arch=aarch64 ;;
@@ -24,6 +24,7 @@ seed_host_target() {
   seed_target="$seed_os-$seed_arch"
   seed_exe_suffix=""
   [[ "$seed_os" != windows ]] || seed_exe_suffix=.exe
+  [[ "$seed_os" != windows ]] || echo "Windows native host: $seed_target (shell machine: $2)" >&2
 }
 
 seed_windows_machine() {
@@ -33,6 +34,81 @@ seed_windows_machine() {
     *) echo "not a Windows seed target: $1" >&2; return 1 ;;
   esac
 }
+
+seed_windows_host_ir() { # <triple>: a probe executable for the shell's machine
+  cat <<EOF
+target triple = "$1"
+declare dllimport ptr @GetCurrentProcess()
+declare dllimport i32 @IsWow64Process2(ptr, ptr, ptr)
+declare dllimport void @ExitProcess(i32) noreturn
+define void @mainCRTStartup() {
+  %process = alloca i16, align 2
+  %native = alloca i16, align 2
+  %handle = call ptr @GetCurrentProcess()
+  %ok = call i32 @IsWow64Process2(ptr %handle, ptr %process, ptr %native)
+  %success = icmp ne i32 %ok, 0
+  br i1 %success, label %machine, label %failed
+machine:
+  %value = load i16, ptr %native, align 2
+  switch i16 %value, label %unsupported [i16 34404, label %x64
+                                        i16 43620, label %arm64]
+x64:
+  call void @ExitProcess(i32 10)
+  unreachable
+arm64:
+  call void @ExitProcess(i32 11)
+  unreachable
+failed:
+  call void @ExitProcess(i32 12)
+  unreachable
+unsupported:
+  call void @ExitProcess(i32 13)
+  unreachable
+}
+EOF
+}
+
+seed_windows_build_host_probe() { # <shell-machine> <private-work-dir>
+  local machine="$1" dir="$2" tool imports expected
+  case "$machine" in
+    arm64|aarch64|ARM64) seed_windows_machine windows-aarch64 ;;
+    x86_64|amd64|AMD64) seed_windows_machine windows-x86_64 ;;
+    *) echo "unsupported Windows shell architecture $machine" >&2; return 1 ;;
+  esac
+  for tool in llc llvm-dlltool lld-link llvm-readobj; do
+    command -v "$tool" >/dev/null || { echo "$tool is not on PATH (Windows host detection needs LLVM)" >&2; return 1; }
+  done
+  mkdir -p "$dir" || return 1
+  seed_windows_host_ir "$seed_triple" > "$dir/native-host.ll" || return 1
+  # This probe has its own three-import boundary. It does not change the
+  # compiler's reviewed import allowlist or require a Windows SDK.
+  printf 'LIBRARY kernel32.dll\nEXPORTS\nGetCurrentProcess\nIsWow64Process2\nExitProcess\n' > "$dir/kernel32.def"
+  llvm-dlltool -m "$seed_dll_machine" -d "$dir/kernel32.def" -l "$dir/kernel32.lib" || return 1
+  llc -filetype=obj -relocation-model=pic "$dir/native-host.ll" -o "$dir/native-host.obj" || return 1
+  lld-link -subsystem:console -entry:mainCRTStartup "-machine:$seed_link_machine" \
+    -timestamp:0 -Brepro "-out:$dir/native-host.exe" "$dir/native-host.obj" "$dir/kernel32.lib" || return 1
+  llvm-readobj --file-headers "$dir/native-host.exe" | grep -E "Machine: $seed_pe_machine([[:space:](]|$)" >/dev/null \
+    || { echo "Windows host probe is not a $seed_pe_machine image" >&2; return 1; }
+  llvm-readobj --coff-imports "$dir/native-host.exe" >/dev/null || return 1
+  imports="$(pe_imports_by_dll "$dir/native-host.exe")"
+  expected="$(printf '%s\n' ExitProcess@kernel32 GetCurrentProcess@kernel32 IsWow64Process2@kernel32 | LC_ALL=C sort)"
+  [[ "$imports" == "$expected" ]] || { echo "Windows host probe has unexpected imports: $imports" >&2; return 1; }
+}
+
+seed_windows_native_arch() ( # <shell-machine>; subprocess owns its temporary files
+  local dir status
+  dir="$(mktemp -d)" || return 1
+  trap 'rm -rf "$dir"' EXIT
+  seed_windows_build_host_probe "$1" "$dir" >&2 || return 1
+  if "$dir/native-host.exe"; then status=0; else status=$?; fi
+  case "$status" in
+    10) printf '%s\n' x86_64 ;;
+    11) printf '%s\n' aarch64 ;;
+    12) echo "IsWow64Process2 could not determine the native Windows machine" >&2; return 1 ;;
+    13) echo "IsWow64Process2 reported an unsupported native Windows machine" >&2; return 1 ;;
+    *) echo "Windows host probe failed (exit $status); refusing to infer the native machine from process variables" >&2; return 1 ;;
+  esac
+)
 
 seed_prepare_link() { # <target> <work-dir> <Windows allowlist>
   local target="$1" dir="$2" dll
