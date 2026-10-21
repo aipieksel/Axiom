@@ -18352,7 +18352,7 @@
 (pub fn (linesCallSym lines sym i)
   (if (>= i (vecLen lines))
     0
-    (if (|| (== (strHasSub (as (vecGet lines i) String) (concat "@" (concat sym "("))) 1)
+    (if (|| (strHasSegments (as (vecGet lines i) String) "@" sym "(")
           (asmLineNamesSym (as (vecGet lines i) String) sym))
       1
       (linesCallSym lines sym (+ i 1)))))
@@ -18365,8 +18365,46 @@
 (pub fn (asmLineNamesSym line sym)
   (if (== (strHasSub line " asm ") 0)
     false
-    (|| (== (strHasSub line (concat (concat "ptr @" sym) ",")) 1)
-      (== (strHasSub line (concat (concat "ptr @" sym) ")")) 1))))
+    (|| (strHasSegments line "ptr @" sym ",") (strHasSegments line "ptr @" sym ")"))))
+
+; Match the concatenation without allocating a search string per line.
+; The three length checks also bound their sum before any byte is read.
+(:: strHasSegments (-> String String String String Bool))
+(fn (strHasSegments hay prefix middle suffix)
+  {
+    (let h (strLen hay))
+    (let p (strLen prefix))
+    (let m (strLen middle))
+    (let s (strLen suffix))
+    (if (|| (> p h) (|| (> m (- h p)) (> s (- (- h p) m))))
+      false
+      {
+        (let n (+ (+ p m) s))
+        (let mut i 0)
+        (let mut found false)
+        (while (&& (! found) (<= i (- h n)))
+          {
+            (let mut j 0)
+            (let mut same true)
+            (while (&& same (< j n))
+              {
+                (let expected
+                  (if (< j p)
+                    (strByte prefix j)
+                    (if (< (- j p) m)
+                      (strByte middle (- j p))
+                      (strByte suffix (- (- j p) m)))))
+                (if (!= (strByte hay (+ i j)) expected)
+                  (set same false))
+                (set j (+ j 1))
+              })
+            (if same
+              (set found true))
+            (set i (+ i 1))
+          })
+        found
+      })
+  })
 
 (pub :: strHasSub (-> String String Int))
 (pub fn (strHasSub hay needle)

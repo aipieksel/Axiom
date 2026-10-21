@@ -884,6 +884,12 @@ if ! python3 "$repo_root/tests/tools/verify-route-b-migration.py"; then
   failed=$((failed + 1))
 fi
 
+echo "== emitted-line symbol matching =="
+if ! python3 "$repo_root/tests/tools/emitted-symbol-match.py" "$work/axc" --work "$work/emitted-symbol-match"; then
+  echo "FAIL emitted-line symbol matching differs or allocates search patterns"
+  failed=$((failed + 1))
+fi
+
 echo
 if [[ $failed -eq 0 ]]; then
   echo "tools-selfhost: all checks passed"
