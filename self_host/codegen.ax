@@ -8741,11 +8741,16 @@
   (parsed : FrontParsed))
 
 (pub struct FrontCache
-  (width : Int)
+  (mut width : Int)
   (modules : (Vec FrontModule)))
 
-; Opt in while transfer costs are measured. Invalid values use the
-; ordinary serial path; cap process and shared-packet memory together.
+; `AXIOM_FRONTEND_JOBS=1` forces the serial path, `2` to `8` sets the
+; worker width, and an invalid value also uses the serial path. When
+; the variable is unset, the answer is 0: the caller runs workers by
+; default once a frontier is large, and stays serial below that.
+; Forking one module on its own costs more than parsing it, which is
+; why a small frontier never forks. Cap process and shared-packet
+; memory together.
 (pub :: frontJobs Int)
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
@@ -8753,9 +8758,13 @@
   {
     (let text (sysEnv "AXIOM_FRONTEND_JOBS"))
     (let width (strToInt text))
-    (if (&& (!= sysForkNum 0) (&& (&& (>= width 2) (<= width 8)) (strEq text (fmtInt width))))
-      width
-      1)
+    (if (== sysForkNum 0)
+      1
+      (if (== (strLen text) 0)
+        0
+        (if (&& (&& (>= width 2) (<= width 8)) (strEq text (fmtInt width)))
+          width
+          1)))
   })
 
 (pub :: frontCached (-> FrontCache String (Option FrontModule)))
@@ -9441,8 +9450,12 @@
       }
       (entryRecordRename bares fulls name full (+ i 1)))))
 
-; CLI opt-in: parse the discovered import graph in bounded frontiers,
-; then use the same resolver. Namespace and diagnostic order stay serial.
+; Parse the discovered import graph in bounded frontiers, then use
+; the same resolver. Namespace and diagnostic order stay serial.
+; With no explicit width, a frontier of eight or more imports runs on
+; four workers and a smaller one stays serial: forking one module on
+; its own costs more than parsing it, so a hello-world program never
+; forks, while a self-compile frontier of dozens does.
 (pub :: resolveImportsParallel (-> (Vec ASTNode) Names Names Ints Int String Units (Vec ASTNode)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
@@ -9451,17 +9464,39 @@
 (pub fn (resolveImportsParallel decls bares fulls mods tcode entryDir units)
   {
     (let width frontJobs)
-    (if (<= width 1)
+    (if (== width 1)
       (resolveImports decls bares fulls mods tcode entryDir units)
       {
+        (let cap
+          (if (>= width 2)
+            width
+            4))
         (let idx mangleIdxNew)
-        (let cache (FrontCache :width width :modules vecNew))
+        (let cache (FrontCache :width cap :modules vecNew))
         (let scheduled vecNew)
         (let mut pending decls)
         (while (> (vecLen pending) 0)
           {
             (let before (vecLen cache.modules))
-            (frontPrefetchImports pending scheduled tcode entryDir units cache)
+            {
+              (if (== width 0)
+                {
+                  (let mut k 0)
+                  (let mut frontier 0)
+                  {
+                    (while (< k (vecLen pending))
+                      {
+                        (if (== (nodeTag (vecGet pending k)) TAG_D_IMPORT)
+                          (set frontier (+ frontier 1)))
+                        (set k (+ k 1))
+                      })
+                    (set cache.width (if (>= frontier 8)
+                      cap
+                      1))
+                  }
+                })
+              (frontPrefetchImports pending scheduled tcode entryDir units cache)
+            }
             (let mut i 0)
             (while (< i (vecLen pending))
               {

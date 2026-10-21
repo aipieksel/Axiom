@@ -29,6 +29,11 @@ its changelog too.
   `tests/stdlib/988-str-builder.ax` and
   `tests/stdlib/990-str-builder-scale.ax`.
 
+- Import parsing runs in worker processes by default once an import
+  frontier reaches eight modules. Smaller frontiers stay serial, and
+  `AXIOM_FRONTEND_JOBS=1` forces the serial path. Parity across 795
+  files is tested by `tests/frontend/parallel/verify.py`.
+
 - Every function is emitted by one route, the walk over the checked
   syntax tree. The mid-level IR route, which emitted straight-line
   arithmetic functions from the IR and wrote the same bytes as the

@@ -498,8 +498,11 @@ the authority on which scripts do, so check it rather than this table.
 | `bench-frontend.sh` | Compares serial module lexing and parsing with bounded process workers. It checks ordered fingerprints and failure results before timing. Add `--ast-transfer` to compare direct serial parsing against workers including syntax transfer and reconstruction. `--phase-profile` measures encoding and reconstruction separately. Use `--jobs 1 2 4 --reps 5`, with `--json report.json` to save samples |
 
 Command-line compilation can parse imported modules in worker processes.
-Set `AXIOM_FRONTEND_JOBS=2` through `8` to try it with `check`, `build`,
-`run`, `emit-llvm` or `symbols`. The default is serial. Workers read,
+Workers run by default with `check`, `build`, `run`, `emit-llvm` or
+`symbols` once an import frontier reaches eight modules, on four
+workers. A smaller frontier stays serial, because forking one module
+costs more than parsing it. Set `AXIOM_FRONTEND_JOBS=1` to force the
+serial path, or `2` through `8` to set the worker width. Workers read,
 lex and parse independent modules; the parent restores their syntax
 and resolves imports in the usual depth-first order. Expansion and
 checking stay serial. An unavailable worker or an oversized syntax

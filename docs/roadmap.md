@@ -217,7 +217,7 @@ including pattern matching, remain work to do.
 | Semantic tokens support range and delta requests | Done |
 | The language server answers inside macro invocations | Not started |
 | Packages can pin a version | Not started |
-| Independent module lexing and parsing in bounded workers | In progress | CLI opt-in with `AXIOM_FRONTEND_JOBS`; compact syntax packets share string storage in the parent. Transfer and deterministic import scheduling are tested by `tests/frontend/parallel/verify.py`. Reduce encoding and scheduling costs before enabling it by default |
+| Independent module lexing and parsing in bounded workers | Done | Workers run by default once an import frontier reaches eight modules; `AXIOM_FRONTEND_JOBS=1` forces serial and `2` to `8` sets the width. Compact syntax packets share string storage in the parent, and parity with the serial path is tested by `tests/frontend/parallel/verify.py` |
 | A published performance profile | Not started |
 
 The editor comparison follows rust-analyzer's
