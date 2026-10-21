@@ -228,13 +228,19 @@ echo "--- 1. user-level cast count does not grow ---"
 # construct sole-share test descriptors. The last 6 are private failing
 # ablations or their source anchors. Every conversion is the ownership
 # behaviour under test (MM-VAL-23); stdlib and examples add none.
+# Baseline 1225 adds eleven line-metadata probe occurrences: one reads a
+# live source-index reference count, four exercise typed indexes through
+# the legacy raw readers, two mirror those readers in a source anchor,
+# and four form the private raw-storage ablation. The owner stays live
+# during every read; the ablation's two erasures are its tested defect
+# (MM-VAL-23). Production compiler conversions fall by eleven.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1214 ]; then
-  ok "user-level (cast count $cast_count <= 1214)"
+elif [ "$cast_count" -le 1225 ]; then
+  ok "user-level (cast count $cast_count <= 1225)"
 else
-  bad "user-level (cast count $cast_count > 1214): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1225): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
