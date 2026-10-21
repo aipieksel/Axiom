@@ -1624,13 +1624,93 @@
 (pub fn (pErrExp p e)
   (as (PResult :ok 0 :value 0 :pos p :exp e :code "") Int))
 
+; Typed reads of a parse result. A parse function answers its
+; `PResult` as a word, because every phase that calls one keeps the
+; result in an `Int`; these read it back through the struct's own
+; layout, at the type each field holds. Each body is a field load and
+; no call, so `opt` inlines it at the read.
+(pub :: pResFailed (-> Int Bool))
+;@axiom:effect(unsafe)
+(pub fn (pResFailed r)
+  {
+    (let res (as r PResult))
+    (== res.ok 0)
+  })
+
+(pub :: pResOk (-> Int Bool))
+;@axiom:effect(unsafe)
+(pub fn (pResOk r)
+  {
+    (let res (as r PResult))
+    (!= res.ok 0)
+  })
+
+; The token position after the parsed form, or where the parse failed.
+(pub :: pResPos (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (pResPos r)
+  {
+    (let res (as r PResult))
+    res.pos
+  })
+
+; The payload as the word `pOk` stored. The typed readers below take it
+; back at the type the parse function that succeeded built.
+(pub :: pResWord (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (pResWord r)
+  {
+    (let res (as r PResult))
+    res.value
+  })
+
+(pub :: pResNode (-> Int ASTNode))
+;@axiom:effect(unsafe)
+(pub fn (pResNode r)
+  {
+    (let res (as r PResult))
+    (as res.value ASTNode)
+  })
+
+(pub :: pResNodes (-> Int Nodes))
+;@axiom:effect(unsafe)
+(pub fn (pResNodes r)
+  {
+    (let res (as r PResult))
+    (as res.value Nodes)
+  })
+
+(pub :: pResText (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (pResText r)
+  {
+    (let res (as r PResult))
+    (as res.value String)
+  })
+
+(pub :: pResVec (-> Int (Vec a)))
+;@axiom:effect(unsafe)
+(pub fn (pResVec r)
+  {
+    (let res (as r PResult))
+    (as res.value (Vec a))
+  })
+
 (pub :: pResExp (-> Int String))
+;@axiom:effect(unsafe)
 (pub fn (pResExp r)
-  (memGetWordStr r 3))
+  {
+    (let res (as r PResult))
+    res.exp
+  })
 
 (pub :: pResCode (-> Int String))
+;@axiom:effect(unsafe)
 (pub fn (pResCode r)
-  (memGetWordStr r 4))
+  {
+    (let res (as r PResult))
+    res.code
+  })
 
 ; A keyword that USED to be Axiom. The point of keeping `union` and
 ; `foreign` reserved is that old source gets an explanation instead of
@@ -1929,7 +2009,7 @@
   ; over it and report AX2003. An explicit code beats an inference that
   ; happens to be unreachable.
   {
-    (let pos (memGetWord r 2))
+    (let pos (pResPos r))
     (let exp (pResExp r))
     (if (strEq (pResCode r) "unmatched-paren")
       (diagSetLabel
@@ -2563,18 +2643,16 @@
       (let p1 (advance (advance pos)))
       {
         (let lr (parseJoinOperand tokens p1))
-        (if (== (memGetWord lr 0) 0)
+        (if (pResFailed lr)
           lr
           {
-            (let rr (parseJoinOperand tokens (memGetWord lr 2)))
-            (if (== (memGetWord rr 0) 0)
+            (let rr (parseJoinOperand tokens (pResPos lr)))
+            (if (pResFailed rr)
               rr
-              (if (peekIs tokens (memGetWord rr 2) TK_RPAREN)
-                (pOk
-                  (concat (concat (concat "syntax/join " (memGetWordStr lr 1)) " ")
-                    (memGetWordStr rr 1))
-                  (advance (memGetWord rr 2)))
-                (pErrExp (memGetWord rr 2) ")")))
+              (if (peekIs tokens (pResPos rr) TK_RPAREN)
+                (pOk (concat (concat (concat "syntax/join " (pResText lr)) " ") (pResText rr))
+                  (advance (pResPos rr)))
+                (pErrExp (pResPos rr) ")")))
           })
       }
     }
@@ -2673,12 +2751,12 @@
       (pErr pos)
       {
         (let r (parseMacroPat tokens pos))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
-          (parseMacroPatArgs tokens (memGetWord r 2)
+          (parseMacroPatArgs tokens (pResPos r)
             (if (nodeSame acc nilNode)
-              (readAstNode r 1)
-              (mkEApp acc (readAstNode r 1)))))
+              (pResNode r)
+              (mkEApp acc (pResNode r)))))
       })))
 
 ; A rule head's argument list. Answers three parallel vectors, one
@@ -2709,22 +2787,22 @@
     }
     {
       (let r (parseMacroPat tokens pos))
-      (if (== (memGetWord r 0) 0)
+      (if (pResFailed r)
         r
         ; An element followed by `...` REPEATS (MAC-LANG-16). The
         ; ellipsis lexes as an ordinary identifier, so this is a
         ; spelling test and not a token kind - see `lexer.ax` for
         ; why that was the cheap way in.
         {
-          (let afterPat (memGetWord r 2))
+          (let afterPat (pResPos r))
           {
             (let rep
               (if (patIsEllipsis tokens afterPat)
                 1
                 0))
             {
-              (vecPush pats (memGetWord r 1))
-              (vecPush names (patSlotName (readAstNode r 1)))
+              (vecPush pats (pResWord r))
+              (vecPush names (patSlotName (pResNode r)))
               (vecPush spells
                 (concat (patTokensSpelling tokens pos afterPat "")
                   (if (== rep 1)
@@ -2827,9 +2905,9 @@
         (pErr pos))
       {
         (let r (parseExpr tokens pos))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
-          (parseExprList tokens (memGetWord r 2) (vecPush acc (memGetWord r 1))))
+          (parseExprList tokens (pResPos r) (vecPush acc (pResWord r))))
       })))
 
 ; ------------------------------------------------------------------
@@ -2941,10 +3019,10 @@
                 (pErrExp (advance pos) "a declaration after `pub`")
                 {
                   (let r (parseTopForm tokens (advance pos)))
-                  (if (== (memGetWord r 0) 0)
+                  (if (pResFailed r)
                     r
                     {
-                      (markPub (readAstNode r 1))
+                      (markPub (pResNode r))
                       r
                     })
                 })
@@ -3038,11 +3116,11 @@
     (if (peekIs tokens p1 TK_LPAREN)
       {
         (let bindR (parseExpr tokens p1))
-        (if (== (memGetWord bindR 0) 0)
+        (if (pResFailed bindR)
           bindR
           {
-            (let binds (readAstNode bindR 1))
-            (let afterSeq (memGetWord bindR 2))
+            (let binds (pResNode bindR))
+            (let afterSeq (pResPos bindR))
             {
               (let var (parseIterBinder binds))
               (if (strEq var "")
@@ -3063,9 +3141,9 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let r (parseTopForm tokens (advance pos)))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
-          (parseDeclForBody tokens (memGetWord r 2) var seq sp (vecPush acc (readAstNode r 1))))
+          (parseDeclForBody tokens (pResPos r) var seq sp (vecPush acc (pResNode r))))
       }
       (pErrExp pos "("))))
 
@@ -3086,7 +3164,7 @@
   ; template may join its name.
   {
     (let nr (parseDeclName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       nr
       ; Two parallel vectors: `ops` keeps the bare NAME strings
       ; every existing reader indexes (codegen's evidence slots,
@@ -3096,16 +3174,16 @@
       ; operation's real arrow where the checker deliberately
       ; keeps a silent wildcard.
       {
-        (let name (memGetWordStr nr 1))
+        (let name (pResText nr))
         (let nameSpan (tokenSpan (vecGet tokens pos)))
         {
           (let ops vecNew)
           (let opFields vecNew)
           {
-            (let r (parseEffectOps tokens (memGetWord nr 2) ops opFields))
-            (if (== (memGetWord r 0) 0)
+            (let r (parseEffectOps tokens (pResPos nr) ops opFields))
+            (if (pResFailed r)
               r
-              (pOk (nodeBuildDEffect name ops opFields nameSpan) (memGetWord r 2)))
+              (pOk (nodeBuildDEffect name ops opFields nameSpan) (pResPos r)))
           }
         }
       })
@@ -3122,20 +3200,20 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let nr (parseIdentName tokens (advance pos)))
-        (if (== (memGetWord nr 0) 0)
+        (if (pResFailed nr)
           nr
           {
             (let tyNode
-              (if (peekIs tokens (memGetWord nr 2) TK_DOUBLE_COLON)
+              (if (peekIs tokens (pResPos nr) TK_DOUBLE_COLON)
                 {
-                  (let tr (parseType tokens (advance (memGetWord nr 2))))
-                  (if (== (memGetWord tr 0) 0)
+                  (let tr (parseType tokens (advance (pResPos nr))))
+                  (if (pResFailed tr)
                     nilNode
-                    (readAstNode tr 1))
+                    (pResNode tr))
                 }
                 nilNode))
             {
-              (vecPush ops (memGetWordStr nr 1))
+              (vecPush ops (pResText nr))
               ; With the NAME's span, the way a trait's methods
               ; have carried one since they were parsed: an
               ; operation is a definition, so a duplicate of it
@@ -3143,13 +3221,13 @@
               ; it. `mkField` leaves span 0 and a spanless
               ; diagnostic is a suppressed one.
               (vecPush opFields
-                (nodeBuildFieldExtern (memGetWordStr nr 1) tyNode ""
+                (nodeBuildFieldExtern (pResText nr) tyNode ""
                   (tokenSpan (vecGet tokens (advance pos)))))
               {
-                (let r (skipParens tokens (memGetWord nr 2) 1))
-                (if (== (memGetWord r 0) 0)
+                (let r (skipParens tokens (pResPos nr) 1))
+                (if (pResFailed r)
                   r
-                  (parseEffectOps tokens (memGetWord r 2) ops opFields))
+                  (parseEffectOps tokens (pResPos r) ops opFields))
               }
             }
           })
@@ -3249,9 +3327,9 @@
               (pErrExternLib pos "")
               {
                 (let r (parseExternItems tokens (advance pos) names items))
-                (if (== (memGetWord r 0) 0)
+                (if (pResFailed r)
                   r
-                  (pOk (nodeBuildDExtern lib names items (tokenSpan libTok)) (memGetWord r 2)))
+                  (pOk (nodeBuildDExtern lib names items (tokenSpan libTok)) (pResPos r)))
               })
           ))
       }
@@ -3275,28 +3353,28 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let nr (parseIdentName tokens (advance pos)))
-        (if (== (memGetWord nr 0) 0)
+        (if (pResFailed nr)
           nr
-          (if (peekIs tokens (memGetWord nr 2) TK_DOUBLE_COLON)
+          (if (peekIs tokens (pResPos nr) TK_DOUBLE_COLON)
             {
-              (let tr (parseType tokens (advance (memGetWord nr 2))))
-              (if (== (memGetWord tr 0) 0)
+              (let tr (parseType tokens (advance (pResPos nr))))
+              (if (pResFailed tr)
                 tr
                 {
-                  (let cr (parseExternClauses tokens (memGetWord tr 2) (memGetWordStr nr 1)))
-                  (if (== (memGetWord cr 0) 0)
+                  (let cr (parseExternClauses tokens (pResPos tr) (pResText nr)))
+                  (if (pResFailed cr)
                     cr
                     {
-                      (vecPush names (memGetWordStr nr 1))
+                      (vecPush names (pResText nr))
                       (vecPush items
-                        (nodeBuildFieldExtern (memGetWordStr nr 1) (readAstNode tr 1)
-                          (memGetWordStr cr 1) (tokenSpan (vecGet tokens (advance pos)))))
-                      (parseExternItems tokens (memGetWord cr 2) names items)
+                        (nodeBuildFieldExtern (pResText nr) (pResNode tr) (pResText cr)
+                          (tokenSpan (vecGet tokens (advance pos)))))
+                      (parseExternItems tokens (pResPos cr) names items)
                     })
                 })
             }
-            (pErrExp (memGetWord nr 2)
-              (concat (concat "`:: type` after extern item `" (memGetWordStr nr 1))
+            (pErrExp (pResPos nr)
+              (concat (concat "`:: type` after extern item `" (pResText nr))
                 "` (an extern item declares its type: `(name :: (-> Int Int) (symbol \"c_name\"))`)"))))
       }
       (pErrExp pos "an extern item `(name :: type (symbol \"...\"))`"))))
@@ -3376,28 +3454,27 @@
     ; `expCheckDeclNames` and refuses there.
     {
       (let nr (parseDeclName tokens pos))
-      (if (== (memGetWord nr 0) 0)
+      (if (pResFailed nr)
         (pErr origPos)
         ; NOT `collectTyParams`: its bare-run test is merely
         ; "does not start uppercase", so a stray `=` lexes as an
         ; ident here and would be swallowed as a tyvar. A tyvar
         ; must start with a lowercase LETTER.
         {
-          (let name (memGetWordStr nr 1))
+          (let name (pResText nr))
           (let nameSpan (tokenSpan (vecGet tokens pos)))
           (let tvs vecNew)
           {
-            (let afterTvs (aliasTyvarsEnd tokens (memGetWord nr 2) tvs))
+            (let afterTvs (aliasTyvarsEnd tokens (pResPos nr) tvs))
             (if (&& (peekIs tokens afterTvs TK_IDENT)
                   (strEq (tokenLexeme (vecGet tokens afterTvs)) "="))
               (pErr origPos)
               {
                 (let tr (parseType tokens afterTvs))
-                (if (== (memGetWord tr 0) 0)
+                (if (pResFailed tr)
                   (pErr origPos)
-                  (if (peekIs tokens (memGetWord tr 2) TK_RPAREN)
-                    (pOk (nodeBuildDAlias name (readAstNode tr 1) tvs nameSpan)
-                      (advance (memGetWord tr 2)))
+                  (if (peekIs tokens (pResPos tr) TK_RPAREN)
+                    (pOk (nodeBuildDAlias name (pResNode tr) tvs nameSpan) (advance (pResPos tr)))
                     (pErr origPos)))
               })
           }
@@ -3421,43 +3498,43 @@
 (pub fn (parseSubtypeDecl tokens pos origPos)
   {
     (let nr (parseDeclName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       (pErr origPos)
       {
-        (let name (memGetWordStr nr 1))
-        (let p1 (memGetWord nr 2))
+        (let name (pResText nr))
+        (let p1 (pResPos nr))
         (if (&& (peekIs tokens p1 TK_IDENT) (strEq (tokenLexeme (vecGet tokens p1)) "is"))
           {
             (let tr (parseType tokens (advance p1)))
-            (if (== (memGetWord tr 0) 0)
+            (if (pResFailed tr)
               (pErr origPos)
               {
-                (let base (readAstNode tr 1))
-                (let p2 (memGetWord tr 2))
+                (let base (pResNode tr))
+                (let p2 (pResPos tr))
                 (if (&& (peekIs tokens p2 TK_IDENT)
                       (strEq (tokenLexeme (vecGet tokens p2)) "range"))
                   {
                     (let lr (parseExpr tokens (advance p2)))
-                    (if (== (memGetWord lr 0) 0)
+                    (if (pResFailed lr)
                       (pErr origPos)
                       {
-                        (let lower (readAstNode lr 1))
-                        (let p3 (memGetWord lr 2))
+                        (let lower (pResNode lr))
+                        (let p3 (pResPos lr))
                         (if (&& (peekIs tokens p3 TK_DOT) (peekIs tokens (advance p3) TK_DOT))
                           {
                             (let ur (parseExpr tokens (advance (advance p3))))
-                            (if (== (memGetWord ur 0) 0)
+                            (if (pResFailed ur)
                               (pErr origPos)
-                              (if (peekIs tokens (memGetWord ur 2) TK_RPAREN)
+                              (if (peekIs tokens (pResPos ur) TK_RPAREN)
                                 {
                                   (let bounds vecNew)
                                   {
                                     (vecPush bounds lower)
-                                    (vecPush bounds (readAstNode ur 1))
+                                    (vecPush bounds (pResNode ur))
                                     (pOk
                                       (mkDSubtypeAt name base bounds
                                         (tokenSpan (vecGet tokens pos)))
-                                      (advance (memGetWord ur 2)))
+                                      (advance (pResPos ur)))
                                   }
                                 }
                                 (pErr origPos)))
@@ -3791,9 +3868,9 @@
       (let afterDots (parseDottedChain tokens (advance pos) chain))
       {
         (let qr (parseTyQualChain tokens afterDots chain))
-        (if (== (memGetWord qr 0) 0)
+        (if (pResFailed qr)
           qr
-          (pOk (mkTCon (memGetWordStr qr 1) vecNew) (memGetWord qr 2)))
+          (pOk (mkTCon (pResText qr) vecNew) (pResPos qr)))
       }
     }
   })
@@ -3825,9 +3902,9 @@
           (if (strEq s "*")
             {
               (let r (parseTypeAtom tokens (advance pos)))
-              (if (== (memGetWord r 0) 0)
+              (if (pResFailed r)
                 r
-                (pOk (mkTPtr (readAstNode r 1)) (memGetWord r 2)))
+                (pOk (mkTPtr (pResNode r)) (pResPos r)))
             }
             ; `linear` is RESERVED, not parsed. It used to build the
             ; nominal type constructor `Linear T`, which was a real
@@ -3878,9 +3955,9 @@
       (pErrExp pos "type")
       {
         (let r (parseTypeAtom tokens pos))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
-          (parseTypeAtoms tokens (memGetWord r 2) (vecPush acc (memGetWord r 1))))
+          (parseTypeAtoms tokens (pResPos r) (vecPush acc (pResWord r))))
       })))
 
 ; `pos` is just past the opening paren.
@@ -3889,14 +3966,13 @@
   (if (peekIs tokens pos TK_RARROW)
     {
       (let r (parseTypeAtoms tokens (advance pos) vecNew))
-      (if (== (memGetWord r 0) 0)
+      (if (pResFailed r)
         r
         {
-          (let tys (memGetWordVec r 1))
+          (let tys (pResVec r))
           (if (< (vecLen tys) 2)
             (pErrExp pos "type")
-            (pOk (foldArrows tys (- (vecLen tys) 2) (vecGet tys (- (vecLen tys) 1)))
-              (memGetWord r 2)))
+            (pOk (foldArrows tys (- (vecLen tys) 2) (vecGet tys (- (vecLen tys) 1))) (pResPos r)))
         })
     }
     (if (peekIs tokens pos TK_RPAREN)
@@ -3914,9 +3990,9 @@
         ; {unknown})` at the call site.
         {
           (let mr (parseDeclName tokens (- pos 1)))
-          (if (== (memGetWord mr 0) 0)
+          (if (pResFailed mr)
             mr
-            (pOk (mkTCon (memGetWordStr mr 1) vecNew) (memGetWord mr 2)))
+            (pOk (mkTCon (pResText mr) vecNew) (pResPos mr)))
         }
         (if (&& (peekIs tokens pos TK_IDENT)
               (|| (peekIs tokens (parseDottedChain tokens (advance pos) vecNew) TK_DOUBLE_COLON)
@@ -3945,32 +4021,32 @@
                       (let qr
                         (parseTyQualChain tokens (parseDottedChain tokens (advance pos) chain)
                           chain))
-                      (if (== (memGetWord qr 0) 0)
+                      (if (pResFailed qr)
                         qr
-                        (pOk (memGetWordStr qr 1) (memGetWord qr 2)))
+                        (pOk (pResText qr) (pResPos qr)))
                     }
                     (pOk head (advance pos))))
-                (if (== (memGetWord hq 0) 0)
+                (if (pResFailed hq)
                   hq
                   {
-                    (let r (parseTypeAtoms tokens (memGetWord hq 2) vecNew))
-                    (if (== (memGetWord r 0) 0)
+                    (let r (parseTypeAtoms tokens (pResPos hq) vecNew))
+                    (if (pResFailed r)
                       r
-                      (pOk (mkTCon (memGetWordStr hq 1) (memGetWordVec r 1)) (memGetWord r 2)))
+                      (pOk (mkTCon (pResText hq) (pResVec r)) (pResPos r)))
                   })
               }
             }
           }
           {
             (let r (parseTypeAtoms tokens pos vecNew))
-            (if (== (memGetWord r 0) 0)
+            (if (pResFailed r)
               r
               ; One parenthesised type is grouping. Products use `struct`
               ; and sums use `data`; tuple types have no value syntax.
               {
-                (let tys (memGetWordVec r 1))
+                (let tys (pResVec r))
                 (if (== (vecLen tys) 1)
-                  (pOk (vecGet tys 0) (memGetWord r 2))
+                  (pOk (vecGet tys 0) (pResPos r))
                   (pErrRemoved pos "tuple"))
               })
           })))))
@@ -3990,7 +4066,7 @@
 (pub fn (parseSigDecl tokens pos)
   {
     (let nr (parseDeclName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       nr
       ; The emitter needs one bit per arrow position - is it `Float`
       ; - because float-ness of a value is not observable at
@@ -4039,22 +4115,22 @@
       ; formatter, which refuses to rewrite either. This parser was
       ; the one implementation of the three that accepted them.
       {
-        (let name (memGetWordStr nr 1))
-        (let typePos (memGetWord nr 2))
+        (let name (pResText nr))
+        (let typePos (pResPos nr))
         {
           (let tr (parseType tokens typePos))
-          (if (== (memGetWord tr 0) 0)
+          (if (pResFailed tr)
             tr
-            (if (peekIs tokens (memGetWord tr 2) TK_RPAREN)
+            (if (peekIs tokens (pResPos tr) TK_RPAREN)
               (pOk
                 (setNodeTyWord
                   (mkDSigAt name (sigFloatFlags tokens typePos) (tokenSpan (vecGet tokens pos)))
-                  (memGetWord tr 1))
-                (advance (memGetWord tr 2)))
+                  (pResWord tr))
+                (advance (pResPos tr)))
               ; stage0's `expect(RParen)` renders its expectation as
               ; `)`, so this is its message verbatim: `expected ),
               ; found \`Bool\``.
-              (pErrExp (memGetWord tr 2) ")")))
+              (pErrExp (pResPos tr) ")")))
         }
       })
   })
@@ -4102,11 +4178,11 @@
       (if (peekIs tokens pos TK_LPAREN)
         {
           (let r (skipParens tokens (advance pos) 1))
-          (if (== (memGetWord r 0) 0)
+          (if (pResFailed r)
             acc
             {
               (vecPush acc 0)
-              (spineFlags tokens (memGetWord r 2) acc)
+              (spineFlags tokens (pResPos r) acc)
             })
         }
         acc))))
@@ -4144,13 +4220,13 @@
 (pub fn (parseModPath tokens pos)
   {
     (let nr (parseIdentName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       nr
-      (if (match (strFindByte (memGetWordStr nr 1) 47 0)
+      (if (match (strFindByte (pResText nr) 47 0)
         ((None) false)
         ((Some _) true))
-        (pErrModSeg pos (memGetWordStr nr 1))
-        (parseModPathRest tokens (memGetWord nr 2) (memGetWordStr nr 1))))
+        (pErrModSeg pos (pResText nr))
+        (parseModPathRest tokens (pResPos nr) (pResText nr))))
   })
 
 (pub :: parseModPathRest (-> Ints Int String Int))
@@ -4158,17 +4234,16 @@
   (if (peekIs tokens pos TK_DOT)
     {
       (let nr (parseIdentName tokens (advance pos)))
-      (if (== (memGetWord nr 0) 0)
+      (if (pResFailed nr)
         nr
         ; The dotted tail is checked too, not only the head: `Sys./etc/x`
         ; is one `.` away from the head case and reaches the same
         ; `concat`.
-        (if (match (strFindByte (memGetWordStr nr 1) 47 0)
+        (if (match (strFindByte (pResText nr) 47 0)
           ((None) false)
           ((Some _) true))
-          (pErrModSeg (advance pos) (memGetWordStr nr 1))
-          (parseModPathRest tokens (memGetWord nr 2)
-            (concat (concat acc ".") (memGetWordStr nr 1)))))
+          (pErrModSeg (advance pos) (pResText nr))
+          (parseModPathRest tokens (pResPos nr) (concat (concat acc ".") (pResText nr)))))
     }
     (pOk acc pos)))
 
@@ -4179,23 +4254,23 @@
 (pub fn (parseImportDecl tokens pos)
   {
     (let mr (parseModPath tokens pos))
-    (if (== (memGetWord mr 0) 0)
+    (if (pResFailed mr)
       mr
       {
-        (let modName (memGetWordStr mr 1))
+        (let modName (pResText mr))
         (let impSpan
           (if (< pos (vecLen tokens))
             (tokenSpan (vecGet tokens pos))
             0))
-        (let nextPos (memGetWord mr 2))
+        (let nextPos (pResPos mr))
         (if (peekIs tokens nextPos TK_LPAREN)
           {
             (let namesR (parseIdentList tokens (advance nextPos) vecNew))
-            (if (== (memGetWord namesR 0) 0)
+            (if (pResFailed namesR)
               namesR
               {
-                (let names (memGetWordVec namesR 1))
-                (let afterNames (memGetWord namesR 2))
+                (let names (pResVec namesR))
+                (let afterNames (pResPos namesR))
                 (if (peekIs tokens afterNames TK_RPAREN)
                   (pOk (mkDImportAt modName names impSpan) (advance afterNames))
                   (pErr afterNames))
@@ -4219,7 +4294,7 @@
   ; same route the fn and sig spellings take.
   {
     (let nr (parseDeclName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       nr
       ; Type parameters are COLLECTED now, not merely skipped: a
       ; constructor's result type is `TCon(name, tyvars)` - `Nil`
@@ -4227,8 +4302,8 @@
       ; argument COUNTS, so losing the tyvars would make the
       ; checker call `Tree` and `Tree a` different types.
       {
-        (let name (memGetWordStr nr 1))
-        (let nextPos (memGetWord nr 2))
+        (let name (pResText nr))
+        (let nextPos (pResPos nr))
         {
           (let tvs vecNew)
           (parseConstructors tokens (collectTyParams tokens nextPos tvs) name
@@ -4270,11 +4345,11 @@
             pos
             {
               (let r (skipParens tokens inPos 1))
-              (if (== (memGetWord r 0) 0)
+              (if (pResFailed r)
                 pos
                 {
                   (collectIdentsUntilRParen tokens inPos tvs)
-                  (memGetWord r 2)
+                  (pResPos r)
                 })
             })
           pos))
@@ -4321,11 +4396,11 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let r (parseOneCtor tokens (advance pos)))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
           {
-            (let ctor (readAstNode r 1))
-            (let nextPos (memGetWord r 2))
+            (let ctor (pResNode r))
+            (let nextPos (pResPos r))
             (parseConstructors tokens nextPos dataName nameSpan (vecPush acc ctor) tvs)
           })
       }
@@ -4365,13 +4440,13 @@
 (pub fn (parseOneCtor tokens pos)
   {
     (let r0 (parseOneCtorInner tokens pos))
-    (if (== (memGetWord r0 0) 0)
+    (if (pResFailed r0)
       r0
       ; Stamp the constructor's NAME span onto the node: `symbols`
       ; reports each constructor at its own name, and until it the
       ; ctor nodes carried none.
       {
-        (setNodeSpan (readAstNode r0 1) (tokenSpan (vecGet tokens pos)))
+        (setNodeSpan (pResNode r0) (tokenSpan (vecGet tokens pos)))
         r0
       })
   })
@@ -4380,11 +4455,11 @@
 (pub fn (parseOneCtorInner tokens pos)
   {
     (let nr (parseDeclName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       nr
       {
-        (let ctorName (memGetWordStr nr 1))
-        (let nextPos (memGetWord nr 2))
+        (let ctorName (pResText nr))
+        (let nextPos (pResPos nr))
         (if (peekIs tokens nextPos TK_RPAREN)
           (pOk (setNodeTyChildren (mkCtor ctorName 0 vecNew) vecNew) (advance nextPos))
           ; A STRUCT VARIANT: `(Rect { w : Int, h : Int })`. The field
@@ -4493,9 +4568,9 @@
 ; and never renders it, so failure here can only under-report.
 (pub :: typeNodeOrWildcard (-> Int ASTNode))
 (pub fn (typeNodeOrWildcard r)
-  (if (== (memGetWord r 0) 0)
+  (if (pResFailed r)
     (mkTVar "")
-    (readAstNode r 1)))
+    (pResNode r)))
 
 ; ------------------------------------------------------------------
 ; Parse (struct Name (field1 : Type1) (field2 : Type2) ...)
@@ -4768,9 +4843,9 @@
 ; Did a field's type parse, and something other than `)` follow it?
 (pub :: fieldTyOverruns (-> Ints Int Bool))
 (pub fn (fieldTyOverruns tokens tr)
-  (if (== (memGetWord tr 0) 0)
+  (if (pResFailed tr)
     false
-    (if (peekIs tokens (memGetWord tr 2) TK_RPAREN)
+    (if (peekIs tokens (pResPos tr) TK_RPAREN)
       false
       true)))
 
@@ -4874,10 +4949,10 @@
                 (mangledFromChain chain)))
             {
               (let argsR (parseExprList tokens afterHead vecNew))
-              (if (== (memGetWord argsR 0) 0)
+              (if (pResFailed argsR)
                 argsR
-                (pOk (nodeBuildDMacrocall name (readAstNodes argsR 1) 0 (tokenSpan head))
-                  (memGetWord argsR 2)))
+                (pOk (nodeBuildDMacrocall name (pResNodes argsR) 0 (tokenSpan head))
+                  (pResPos argsR)))
             }
           }
         }
@@ -5039,19 +5114,19 @@
     false)
     {
       (let nr (parseIdentName tokens (advance (advance pos))))
-      (if (== (memGetWord nr 0) 0)
+      (if (pResFailed nr)
         nr
         ; The pattern's head must BE the macro's name -
         ; syntax-rules' convention, and what multi-rule dispatch
         ; hangs from.
-        (if (strEq (memGetWordStr nr 1) macName)
+        (if (strEq (pResText nr) macName)
           {
-            (let paramsR (parseMacroPatList tokens (memGetWord nr 2) vecNew vecNew vecNew vecNew))
-            (if (== (memGetWord paramsR 0) 0)
+            (let paramsR (parseMacroPatList tokens (pResPos nr) vecNew vecNew vecNew vecNew))
+            (if (pResFailed paramsR)
               paramsR
               {
-                (let tplR (parseRuleTemplates tokens (memGetWord paramsR 2)))
-                (if (== (memGetWord tplR 0) 0)
+                (let tplR (parseRuleTemplates tokens (pResPos paramsR)))
+                (if (pResFailed tplR)
                   tplR
                   ; Slots 0 and 1 are the wire format the
                   ; expander has always read; 2, 3 and 4
@@ -5066,8 +5141,8 @@
                   ; for the same reason.)
                   {
                     (let rule vecNew)
-                    (let three (memGetWordVec paramsR 1))
-                    (let kinds (memGetWordVec tplR 1))
+                    (let three (pResVec paramsR))
+                    (let kinds (pResVec tplR))
                     {
                       (let rw
                         (rewriteRuleLits (as (vecGet three 0) Nodes)
@@ -5085,7 +5160,7 @@
                           (vecPush rule (as litpair Int))
                           (vecPush rule (vecGet kinds 1))
                           (vecPush acc rule)
-                          (parseMacroRules tokens (memGetWord tplR 2) macName acc lits)
+                          (parseMacroRules tokens (pResPos tplR) macName acc lits)
                         }
                       }
                     }
@@ -5124,27 +5199,27 @@
         (pErr pos)
         (parseExpr tokens pos)))
     {
-      (let exprOk (&& (!= (memGetWord exprR 0) 0) (peekIs tokens (memGetWord exprR 2) TK_RPAREN)))
+      (let exprOk (&& (pResOk exprR) (peekIs tokens (pResPos exprR) TK_RPAREN)))
       {
-        (let declOk (&& (!= (memGetWord declR 0) 0) (|| (! exprOk) (tplNamesMacro tokens pos))))
+        (let declOk (&& (pResOk declR) (|| (! exprOk) (tplNamesMacro tokens pos))))
         (if (|| declOk exprOk)
           {
             (let pair vecNew)
             {
               (if declOk
-                (vecPush pair (memGetWord declR 1))
+                (vecPush pair (pResWord declR))
                 (vecPushVec pair vecNew))
               (vecPush pair
                 (if exprOk
-                  (memGetWord exprR 1)
+                  (pResWord exprR)
                   0))
               (pOk pair
                 (if declOk
-                  (memGetWord declR 2)
-                  (advance (memGetWord exprR 2))))
+                  (pResPos declR)
+                  (advance (pResPos exprR))))
             }
           }
-          (if (|| (tplDeclHead tokens pos) (!= (memGetWord exprR 0) 0))
+          (if (|| (tplDeclHead tokens pos) (pResOk exprR))
             declR
             exprR))
       }
@@ -5213,11 +5288,11 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let r (parseTopForm tokens (advance pos)))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
           {
-            (vecPush acc (readAstNode r 1))
-            (parseTplDecls tokens (memGetWord r 2) acc)
+            (vecPush acc (pResNode r))
+            (parseTplDecls tokens (pResPos r) acc)
           })
       }
       ; A bare `...` among template declarations is the splice marker
@@ -5264,10 +5339,10 @@
       (if (parseLiteralsHead tokens p1)
         {
           (let lr (parseLiteralsDecl tokens p1))
-          (if (== (memGetWord lr 0) 0)
+          (if (pResFailed lr)
             lr
-            (parseDeclMacroRules tokens (memGetWord lr 2) macName macSpan
-              (as (memGetWordVec lr 1) (Vec String))))
+            (parseDeclMacroRules tokens (pResPos lr) macName macSpan
+              (as (pResVec lr) (Vec String))))
         }
         (if (peekIs tokens (advance p1) TK_LPAREN)
           ; One or more RULES (MAC-LANG-14). Word 9 holds them all,
@@ -5288,11 +5363,11 @@
   (if (peekIs tokens (advance pos) TK_LPAREN)
     {
       (let rulesR (parseMacroRules tokens pos macName vecNew lits))
-      (if (== (memGetWord rulesR 0) 0)
+      (if (pResFailed rulesR)
         rulesR
         {
           (let rules (pResultRules rulesR))
-          (let after (memGetWord rulesR 2))
+          (let after (pResPos rulesR))
           (if (peekIs tokens after TK_RPAREN)
             {
               (let node (mkDMacroAt macName (ruleParamsAt rules 0) nilNode macSpan))
@@ -5313,7 +5388,7 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let nr (parseIdentName tokens (advance pos)))
-        (if (== (memGetWord nr 0) 0)
+        (if (pResFailed nr)
           nr
           ; The NAME token's span, kept for the same reason a
           ; `fn`'s is: a diagnostic about a declaration points
@@ -5326,19 +5401,19 @@
           ; in its capabilities and published none.
           ; Consumes the head's closing paren too.
           {
-            (let macName (memGetWordStr nr 1))
+            (let macName (pResText nr))
             (let macSpan (tokenSpan (vecGet tokens (advance pos))))
-            (let paramsR (parseIdentList tokens (memGetWord nr 2) vecNew))
-            (if (== (memGetWord paramsR 0) 0)
+            (let paramsR (parseIdentList tokens (pResPos nr) vecNew))
+            (if (pResFailed paramsR)
               paramsR
               {
-                (let params (memGetWordVec paramsR 1))
-                (let bodyR (parseExpr tokens (memGetWord paramsR 2)))
-                (if (== (memGetWord bodyR 0) 0)
+                (let params (pResVec paramsR))
+                (let bodyR (parseExpr tokens (pResPos paramsR)))
+                (if (pResFailed bodyR)
                   bodyR
                   {
-                    (let body (readAstNode bodyR 1))
-                    (let afterBody (memGetWord bodyR 2))
+                    (let body (pResNode bodyR))
+                    (let afterBody (pResPos bodyR))
                     (if (peekIs tokens afterBody TK_RPAREN)
                       (pOk (mkDMacroAt macName params body macSpan) (advance afterBody))
                       (pErr afterBody))
@@ -5358,14 +5433,14 @@
       (let headerStart (advance pos))
       {
         (let nr (parseDeclName tokens headerStart))
-        (if (== (memGetWord nr 0) 0)
+        (if (pResFailed nr)
           nr
           {
-            (let fnName (memGetWordStr nr 1))
-            (let afterName (memGetWord nr 2))
+            (let fnName (pResText nr))
+            (let afterName (pResPos nr))
             {
               (let paramsR (parseIdentList tokens afterName vecNew))
-              (if (== (memGetWord paramsR 0) 0)
+              (if (pResFailed paramsR)
                 paramsR
                 ; A body of SEVERAL expressions sequences them,
                 ; exactly as `let` bodies do - stage0's
@@ -5374,15 +5449,15 @@
                 ; until the zoo's `(fn (manyBody n) 1 n)` met
                 ; it. parseExprList consumes the closing paren.
                 {
-                  (let params (memGetWordVec paramsR 1))
-                  (let afterParams (memGetWord paramsR 2))
+                  (let params (pResVec paramsR))
+                  (let afterParams (pResPos paramsR))
                   {
                     (let bodyR (parseExprList tokens afterParams vecNew))
-                    (if (== (memGetWord bodyR 0) 0)
+                    (if (pResFailed bodyR)
                       bodyR
                       {
-                        (let exprs (readAstNodes bodyR 1))
-                        (let afterBody (memGetWord bodyR 2))
+                        (let exprs (pResNodes bodyR))
+                        (let afterBody (pResPos bodyR))
                         (if (== (vecLen exprs) 0)
                           (pErr afterParams)
                           (pOk
@@ -5414,7 +5489,7 @@
 (pub fn (parseExpr tokens pos)
   {
     (let r (parseExprCore tokens pos))
-    (if (== (memGetWord r 0) 0)
+    (if (pResFailed r)
       r
       (parsePostfix tokens r))
   })
@@ -5426,14 +5501,14 @@
 (pub :: parsePostfix (-> Ints Int Int))
 (pub fn (parsePostfix tokens r)
   {
-    (let pos (memGetWord r 2))
+    (let pos (pResPos r))
     (if (peekIs tokens pos TK_QUESTION)
       ; An `if` or a block carries no span of its own (`mkEIf`,
       ; `mkEBegin`), so the `?` starts its own span there; reading
       ; the operand's null span was a crash on `(if ...)?`
       ; (tests/stdlib/891-propagate-on-forms.ax).
       {
-        (let inner (readAstNode r 1))
+        (let inner (pResNode r))
         (let qsp (tokenSpan (vecGet tokens pos)))
         (parsePostfix tokens
           (pOk
@@ -5684,21 +5759,20 @@
 (pub fn (parseAsExpr tokens pos)
   {
     (let value (parseExpr tokens pos))
-    (if (== (memGetWord value 0) 0)
+    (if (pResFailed value)
       value
       {
-        (let target (parseType tokens (memGetWord value 2)))
-        (if (== (memGetWord target 0) 0)
+        (let target (parseType tokens (pResPos value)))
+        (if (pResFailed target)
           target
           {
-            (let after (memGetWord target 2))
+            (let after (pResPos target))
             (if (peekIs tokens after TK_RPAREN)
               (pOk
                 (mkEApp
                   (mkEApp (mkEVarAt "__as_numeric" (tokenSpan (vecGet tokens (- pos 1))))
-                    (typeExprAt (readAstNode target 1)
-                      (tokenSpan (vecGet tokens (memGetWord value 2)))))
-                  (readAstNode value 1))
+                    (typeExprAt (pResNode target) (tokenSpan (vecGet tokens (pResPos value)))))
+                  (pResNode value))
                 (advance after))
               (pErrExp after "the end of an as expression"))
           })
@@ -5709,17 +5783,16 @@
 (pub fn (parseTypeSigExpr tokens pos)
   {
     (let er (parseExpr tokens pos))
-    (if (== (memGetWord er 0) 0)
+    (if (pResFailed er)
       er
       {
-        (let inner (readAstNode er 1))
-        (let tr (parseType tokens (memGetWord er 2)))
-        (if (== (memGetWord tr 0) 0)
+        (let inner (pResNode er))
+        (let tr (parseType tokens (pResPos er)))
+        (if (pResFailed tr)
           tr
           {
-            (let tyExpr
-              (typeExprAt (readAstNode tr 1) (tokenSpan (vecGet tokens (memGetWord er 2)))))
-            (let after (memGetWord tr 2))
+            (let tyExpr (typeExprAt (pResNode tr) (tokenSpan (vecGet tokens (pResPos er)))))
+            (let after (pResPos tr))
             (if (peekIs tokens after TK_RPAREN)
               (pOk (mkEApp (mkEApp (mkEVarAt "__ascribe" (nodeSpan inner)) tyExpr) inner)
                 (advance after))
@@ -5735,15 +5808,15 @@
 (pub fn (parseWhileExpr tokens pos)
   {
     (let condR (parseExpr tokens pos))
-    (if (== (memGetWord condR 0) 0)
+    (if (pResFailed condR)
       condR
       ; Consumes the while form's closing paren.
       {
-        (let cnd (readAstNode condR 1))
-        (let bodyR (parseExprList tokens (memGetWord condR 2) vecNew))
-        (if (== (memGetWord bodyR 0) 0)
+        (let cnd (pResNode condR))
+        (let bodyR (parseExprList tokens (pResPos condR) vecNew))
+        (if (pResFailed bodyR)
           bodyR
-          (pOk (nodeBuildEWhilePlain cnd (readAstNodes bodyR 1) 0) (memGetWord bodyR 2)))
+          (pOk (nodeBuildEWhilePlain cnd (pResNodes bodyR) 0) (pResPos bodyR)))
       })
   })
 
@@ -5915,27 +5988,25 @@
 (pub fn (parseForOperands tokens pos isPair xName xSpan iName iSpan kwSpan)
   {
     (let aR (parseExpr tokens pos))
-    (if (== (memGetWord aR 0) 0)
+    (if (pResFailed aR)
       (if (peekIs tokens pos TK_RPAREN)
         (pErrExp pos
           "the rest of the `for` shape: `(for x in xs body)`, `(for (x i) in xs body)`, `(for i in lo..hi body)` or `(for i in lo..hi by step body)`, and `{ ... }` sequences several")
         aR)
-      (if (forAtDotDot tokens (memGetWord aR 2))
+      (if (forAtDotDot tokens (pResPos aR))
         (if (== isPair 1)
-          (pErrExp (memGetWord aR 2)
+          (pErrExp (pResPos aR)
             "the container: an element-index binder `(x i)` takes the container shape only, `(for (x i) in xs body)`, because a range counts its own index")
-          (parseForRange tokens (advance (advance (memGetWord aR 2))) xName xSpan
-            (readAstNode aR 1) kwSpan))
+          (parseForRange tokens (advance (advance (pResPos aR))) xName xSpan (pResNode aR) kwSpan))
         {
-          (let bR (parseForBody tokens (memGetWord aR 2)))
-          (if (== (memGetWord bR 0) 0)
+          (let bR (parseForBody tokens (pResPos aR)))
+          (if (pResFailed bR)
             bR
             (pOk
               (if (== isPair 1)
-                (mkForContainerIndexed xName xSpan iName iSpan (readAstNode aR 1)
-                  (readAstNode bR 1) kwSpan)
-                (mkForContainer xName xSpan (readAstNode aR 1) (readAstNode bR 1) kwSpan))
-              (memGetWord bR 2)))
+                (mkForContainerIndexed xName xSpan iName iSpan (pResNode aR) (pResNode bR) kwSpan)
+                (mkForContainer xName xSpan (pResNode aR) (pResNode bR) kwSpan))
+              (pResPos bR)))
         }))
   })
 
@@ -5953,42 +6024,39 @@
 (pub fn (parseForRange tokens pos xName xSpan lo kwSpan)
   {
     (let hR (parseExpr tokens pos))
-    (if (== (memGetWord hR 0) 0)
+    (if (pResFailed hR)
       (if (peekIs tokens pos TK_RPAREN)
         (pErrExp pos
           "the end of the range: `(for i in lo..hi body)` counts from `lo` up to, but not including, `hi`")
         hR)
       {
-        (let afterHi (memGetWord hR 2))
+        (let afterHi (pResPos hR))
         (if (&& (peekIs tokens afterHi TK_IDENT) (strEq (tokenLexeme (vecGet tokens afterHi)) "by"))
           {
             (let sR (parseExpr tokens (advance afterHi)))
-            (if (== (memGetWord sR 0) 0)
+            (if (pResFailed sR)
               (if (peekIs tokens (advance afterHi) TK_RPAREN)
                 (pErrExp (advance afterHi) "the step after `by`: `(for i in lo..hi by step body)`")
                 sR)
               {
-                (let step (readAstNode sR 1))
+                (let step (pResNode sR))
                 (if (&& (== (nodeTag step) TAG_E_INT) (== (nodeA step) 0))
                   (pErrExp (advance afterHi)
                     "a nonzero step: a step of `0` never advances the counter")
                   {
-                    (let bR (parseForBody tokens (memGetWord sR 2)))
-                    (if (== (memGetWord bR 0) 0)
+                    (let bR (parseForBody tokens (pResPos sR)))
+                    (if (pResFailed bR)
                       bR
-                      (pOk
-                        (mkForRangeStep xName xSpan lo (readAstNode hR 1) step (readAstNode bR 1)
-                          kwSpan)
-                        (memGetWord bR 2)))
+                      (pOk (mkForRangeStep xName xSpan lo (pResNode hR) step (pResNode bR) kwSpan)
+                        (pResPos bR)))
                   })
               })
           }
           {
             (let bR (parseForBody tokens afterHi))
-            (if (== (memGetWord bR 0) 0)
+            (if (pResFailed bR)
               bR
-              (pOk (mkForRange xName xSpan lo (readAstNode hR 1) (readAstNode bR 1) kwSpan)
-                (memGetWord bR 2)))
+              (pOk (mkForRange xName xSpan lo (pResNode hR) (pResNode bR) kwSpan) (pResPos bR)))
           })
       })
   })
@@ -5999,13 +6067,13 @@
 (pub fn (parseForBody tokens pos)
   {
     (let bR (parseExpr tokens pos))
-    (if (== (memGetWord bR 0) 0)
+    (if (pResFailed bR)
       (if (peekIs tokens pos TK_RPAREN)
         (pErrExp pos "the loop's body: `{ ... }` sequences several expressions")
         bR)
-      (if (peekIs tokens (memGetWord bR 2) TK_RPAREN)
-        (pOk (memGetWord bR 1) (advance (memGetWord bR 2)))
-        (pErrExp (memGetWord bR 2)
+      (if (peekIs tokens (pResPos bR) TK_RPAREN)
+        (pOk (pResWord bR) (advance (pResPos bR)))
+        (pErrExp (pResPos bR)
           "`)`: a `for` has exactly one body expression, and `{ ... }` sequences several")))
   })
 
@@ -6179,14 +6247,12 @@
     {
       (let nameTok (vecGet tokens pos))
       (let bodyR (parseExpr tokens (advance pos)))
-      (if (== (memGetWord bodyR 0) 0)
+      (if (pResFailed bodyR)
         bodyR
-        (if (peekIs tokens (memGetWord bodyR 2) TK_RPAREN)
-          (pOk
-            (nodeBuildERegion (tokenLexeme nameTok) (readAstNode bodyR 1) (tokenSpan nameTok)
-              kwSpan)
-            (advance (memGetWord bodyR 2)))
-          (pErrExp (memGetWord bodyR 2)
+        (if (peekIs tokens (pResPos bodyR) TK_RPAREN)
+          (pOk (nodeBuildERegion (tokenLexeme nameTok) (pResNode bodyR) (tokenSpan nameTok) kwSpan)
+            (advance (pResPos bodyR)))
+          (pErrExp (pResPos bodyR)
             "`)` - `region` takes ONE body: `(region r body)`, and `{ ... }` sequences several")))
     }
     (pErrExp pos "the region's name")))
@@ -6246,21 +6312,21 @@
       (if (peekIs tokens (advance pos) TK_LPAREN)
         {
           (let br (parseParBindings tokens (advance (advance pos)) vecNew))
-          (if (== (memGetWord br 0) 0)
+          (if (pResFailed br)
             br
             {
-              (let binds (readAstNodes br 1))
-              (let afterBinds (memGetWord br 2))
+              (let binds (pResNodes br))
+              (let afterBinds (pResPos br))
               (if (== (vecLen binds) 0)
                 (pErrExp (- afterBinds 1)
                   "at least one binding - `(parallel p ((x e)) body)` runs `e` beside the caller")
                 {
                   (let bodyR (parseExprList tokens afterBinds vecNew))
-                  (if (== (memGetWord bodyR 0) 0)
+                  (if (pResFailed bodyR)
                     bodyR
                     {
-                      (let exprs (readAstNodes bodyR 1))
-                      (let afterBody (memGetWord bodyR 2))
+                      (let exprs (pResNodes bodyR))
+                      (let afterBody (pResPos bodyR))
                       (if (== (vecLen exprs) 0)
                         (pErrExp afterBinds "a body expression after the binding list")
                         (pOk
@@ -6295,12 +6361,12 @@
               "a binding name - a `parallel` binding is bound once, at its join, so `mut` has nothing to mean here")
             {
               (let valR (parseExpr tokens (advance (advance pos))))
-              (if (== (memGetWord valR 0) 0)
+              (if (pResFailed valR)
                 valR
-                (if (peekIs tokens (memGetWord valR 2) TK_RPAREN)
-                  (parseParBindings tokens (advance (memGetWord valR 2))
-                    (vecPush acc (nodeBuildParallelBinding nm (readAstNode valR 1) (tokenSpan nt))))
-                  (pErrExp (memGetWord valR 2)
+                (if (peekIs tokens (pResPos valR) TK_RPAREN)
+                  (parseParBindings tokens (advance (pResPos valR))
+                    (vecPush acc (nodeBuildParallelBinding nm (pResNode valR) (tokenSpan nt))))
+                  (pErrExp (pResPos valR)
                     "`)` - a `parallel` binding is one name and one expression")))
             })
         }
@@ -6419,25 +6485,23 @@
 (pub fn (parseHandleExpr tokens pos)
   {
     (let bodyR (parseExpr tokens pos))
-    (if (== (memGetWord bodyR 0) 0)
+    (if (pResFailed bodyR)
       bodyR
       {
         (let effsR
-          (if (peekIs tokens (memGetWord bodyR 2) TK_LPAREN)
-            (parseEffectNames tokens (advance (memGetWord bodyR 2)) vecNew)
-            (pOk vecNew (memGetWord bodyR 2))))
-        (if (== (memGetWord effsR 0) 0)
+          (if (peekIs tokens (pResPos bodyR) TK_LPAREN)
+            (parseEffectNames tokens (advance (pResPos bodyR)) vecNew)
+            (pOk vecNew (pResPos bodyR))))
+        (if (pResFailed effsR)
           effsR
           {
-            (let hR (parseExpr tokens (memGetWord effsR 2)))
-            (if (== (memGetWord hR 0) 0)
+            (let hR (parseExpr tokens (pResPos effsR)))
+            (if (pResFailed hR)
               hR
-              (if (peekIs tokens (memGetWord hR 2) TK_RPAREN)
-                (pOk
-                  (nodeBuildEHandlePlain (readAstNode bodyR 1) (readAstNodes effsR 1)
-                    (readAstNode hR 1))
-                  (advance (memGetWord hR 2)))
-                (pErr (memGetWord hR 2))))
+              (if (peekIs tokens (pResPos hR) TK_RPAREN)
+                (pOk (nodeBuildEHandlePlain (pResNode bodyR) (pResNodes effsR) (pResNode hR))
+                  (advance (pResPos hR)))
+                (pErr (pResPos hR))))
           })
       })
   })
@@ -6468,26 +6532,25 @@
   ; the generic "identifier" its own ident parser would give.
   {
     (let nr (parseIdentName tokens pos))
-    (if (== (memGetWord nr 0) 0)
-      (pErrExp (memGetWord nr 2) "the name of a `mut` binding, or a field path")
-      (if (peekIs tokens (memGetWord nr 2) TK_DOT)
+    (if (pResFailed nr)
+      (pErrExp (pResPos nr) "the name of a `mut` binding, or a field path")
+      (if (peekIs tokens (pResPos nr) TK_DOT)
         ; A dotted target is a field store: the chain builds the
         ; base the same way expression-position access does, and
         ; the LAST segment names the field written.
-        (parseSetField tokens (memGetWord nr 2)
-          (mkEVarAt (memGetWordStr nr 1) (tokenSpan (vecGet tokens pos))))
+        (parseSetField tokens (pResPos nr) (mkEVarAt (pResText nr) (tokenSpan (vecGet tokens pos))))
         {
-          (let valR (parseExpr tokens (memGetWord nr 2)))
-          (if (== (memGetWord valR 0) 0)
+          (let valR (parseExpr tokens (pResPos nr)))
+          (if (pResFailed valR)
             valR
             {
-              (let val (readAstNode valR 1))
-              (let afterVal (memGetWord valR 2))
+              (let val (pResNode valR))
+              (let afterVal (pResPos valR))
               (if (peekIs tokens afterVal TK_RPAREN)
                 ; The node's span is its TARGET's - stage0
                 ; points both AX3001 and AX3012 about a `set`
                 ; at the name being assigned, not at the form.
-                (pOk (nodeBuildESet (memGetWordStr nr 1) val 0 (tokenSpan (vecGet tokens pos)))
+                (pOk (nodeBuildESet (pResText nr) val 0 (tokenSpan (vecGet tokens pos)))
                   (advance afterVal))
                 (pErr afterVal))
             })
@@ -6507,11 +6570,11 @@
           (nodeBuildEField base fname 0 (tokenSpan (vecGet tokens (advance pos)))))
         {
           (let valR (parseExpr tokens after))
-          (if (== (memGetWord valR 0) 0)
+          (if (pResFailed valR)
             valR
             {
-              (let val (readAstNode valR 1))
-              (let afterVal (memGetWord valR 2))
+              (let val (pResNode valR))
+              (let afterVal (pResPos valR))
               (if (peekIs tokens afterVal TK_RPAREN)
                 ; Span = the stored field's name token, AX3007's
                 ; anchor, as on TAG_E_FIELD.
@@ -6590,18 +6653,18 @@
     (if (peekIs tokens pos TK_LPAREN)
       {
         (let paramsR (parseIdentList tokens (advance pos) vecNew))
-        (if (== (memGetWord paramsR 0) 0)
+        (if (pResFailed paramsR)
           paramsR
           {
-            (let params (memGetWordVec paramsR 1))
-            (let afterParams (memGetWord paramsR 2))
+            (let params (pResVec paramsR))
+            (let afterParams (pResPos paramsR))
             {
               (let bodyR (parseExpr tokens afterParams))
-              (if (== (memGetWord bodyR 0) 0)
+              (if (pResFailed bodyR)
                 bodyR
                 {
-                  (let body (readAstNode bodyR 1))
-                  (let afterBody (memGetWord bodyR 2))
+                  (let body (pResNode bodyR))
+                  (let afterBody (pResPos bodyR))
                   (if (peekIs tokens afterBody TK_RPAREN)
                     (pOk (mkLamCurried params body kwSp) (advance afterBody))
                     (pErr afterBody))
@@ -6649,22 +6712,22 @@
 (pub fn (parseIfExpr tokens pos)
   {
     (let testR (parseIfTest tokens pos))
-    (if (== (memGetWord testR 0) 0)
+    (if (pResFailed testR)
       (if (peekIs tokens pos TK_RPAREN)
         (pErrExp pos
           "the test operand: `if` takes `(if test then else)`, or `(if test then)` to answer `()`, variadically `(if t1 b1 t2 b2 ... els)`")
         testR)
       {
-        (let test (readAstNode testR 1))
-        (let afterTest (memGetWord testR 2))
+        (let test (pResNode testR))
+        (let afterTest (pResPos testR))
         {
           (let thenR (parseExpr tokens afterTest))
-          (if (== (memGetWord thenR 0) 0)
+          (if (pResFailed thenR)
             (if (peekIs tokens afterTest TK_RPAREN)
               (pErrExp afterTest
                 "the `then` branch: `if` takes `(if test then else)`, or `(if test then)` to answer `()`, variadically `(if t1 b1 t2 b2 ... els)`")
               thenR)
-            (parseIfTail tokens (memGetWord thenR 2) test (readAstNode thenR 1)))
+            (parseIfTail tokens (pResPos thenR) test (pResNode thenR)))
         }
       })
   })
@@ -6680,7 +6743,7 @@
 (pub fn (parseIfTail tokens pos test thenEx)
   {
     (let eR (parseIfTest tokens pos))
-    (if (== (memGetWord eR 0) 0)
+    (if (pResFailed eR)
       (if (peekIs tokens pos TK_RPAREN)
         ; No else: the `if` supplies `()`, so `(if t b)` runs `b` when
         ; `t` holds and answers the unit value either way (the checker
@@ -6688,8 +6751,8 @@
         (pOk (mkIfOrLet test thenEx (mkEUnitAt (tokenSpan (vecGet tokens pos)))) (advance pos))
         eR)
       {
-        (let e (readAstNode eR 1))
-        (let afterE (memGetWord eR 2))
+        (let e (pResNode eR))
+        (let afterE (pResPos eR))
         (if (peekIs tokens afterE TK_RPAREN)
           (if (isLetTest e)
             (pErrExp afterE
@@ -6697,13 +6760,13 @@
             (pOk (mkIfOrLet test thenEx e) (advance afterE)))
           {
             (let thenR (parseExpr tokens afterE))
-            (if (== (memGetWord thenR 0) 0)
+            (if (pResFailed thenR)
               thenR
               {
-                (let tailR (parseIfTail tokens (memGetWord thenR 2) e (readAstNode thenR 1)))
-                (if (== (memGetWord tailR 0) 0)
+                (let tailR (parseIfTail tokens (pResPos thenR) e (pResNode thenR)))
+                (if (pResFailed tailR)
                   tailR
-                  (pOk (mkIfOrLet test thenEx (readAstNode tailR 1)) (memGetWord tailR 2)))
+                  (pOk (mkIfOrLet test thenEx (pResNode tailR)) (pResPos tailR)))
               })
           })
       })
@@ -6737,21 +6800,21 @@
       "a pattern: a `(let ...)` test binds its names for one branch, and they cannot be `mut`")
     {
       (let patR (parseArmPattern tokens pos))
-      (if (== (memGetWord patR 0) 0)
+      (if (pResFailed patR)
         patR
         {
-          (let pat (readAstNode patR 1))
+          (let pat (pResNode patR))
           (if (== (letTestCannotFail pat) 1)
             (pErrExp pos
               "a pattern that can fail to match: `(if (let (Some x) value) then else)` tests a constructor or a literal, and a lowercase name or `_` matches everything, so bind it in a block with `(let x value)`")
             {
-              (let valR (parseExpr tokens (memGetWord patR 2)))
-              (if (== (memGetWord valR 0) 0)
+              (let valR (parseExpr tokens (pResPos patR)))
+              (if (pResFailed valR)
                 valR
                 {
-                  (let afterVal (memGetWord valR 2))
+                  (let afterVal (pResPos valR))
                   (if (peekIs tokens afterVal TK_RPAREN)
-                    (pOk (nodeBuildMArmPlain pat (readAstNode valR 1) 0) (advance afterVal))
+                    (pOk (nodeBuildMArmPlain pat (pResNode valR) 0) (advance afterVal))
                     (pErrExp afterVal "`)` closing the `(let PATTERN value)` test"))
                 })
             })
@@ -6801,18 +6864,18 @@
 (pub fn (parseMatchExpr tokens pos)
   {
     (let scrutR (parseExpr tokens pos))
-    (if (== (memGetWord scrutR 0) 0)
+    (if (pResFailed scrutR)
       scrutR
       {
-        (let scrut (readAstNode scrutR 1))
-        (let afterScrut (memGetWord scrutR 2))
+        (let scrut (pResNode scrutR))
+        (let afterScrut (pResPos scrutR))
         {
           (let armsR (parseMatchArms tokens afterScrut vecNew))
-          (if (== (memGetWord armsR 0) 0)
+          (if (pResFailed armsR)
             armsR
             {
-              (let arms (readAstNodes armsR 1))
-              (let afterArms (memGetWord armsR 2))
+              (let arms (pResNodes armsR))
+              (let afterArms (pResPos armsR))
               (if (peekIs tokens afterArms TK_RPAREN)
                 (pOk (nodeBuildEMatchPlain scrut arms 0) (advance afterArms))
                 (pErr afterArms))
@@ -6838,17 +6901,17 @@
             (strEq (tokenLexeme (vecGet tokens (advance pos))) "syntax/for"))
         {
           (let forR (parseMatchForArm tokens (advance pos)))
-          (if (== (memGetWord forR 0) 0)
+          (if (pResFailed forR)
             forR
-            (parseMatchArms tokens (memGetWord forR 2) (vecPush acc (readAstNode forR 1))))
+            (parseMatchArms tokens (pResPos forR) (vecPush acc (pResNode forR))))
         }
         {
           (let armR (parseMatchArm tokens (advance pos)))
-          (if (== (memGetWord armR 0) 0)
+          (if (pResFailed armR)
             armR
             {
-              (let arm (readAstNode armR 1))
-              (let afterArm (memGetWord armR 2))
+              (let arm (pResNode armR))
+              (let afterArm (pResPos armR))
               (parseMatchArms tokens afterArm (vecPush acc arm))
             })
         })
@@ -6884,22 +6947,22 @@
     (if (peekIs tokens p1 TK_LPAREN)
       {
         (let bindR (parseExpr tokens p1))
-        (if (== (memGetWord bindR 0) 0)
+        (if (pResFailed bindR)
           bindR
           {
-            (let binds (readAstNode bindR 1))
-            (let afterSeq (memGetWord bindR 2))
+            (let binds (pResNode bindR))
+            (let afterSeq (pResPos bindR))
             {
               (let var (parseIterBinder binds))
               (if (strEq var "")
                 (pErrExp (advance p1) "identifier")
                 {
                   (let armsR (parseMatchArms tokens afterSeq vecNew))
-                  (if (== (memGetWord armsR 0) 0)
+                  (if (pResFailed armsR)
                     armsR
                     {
-                      (let arms (readAstNodes armsR 1))
-                      (let afterArms (memGetWord armsR 2))
+                      (let arms (pResNodes armsR))
+                      (let afterArms (pResPos armsR))
                       (if (== (vecLen arms) 0)
                         (pErr afterArms)
                         (if (peekIs tokens afterArms TK_RPAREN)
@@ -6950,11 +7013,11 @@
               TK_DOUBLE_COLON))))
     {
       (let head (parseIdentRef tokens (advance pos)))
-      (if (== (memGetWord head 0) 0)
+      (if (pResFailed head)
         head
         {
-          (let node (readAstNode head 1))
-          (let after (memGetWord head 2))
+          (let node (pResNode head))
+          (let after (pResPos head))
           (if (!= (nodeTag node) TAG_E_VAR)
             (pErrExp (advance pos) "constructor")
             (if (peekIs tokens after TK_RPAREN)
@@ -6981,11 +7044,11 @@
 (pub fn (parseGroupedArmPattern tokens pos)
   {
     (let inner (parseArmPattern tokens (advance pos)))
-    (if (== (memGetWord inner 0) 0)
+    (if (pResFailed inner)
       inner
       {
-        (let pat (readAstNode inner 1))
-        (let after (memGetWord inner 2))
+        (let pat (pResNode inner))
+        (let after (pResPos inner))
         (if (peekIs tokens after TK_RPAREN)
           (pOk pat (advance after))
           {
@@ -7092,12 +7155,12 @@
           (if (peekIsEq tokens (advance pos))
             {
               (let pr (parseArmPattern tokens (advance (advance pos))))
-              (if (== (memGetWord pr 0) 0)
+              (if (pResFailed pr)
                 pr
                 {
-                  (vecPush pats (readAstNode pr 1))
-                  (parseNamedPatFields tokens (skipFieldComma tokens (memGetWord pr 2)) cname csp
-                    names pats)
+                  (vecPush pats (pResNode pr))
+                  (parseNamedPatFields tokens (skipFieldComma tokens (pResPos pr)) cname csp names
+                    pats)
                 })
             }
             {
@@ -7117,27 +7180,27 @@
       (pErr pos)
       {
         (let r (parseArmPattern tokens pos))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
-          (parseArmPatternArgs tokens (memGetWord r 2) (mkEApp acc (readAstNode r 1))))
+          (parseArmPatternArgs tokens (pResPos r) (mkEApp acc (pResNode r))))
       })))
 
 (pub :: parseMatchArm (-> Ints Int Int))
 (pub fn (parseMatchArm tokens pos)
   {
     (let patR (parseArmPattern tokens pos))
-    (if (== (memGetWord patR 0) 0)
+    (if (pResFailed patR)
       patR
       {
-        (let pat (readAstNode patR 1))
-        (let afterPat (memGetWord patR 2))
+        (let pat (pResNode patR))
+        (let afterPat (pResPos patR))
         {
           (let bodyR (parseExpr tokens afterPat))
-          (if (== (memGetWord bodyR 0) 0)
+          (if (pResFailed bodyR)
             bodyR
             {
-              (let body (readAstNode bodyR 1))
-              (let afterBody (memGetWord bodyR 2))
+              (let body (pResNode bodyR))
+              (let afterBody (pResPos bodyR))
               (if (peekIs tokens afterBody TK_RPAREN)
                 (pOk (nodeBuildMArmPlain pat body 0) (advance afterBody))
                 (pErr afterBody))
@@ -7174,9 +7237,9 @@
         (parseBlockLocalLet tokens (advance (advance pos)) acc)
         {
           (let r (parseExpr tokens pos))
-          (if (== (memGetWord r 0) 0)
+          (if (pResFailed r)
             r
-            (parseBlockBody tokens (memGetWord r 2) (vecPush acc (readAstNode r 1))))
+            (parseBlockBody tokens (pResPos r) (vecPush acc (pResNode r))))
         }))))
 
 ; A local declaration belongs to the block that contains it. Lower
@@ -7193,22 +7256,22 @@
 (pub fn (parseBlockLocalLet tokens pos acc)
   {
     (let nr (parseIdentName tokens pos))
-    (if (== (memGetWord nr 0) 0)
+    (if (pResFailed nr)
       nr
       {
-        (let mutable (strEq (memGetWordStr nr 1) "mut"))
+        (let mutable (strEq (pResText nr) "mut"))
         (let nameR
           (if mutable
-            (parseIdentName tokens (memGetWord nr 2))
+            (parseIdentName tokens (pResPos nr))
             nr))
-        (if (== (memGetWord nameR 0) 0)
+        (if (pResFailed nameR)
           nameR
           {
-            (let valueR (parseExpr tokens (memGetWord nameR 2)))
-            (if (== (memGetWord valueR 0) 0)
+            (let valueR (parseExpr tokens (pResPos nameR)))
+            (if (pResFailed valueR)
               valueR
               {
-                (let afterValue (memGetWord valueR 2))
+                (let afterValue (pResPos valueR))
                 (if (! (peekIs tokens afterValue TK_RPAREN))
                   (pErrExp afterValue "`)` after the local binding's value")
                   {
@@ -7217,16 +7280,16 @@
                       (if (peekIs tokens after TK_RBRACE)
                         (pOk (mkEUnitAt (tokenSpan (vecGet tokens after))) (advance after))
                         (parseBlockBody tokens after vecNew)))
-                    (if (== (memGetWord bodyR 0) 0)
+                    (if (pResFailed bodyR)
                       bodyR
                       {
-                        (let name (memGetWordStr nameR 1))
-                        (let sp (tokenSpan (vecGet tokens (- (memGetWord nameR 2) 1))))
+                        (let name (pResText nameR))
+                        (let sp (tokenSpan (vecGet tokens (- (pResPos nameR) 1))))
                         (let local
                           (if mutable
-                            (nodeBuildELetm name (readAstNode valueR 1) (readAstNode bodyR 1) sp)
-                            (mkELetAt name (readAstNode valueR 1) (readAstNode bodyR 1) sp)))
-                        (pOk (mkEBegin (vecPush acc local)) (memGetWord bodyR 2))
+                            (nodeBuildELetm name (pResNode valueR) (pResNode bodyR) sp)
+                            (mkELetAt name (pResNode valueR) (pResNode bodyR) sp)))
+                        (pOk (mkEBegin (vecPush acc local)) (pResPos bodyR))
                       })
                   })
               })
@@ -7241,16 +7304,16 @@
 (pub fn (parseAppForm tokens pos)
   {
     (let r (parseExpr tokens pos))
-    (if (== (memGetWord r 0) 0)
+    (if (pResFailed r)
       r
       {
-        (let fnExpr (readAstNode r 1))
-        (let nextPos (memGetWord r 2))
+        (let fnExpr (pResNode r))
+        (let nextPos (pResPos r))
         {
           (let ar (parseArgs tokens nextPos fnExpr))
-          (if (== (memGetWord ar 0) 0)
+          (if (pResFailed ar)
             ar
-            (pOk (unaryMinusToBinary (readAstNode ar 1)) (memGetWord ar 2)))
+            (pOk (unaryMinusToBinary (pResNode ar)) (pResPos ar)))
         }
       })
   })
@@ -7294,11 +7357,11 @@
           (pErrExp pos "a positional argument; labelled fields cannot follow positional arguments"))
         {
           (let r (parseExpr tokens pos))
-          (if (== (memGetWord r 0) 0)
+          (if (pResFailed r)
             r
             {
-              (let arg (readAstNode r 1))
-              (let nextPos (memGetWord r 2))
+              (let arg (pResNode r))
+              (let nextPos (pResPos r))
               (parseArgs tokens nextPos (mkEApp fnExpr arg))
             })
         }))))
@@ -7314,14 +7377,14 @@
       (pErrExp pos "a `:field` label or `)`")
       {
         (let nameR (parseIdentName tokens (advance pos)))
-        (if (== (memGetWord nameR 0) 0)
+        (if (pResFailed nameR)
           nameR
           {
-            (let valueR (parseExpr tokens (memGetWord nameR 2)))
-            (if (== (memGetWord valueR 0) 0)
+            (let valueR (parseExpr tokens (pResPos nameR)))
+            (if (pResFailed valueR)
               valueR
-              (parseNamedArgs tokens (memGetWord valueR 2) (mkEApp call (readAstNode valueR 1))
-                (vecPush labels (memGetWordStr nameR 1))
+              (parseNamedArgs tokens (pResPos valueR) (mkEApp call (pResNode valueR))
+                (vecPush labels (pResText nameR))
                 (vecPush spans (tokenSpan (vecGet tokens (advance pos))))))
           })
       })))
@@ -7343,11 +7406,11 @@
 (pub fn (parseDecls tokens pos acc)
   {
     (let r (parseDecl tokens pos))
-    (if (== (memGetWord r 0) 0)
+    (if (pResFailed r)
       r
       {
-        (let val (readAstNode r 1))
-        (let nextPos (memGetWord r 2))
+        (let val (pResNode r))
+        (let nextPos (pResPos r))
         (if (nodeSame val nilNode)
           (pOk acc nextPos)
           (if (&& (== (nodeTag val) TAG_D_IMPORT)
@@ -7461,13 +7524,13 @@
       (pErrCode over "AX2005")
       {
         (let r (parseDecls tokens 0 vecNew))
-        (if (== (memGetWord r 0) 0)
+        (if (pResFailed r)
           r
           ; A tag belongs to the declaration after it, so one with none
           ; after it is refused, as the formatter refuses it. It used to
           ; be dropped with no word, and a claim such as
           ; `restrict(no-alloc)` then applied to nothing.
-          (if (< (attachAxtags (readAstNodes r 1) 0 axtags 0) (vecLen axtags))
+          (if (< (attachAxtags (pResNodes r) 0 axtags 0) (vecLen axtags))
             (pErrExp (- (vecLen tokens) 1) "a declaration after the `;@axiom:` tag")
             r))
       })
@@ -7729,10 +7792,10 @@
           (contractShift toks 0 (contractBaseOf t))
           {
             (let r (parseExpr toks 0))
-            (if (== (memGetWord r 0) 0)
+            (if (pResFailed r)
               nilNode
-              (if (peekIs toks (memGetWord r 2) TK_EOF)
-                (readAstNode r 1)
+              (if (peekIs toks (pResPos r) TK_EOF)
+                (pResNode r)
                 nilNode))
           }
         }
@@ -8131,9 +8194,8 @@
   (as (vecGet (vecGet rules index) 1) Nodes))
 
 (pub :: pResultRules (-> Int IntRows))
-;@axiom:effect(unsafe)
 (pub fn (pResultRules result)
-  (as (memGetWord result 1) IntRows))
+  (pResVec result))
 
 (pub :: nodeSetPayload (-> ASTNode Int AstPayload Int))
 (pub fn (nodeSetPayload node index payload)
