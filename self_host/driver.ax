@@ -51,13 +51,9 @@
 ;      through codegen rather than through this file
 ;   4  a native tool failed or is missing
 ;
-; Two of these were previously documented wrongly in this comment, in
-; opposite directions, and the errors survived because nothing derived
-; the table from the code. It claimed 2 meant "a parse error" - untrue
-; since the parse-error port moved syntax errors to 1, leaving 2 unused
-; until usage errors took it - and it claimed 3 was "retired", which was
-; true only of the import path: `dieImport` still exits 3 from four
-; sites, and an entry file importing an unparsable module still does.
+; A syntax error in the entry file is 1, not 2: 2 belongs to the
+; command line alone. 3 is live: `dieImport` exits 3 from four sites,
+; and an entry file importing an unparsable module does too.
 ;
 ; 4 is deliberately distinct from 1 and is this compiler's own choice,
 ; NOT the retired compiler's - that one exited 1 for a failing llc or
@@ -90,22 +86,18 @@
         (memSetWord v 0 (strCStr (strDup tool)))
         (fillArgv v args 0 n)
         (memSetWord v (+ n 1) 0)
-        ; The stdlib boundary. `sysRunPath` answers a `Result` since
-        ; 0.3.4 - `Err` is the spawn failing, the tool never ran - and
-        ; the compiler's own phases are ERR-ADOPT-1 slice 4, not this
-        ; one. So the Result is collapsed here, and it is collapsed
-        ; back onto THE EXACT CONTRACT EVERY CALLER ALREADY TESTS: a
-        ; NEGATED ERRNO when the tool could not be started, the child's
-        ; own code otherwise.
+        ; The stdlib boundary. `sysRunPath` answers a `Result` - `Err`
+        ; is the spawn failing, the tool never ran - and it is collapsed
+        ; here onto THE CONTRACT EVERY CALLER TESTS: a NEGATED ERRNO
+        ; when the tool could not be started, the child's own code
+        ; otherwise.
         ;
-        ; It was `127` for one commit - "command not found", the
-        ; shell's convention - and that broke the build on all three
-        ; platforms. Every caller here distinguishes the two cases BY
-        ; SIGN: `(if (< rc 0)` above `opt` prints "not found on PATH;
-        ; building without mid-level optimisation" and CONTINUES, while
-        ; any non-zero non-negative rc fails the build. 127 is
-        ; positive, so a missing `opt` stopped being survivable -
-        ; which `check-driver.sh` exists to catch and did.
+        ; Not `127`, the shell's "command not found": every caller here
+        ; distinguishes the two cases BY SIGN. `(if (< rc 0)` above
+        ; `opt` prints "not found on PATH; building without mid-level
+        ; optimisation" and CONTINUES, while any non-zero non-negative
+        ; rc fails the build, so a positive code would make a missing
+        ; `opt` fatal. `check-driver.sh` pins it.
         (match (sysRunPath tool v sysEnvp)
           ((Ok code) code)
           ((Err e) (- 0 (errCode e))))
@@ -120,7 +112,7 @@
     ; Every element is copied, because a Str produced by slicing
     ; shares its bytes with a larger string and stops at no NUL.
     {
-      (memSetWord v (+ i 1) (strCStr (strDup (vecGetStr args i))))
+      (memSetWord v (+ i 1) (strCStr (strDup (vecGet args i))))
       (fillArgv v args (+ i 1) n)
     }))
 
@@ -302,38 +294,22 @@
 
 ; Copy the caller's already-formatted link arguments (`-L<dir>`,
 ; `-l<name>`) onto the `cc` argument vector.
-(pub :: appendLinkArgs (-> Strings Ints Int Int))
-(pub fn (appendLinkArgs v linkArgs i)
-  (if (== (as linkArgs Int) 0)
-    0
-    (if (>= i (vecLen linkArgs))
-      0
-      {
-        (vecPush v (vecGetStr linkArgs i))
-        (appendLinkArgs v linkArgs (+ i 1))
-      })))
+(pub :: appendLinkArgs (-> Strings Strings ()))
+(pub fn (appendLinkArgs v linkArgs)
+  (for a in linkArgs
+    (vecPush v a)))
 
 ; The same arguments in lld-link's spelling: `-L<dir>` is
 ; `/libpath:<dir>` and `-l<name>` is `<name>.lib`. Anything else is
 ; copied as it came, which is what `cc` would have done with it too.
-(pub :: appendLinkArgsWindows (-> Strings Ints Int Int))
-;@axiom:effect(unsafe)
-(pub fn (appendLinkArgsWindows v linkArgs i)
-  (if (== (as linkArgs Int) 0)
-    0
-    (if (>= i (vecLen linkArgs))
-      0
-      {
-        (let a (as (vecGet linkArgs i) String))
-        {
-          (if (strStartsWith a "-L")
-            (vecPush v (concat "/libpath:" (strSlice a 2 (- (strLen a) 2))))
-            (if (strStartsWith a "-l")
-              (vecPush v (concat (strSlice a 2 (- (strLen a) 2)) ".lib"))
-              (vecPush v (vecGetStr linkArgs i))))
-          (appendLinkArgsWindows v linkArgs (+ i 1))
-        }
-      })))
+(pub :: appendLinkArgsWindows (-> Strings Strings ()))
+(pub fn (appendLinkArgsWindows v linkArgs)
+  (for a in linkArgs
+    (if (strStartsWith a "-L")
+      (vecPush v (concat "/libpath:" (strSlice a 2 (- (strLen a) 2))))
+      (if (strStartsWith a "-l")
+        (vecPush v (concat (strSlice a 2 (- (strLen a) 2)) ".lib"))
+        (vecPush v a)))))
 
 ; Some lld-link versions accept an x64 short-import archive while
 ; producing an arm64 PE. Walk the COFF archive's member boundaries and
@@ -374,9 +350,7 @@
                                         (== (strByte bytes (+ p 5)) 0))))))))
                         (if (!= (+ (strByte bytes (+ p 6)) (* 256 (strByte bytes (+ p 7))))
                               (+ 100 (* 256 wantHigh)))
-                          (set bad true)
-                          false)
-                        false)
+                          (set bad true)))
                       (set i (+ (+ p n) (% n 2)))
                     }
                   }
@@ -389,59 +363,42 @@
 
 ; Resolve each library in directory order, as lld-link does. A later
 ; directory's archive with the same name is not part of the link.
-(pub :: windowsArchivePathsOf (-> Ints Ints))
+(pub :: windowsArchivePathsOf (-> Strings Strings))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (windowsArchivePathsOf linkArgs)
   {
     (let dirs vecNew)
     (let libs vecNew)
     (let out vecNew)
-    (let mut i 0)
     {
-      (if (! (== (as linkArgs Int) 0))
-        (while (< i (vecLen linkArgs))
-          {
-            {
-              (let a (as (vecGet linkArgs i) String))
-              (if (strStartsWith a "-L")
-                (vecPush dirs (as (strSlice a 2 (- (strLen a) 2)) Int))
-                (if (strStartsWith a "-l")
-                  (vecPush libs (as (strSlice a 2 (- (strLen a) 2)) Int))
-                  (as 0 (Vec Int))))
-            }
-            (set i (+ i 1))
-          }))
-      (set i 0)
-      (while (< i (vecLen libs))
+      (for a in linkArgs
+        (if (strStartsWith a "-L")
+          (vecPush dirs (strSlice a 2 (- (strLen a) 2)))
+          (if (strStartsWith a "-l")
+            (vecPush libs (strSlice a 2 (- (strLen a) 2))))))
+      (for lib in libs
         {
-          {
-            (let lib (as (vecGet libs i) String))
-            (let mut d 0)
-            (let mut found false)
-            (while (&& (< d (vecLen dirs)) (! found))
+          (let mut d 0)
+          (let mut found false)
+          (while (&& (< d (vecLen dirs)) (! found))
+            {
+              (let path (archivePathIn (vecGet dirs d) lib true))
               {
-                (let path (archivePathIn (as (vecGet dirs d) String) lib true))
-                {
-                  (if (fileExists path)
-                    {
-                      (vecPush out (as path Int))
-                      (set found true)
-                    }
-                    false)
-                  (set d (+ d 1))
-                }
-              })
-          }
-          (set i (+ i 1))
+                (if (fileExists path)
+                  {
+                    (vecPush out path)
+                    (set found true)
+                  })
+                (set d (+ d 1))
+              }
+            })
         })
       out
     }
   })
 
-(pub :: windowsArchivesWrongMachine (-> Ints String Bool))
+(pub :: windowsArchivesWrongMachine (-> Strings String Bool))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (windowsArchivesWrongMachine linkArgs winTarget)
   {
     (let paths (windowsArchivePathsOf linkArgs))
@@ -455,12 +412,10 @@
       (while (&& (< i (vecLen paths)) (! bad))
         {
           {
-            (let path (as (vecGet paths i) String))
+            (let path (vecGet paths i))
             (if (fileExists path)
               (if (winImportMachineMismatch (unwrapOr (readFile path) "") wantHigh)
-                (set bad true)
-                false)
-              false)
+                (set bad true)))
           }
           (set i (+ i 1))
         })
@@ -629,25 +584,29 @@
 (pub :: asmUnquoteName (-> String String))
 (pub fn (asmUnquoteName s)
   {
-    (let mut out "")
+    (let out (strBuilderNew))
     (let mut i 0)
     {
       (while (< i (strLen s))
         (if (&& (== (strByte s i) 92) (< (+ i 2) (strLen s)))
           {
-            (set out (concat out
-                       (strFromByteVal
-                         (+ (* 16 (asmHexVal (strByte s (+ i 1))))
-                           (asmHexVal (strByte s (+ i 2)))))))
+            (strBuilderPushByte out
+              (asmLowByte
+                (+ (* 16 (asmHexVal (strByte s (+ i 1)))) (asmHexVal (strByte s (+ i 2))))))
             (set i (+ i 3))
           }
           {
-            (set out (concat out (strSlice s i 1)))
+            (strBuilderPushByte out (strByte s i))
             (set i (+ i 1))
           }))
-      out
+      (strBuilderFinish out)
     }
   })
+
+; The low byte of `v`, which is what a malformed escape decodes to.
+(:: asmLowByte (-> Int Int))
+(fn (asmLowByte v)
+  (% (+ (% v 256) 256) 256))
 
 (pub :: asmHexVal (-> Int Int))
 (pub fn (asmHexVal c)
@@ -656,18 +615,6 @@
     (if (&& (>= c 65) (<= c 70))
       (- c 55)
       (- c 87))))
-
-; A one-byte string.
-(pub :: strFromByteVal (-> Int String))
-;@axiom:effect(unsafe)
-(pub fn (strFromByteVal c)
-  {
-    (let s (strAlloc 1))
-    {
-      (__store8 (strData s) 0 c)
-      s
-    }
-  })
 
 ; Where cookie `n` points: `[file, start, end]` from the site comment
 ; whose cookies cover it, or an empty Vec when none does.
@@ -708,13 +655,13 @@
       0
       {
         (let k (- n first))
-        (let file (asmFileName ir (vecGetStr parts 1)))
+        (let file (asmFileName ir (vecGet parts 1)))
         (if (|| (< k 0) (|| (>= (+ k 2) (vecLen parts)) (== (strLen file) 0)))
           0
           {
-            (let r (vecGetStr parts (+ k 2)))
+            (let r (vecGet parts (+ k 2)))
             (let dash
-              (match (strFindByte (vecGetStr parts (+ k 2)) 45 0)
+              (match (strFindByte (vecGet parts (+ k 2)) 45 0)
                 ((Some d) d)
                 ((None) (- 0 1))))
             (if (< dash 0)
@@ -816,12 +763,12 @@
     (if (== (vecLen site) 0)
       0
       {
-        (let u (asmUnitFor units (vecGetStr site 0)))
-        (let s (asmNumAt (vecGetStr site 1) 0))
-        (let e (asmNumAt (vecGetStr site 2) 0))
+        (let u (asmUnitFor units (vecGet site 0)))
+        (let s (asmNumAt (vecGet site 1) 0))
+        (let e (asmNumAt (vecGet site 2) 0))
         (let key
-          (concat (concat (concat (vecGetStr site 0) ":") (concat (vecGetStr site 1) ":"))
-            (concat (concat (vecGetStr site 2) ":") msg)))
+          (concat (concat (concat (vecGet site 0) ":") (concat (vecGet site 1) ":"))
+            (concat (concat (vecGet site 2) ":") msg)))
         {
           (let src (memGetWordStr (vecGet units u) 1))
           (if (>= (asmSeenAt seen key 0) 0)
@@ -851,7 +798,7 @@
 (pub fn (asmSeenAt v k i)
   (if (>= i (vecLen v))
     (- 0 1)
-    (if (strEq (vecGetStr v i) k)
+    (if (strEq (vecGet v i) k)
       i
       (asmSeenAt v k (+ i 1)))))
 
@@ -876,8 +823,8 @@
     {
       (while (< i (vecLen ls))
         {
-          (let l (vecGetStr ls i))
-          (let at (strFindSub (vecGetStr ls i) "error: " 0))
+          (let l (vecGet ls i))
+          (let at (strFindSub (vecGet ls i) "error: " 0))
           {
             (if (>= at 0)
               {
@@ -894,7 +841,7 @@
                       (asmBeforeAtLine msg)))
                   (let read
                     (if (&& inline (< (+ i 1) (vecLen ls)))
-                      (asmTrim (vecGetStr ls (+ i 1)))
+                      (asmTrim (vecGet ls (+ i 1)))
                       ""))
                   (if (!
                         (&& (>= cookie 0)
@@ -920,9 +867,9 @@
       (while (&& (< c 0) (&& (< i (vecLen ls)) (< i (+ from 3))))
         {
           {
-            (let at (strFindSub (vecGetStr ls i) "note: !srcloc = " 0))
+            (let at (strFindSub (vecGet ls i) "note: !srcloc = " 0))
             (if (>= at 0)
-              (set c (asmNumAt (vecGetStr ls i) (+ at 16))))
+              (set c (asmNumAt (vecGet ls i) (+ at 16))))
           }
           (set i (+ i 1))
         })
@@ -998,7 +945,7 @@
     }
   })
 
-(pub :: assembleAndLink (-> String String String String Int Ints String Bool Int))
+(pub :: assembleAndLink (-> String String String String Int Strings String Bool Int))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -1063,12 +1010,11 @@
                               ; itself (0xC00000FD).
                               (vecPush v "/stack:8388608")
                               (if (strEq winTarget "windows-aarch64")
-                                (vecPush v "/machine:arm64")
-                                v)
+                                (vecPush v "/machine:arm64"))
                               (vecPush v (concat "/out:" outPath))
                               (vecPush v objPath)
                               (windowsPushLibs v implibs 0)
-                              (appendLinkArgsWindows v linkArgs 0)
+                              (appendLinkArgsWindows v linkArgs)
                               v
                             }
                           })
@@ -1108,7 +1054,7 @@
                               (vecPush v "-T")
                               (vecPush v ldPath)
                               (vecPush v objPath)
-                              (appendLinkArgs v linkArgs 0)
+                              (appendLinkArgs v linkArgs)
                               (vecPush v "-o")
                               (vecPush v outPath)
                               v
@@ -1179,9 +1125,8 @@
                             (vecPush v
                               (if (isSome (strFind (unwrapOr (readFile llPath) "") "apple-" 0))
                                 "-Wl,-S,-x"
-                                "-Wl,--strip-all"))
-                            v)
-                          (appendLinkArgs v linkArgs 0)
+                                "-Wl,--strip-all")))
+                          (appendLinkArgs v linkArgs)
                           (vecPush v "-o")
                           (vecPush v outPath)
                           v
@@ -1220,19 +1165,14 @@
 ; ------------------------------------------------------------------
 (pub :: prepareCrates Int)
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (prepareCrates)
   {
     (let crates crateDirsOf)
-    (let mut i 0)
     {
-      (while (< i (vecLen crates))
-        {
-          (prepareCrate (as (vecGet crates i) String))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen crates)
+        (prepareCrate (vecGetStr crates i)))
       0
     }
   })
@@ -1267,14 +1207,14 @@
     }
   })
 
-(pub :: crateTargetDirs (-> String Ints))
+(pub :: crateTargetDirs (-> String Strings))
 (pub fn (crateTargetDirs dir)
   {
     (let v vecNew)
     {
-      (vecPush v (as (concat dir "target/release") Int))
-      (vecPush v (as (concat dir "../target/release") Int))
-      (vecPush v (as (concat dir "../../target/release") Int))
+      (vecPush v (concat dir "target/release"))
+      (vecPush v (concat dir "../target/release"))
+      (vecPush v (concat dir "../../target/release"))
       v
     }
   })
@@ -1424,33 +1364,26 @@
     (let entries (unwrapOr (listDir (concat dir "axiom")) vecNew))
     (let mut found "")
     (let mut n 0)
-    (let mut i 0)
     {
-      (while (< i (vecLen entries))
+      (for i in 0..(vecLen entries)
         {
           ; `Name.ax` and nothing else: the first `.` is the
-          ; extension's. Until 2026-08-22 this compared with `<`,
-          ; which no plain name satisfies, so a crate whose module
-          ; was `Hash.ax` got a second module named for the package
-          {
-            (let e (as (vecGet entries i) String))
-            (if (&& (> (strLen e) 3)
-                  (&& (strEq (strSlice e (- (strLen e) 3) 3) ".ax")
-                    (match (strFindByte e 46 0)
-                      ((None) false)
-                      ((Some d) (== d (- (strLen e) 3))))))
-              {
-                (if (== (strLen found) 0)
-                  ; The guard above has just established that the ONLY
-                  ; `.` is at `strLen - 3`, so this is that index
-                  ; rather than a second scan for it. It used to be a
-                  ; second `strFindByte` whose `-1` could not happen
-                  ; and was not tested for.
-                  (set found (strSlice e 0 (- (strLen e) 3))))
-                (set n (+ n 1))
-              })
-          }
-          (set i (+ i 1))
+          ; extension's, so a crate whose module is `Hash.ax` gets no
+          ; second module named for the package.
+          (let e (vecGet entries i))
+          (if (&& (> (strLen e) 3)
+                (&& (strEq (strSlice e (- (strLen e) 3) 3) ".ax")
+                  (match (strFindByte e 46 0)
+                    ((None) false)
+                    ((Some d) (== d (- (strLen e) 3))))))
+            {
+              (if (== (strLen found) 0)
+                ; The guard above has just established that the ONLY
+                ; `.` is at `strLen - 3`, so this is that index
+                ; rather than a second scan for it.
+                (set found (strSlice e 0 (- (strLen e) 3))))
+              (set n (+ n 1))
+            })
         })
       ; EXACTLY one, not the first of several. With two `.ax` files
       ; under `axiom/`, picking one - even the first in `listDir`'s
@@ -1574,45 +1507,21 @@
 ; `<dir>/<name>.lib` for a Windows link - every directory crossed with
 ; every library, because the link line does not say which archive
 ; lives where and neither does this.
-(pub :: archivePathsOf (-> Ints Bool Ints))
-;@axiom:effect(unsafe)
+(pub :: archivePathsOf (-> Strings Bool Strings))
 (pub fn (archivePathsOf linkArgs isWin)
   {
     (let dirs vecNew)
     (let libs vecNew)
     (let out vecNew)
-    (let mut i 0)
     {
-      (if (! (== (as linkArgs Int) 0))
-        (while (< i (vecLen linkArgs))
-          {
-            {
-              (let a (as (vecGet linkArgs i) String))
-              (if (strStartsWith a "-L")
-                (vecPush dirs (as (strSlice a 2 (- (strLen a) 2)) Int))
-                (if (strStartsWith a "-l")
-                  (vecPush libs (as (strSlice a 2 (- (strLen a) 2)) Int))
-                  (as 0 (Vec Int))))
-            }
-            (set i (+ i 1))
-          }))
-      {
-        (let mut d 0)
-        (while (< d (vecLen dirs))
-          {
-            {
-              (let mut l 0)
-              (while (< l (vecLen libs))
-                {
-                  (vecPush out
-                    (as (archivePathIn (as (vecGet dirs d) String) (as (vecGet libs l) String)
-                          isWin) Int))
-                  (set l (+ l 1))
-                })
-            }
-            (set d (+ d 1))
-          })
-      }
+      (for a in linkArgs
+        (if (strStartsWith a "-L")
+          (vecPush dirs (strSlice a 2 (- (strLen a) 2)))
+          (if (strStartsWith a "-l")
+            (vecPush libs (strSlice a 2 (- (strLen a) 2))))))
+      (for dir in dirs
+        (for lib in libs
+          (vecPush out (archivePathIn dir lib isWin))))
       out
     }
   })
@@ -1620,8 +1529,7 @@
 ; The `; axiom-extern-lib NAME` lines codegen writes beside the
 ; declares: one per `extern` block the program or its imports
 ; declare.
-(pub :: externLibsOf (-> String Ints))
-;@axiom:effect(unsafe)
+(pub :: externLibsOf (-> String Strings))
 (pub fn (externLibsOf ir)
   {
     (let out vecNew)
@@ -1643,8 +1551,7 @@
                     {
                       (let nm (strSlice ir start (- end start)))
                       (if (== (strIndexIn out nm) (- 0 1))
-                        (vecPush out (as nm Int))
-                        (as 0 (Vec Int)))
+                        (vecPush out nm))
                     }
                     (set at end)
                   }
@@ -1661,43 +1568,31 @@
 ; `<dir>/../../target/release` beside each `$AXIOM_PATH` entry (a
 ; crate's `axiom/` binding directory sits next to its `target/`),
 ; and then `-l<lib>` for every `extern` block whose `lib<lib>.a` some
-; search directory holds and no explicit flag already names. The
-; block's library string was dead data until 2026-08-22: every build
-; repeated it as `--link-lib` and named the target directory too.
+; search directory holds and no explicit flag already names, so a
+; build need not repeat a block's library as `--link-lib`.
 ;
-; `entryDir` IS THE SECOND PARAMETER since 2026-09-03, and it is here
-; for one reason: `axiom.pkg`'s `crate` lines. Every other source of a
-; search directory is a flag or an environment variable, both of which
-; this function could read for itself; a manifest is found by walking
-; up from the file being compiled, so the file has to be handed in.
-; Measured before it was: with the same tree and the same archive on
-; disk, `AXIOM_PATH=vendor/greeter/axiom` linked and ran at exit 0
-; while `depend vendor/greeter/axiom` exited 4 with `AX4004` - the
-; shell could describe the project and the project could not.
-(pub :: effectiveLinkArgs (-> String String Ints Ints))
+; `entryDir` is here for one reason: `axiom.pkg`'s `crate` lines.
+; Every other source of a search directory is a flag or an environment
+; variable, both of which this function could read for itself; a
+; manifest is found by walking up from the file being compiled, so the
+; file has to be handed in. Without it, `AXIOM_PATH=vendor/greeter/axiom`
+; would link while `depend vendor/greeter/axiom` in the manifest exited
+; 4 with `AX4004`.
+(pub :: effectiveLinkArgs (-> String String Strings Strings))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (effectiveLinkArgs ir entryDir explicit)
   {
     (let v vecNew)
     (let dirs vecNew)
     (let libs vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen explicit))
+      (for a in explicit
         {
-          {
-            (let a (as (vecGet explicit i) String))
-            {
-              (vecPush v (as a Int))
-              (if (strStartsWith a "-L")
-                (vecPush dirs (as (strSlice a 2 (- (strLen a) 2)) Int))
-                (if (strStartsWith a "-l")
-                  (vecPush libs (as (strSlice a 2 (- (strLen a) 2)) Int))
-                  (as 0 (Vec Int))))
-            }
-          }
-          (set i (+ i 1))
+          (vecPush v a)
+          (if (strStartsWith a "-L")
+            (vecPush dirs (strSlice a 2 (- (strLen a) 2)))
+            (if (strStartsWith a "-l")
+              (vecPush libs (strSlice a 2 (- (strLen a) 2)))))
         })
       (addSearchDir v dirs (sysEnv "AXIOM_LINK_SEARCH"))
       (addAxiomPathDirs v dirs (sysEnv "AXIOM_PATH"))
@@ -1711,22 +1606,13 @@
       (addCrateDirs v dirs (pkgCrateDirs entryDir))
       {
         (let wanted (externLibsOf ir))
-        (let mut j 0)
-        (while (< j (vecLen wanted))
-          {
-            {
-              (let lib (as (vecGet wanted j) String))
-              (if (== (strIndexIn libs lib) (- 0 1))
-                (if (libExistsIn dirs lib 0 (irTargetIsWindows ir))
-                  {
-                    (vecPush v (as (concat "-l" lib) Int))
-                    (vecPush libs (as lib Int))
-                  }
-                  (as 0 (Vec Int)))
-                (as 0 (Vec Int)))
-            }
-            (set j (+ j 1))
-          })
+        (for lib in wanted
+          (if (== (strIndexIn libs lib) (- 0 1))
+            (if (libExistsIn dirs lib 0 (irTargetIsWindows ir))
+              {
+                (vecPush v (concat "-l" lib))
+                (vecPush libs lib)
+              })))
       }
       v
     }
@@ -1738,34 +1624,27 @@
 ; in - rather than a second copy, because a driver that BUILDS into a
 ; directory it does not then SEARCH is the shape of an AX4004 nobody
 ; can explain.
-(pub :: addCrateDirs (-> Ints Ints Ints Int))
+(pub :: addCrateDirs (-> Strings Strings Ints Int))
 ;@axiom:effect(io)
 (pub fn (addCrateDirs v dirs crates)
   {
-    (let mut c 0)
-    {
-      (while (< c (vecLen crates))
-        {
-          (addTargetDirs v dirs (crateTargetDirs (pathWithSlash (vecGetStr crates c))) 0)
-          (set c (+ c 1))
-        })
-      0
-    }
+    (for c in 0..(vecLen crates)
+      (addTargetDirs v dirs (crateTargetDirs (pathWithSlash (vecGetStr crates c))) 0))
+    0
   })
 
-(pub :: addTargetDirs (-> Ints Ints Ints Int Int))
+(pub :: addTargetDirs (-> Strings Strings Strings Int Int))
 ;@axiom:effect(io)
 (pub fn (addTargetDirs v dirs td i)
   (if (>= i (vecLen td))
     0
     {
-      (addOneDir v dirs (vecGetStr td i))
+      (addOneDir v dirs (vecGet td i))
       (addTargetDirs v dirs td (+ i 1))
     }))
 
-(pub :: addSearchDir (-> Ints Ints String Int))
+(pub :: addSearchDir (-> Strings Strings String Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (addSearchDir v dirs list)
   {
     (let parts (strSplit list 58))
@@ -1774,15 +1653,13 @@
       (while (< i (vecLen parts))
         {
           {
-            (let d (as (vecGet parts i) String))
+            (let d (vecGet parts i))
             (if (&& (> (strLen d) 0) (== (strIndexIn dirs d) (- 0 1)))
               (if (fileExists d)
                 {
-                  (vecPush v (as (concat "-L" d) Int))
-                  (vecPush dirs (as d Int))
-                }
-                (as 0 (Vec Int)))
-              (as 0 (Vec Int)))
+                  (vecPush v (concat "-L" d))
+                  (vecPush dirs d)
+                }))
           }
           (set i (+ i 1))
         })
@@ -1790,68 +1667,55 @@
     }
   })
 
-(pub :: addAxiomPathDirs (-> Ints Ints String Int))
+(pub :: addAxiomPathDirs (-> Strings Strings String Int))
 ;@axiom:effect(io)
 (pub fn (addAxiomPathDirs v dirs list)
   {
     (let parts (strSplit list 58))
-    (let mut i 0)
     {
-      (while (< i (vecLen parts))
-        {
+      (for p in parts
+        (if (> (strLen p) 0)
           {
-            (let p (as (vecGet parts i) String))
-            (if (> (strLen p) 0)
-              {
-                (addOneDir v dirs (concat (pathWithSlash p) "../target/release"))
-                (addOneDir v dirs (concat (pathWithSlash p) "../../target/release"))
-              })
-          }
-          (set i (+ i 1))
-        })
+            (addOneDir v dirs (concat (pathWithSlash p) "../target/release"))
+            (addOneDir v dirs (concat (pathWithSlash p) "../../target/release"))
+          }))
       0
     }
   })
 
-(pub :: addOneDir (-> Ints Ints String Int))
+(pub :: addOneDir (-> Strings Strings String Int))
 ;@axiom:effect(io)
 (pub fn (addOneDir v dirs d)
   (if (== (strIndexIn dirs d) (- 0 1))
     (if (fileExists d)
       {
-        (vecPush v (as (concat "-L" d) Int))
-        (vecPush dirs (as d Int))
+        (vecPush v (concat "-L" d))
+        (vecPush dirs d)
         0
       }
       0)
     0))
 
-(pub :: libExistsIn (-> Ints String Int Bool Bool))
+(pub :: libExistsIn (-> Strings String Int Bool Bool))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (libExistsIn dirs lib i isWin)
   (if (>= i (vecLen dirs))
     false
-    (if (fileExists (archivePathIn (as (vecGet dirs i) String) lib isWin))
+    (if (fileExists (archivePathIn (vecGet dirs i) lib isWin))
       true
       (libExistsIn dirs lib (+ i 1) isWin))))
 
 ; Read every archive once. A path that does not exist reads empty and
 ; simply grounds nothing, which lets `cc` produce its own error about
 ; the missing file rather than this pass inventing one.
-(pub :: readArchives (-> Ints Ints))
+(pub :: readArchives (-> Strings Strings))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (readArchives paths)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen paths))
-        {
-          (vecPush out (as (unwrapOr (readFile (as (vecGet paths i) String)) "") Int))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen paths)
+        (vecPush out (unwrapOr (readFile (vecGet paths i)) "")))
       out
     }
   })
@@ -1861,17 +1725,15 @@
 ; `\0name\0` (ELF), or `\0__imp_name\0` (a COFF import library, whose
 ; members are import descriptors rather than code: the linker resolves
 ; a call to `name` through `__imp_name`, and an import library made by
-; `llvm-dlltool` lists ONLY that spelling - measured 2026-08-29 on one
-; generated from a `.def`: `\0VirtualAlloc\0` 0 times, `__imp_
-; VirtualAlloc` 2). A bare substring scan - what this was until
-; 2026-08-22 - let `axffi_trip` ground against `axffi_triple` and die
-; in the linker with a message about `cc`.
-(pub :: symbolGrounded (-> Ints String Int Bool))
-;@axiom:effect(unsafe)
+; `llvm-dlltool` from a `.def` lists ONLY that spelling). The whole
+; name matters: a bare substring scan would let `axffi_trip` ground
+; against `axffi_triple` and die in the linker with a message about
+; `cc`.
+(pub :: symbolGrounded (-> Strings String Int Bool))
 (pub fn (symbolGrounded blobs name i)
   (if (>= i (vecLen blobs))
     false
-    (if (blobDefines (as (vecGet blobs i) String) name)
+    (if (blobDefines (vecGet blobs i) name)
       true
       (symbolGrounded blobs name (+ i 1)))))
 
@@ -1886,9 +1748,9 @@
 ; Some occurrence of `needle` that ENDS the string it sits in and does
 ; not continue an identifier to its left.
 ;
-; The left test used to demand a NUL, and that is a Mach-O fact rather
-; than a fact about archives. Measured on the linux-x86_64 runner, every
-; occurrence of `axffi_abi_probe` in `libaxiom_demo.a`:
+; The left test does not demand a NUL: that is a Mach-O fact rather
+; than a fact about archives. On linux-x86_64, every occurrence of
+; `axffi_abi_probe` in `libaxiom_demo.a` reads:
 ;
 ;   off=10608   before=0xbe  after=0x00
 ;   off=10624   before=0x00  after='_'
@@ -1904,20 +1766,17 @@
 ; means the standalone spelling never appears. `axffi_fnv1a` in the
 ; nostd archive is the same story.
 ;
-; So the symbol was defined, the archive said so, and the compiler
-; refused the program with AX4004 - on Linux only, since Mach-O writes
-; `\0_name\0` and satisfied the old test by accident of format.
+; A NUL on the left would refuse a defined symbol with AX4004 on Linux
+; only, since Mach-O writes `\0_name\0`.
 ;
-; The trailing NUL is what carries the real check and is unchanged: it
-; is what keeps `axffi_trip` from grounding against `axffi_triple`, the
-; defect this function was tightened for on 2026-08-22. To its left, a
+; The trailing NUL is what carries the real check: it is what keeps
+; `axffi_trip` from grounding against `axffi_triple`. To its left, a
 ; byte that cannot continue an identifier says the same thing portably -
 ; a NUL, a `.`, or the last byte of an offset table all qualify, and
 ; `e` in `axffi_triple` does not.
 ;
-; Also: the old form COMMITTED to the underscore spelling the moment it
-; saw `\0_name` anywhere, and answered whatever that branch decided. It
-; tries both now.
+; `blobDefines` tries the underscore spelling and the bare one; seeing
+; `\0_name` somewhere does not commit it to the first.
 (pub :: nulAfter (-> String String Int Bool))
 (pub fn (nulAfter blob needle from)
   {
@@ -1948,24 +1807,18 @@
     }))
 
 ; Every `axffi_` name an archive's tables hold, for a did-you-mean.
-(pub :: archiveFfiNames (-> Ints Ints))
-;@axiom:effect(unsafe)
+(pub :: archiveFfiNames (-> Strings Strings))
 (pub fn (archiveFfiNames blobs)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen blobs))
-        {
-          (collectFfiNames (as (vecGet blobs i) String) out 0)
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen blobs)
+        (collectFfiNames (vecGet blobs i) out 0))
       out
     }
   })
 
-(pub :: collectFfiNames (-> String Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: collectFfiNames (-> String Strings Int Int))
 (pub fn (collectFfiNames blob out from)
   {
     (let at (strFindSub blob "axffi_" from))
@@ -1978,8 +1831,7 @@
             {
               (let nm (strSlice blob at (- end at)))
               (if (&& (< (strLen nm) 200) (== (strIndexIn out nm) (- 0 1)))
-                (vecPush out (as nm Int))
-                (as 0 (Vec Int)))
+                (vecPush out nm))
             }
             (collectFfiNames blob out end)
           }
@@ -1988,28 +1840,20 @@
 
 ; The candidate sharing the longest prefix with `name`, when that
 ; prefix reaches past `axffi_`; "" otherwise.
-(pub :: closestFfiName (-> Ints String String))
-;@axiom:effect(unsafe)
+(pub :: closestFfiName (-> Strings String String))
 (pub fn (closestFfiName names name)
   {
     (let mut best "")
     (let mut bestLen 6)
-    (let mut i 0)
     {
-      (while (< i (vecLen names))
+      (for c in names
         {
-          {
-            (let c (as (vecGet names i) String))
+          (let k (commonPrefixLen c name 0))
+          (if (> k bestLen)
             {
-              (let k (commonPrefixLen c name 0))
-              (if (> k bestLen)
-                {
-                  (set best c)
-                  (set bestLen k)
-                })
-            }
-          }
-          (set i (+ i 1))
+              (set best c)
+              (set bestLen k)
+            })
         })
       best
     }
@@ -2054,13 +1898,12 @@
 ; writes above the declares of an `extern "kernel32"` block; for any
 ; other DLL it is the runs after that DLL's own marker. These are the
 ; names an import library for the DLL has to carry.
-(pub :: windowsImportNamesOf (-> String String Ints))
+(pub :: windowsImportNamesOf (-> String String Strings))
 (pub fn (windowsImportNamesOf ir dll)
   {
     (let out vecNew)
     (if (strEq dll "kernel32")
-      (windowsDllimportFrom ir 0 out)
-      0)
+      (windowsDllimportFrom ir 0 out))
     (windowsLibRunsFrom ir 0 (concat (concat "\n; axiom-extern-lib " dll) "\n") out)
     out
   })
@@ -2068,7 +1911,7 @@
 ; The DLLs a Windows module imports from: kernel32, which the runtime
 ; always needs, then each `extern` block's library in order of first
 ; appearance, read from the markers codegen writes.
-(pub :: windowsExternLibsOf (-> String Ints))
+(pub :: windowsExternLibsOf (-> String Strings))
 (pub fn (windowsExternLibsOf ir)
   {
     (let out vecNew)
@@ -2077,7 +1920,7 @@
     out
   })
 
-(pub :: windowsExternLibsFrom (-> String Int Ints Int))
+(pub :: windowsExternLibsFrom (-> String Int Strings Int))
 (pub fn (windowsExternLibsFrom ir at out)
   {
     (let marker "\n; axiom-extern-lib ")
@@ -2108,16 +1951,16 @@
         ((Some open) (strDup (strSlice ir (+ sym 1) (- open (+ sym 1))))))
     )))
 
-(pub :: pushNameOnce (-> Ints String Int))
+(pub :: pushNameOnce (-> Strings String Int))
 (pub fn (pushNameOnce out n)
   (if (|| (== (strLen n) 0) (>= (strIndexIn out n) 0))
     0
     {
-      (vecPush out (as n Int))
+      (vecPush out n)
       0
     }))
 
-(pub :: windowsDllimportFrom (-> String Int Ints Int))
+(pub :: windowsDllimportFrom (-> String Int Strings Int))
 (pub fn (windowsDllimportFrom ir at out)
   {
     (let d (strFindSub ir "\ndeclare dllimport " at))
@@ -2129,7 +1972,7 @@
       })
   })
 
-(pub :: windowsLibRunsFrom (-> String Int String Ints Int))
+(pub :: windowsLibRunsFrom (-> String Int String Strings Int))
 (pub fn (windowsLibRunsFrom ir at marker out)
   {
     (let m (strFindSub ir marker at))
@@ -2145,7 +1988,7 @@
 
 ; Push the name of each consecutive `declare` line from `at`, a line
 ; start, answering where the run ended.
-(pub :: windowsDeclareRun (-> String Int Ints Int))
+(pub :: windowsDeclareRun (-> String Int Strings Int))
 (pub fn (windowsDeclareRun ir at out)
   (if (strStartsWith (strSlice ir at (- (strLen ir) at)) "declare ")
     {
@@ -2163,23 +2006,23 @@
 ; `llvm-dlltool` from the module's own imports of that DLL, the way
 ; `scripts/check-windows-hello.sh` makes them from the allowlist.
 ; `(Err msg)` when `llvm-dlltool` can't make one.
-(pub :: windowsImportLibs (-> String String String Ints (Result Ints String)))
+(pub :: windowsImportLibs (-> String String String Strings (Result Strings String)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (windowsImportLibs ir objPath winTarget linkArgs)
   (windowsImportLibsFrom ir objPath winTarget linkArgs (windowsExternLibsOf ir) 0 vecNew))
 
-(pub :: windowsImportLibsFrom (-> String String String Ints Ints Int Ints (Result Ints String)))
+(pub :: windowsImportLibsFrom
+  (-> String String String Strings Strings Int Strings (Result Strings String)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
-;@axiom:effect(unsafe)
 (pub fn (windowsImportLibsFrom ir objPath winTarget linkArgs dlls i out)
   (if (>= i (vecLen dlls))
     (Ok out)
     {
-      (let dll (as (vecGet dlls i) String))
+      (let dll (vecGet dlls i))
       (let names (windowsImportNamesOf ir dll))
       ; A block the module calls nothing from leaves no declare, and
       ; needs no library: a program that never draws entropy links
@@ -2190,7 +2033,7 @@
           ((Err msg) (Err msg))
           ((Ok lib)
             {
-              (vecPush out (as lib Int))
+              (vecPush out lib)
               (windowsImportLibsFrom ir objPath winTarget linkArgs dlls (+ i 1) out)
             }
           )))
@@ -2198,7 +2041,7 @@
 
 ; One DLL's import library for `names`, written beside the object:
 ; `<obj>.<dll>.lib`.
-(pub :: windowsImportLibFor (-> String String String Ints (Result String String)))
+(pub :: windowsImportLibFor (-> String String String Strings (Result String String)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -2206,7 +2049,9 @@
   {
     (let defPath (concat objPath (concat "." (concat dll ".def"))))
     (let libPath (concat objPath (concat "." (concat dll ".lib"))))
-    (let def (concat (concat "LIBRARY " dll) (concat ".dll\nEXPORTS\n" (joinLines names 0 ""))))
+    (let def
+      (concat (concat "LIBRARY " dll)
+        (concat ".dll\nEXPORTS\n" (concat (strJoin names "\n") "\n"))))
     (if (isErr (writeFile defPath def))
       (Err (concat (concat "could not write the " dll) " import definitions beside the object"))
       {
@@ -2233,14 +2078,13 @@
       })
   })
 
-(pub :: windowsHasLib (-> Ints String Int Bool))
+(pub :: windowsHasLib (-> Strings String Int Bool))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (windowsHasLib paths dll i)
   (if (>= i (vecLen paths))
     false
     {
-      (let p (as (vecGet paths i) String))
+      (let p (vecGet paths i))
       (if (&& (strEq (pathBase p) (concat dll ".lib")) (fileExists p))
         true
         (windowsHasLib paths dll (+ i 1)))
@@ -2248,53 +2092,39 @@
 
 ; The import libraries, pushed onto the link line; and removed again
 ; after it, so a build leaves only its output behind.
-(pub :: windowsPushLibs (-> Strings Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: windowsPushLibs (-> Strings Strings Int Int))
 (pub fn (windowsPushLibs v libs i)
   (if (>= i (vecLen libs))
     0
     {
-      (vecPush v (as (vecGet libs i) String))
+      (vecPush v (vecGet libs i))
       (windowsPushLibs v libs (+ i 1))
     }))
 
-(pub :: windowsRemoveLibs (-> Ints Int Int))
+(pub :: windowsRemoveLibs (-> Strings Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (windowsRemoveLibs libs i)
   (if (>= i (vecLen libs))
     0
     {
-      (unwrapOr (removeFile (as (vecGet libs i) String)) 0)
+      (unwrapOr (removeFile (vecGet libs i)) 0)
       (windowsRemoveLibs libs (+ i 1))
     }))
 
-(pub :: joinLines (-> Ints Int String String))
-;@axiom:effect(unsafe)
-(pub fn (joinLines v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (joinLines v (+ i 1) (concat acc (concat (as (vecGet v i) String) "\n")))))
-
 ; Every name a Windows module imports, from every DLL
 ; (`windowsExternLibsOf`): what the link grounds with import libraries.
-(pub :: windowsAllImportNamesOf (-> String Ints))
+(pub :: windowsAllImportNamesOf (-> String Strings))
 (pub fn (windowsAllImportNamesOf ir)
   (windowsAllImportNamesFrom ir (windowsExternLibsOf ir) 0 vecNew))
 
-(pub :: windowsAllImportNamesFrom (-> String Ints Int Ints Ints))
-;@axiom:effect(unsafe)
+(pub :: windowsAllImportNamesFrom (-> String Strings Int Strings Strings))
 (pub fn (windowsAllImportNamesFrom ir dlls i out)
   (if (>= i (vecLen dlls))
     out
     {
-      (let names (windowsImportNamesOf ir (as (vecGet dlls i) String)))
-      (let mut k 0)
-      (while (< k (vecLen names))
-        {
-          (pushNameOnce out (as (vecGet names k) String))
-          (set k (+ k 1))
-        })
+      (let names (windowsImportNamesOf ir (vecGet dlls i)))
+      (for k in 0..(vecLen names)
+        (pushNameOnce out (vecGet names k)))
       (windowsAllImportNamesFrom ir dlls (+ i 1) out)
     }))
 
@@ -2302,7 +2132,7 @@
 ; the platform grounds (`platformGroundedSym`), and on a Windows target
 ; less the DLL imports (`windowsAllImportNamesOf`), which the link
 ; grounds with import libraries (`windowsImportLibs`).
-(pub :: declareNamesOf (-> String Ints))
+(pub :: declareNamesOf (-> String Strings))
 (pub fn (declareNamesOf ir)
   {
     (let out vecNew)
@@ -2333,7 +2163,7 @@
                               (|| (backendGroundedSym (strSlice ir (+ sym 1) (- open (+ sym 1))))
                                 (>= (strIndexIn k32 (strSlice ir (+ sym 1) (- open (+ sym 1))))
                                   0))))
-                        (vecPush out (as (strSlice ir (+ sym 1) (- open (+ sym 1))) Int)))
+                        (vecPush out (strSlice ir (+ sym 1) (- open (+ sym 1)))))
                       (set at open)
                     }
                   ))
@@ -2345,13 +2175,12 @@
 
 ; The grounding check WITH a source span: the extern item that bound
 ; the ungrounded symbol is found among the resolved declarations, and
-; the diagnostic points at it, distinguishing the three mistakes that
-; used to share one message - nothing linked at all, an archive
-; linked that does not define the name, and a name close to one an
-; archive does define. `compileFile` runs this before the toolchain;
+; the diagnostic points at it, distinguishing three mistakes - nothing
+; linked at all, an archive linked that does not define the name, and a
+; name close to one an archive does define. `compileFile` runs this before the toolchain;
 ; `groundDeclares` below stays as the span-less fallback for IR built
 ; by another path.
-(pub :: groundExternsSpanned (-> String (Vec ASTNode) Ints Int Ints Int))
+(pub :: groundExternsSpanned (-> String (Vec ASTNode) Ints Int Strings Int))
 ;@axiom:effect(io)
 (pub fn (groundExternsSpanned ir decls units dfmt linkArgs)
   {
@@ -2367,33 +2196,27 @@
       })
   })
 
-(pub :: existingPaths (-> Ints Ints))
+(pub :: existingPaths (-> Strings Strings))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (existingPaths paths)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen paths))
-        {
-          (if (fileExists (as (vecGet paths i) String))
-            (vecPush out (vecGet paths i))
-            (as 0 (Vec Int)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen paths)
+        (if (fileExists (vecGet paths i))
+          (vecPush out (vecGet paths i))))
       out
     }
   })
 
-(pub :: groundEachSpanned (-> Ints Ints Ints (Vec ASTNode) Ints Int Int Int))
+(pub :: groundEachSpanned (-> Strings Strings Strings (Vec ASTNode) Ints Int Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (groundEachSpanned names blobs paths decls units dfmt i)
   (if (>= i (vecLen names))
     0
     {
-      (let n (as (vecGet names i) String))
+      (let n (vecGet names i))
       (if (symbolGrounded blobs n 0)
         ; grounded: now the SHAPE. A shim `#[axiom_export]` writes
         ; also exports `<sym>__sig_<params>_<ret>`, a no-op whose
@@ -2401,7 +2224,7 @@
         ; f: Float bits, s: a String, c: a callback), and the item's
         ; declared type spells the same string here; a difference
         ; is AX4005 at the item - a two-argument declaration over a
-        ; three-argument shim used to build, link and answer garbage
+        ; three-argument shim would build, link and answer garbage
         {
           (let want
             {
@@ -2423,7 +2246,7 @@
                       (nodeSpan item))
                     (concat (concat "`" (concat n "` is exported by the crate for "))
                       (concat
-                        (concat (sigTagSpelled (as (vecGet have 0) String))
+                        (concat (sigTagSpelled (vecGet have 0))
                           (concat "; the `extern` item declares " (sigTagSpelled want)))
                         ""))
                     0 0
@@ -2477,7 +2300,7 @@
                     "\", and `axiom build` links `lib<name>.a` by itself when a search directory holds it (an `AXIOM_PATH` entry's `../target/release` is searched too)"))
                 {
                   (let near (closestFfiName (archiveFfiNames blobs) n))
-                  (concat (concat "searched: " (concat (joinPaths paths 0) "; "))
+                  (concat (concat "searched: " (concat (strJoin paths ", ") "; "))
                     (concat
                       (if (== (strLen near) 0)
                         "check the `(symbol \"...\")` clause against the crate's `#[axiom_export]` names"
@@ -2596,25 +2419,19 @@
 
 ; Every `<sym>__sig_...` name an archive holds, as the part after
 ; `__sig_`.
-(pub :: descriptorsOf (-> Ints String Ints))
-;@axiom:effect(unsafe)
+(pub :: descriptorsOf (-> Strings String Strings))
 (pub fn (descriptorsOf blobs sym)
   {
     (let out vecNew)
-    (let mut i 0)
     (let prefix (concat sym "__sig_"))
     {
-      (while (< i (vecLen blobs))
-        {
-          (collectPrefixed (as (vecGet blobs i) String) prefix out 0)
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen blobs)
+        (collectPrefixed (vecGet blobs i) prefix out 0))
       out
     }
   })
 
-(pub :: collectPrefixed (-> String String Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: collectPrefixed (-> String String Strings Int Int))
 (pub fn (collectPrefixed blob prefix out from)
   {
     (let at (strFindSub blob prefix from))
@@ -2627,8 +2444,7 @@
             {
               (let tail (strSlice blob (+ at (strLen prefix)) (- end (+ at (strLen prefix)))))
               (if (&& (< (strLen tail) 80) (== (strIndexIn out tail) (- 0 1)))
-                (vecPush out (as tail Int))
-                (as 0 (Vec Int)))
+                (vecPush out tail))
             }
             (collectPrefixed blob prefix out end)
           }
@@ -2652,9 +2468,17 @@
 
 (pub :: tagWords (-> String Int String))
 (pub fn (tagWords ps i)
-  (if (>= i (strLen ps))
-    ""
-    (concat (tagWord (strSlice ps i 1)) (concat " " (tagWords ps (+ i 1))))))
+  {
+    (let out (strBuilderNew))
+    {
+      (for k in i..(strLen ps)
+        {
+          (strBuilderPush out (tagWord (strSlice ps k 1)))
+          (strBuilderPush out " ")
+        })
+      (strBuilderFinish out)
+    }
+  })
 
 (pub :: tagWord (-> String String))
 (pub fn (tagWord t)
@@ -2665,16 +2489,6 @@
       (if (strEq t "c")
         "(-> Int ...)"
         "Int"))))
-
-(pub :: joinPaths (-> Ints Int String))
-;@axiom:effect(unsafe)
-(pub fn (joinPaths paths i)
-  (if (>= i (vecLen paths))
-    ""
-    (concat (as (vecGet paths i) String)
-      (if (< (+ i 1) (vecLen paths))
-        (concat ", " (joinPaths paths (+ i 1)))
-        ""))))
 
 ; The extern ITEM node binding linker symbol `sym`, or 0.
 (pub :: findExternItem (-> (Vec ASTNode) String Int ASTNode))
@@ -2717,7 +2531,7 @@
 
 ; 0 when every declare is grounded; otherwise the build's exit code,
 ; having reported the FIRST ungrounded symbol.
-(pub :: groundDeclares (-> String Ints Int))
+(pub :: groundDeclares (-> String Strings Int))
 ;@axiom:effect(io)
 (pub fn (groundDeclares ir linkArgs)
   {
@@ -2730,14 +2544,13 @@
       })
   })
 
-(pub :: groundEach (-> Ints Ints Int Int))
+(pub :: groundEach (-> Strings Strings Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (groundEach names blobs i)
   (if (>= i (vecLen names))
     0
     {
-      (let n (as (vecGet names i) String))
+      (let n (vecGet names i))
       (if (symbolGrounded blobs n 0)
         (groundEach names blobs (+ i 1))
         (buildFailDiag "AX4004" "ungrounded-symbol"
@@ -2946,7 +2759,7 @@
 ; takes the serial path). Optimising before the split keeps every
 ; inlining decision whole-module: the objects answer what the
 ; serial path's optimiser produced, only assembled concurrently.
-(pub :: buildSplit (-> String String String String Int Ints Int))
+(pub :: buildSplit (-> String String String String Int Strings Int))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -3001,7 +2814,7 @@
                       {
                         (let v (splitLinkArgs stem jobs 0 vecNew))
                         {
-                          (appendLinkArgs v linkArgs 0)
+                          (appendLinkArgs v linkArgs)
                           (vecPush v "-o")
                           (vecPush v outPath)
                           v
@@ -3036,7 +2849,7 @@
 ; PRE-`opt` IR - also stage0's choice, and worth knowing before writing
 ; a gate that greps it, since it is the optimiser's input rather than
 ; what llc consumed.
-(pub :: buildToExecutable (-> String String Int Int Ints Int))
+(pub :: buildToExecutable (-> String String Int Int Strings Int))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -3195,11 +3008,10 @@
 
 ; One command's help: its synopsis and the flags it actually reads.
 ;
-; `axiom build --help` used to answer `error: build needs an input
-; file` - the one question a CLI must never refuse. Worse,
-; `axiom fmt FILE --help` REWROTE the file, and `axiom repl --help`
-; dropped the user into the REPL, because `--help` was recognised only
-; at argv[1] and every other position fell through to the subcommand.
+; `--help` is recognised in any position (`helpFlagPresent`), so
+; `axiom build --help` answers this rather than `build needs an input
+; file`, `axiom fmt FILE --help` does not rewrite FILE, and
+; `axiom repl --help` does not start the REPL.
 ;
 ; A synopsis and a flag list rather than a page of prose: the flags are
 ; the part a reader cannot guess, and check-driver.sh asserts that every
@@ -3249,7 +3061,7 @@
 ; This is the FFI's only reach into the driver. Before it, `cc` was
 ; invoked with exactly three arguments and the language had no way to
 ; name an external symbol, so there was nothing for a `-l` to resolve.
-(pub :: linkArgsOf Ints)
+(pub :: linkArgsOf Strings)
 ;@axiom:effect(io)
 (pub fn (linkArgsOf)
   {
@@ -3264,7 +3076,7 @@
 ; Both `--flag VALUE` and `--flag=VALUE`, the two spellings
 ; `flagValueAt` already accepts, but collecting EVERY occurrence rather
 ; than the first: a program may bind more than one library.
-(pub :: collectFlagInto (-> Ints String String Int Int Int))
+(pub :: collectFlagInto (-> Strings String String Int Int Int))
 ;@axiom:effect(io)
 (pub fn (collectFlagInto v name prefix i n)
   (if (>= i n)
@@ -3274,7 +3086,7 @@
       (if (strEq a name)
         (if (< (+ i 1) n)
           {
-            (vecPush v (as (concat prefix (sysArg (+ i 1))) Int))
+            (vecPush v (concat prefix (sysArg (+ i 1))))
             (collectFlagInto v name prefix (+ i 2) n)
           }
           0)
@@ -3282,8 +3094,7 @@
           (let eq (concat name "="))
           (if (strStartsWith a eq)
             {
-              (vecPush v
-                (as (concat prefix (strSlice a (strLen eq) (- (strLen a) (strLen eq)))) Int))
+              (vecPush v (concat prefix (strSlice a (strLen eq) (- (strLen a) (strLen eq)))))
               (collectFlagInto v name prefix (+ i 1) n)
             }
             (collectFlagInto v name prefix (+ i 1) n))
@@ -3325,21 +3136,19 @@
 ; How many SEPARATE arguments this flag consumes after itself: 1 for a
 ; value flag, 0 for a boolean, -1 when the name is not a flag at all.
 ;
-; Kept as a table rather than inferred, because inferring it is what
-; broke. The scan below used to skip TWO arguments for any flag without
-; an `=`, on the assumption that a flag always takes a value, so
+; Kept as a table rather than inferred: there is no way to tell a
+; boolean from a value-taking flag by looking at the flag. A scan that
+; assumed every flag without an `=` takes a value would read `prog.ax`
+; in
 ;
 ;     axiom --emit-llvm prog.ax
 ;
-; read `prog.ax` as the VALUE of `--emit-llvm` and found no positional
-; after it. Any boolean flag before a positional did it. There is no way
-; to tell a boolean from a value-taking flag by looking at the flag.
+; as the VALUE of `--emit-llvm` and find no positional after it.
 ;
-; The -1 arm is the new half, and it is what makes an unrecognised flag
-; an ERROR rather than something silently stepped over. Skipping is
-; indistinguishable from accepting, which is why `axiom check --bogus
-; f.ax` used to print OK and exit 0, and why a mistyped
-; `--diagnostic-formt=json` quietly produced human output.
+; The -1 arm makes an unrecognised flag an ERROR rather than something
+; silently stepped over. Skipping is indistinguishable from accepting:
+; `axiom check --bogus f.ax` would print OK and exit 0, and a mistyped
+; `--diagnostic-formt=json` would quietly produce human output.
 (pub :: flagArity (-> String Int))
 (pub fn (flagArity a)
   (if (|| (strEq a "--input")
@@ -3498,12 +3307,10 @@
 
 ; The optimisation level, refusing a value it cannot honour.
 ;
-; It used to fall back to 1 for anything it did not recognise, so
-; `--opt banana` and `--opt 9` both built at -O1 in silence - the user
-; asked for one thing and got another with no way to tell. The retired
-; compiler parsed a u8 and clamped, so `--opt 200` also silently became
-; -O3; refusing outside 0-3 is stricter than that on purpose, because a
-; clamp is a silent answer to a question the user got wrong.
+; A fallback to 1 would build `--opt banana` and `--opt 9` at -O1 in
+; silence, and a clamp would build `--opt 200` at -O3: each a silent
+; answer to a question the user got wrong, so anything outside 0-3 is
+; refused.
 ;
 ; The command line wins wherever it speaks; where it is silent the
 ; project's manifest answers through `pkgOpt`, or 1 when the project
@@ -3644,24 +3451,24 @@
     }
   })
 
-(pub :: subcommandNames Ints)
+(pub :: subcommandNames Strings)
 (pub fn (subcommandNames)
   {
     (let v vecNew)
     {
-      (vecPush v (as "build" Int))
-      (vecPush v (as "check" Int))
-      (vecPush v (as "run" Int))
-      (vecPush v (as "test" Int))
-      (vecPush v (as "emit-llvm" Int))
-      (vecPush v (as "fmt" Int))
-      (vecPush v (as "explain" Int))
-      (vecPush v (as "symbols" Int))
-      (vecPush v (as "doc" Int))
-      (vecPush v (as "repl" Int))
-      (vecPush v (as "lsp" Int))
-      (vecPush v (as "version" Int))
-      (vecPush v (as "help" Int))
+      (vecPush v "build")
+      (vecPush v "check")
+      (vecPush v "run")
+      (vecPush v "test")
+      (vecPush v "emit-llvm")
+      (vecPush v "fmt")
+      (vecPush v "explain")
+      (vecPush v "symbols")
+      (vecPush v "doc")
+      (vecPush v "repl")
+      (vecPush v "lsp")
+      (vecPush v "version")
+      (vecPush v "help")
       v
     }
   })
@@ -3680,12 +3487,12 @@
 (pub fn (nearestSubcommand w)
   (nearestSubcommandFrom w subcommandNames 0))
 
-(pub :: nearestSubcommandFrom (-> String Ints Int String))
+(pub :: nearestSubcommandFrom (-> String Strings Int String))
 (pub fn (nearestSubcommandFrom w v i)
   (if (>= i (vecLen v))
     ""
     {
-      (let c (vecGetStr v i))
+      (let c (vecGet v i))
       (if (<= (editDistance w c) 2)
         c
         (nearestSubcommandFrom w v (+ i 1)))
@@ -3694,9 +3501,9 @@
 ; Is `want` present as a FLAG - anywhere in argv, not as another flag's
 ; value, and not after `--`?
 ;
-; Anywhere is the whole point. `--help` used to be recognised only at
-; argv[1], so `axiom fmt FILE --help` fell through to fmt's write path
-; and rewrote the file it had been asked to explain.
+; Anywhere is the whole point. Recognised only at argv[1], `axiom fmt
+; FILE --help` would fall through to fmt's write path and rewrite the
+; file it had been asked to explain.
 ;
 ; After `run`'s own file operand every argument belongs to the PROGRAM,
 ; so the scan stops there: `axiom run prog.ax --help` asks prog.ax for
@@ -3812,11 +3619,10 @@
 ; same walk as the names, so a wrong command line is refused before any
 ; subcommand acts on it.
 ;
-; `--opt` was previously parsed where it is USED, which in `build` is
-; after `compileFile` has already run - so `axiom build --input bad.ax
-; --opt banana` reported the type error, and only mentioned the bad
-; optimisation level on the next run, after the user had fixed the
-; first thing. A command line that cannot be honoured should be refused
+; Parsed only where it is USED, `--opt` would be read in `build` after
+; `compileFile` has run, so `axiom build --input bad.ax --opt banana`
+; would report the type error first and the bad optimisation level only
+; on the next run. A command line that cannot be honoured is refused
 ; before the compiler does a minute of work on it.
 ;
 ; `--diagnostic-format` takes exactly `human`, `ai` or `json`, the
