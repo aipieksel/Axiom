@@ -52,6 +52,10 @@ have() { # have <got> <want> <what>
   else fail "$3 is $1, pinned $2 - the distribution moved; revisit the required/ambient line in the diff"; fi
 }
 
+# Counted line-table metadata adds srcLineIndexTyped (Alloc,Mut).
+# A same-compiler source comparison moves collectMods, resolveModMarks and
+# srcLineIndex from Alloc,Mut,Unsafe to Alloc,Mut after removing raw views.
+# No other existing row, including any IO-bearing row, changes effects.
 # RE-DERIVED 2026-10-13: the lexicon (`self_host/lexicon.ax`), the
 # nolint reading (`self_host/nolint.ax`) and the server's semantic
 # tokens section arrived, all of them string-building and
@@ -265,14 +269,14 @@ echo "== compiler view: symbols --calls self_host/main.ax =="
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3365 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3369 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 455 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 195 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 117 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 258 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 255 "Alloc,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Unsafe')" 176 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 67 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 40 "Mut,Unsafe"

@@ -1,0 +1,92 @@
+; Counted line metadata keeps aliases valid and retires completed tables.
+(import codegen)
+(import diag)
+(import raw)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+; The inspected addresses remain held by the typed source-index value.
+(:: ixCount (-> SrcIx Int Int))
+;@axiom:effect(unsafe)
+(fn (ixCount ix field)
+  (__load64 (__load64 (as ix Int) field) -2))
+
+(:: indexScope Int)
+(fn (indexScope)
+  {
+    (let ix (srcLineIndexTyped "α\nz\n"))
+    (+ (vecLen ix.starts) (vecLen ix.chars))
+  })
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let text "α\nz\n")
+    (let ix (srcLineIndexTyped text))
+    (say 1 (== (vecLen ix.starts) 3))
+    (say 2 (== (vecGet ix.starts 0) 0))
+    (say 3 (== (vecGet ix.starts 1) 3))
+    (say 4 (== (vecGet ix.starts 2) 5))
+    (say 5 (== (vecGet ix.chars 1) 2))
+    (say 6 (== (vecGet ix.chars 2) 4))
+    (say 7 (== (ixCount ix 0) 1))
+    (say 8 (== (ixCount ix 1) 1))
+    (say 9 (== (lineOfIx (as ix Int) 3) 2))
+    (say 10 (== (colOfIx text (as ix Int) 3) 1))
+    (say 11 (== (colOfIx text (as ix Int) 2) 2))
+    (let raw (srcLineIndex text))
+    (say 12 (== (lineOfIx raw 3) (lineOfIx (as ix Int) 3)))
+    (let empty (srcLineIndexTyped ""))
+    (say 13 (== (vecLen empty.starts) 1))
+    (say 14 (== (vecLen empty.chars) 1))
+    (let values (probeMetadataValues))
+    (say 15 (strEq (vecGet values 0) "modA"))
+    (say 16 (strEq (vecGet values 1) "modB"))
+    (say 17 (strEq (vecGet values 2) "first"))
+    (say 18 (strEq (vecGet values 3) "@one"))
+    (say 19 (strEq (vecGet values 4) "last"))
+    (say 20 (strEq (vecGet values 5) "@three"))
+    (say 21 (strEq (vecGet values 6) "source.ax"))
+    (say 22
+      (strEq (vecGet values 7) "  i64 ptrtoint (ptr @__axiom_filen_0 to i64), i64 9, i64 1, i64 1"))
+    (say 23
+      (strEq (vecGet values 8) "  i64 ptrtoint (ptr @__axiom_filen_0 to i64), i64 9, i64 2, i64 1"))
+    (say 24 (probeMetadataOwnsRows))
+    (probeMetadataScope)
+    (indexScope)
+    (let beforeMetadata (live))
+    (for i in 0..200
+      (probeMetadataScope))
+    (let metadataGrowth (- (live) beforeMetadata))
+    (say 25 (== metadataGrowth 0))
+    (let beforeIndexes (live))
+    (for i in 0..200
+      (indexScope))
+    (let indexGrowth (- (live) beforeIndexes))
+    (say 26 (== indexGrowth 0))
+    (let crlf (srcLineIndexTyped "a\r\nβ\r\n"))
+    (say 27 (== (vecGet crlf.starts 1) 3))
+    (say 28 (== (vecGet crlf.starts 2) 7))
+    (say 29 (== (vecGet crlf.chars 1) 3))
+    (say 30 (== (vecGet crlf.chars 2) 6))
+    (writeStr stderr
+      (concat "metadata-growth "
+        (concat (fmtInt metadataGrowth)
+          (concat " index-growth " (concat (fmtInt indexGrowth) "\n")))))
+  })

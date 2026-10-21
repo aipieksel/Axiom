@@ -508,6 +508,8 @@ python3 "$repo_root/tests/selfhost/emitter-string-slots.py" --axiom "$work/d3/ax
   || fail "emitter String slot ownership regression"
 python3 "$repo_root/tests/selfhost/emitter-pending-strings.py" --axiom "$work/d3/axc" \
   || fail "emitter pending String ownership regression"
+python3 "$repo_root/tests/selfhost/emitter-line-metadata.py" --axiom "$work/d3/axc" \
+  || fail "emitter line metadata ownership regression"
 
 # And a program that PRINTS, because every case above communicates
 # through its exit status alone and a compiler can get those right with

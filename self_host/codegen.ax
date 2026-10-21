@@ -16173,6 +16173,14 @@
 ;
 ; Returns the row count: `emitBacktrace` passes it to the walker's
 ; baked loop bound beside the symbol count.
+(struct LineMark
+  (label : String)
+  (function : String)
+  (module : String)
+  (offset : Int))
+
+(type LineMarks (Vec LineMark))
+
 (pub :: emitLineTable (-> Int Int))
 ;@axiom:effect(io)
 (pub fn (emitLineTable cg)
@@ -16212,7 +16220,7 @@
 ; return addresses resolving to a NEIGHBOURING block's line, which is
 ; exactly the confident misattribution this table exists to remove;
 ; the build fails here instead, naming the compiler bug.
-(pub :: scanLineMarks (-> Ints Int String String Ints Ints))
+(pub :: scanLineMarks (-> Ints Int String String LineMarks LineMarks))
 ;@axiom:effect(io)
 (pub fn (scanLineMarks lines i curfn lastlabel marks)
   (if (>= i (vecLen lines))
@@ -16277,32 +16285,22 @@
     )))
 
 ; One marker row: label, function, module ("" for entry), span start.
-(pub :: pushLineMark (-> Ints String String String Ints))
+(pub :: pushLineMark (-> LineMarks String String String LineMarks))
 (pub fn (pushLineMark marks label func ln)
   {
     (let rest (strSlice ln 9 (- (strLen ln) 9)))
-    {
-      (let v vecNew)
-      {
-        (vecPush v (as label Int))
-        (vecPush v (as func Int))
-        (match (strFindByte rest 32 0)
-          ((None)
-            {
-              (vecPush v (as "" Int))
-              (vecPush v (strToInt rest))
-            }
-          )
-          ((Some e)
-            {
-              (vecPush v (as (strSlice rest 0 e) Int))
-              (vecPush v (strToInt (strSlice rest (+ e 1) (- (strLen rest) (+ e 1)))))
-            }
-          ))
-        (vecPush marks (as v Int))
-        marks
-      }
-    }
+    (let marker
+      (match (strFindByte rest 32 0)
+        ((None) (LineMark :label label :function func :module "" :offset (strToInt rest)))
+        ((Some e)
+          (LineMark
+            :label label
+            :function func
+            :module (strSlice rest 0 e)
+            :offset (strToInt (strSlice rest (+ e 1) (- (strLen rest) (+ e 1)))))
+        )))
+    (vecPush marks marker)
+    marks
   })
 
 ; A helper because the walker makes six of these calls and the template
@@ -16318,34 +16316,34 @@
 ; per marker re-read and re-scanned whole files, which put a second
 ; per call site on a 700 KiB module - measured, the shape that took
 ; self-host emission from two seconds to eight.
-(pub :: resolveLineRows (-> Ints Ints Ints Ints Ints Int Int))
+(pub :: resolveLineRows (-> LineMarks Strings Strings Strings Strings Int Int))
 ;@axiom:effect(io)
 (pub fn (resolveLineRows marks rows files addrFns addrLbls cg)
   (resolveMods marks (collectMods marks 0 vecNew) 0 rows files addrFns addrLbls cg))
 
 ; Distinct modules in first-sight order.
-(pub :: collectMods (-> Ints Int Ints Ints))
-;@axiom:effect(unsafe)
+(pub :: collectMods (-> LineMarks Int Strings Strings))
 (pub fn (collectMods marks i mods)
   (if (>= i (vecLen marks))
     mods
     {
-      (let modname (vecGetStr (as (vecGet marks i) (Vec Int)) 2))
+      (let marker (vecGet marks i))
+      (let modname marker.module)
       (if (>= (findString mods modname 0) 0)
         (collectMods marks (+ i 1) mods)
         {
-          (vecPush mods (as modname Int))
+          (vecPush mods (strDup modname))
           (collectMods marks (+ i 1) mods)
         })
     }))
 
-(pub :: resolveMods (-> Ints Ints Int Ints Ints Ints Ints Int Int))
+(pub :: resolveMods (-> LineMarks Strings Int Strings Strings Strings Strings Int Int))
 ;@axiom:effect(io)
 (pub fn (resolveMods marks mods j rows files addrFns addrLbls cg)
   (if (>= j (vecLen mods))
     (vecLen rows)
     {
-      (let modname (vecGetStr mods j))
+      (let modname (vecGet mods j))
       {
         (let text (markText modname cg))
         (if (== (strLen text) 0)
@@ -16353,7 +16351,7 @@
           {
             (let path (markPath modname cg))
             {
-              (let ix (srcLineIndex text))
+              (let ix (srcLineIndexTyped text))
               {
                 (resolveModMarks marks 0 modname text path ix rows files addrFns addrLbls)
                 (resolveMods marks mods (+ j 1) rows files addrFns addrLbls cg)
@@ -16363,24 +16361,25 @@
       }
     }))
 
-(pub :: resolveModMarks (-> Ints Int String String String Int Ints Ints Ints Ints Int))
-;@axiom:effect(unsafe)
+(pub :: resolveModMarks
+  (-> LineMarks Int String String String SrcIx Strings Strings Strings Strings Int))
 (pub fn (resolveModMarks marks i modname text path ix rows files addrFns addrLbls)
   (if (>= i (vecLen marks))
     0
     {
-      (let m (as (vecGet marks i) (Vec Int)))
-      (if (strEq modname (vecGetStr m 2))
+      (let m (vecGet marks i))
+      (if (strEq modname m.module)
         {
-          (let off (vecGet m 3))
+          (let off m.offset)
           (if (>= off (strLen text))
             (resolveModMarks marks (+ i 1) modname text path ix rows files addrFns addrLbls)
             {
               (let fi (fileIndex files path 0))
               {
-                (vecPush rows (as (lineRowStr fi path (lineOfIx ix off) (colOfIx text ix off)) Int))
-                (vecPush addrFns (as (vecGetStr m 1) Int))
-                (vecPush addrLbls (as (vecGetStr m 0) Int))
+                (vecPush rows
+                  (lineRowStr fi path (lineOfIx (as ix Int) off) (colOfIx text (as ix Int) off)))
+                (vecPush addrFns (strDup m.function))
+                (vecPush addrLbls (strDup m.label))
                 (resolveModMarks marks (+ i 1) modname text path ix rows files addrFns addrLbls)
               }
             })
@@ -16425,17 +16424,17 @@
 ; First-sight index of a path in `files`, appending. Linear, like
 ; `findString` beside it: tables here are tens of rows, and an index
 ; structure would out-cost what it indexes.
-(pub :: fileIndex (-> Ints String Int Int))
+(pub :: fileIndex (-> Strings String Int Int))
 (pub fn (fileIndex files path i)
   (if (>= i (vecLen files))
     {
       (let n (vecLen files))
       {
-        (vecPush files (as path Int))
+        (vecPush files path)
         n
       }
     }
-    (if (strEq (vecGetStr files i) path)
+    (if (strEq (vecGet files i) path)
       i
       (fileIndex files path (+ i 1)))))
 
@@ -16474,7 +16473,7 @@
 ; corrupt them, and fork inherits them filled. With no rows the
 ; arrays are the same one-element placeholders the symbol table
 ; uses, and the initialiser is a bare `ret`.
-(pub :: emitLineTableGlobals (-> Ints Ints Ints Ints Int Int Int))
+(pub :: emitLineTableGlobals (-> Strings Strings Strings Strings Int Int Int))
 (pub fn (emitLineTableGlobals rows files addrFns addrLbls n cg)
   {
     (emitFilenGlobals files 0 cg)
@@ -16505,7 +16504,7 @@
 ; its bound and step in registers the emitter would then have to
 ; keep alive across nothing - unrolled text is what this emitter
 ; does everywhere else).
-(pub :: emitLineInit (-> Ints Ints Int Int Int Int))
+(pub :: emitLineInit (-> Strings Strings Int Int Int Int))
 (pub fn (emitLineInit addrFns addrLbls i n cg)
   {
     (if (== i 0)
@@ -16522,7 +16521,7 @@
         cg
       }
       {
-        (emitLine cg (lineInitStore (vecGetStr addrFns i) (vecGetStr addrLbls i) i n))
+        (emitLine cg (lineInitStore (vecGet addrFns i) (vecGet addrLbls i) i n))
         (emitLineInit addrFns addrLbls (+ i 1) n cg)
       })
   })
@@ -16552,12 +16551,12 @@
     }
   })
 
-(pub :: emitFilenGlobals (-> Ints Int Int Int))
+(pub :: emitFilenGlobals (-> Strings Int Int Int))
 (pub fn (emitFilenGlobals files i cg)
   (if (>= i (vecLen files))
     cg
     {
-      (let p (vecGetStr files i))
+      (let p (vecGet files i))
       {
         (let head (concat "@__axiom_filen_" (fmtInt i)))
         {
@@ -16577,13 +16576,13 @@
       }
     }))
 
-(pub :: emitLineRows (-> Ints Int Int Int Int))
+(pub :: emitLineRows (-> Strings Int Int Int Int))
 (pub fn (emitLineRows rows i n cg)
   (if (>= i n)
     cg
     {
       (emitLine cg
-        (concat (vecGetStr rows i)
+        (concat (vecGet rows i)
           (if (< (+ i 1) n)
             ","
             "")))
