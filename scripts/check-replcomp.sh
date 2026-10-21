@@ -126,17 +126,16 @@ s = open(path).read()
 subs = {'matcher': ('(pub fn (replComplOffer out seen label origin tag detail prefix)\n'
              '  (if (lspComplWants seen label prefix)',
              '(pub fn (replComplOffer out seen label origin tag detail prefix)\n  (if true'),
- 'session': ('            (if (! (== (as decls Int) 0))\n'
-             '              (replComplDecls out seen (memGetWordStr e 0) decls prefix))',
-             '            0'),
+ 'session': ('                (replComplDecls out seen e.declsSrc decls prefix)\n',
+             '                ()\n'),
  'sig': ('(pub fn (replComplWantsDecl tag)\n  (|| (lspWantsSymbol tag) (== tag TAG_D_SIG)))',
          '(pub fn (replComplWantsDecl tag)\n  (lspWantsSymbol tag))'),
  'lcp': ('        (strSlice first 0 n)', '        first'),
- 'colon': ('            (memSetWord r 1\n'
-           '              (if atCmd\n'
-           '                (concat ":" word)\n'
-           '                word))',
-           '            (memSetWord r 1 word)'),
+ 'colon': ('          :prefix\n'
+           '            (if atCmd\n'
+           '              (concat ":" word)\n'
+           '              word)\n',
+           '          :prefix word\n'),
  'fits': ('(pub fn (replComplFits cands sel width)\n'
           '  (<= (replComplMaxLine cands sel width) (replComplWidthOf width)))',
           '(pub fn (replComplFits cands sel width)\n  true)'),

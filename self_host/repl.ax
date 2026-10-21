@@ -147,7 +147,7 @@
 ; is answered inside the loop for the same reason: the splice, the
 ; cursor seek and the menu all land in one step.
 ; ------------------------------------------------------------------
-(pub :: replReadPrompted (-> Int KeyIn LineEd String String Int Int (Option String)))
+(pub :: replReadPrompted (-> Int KeyIn LineEd String String Hist ReplComplEnv (Option String)))
 ;@axiom:effect(io)
 (pub fn (replReadPrompted interactive kin ed prompt pending hist cenv)
   (if (== interactive 0)
@@ -225,7 +225,7 @@
 ; What a recall puts in the buffer: the browse cursor's entry - or the
 ; saved draft coming back down past the newest - on one row.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: replHistText (-> Int String))
+(pub :: replHistText (-> Hist String))
 (pub fn (replHistText hist)
   (histFlatten (histCurrent hist) " "))
 
@@ -233,7 +233,7 @@
 ; repainted, 0 at the oldest entry, where the editor does nothing -
 ; the same "did it move" shape `histBrowseUp` itself answers.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: replHistUp (-> Int LineEd String Strings Int))
+(pub :: replHistUp (-> Hist LineEd String Strings Int))
 (pub fn (replHistUp hist ed pending out)
   (if (== (histBrowseUp hist (ledSnapshot ed)) 0)
     0
@@ -245,7 +245,7 @@
 
 ; Recall one step newer, back toward the saved draft.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: replHistDown (-> Int LineEd String Strings Int))
+(pub :: replHistDown (-> Hist LineEd String Strings Int))
 (pub fn (replHistDown hist ed pending out)
   (if (== (histBrowseDown hist) 0)
     0
@@ -422,14 +422,12 @@
 ; completed line is an edit, and the next Up starts from the newest.
 ; `cancel` 1 is Escape: the answer's menu already carries its erase,
 ; so the old one is not erased twice.
-(pub :: replComplKey (-> Int LineEd Int Int Int Strings Int Int))
+(pub :: replComplKey (-> (Option ComplSt) LineEd Hist ReplComplEnv Int Strings Int TabAnswer))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (replComplKey cst ed hist cenv width out cancel)
   {
-    (if (&& (== cancel 0) (!= cst 0))
-      (vecPush out (replComplErase (stRows cst)))
-      (as 0 (Vec String)))
+    (if (== cancel 0)
+      (replComplDrop out cst))
     {
       (let buf (ledSnapshot ed))
       (let cur (replCursorBytes ed))
@@ -446,6 +444,17 @@
         }
       }
     }
+  })
+
+; Erase the menu a completion state printed, if it printed one, and
+; answer the idle state.
+(:: replComplDrop (-> Strings (Option ComplSt) (Option ComplSt)))
+(fn (replComplDrop out cst)
+  {
+    (match cst
+      ((Some s) (vecPush out (replComplErase (stRows s))))
+      ((None) ()))
+    None
   })
 
 ; Whether a colon line opens a multi-line entry: one of the four
@@ -480,17 +489,17 @@
 ; A continuation line starts indented (`replIndentFor`); the indent is
 ; cosmetic - `replMain` trims before joining - so it aligns the form
 ; without ever entering it.
-(pub :: replTermLoop (-> KeyIn LineEd String String Int Int (Option String)))
+(pub :: replTermLoop (-> KeyIn LineEd String String Hist ReplComplEnv (Option String)))
 ;@axiom:effect(io)
 (pub fn (replTermLoop kin ed prompt pending hist cenv)
-  ; Tab completion state, 0 when idle (`tabState`).
+  ; Tab completion state, `None` when idle (`tabState`).
   ; Ctrl-R search state: the needle kept across repeats, where the
   ; next repeat continues from, and whether a search is open.
   {
     (let out vecNew)
     (let mut state 0)
     (let mut got "")
-    (let mut cst 0)
+    (let mut cst None)
     (let mut sNeedle "")
     (let mut sAt 0)
     (let mut sActive 0)
@@ -512,22 +521,14 @@
             (if (! (== ev.kind KEY_NONE))
               (if (replIsHistUp ev)
                 {
-                  (if (!= cst 0)
-                    {
-                      (vecPush out (replComplClear cst))
-                      (set cst 0)
-                    })
+                  (set cst (replComplDrop out cst))
                   (set sActive 0)
                   (replHistUp hist ed pending out)
                   (termFlush out)
                 }
                 (if (replIsHistDown ev)
                   {
-                    (if (!= cst 0)
-                      {
-                        (vecPush out (replComplClear cst))
-                        (set cst 0)
-                      })
+                    (set cst (replComplDrop out cst))
                     (set sActive 0)
                     (replHistDown hist ed pending out)
                     (termFlush out)
@@ -556,11 +557,7 @@
                       ; leaving is any edit. A press with no (older)
                       ; match leaves the line as it is.
                       {
-                        (if (!= cst 0)
-                          {
-                            (vecPush out (replComplClear cst))
-                            (set cst 0)
-                          })
+                        (set cst (replComplDrop out cst))
                         (if (== sActive 0)
                           {
                             (set sNeedle (ledSnapshot ed))
@@ -581,7 +578,10 @@
                         (ledRefreshPainted ed out (replPaintCurrent ed pending))
                         (termFlush out)
                       }
-                      (if (&& (replIsEscKey ev) (!= cst 0))
+                      (if (&& (replIsEscKey ev)
+                            (match cst
+                              ((Some _) true)
+                              ((None) false)))
                         {
                           (set sActive 0)
                           (termReadSize kin)
@@ -597,11 +597,7 @@
                           }
                         }
                         {
-                          (if (!= cst 0)
-                            {
-                              (vecPush out (replComplClear cst))
-                              (set cst 0)
-                            })
+                          (set cst (replComplDrop out cst))
                           (set sActive 0)
                           {
                             (let before (ledSnapshot ed))
@@ -1068,23 +1064,17 @@
 ;@axiom:effect(io)
 (pub fn (printTypeErrors ds from)
   {
-    (let mut i from)
-    {
-      (while (< i (vecLen ds))
+    (for i in from..(vecLen ds)
+      {
+        (let d (vecGet ds i))
+        (let code (diagCode d))
         {
-          {
-            (let d (vecGet ds i))
-            (let code (diagCode d))
-            {
-              (replStyled REPL_ERROR
-                (concat (concat (concat (concat "Type error: [" code) "] ") (diagMsg d)) "\n"))
-              (replStyled REPL_MUTED (concat (concat "  help: :explain " code) "\n"))
-            }
-          }
-          (set i (+ i 1))
-        })
-      0
-    }
+          (replStyled REPL_ERROR
+            (concat (concat (concat (concat "Type error: [" code) "] ") (diagMsg d)) "\n"))
+          (replStyled REPL_MUTED (concat (concat "  help: :explain " code) "\n"))
+        }
+      })
+    0
   })
 
 ; ------------------------------------------------------------------
@@ -1335,19 +1325,15 @@
   })
 
 (pub :: joinDiagMsgs (-> Ints String))
-;@axiom:effect(unsafe)
 (pub fn (joinDiagMsgs ds)
   {
     (let parts vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen ds))
+      (for i in 0..(vecLen ds)
         {
           (if (> i 0)
-            (vecPush parts "; ")
-            (as 0 (Vec String)))
+            (vecPush parts "; "))
           (vecPush parts (diagMsg (vecGet ds i)))
-          (set i (+ i 1))
         })
       (vecPush parts "\n")
       (catStrs parts)
@@ -1719,20 +1705,13 @@
 (pub fn (replDeclsSrcDropping declsSrc newDecls)
   {
     (let mut out declsSrc)
-    (let mut j 0)
     {
-      (while (< j (vecLen newDecls))
+      (for nd in newDecls
         {
-          {
-            (let nd (vecGet newDecls j))
-            {
-              (let tag (nodeTag nd))
-              (if (|| (== tag TAG_D_FN)
-                    (|| (== tag TAG_D_SIG) (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))))
-                (set out (replDropMatching out tag (nodeAName nd))))
-            }
-          }
-          (set j (+ j 1))
+          (let tag (nodeTag nd))
+          (if (|| (== tag TAG_D_FN)
+                (|| (== tag TAG_D_SIG) (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))))
+            (set out (replDropMatching out tag (nodeAName nd))))
         })
       out
     }
@@ -1828,8 +1807,7 @@
     acc
     {
       (if (! (strEq (diagCode (vecGet ds i)) "AX3015"))
-        (vecPush acc (vecGet ds i))
-        acc)
+        (vecPush acc (vecGet ds i)))
       (replDiagsButDeferred ds acc (+ i 1))
     }))
 
@@ -2184,21 +2162,17 @@
     (let toks (lex src))
     {
       (let n (vecLen toks))
-      (let mut i 0)
       (let mut depth 0)
       {
-        (while (< i n)
+        (for i in 0..n
           {
-            {
-              (let k (kindInt (tokenKind (vecGet toks i))))
-              (if (|| (== k (kindInt TK_LPAREN))
-                    (|| (== k (kindInt TK_LBRACE)) (== k (kindInt TK_LBRACKET))))
-                (set depth (+ depth 1))
-                (if (|| (== k (kindInt TK_RPAREN))
-                      (|| (== k (kindInt TK_RBRACE)) (== k (kindInt TK_RBRACKET))))
-                  (set depth (- depth 1))))
-            }
-            (set i (+ i 1))
+            (let k (kindInt (tokenKind (vecGet toks i))))
+            (if (|| (== k (kindInt TK_LPAREN))
+                  (|| (== k (kindInt TK_LBRACE)) (== k (kindInt TK_LBRACKET))))
+              (set depth (+ depth 1))
+              (if (|| (== k (kindInt TK_RPAREN))
+                    (|| (== k (kindInt TK_RBRACE)) (== k (kindInt TK_RBRACKET))))
+                (set depth (- depth 1))))
           })
         depth
       }
@@ -2330,7 +2304,7 @@
 ; (`replColonBuffers`) stays a shallow branch at the call site rather
 ; than a new level around the whole dispatch.
 ; ------------------------------------------------------------------
-(pub :: replColon (-> String String Int String))
+(pub :: replColon (-> String String Hist String))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -2628,18 +2602,11 @@
       (if (! (== (memGetWord dr 0) 0))
         {
           (let decls (readAstNodes dr 1))
-          (let mut i 0)
-          (while (< i (vecLen decls))
-            {
-              (let d (vecGet decls i))
-              {
-                (if (|| (== (nodeTag d) TAG_D_FN)
-                      (|| (== (nodeTag d) TAG_D_SIG)
-                        (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))))
-                  (replOut (concat (concat "  " (nodeAName d)) "\n")))
-                (set i (+ i 1))
-              }
-            })
+          (for d in decls
+            (if (|| (== (nodeTag d) TAG_D_FN)
+                  (|| (== (nodeTag d) TAG_D_SIG)
+                    (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))))
+              (replOut (concat (concat "  " (nodeAName d)) "\n"))))
         })
     }
     0
