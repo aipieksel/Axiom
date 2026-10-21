@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explain local constructor allocation combined with a field mutation."""
+"""Prove local effect seeds that need no function-call edge."""
 import importlib.util
 import ast
 from pathlib import Path
@@ -106,12 +106,72 @@ def constructor_store(path, name, constructors):
     return False
 
 
+def direct_forging_cast(path, name, metadata, declared_types):
+    """Prove a trusted Int-parameter cast to an unambiguous builtin owner.
+
+    AXSYM supplies the checked parameter/result types and trusted boundary;
+    source supplies the whole, direct intrinsic body. Imported nominal or
+    alias homonyms remain findings, as do selective imports whose binding
+    provenance the pretty type spelling cannot establish (MM-EXEC-9d).
+    """
+    if (not re.search(r'(?:^| )#unsafe=trusted(?: |$)', metadata)
+            or re.search(r'(?:^| )#effects-incomplete(?: |$)', metadata)):
+        return False
+    printed = re.match(r'("(?:[^"\\]|\\.)*")(?= |$)', metadata)
+    if not printed:
+        return False
+    try:
+        checked_type = ast.literal_eval(printed[1])
+        source = Path(path).read_text()
+    except (OSError, SyntaxError, ValueError):
+        return False
+    top, _ = reader.scan(source)
+    definitions = []
+    for declaration in top:
+        parts = declaration.children
+        kind = head(source, declaration)
+        if kind == 'import' and len(parts) != 2:
+            return False
+        if (kind == 'pub' and len(parts) > 1
+                and source[parts[1].start:parts[1].end] == 'import'):
+            return False
+        if (kind == 'pub' and len(parts) == 4
+                and source[parts[1].start:parts[1].end] == 'fn'):
+            header, body = parts[2:]
+        elif kind == 'fn' and len(parts) == 3:
+            header, body = parts[1:]
+        else:
+            continue
+        if head(source, header) == name:
+            definitions.append((header, body))
+    if len(definitions) != 1:
+        return False
+    header, body = definitions[0]
+    if (len(header.children) != 2 or header.children[1].kind != 'atom'
+            or head(source, body) != 'as' or len(body.children) != 3):
+        return False
+    parameter, value, target = header.children[1], body.children[1], body.children[2]
+    if value.kind != 'atom' or target.kind != 'atom':
+        return False
+    target_name = source[target.start:target.end]
+    if (target_name not in {'String', 'Handle', 'Spawn'}
+            or 'Int' in declared_types
+            or target_name in declared_types
+            or source[value.start:value.end] != source[parameter.start:parameter.end]):
+        return False
+    return checked_type == f'(Int -> {target_name})'
+
+
 def missing_rows(text, prefix):
     rows = [line.split(None, 3) for line in text.splitlines() if line.strip()]
     constructors = {row[1] for row in rows if row[0] == 'C'}
     # An imported function with the same spelling makes the source-only
     # proof ambiguous. Keep that case a finding rather than guessing.
     constructors -= {row[1] for row in rows if row[0] == 'F'}
+    # Pretty function types omit nominal provenance. A declaration anywhere
+    # in the complete symbol stream keeps a homonym out of the builtin proof.
+    declared_types = {re.split(r'::|[$.]', row[1])[-1]
+                      for row in rows if len(row) >= 2 and row[0] in {'D', 'S', 'A'}}
     missing = []
     for row in rows:
         if len(row) != 4 or row[0] != 'F' or not row[2].startswith(prefix):
@@ -127,6 +187,8 @@ def missing_rows(text, prefix):
             continue
         path = re.sub(r':\d+:\d+(?:-\d+(?::\d+)?)?$', '', location)
         if effect_set == {'Alloc', 'Mut'} and constructor_store(path, name, constructors):
+            continue
+        if effect_set == {'Unsafe'} and direct_forging_cast(path, name, metadata, declared_types):
             continue
         missing.append((name, location))
     return missing
@@ -175,6 +237,52 @@ class Totality(unittest.TestCase):
     def test_unreadable_source_does_not_justify_a_row(self):
         self.assertEqual(missing_rows('F eta /missing/D.ax:2:1-2 "T" @g #effects=Alloc,Mut', '/missing/'),
                          [('eta', '/missing/D.ax:2:1-2')])
+
+    def test_direct_forging_cast_requires_the_checked_builtin_boundary(self):
+        with tempfile.TemporaryDirectory(prefix='axiom-totality-cast-') as directory:
+            path = Path(directory) / 'Owner.ax'
+            prefix = directory + '/'
+            for target in ['String', 'Handle', 'Spawn']:
+                path.write_text(f'(fn (forge word) (as word {target}))')
+                metadata = f'"(Int -> {target})" @f #effects=Unsafe #unsafe=trusted'
+                row = f'F forge {path}:1:6-11 {metadata}\n'
+                with self.subTest(target=target):
+                    self.assertEqual(missing_rows(row, prefix), [])
+                    # A missing IO edge or unknown callback cannot be hidden
+                    # behind an otherwise genuine local Unsafe seed.
+                    self.assertTrue(missing_rows(row.replace('effects=Unsafe', 'effects=IO,Unsafe'), prefix))
+                    self.assertTrue(missing_rows(row.replace(' #unsafe=trusted', ''), prefix))
+                    self.assertTrue(missing_rows(row.rstrip() + ' #effects-incomplete\n', prefix))
+                    self.assertTrue(missing_rows(row.replace('(Int ->', '(String ->'), prefix))
+                    for declaration in [f'S {target} - "struct {target}"',
+                                        f'S Imported${target} /other/Types.ax:1:1 "struct {target}"',
+                                        f'A Imported::{target} /other/Types.ax:1:1 "Int"',
+                                        f'A Imported$Int /other/Types.ax:1:1 "{target}"']:
+                        self.assertTrue(missing_rows(declaration + '\n' + row, prefix))
+            row = f'F forge {path}:1:6-11 "(Int -> Spawn)" @f #effects=Unsafe #unsafe=trusted\n'
+            for source in [
+                    '(fn (forge word) word)',
+                    '(fn (forge word) (as word Int))',
+                    '(fn (forge word) (as other Spawn))',
+                    '(fn (forge word other) (as word Spawn))',
+                    '(fn (forge word) { (as word Spawn) })',
+                    '(fn (forge word) "(as word Spawn)")',
+                    '(fn (forge word) (as word CustomOwner))',
+                    '(import Imported (Spawn))\n(fn (forge word) (as word Spawn))',
+                    '(fn (forge word) (as word Spawn))\n(fn (forge word) word)',
+            ]:
+                with self.subTest(source=source):
+                    path.write_text(source)
+                    self.assertTrue(missing_rows(row, prefix))
+            # Whole-module imports need no source-only binding guess: the
+            # complete AXSYM type declarations still rule out any homonym.
+            path.write_text('(import Imported)\n(fn (forge word) (as word Spawn))')
+            self.assertEqual(missing_rows(row, prefix), [])
+            self.assertTrue(missing_rows('A Imported$Spawn - "Int"\n' + row, prefix))
+
+    def test_unreadable_cast_source_is_not_a_seed(self):
+        row = 'F forge /missing/D.ax:2:1-2 "(Int -> Spawn)" @f #effects=Unsafe #unsafe=trusted'
+        self.assertEqual(missing_rows(row, '/missing/'), [('forge', '/missing/D.ax:2:1-2')])
 
 
 if __name__ == '__main__':
