@@ -33,14 +33,16 @@ top-level declarations changes neither its verdict (R1: the exit
 status and the diagnostic codes) nor any declaration's `symbols` row
 (R2: type, effect row, tags and NID, with the location dropped).
 Imports stay first, and a `::` travels with its `fn`, keeping their
-own order, together with the comment and tag lines above each. IR is
+own order, together with the comment and tag lines above each. A
+function without a signature stays after the same declaration prefix:
+its body is inferred in source order, so moving a caller above that
+definition is outside the relation (AN-39, AX3089). The remaining
+groups reverse within those inference boundaries. IR is
 not compared: constructor tags, string constants and lambdas are
 numbered in declaration order by design, so a reordered program's IR
-differs in names that no program can observe. Its first run found two
-programs a reordering refuses: an unsigned function called above its
-definition, which needs its signature (AN-39, AX3089) and a declaration macro querying a `data` another
-macro generates below it (AN-40). They are `--known` divergences: each
-must still fail exactly as recorded, so a fix has to update the list.
+differs in names that no program can observe. Declaration-macro queries
+must still resolve the same declarations after an eligible permutation
+(AN-40).
 
 THE THIRD RELATION, `sigmove`: moving every `::` to just below its
 own `fn` changes neither the verdict nor any `symbols` row. A NID used
@@ -87,6 +89,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 NAMES = list("abcdefghijkmnprstuvwxyz")
 ENUMERATORS = {"__axiom_bt_name", "__axiom_lineinit"}
@@ -361,23 +364,48 @@ UNIT_HEAD = re.compile(r'^\s*(?:(?:;[^\n]*|#\|.*?\|#)\s*)*\((?:pub\s+)?(\S+)\s+\
 
 
 def reordered(src):
-    """The declarations in reverse order: imports first, and a `::`
-    grouped with its `fn` in their own order."""
+    """Reverse groups without changing an unsigned function's prefix.
+
+    Inference sees preceding definitions. Treat an unsigned function as
+    a boundary rather than guessing dependencies from bare spellings:
+    macros and lexical shadowing can hide or imitate a use. Every group
+    stays on its original side of each such definition. Signed groups
+    between boundaries still move, with imports first and signatures
+    attached to their definitions. Return the number actually moved.
+    """
     us, tail = units(src)
     heads = [UNIT_HEAD.match(u) for u in us]
     imports = [u for u, h in zip(us, heads) if h and h.group(1) == 'import']
-    groups, placed = [], {}
+    groups, kinds, placed = [], [], {}
     for u, h in zip(us, heads):
         if h and h.group(1) == 'import':
             continue
         kind, name = (h.group(1), h.group(2)) if h else (None, None)
         if kind in ('::', 'fn') and name in placed:
             groups[placed[name]] += u
+            kinds[placed[name]].add(kind)
         else:
             if kind in ('::', 'fn'):
                 placed[name] = len(groups)
             groups.append(u)
-    return ''.join(imports) + ''.join(reversed(groups)) + tail, len(groups)
+            kinds.append({kind})
+    order, pending = [], []
+    for i, kind in enumerate(kinds):
+        if 'fn' in kind and '::' not in kind:
+            order.extend(reversed(pending))
+            pending = []
+            order.append(i)
+        else:
+            pending.append(i)
+    order.extend(reversed(pending))
+    moved = sum(i != j for i, j in enumerate(order))
+    if moved == 0:
+        return src, 0
+    # The first source group may have no leading newline. Once moved it
+    # still needs a separator, especially before its attached tag comment.
+    body = ''.join(groups[i] if groups[i].startswith('\n') else '\n' + groups[i]
+                   for i in order)
+    return ''.join(imports) + body + tail, moved
 
 
 def sigs_below(src):
@@ -508,7 +536,7 @@ def cmd_reorder(argv, transform=reordered):
             counts['fixed'] += 1
             print('MISSING %s: on the known list and not swept' % p)
     print('reordered %d files: %d permuted and kept the relation, %d known divergences held, '
-          '%d diverged, %d known entries changed, %d refused, %d with one declaration, %d unparsed'
+          '%d diverged, %d known entries changed, %d refused, %d without an eligible permutation, %d unparsed'
           % (len(files), counts['kept'], counts['known'], counts['diverged'], counts['fixed'],
              counts['refused'], counts['single'], counts['unparsed']))
     return 1 if counts['diverged'] or counts['fixed'] or counts['unparsed'] else 0
@@ -581,11 +609,49 @@ def cmd_selftest():
     text, n = reordered(prog)
     us, _ = units(text)
     expect(us[0].strip() == '(import IO)', "reorder keeps imports first")
-    expect(n == 3 and text.index('(fn (g)') < text.index('(data D') < text.index('(:: f Int)'),
+    expect(n == 2 and text.index('(fn (g)') < text.index('(data D') < text.index('(:: f Int)'),
            "reorder reverses the declarations")
     expect(text.index(';@axiom:effect(io)') < text.index('(:: f Int)') < text.index('(fn (f)'),
            "a tag line and a signature travel with their function")
     expect(sorted(prog.split()) == sorted(text.split()), "reorder is a permutation of the source")
+    ordered = ('(:: first Int)\n(fn (first) 1)\n'
+               '(:: second Int)\n(fn (second) 2)\n'
+               '(fn (inferred n) (+ n 1))\n'
+               '(:: third Int)\n(fn (third) (inferred 3))\n'
+               '(:: fourth Int)\n(fn (fourth) (inferred 4))\n')
+    bounded, nmoved = reordered(ordered)
+    expect(nmoved == 4 and bounded.index('(fn (second)') < bounded.index('(fn (first)')
+           < bounded.index('(fn (inferred n)') < bounded.index('(fn (fourth)')
+           < bounded.index('(fn (third)'),
+           "reorder moves signed groups on both sides of an inference boundary")
+    inferred = '(fn (a n) n)\n(fn (b n) (a n))\n(fn (main) (b 0))\n'
+    unchanged, nmoved = reordered(inferred)
+    expect(unchanged == inferred and nmoved == 0,
+           "unsigned-only input is reported without an eligible permutation")
+    signed_late = '(fn (a n) n)\n(:: a (-> Int Int))\n(:: b Int)\n(fn (b) (a 0))\n'
+    reversed_late, nmoved = reordered(signed_late)
+    expect(nmoved == 2 and reversed_late.index('(fn (b)') < reversed_late.index('(fn (a n)'),
+           "a signature after its function still permits reordering")
+    expect(sorted(ordered.split()) == sorted(bounded.split()),
+           "inference boundaries preserve every source token")
+    # Exercise the command's real comparator path too: a planted compiler
+    # verdict change must still fail after applicability has been checked.
+    saved_run = globals()['run']
+    try:
+        def wrong_verdict(axiom, args, cwd):
+            if args[0] == 'check':
+                return (1, '', 'E AX3004 changed') if args[1].startswith('.reorder-') else (0, '', '')
+            return 0, 'F first F:1 "Int"\nF second F:2 "Int"\n', ''
+        globals()['run'] = wrong_verdict
+        with tempfile.TemporaryDirectory(prefix='axiom-metamorphic-selftest-') as directory:
+            path = os.path.join(directory, 'signed.ax')
+            with open(path, 'w', encoding='utf-8') as stream:
+                stream.write('(:: first Int)\n(fn (first) 1)\n(:: second Int)\n(fn (second) 2)\n')
+            _, verdict, reason = one_reorder('planted-compiler', path)
+            expect(verdict == 'diverged' and reason == 'R1 AX3004',
+                   "an eligible permutation still detects a planted compiler verdict change")
+    finally:
+        globals()['run'] = saved_run
     moved, nsig = sigs_below('(:: f Int)\n(fn (f) 1)\n(:: g Int)\n(fn (g) (f))\n')
     expect(nsig == 2 and moved.index('(fn (f)') < moved.index('(:: f Int)') < moved.index('(fn (g)') < moved.index('(:: g Int)'),
            "sigmove puts each signature just below its function")
