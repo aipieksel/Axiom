@@ -1,0 +1,121 @@
+; expect 0
+; The compiler's argument register names are Strings owned by their ledger.
+(import codegen)
+(import parser)
+(import raw)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(type RegisterTexts (Vec String))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: countOf (-> String Int))
+;@axiom:effect(unsafe)
+(fn (countOf value)
+  (__load64 (as value Int) -2))
+
+(:: registerAt (-> RegisterTexts Int String))
+(fn (registerAt values index)
+  (vecGet values index))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: ledgerChecks (-> Nodes Int ()))
+;@axiom:effect(io)
+(fn (ledgerChecks args cg)
+  {
+    (let empty (:: vecNew RegisterTexts))
+    (emitArgsRegs vecNew cg empty 0 "metadata-only" 0)
+    (say 1 (== (vecLen empty) 0))
+    (let regs (:: vecNew RegisterTexts))
+    (say 2 (== (emitArgsRegs args cg regs 0 "metadata-only" 0) cg))
+    (say 3 (== (vecLen regs) 3))
+    (say 4 (vecOwnsRefs regs))
+    (say 5
+      (&& (strEq (registerAt regs 0) "17")
+        (&& (strEq (registerAt regs 1) "-3") (strEq (registerAt regs 2) "42"))))
+    (say 6 (strEq (memGetWordStr cg 2) "17, -3, 42"))
+    (say 7 (strEq (memGetWordStr cg 9) "17, i64 -3, i64 42"))
+    (let first (registerAt regs 0))
+    (let beforeCopy (countOf first))
+    (let copies (:: vecNew (Vec String)))
+    (for index in 0..(vecLen regs)
+      (vecPush copies (registerAt regs index)))
+    (say 8 (== (vecLen copies) 3))
+    (say 9 (== (countOf first) (+ beforeCopy 1)))
+    (vecClear regs)
+    (say 10 (== (countOf first) beforeCopy))
+    (say 11
+      (&& (strEq (vecGet copies 0) "17")
+        (&& (strEq (vecGet copies 1) "-3") (strEq (vecGet copies 2) "42"))))
+    (say 12 (== (vecLen regs) 0))
+    (vecClear copies)
+    (say 13 (== (countOf first) (- beforeCopy 1)))
+    (say 14 (strEq first "17"))
+    (let result (memGetWordStr cg 2))
+    (let typed (memGetWordStr cg 9))
+    (emitArgsRegs vecNew cg empty 0 "metadata-only" 0)
+    (say 15 (strEq result "17, -3, 42"))
+    (say 16 (strEq typed "17, i64 -3, i64 42"))
+  })
+
+; No new syntax nodes or contexts are created in this measured scope.
+; Empty emission resets both output slots before the local ledger drops.
+(:: registerRound (-> Nodes Nodes RegisterTexts Int Bool))
+;@axiom:effect(io)
+(fn (registerRound args emptyArgs emptyRegs cg)
+  {
+    (let regs (:: vecNew RegisterTexts))
+    (emitArgsRegs args cg regs 0 "metadata-only" 0)
+    (let good
+      (&& (== (vecLen regs) 3)
+        (&& (strEq (registerAt regs 0) "17")
+          (&& (strEq (registerAt regs 1) "-3") (strEq (registerAt regs 2) "42")))))
+    (emitArgsRegs emptyArgs cg emptyRegs 0 "metadata-only" 0)
+    good
+  })
+
+(:: soakChecks (-> Nodes Int ()))
+;@axiom:effect(io)
+(fn (soakChecks args cg)
+  {
+    (let emptyArgs (:: vecNew Nodes))
+    (let emptyRegs (:: vecNew RegisterTexts))
+    (let mut good true)
+    (for i in 0..16
+      (if (! (registerRound args emptyArgs emptyRegs cg))
+        (set good false)))
+    (say 17 good)
+    (let before (live))
+    (for i in 0..1000
+      (if (! (registerRound args emptyArgs emptyRegs cg))
+        (set good false)))
+    (let growth (- (live) before))
+    (say 18 (== growth 0))
+    (say 19 good)
+    (say 20 (&& (strEq (memGetWordStr cg 2) "") (strEq (memGetWordStr cg 9) "")))
+    (writeStr stderr (concat "argument-register-soak-growth " (concat (fmtInt growth) "\n")))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let args (vecPush (vecPush (vecPush vecNew (mkEInt 17)) (mkEInt -3)) (mkEInt 42)))
+    (let cg newCG)
+    (ledgerChecks args cg)
+    (soakChecks args cg)
+    0
+  })

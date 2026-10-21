@@ -514,6 +514,8 @@ python3 "$repo_root/tests/selfhost/emitter-binder-summary.py" --axiom "$work/d3/
   --source-root "$repo_root" || fail "emitter binder summary ownership regression"
 python3 "$repo_root/tests/selfhost/emitter-prune-owner.py" --axiom "$work/d3/axc" \
   --source-root "$repo_root" || fail "emitter pruning interner ownership regression"
+python3 "$repo_root/tests/selfhost/emitter-argument-registers.py" --axiom "$work/d3/axc" \
+  --repo "$repo_root" || fail "emitter argument register text ownership regression"
 
 # And a program that PRINTS, because every case above communicates
 # through its exit status alone and a compiler can get those right with
