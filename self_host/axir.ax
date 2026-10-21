@@ -2,10 +2,8 @@
 ;
 ; WHY THE EXTENSION IS NOT `.mir`. LLVM owns `.mir` - it is Machine IR,
 ; the post-ISel form `llc -stop-after=<pass>` writes - and this
-; toolchain writes it today. Measured 2026-09-03 on this machine:
-; `llc --version` is Homebrew LLVM 23.1.0, and
-; `llc -stop-after=finalize-isel -o s1.mir s1.ll` turned a 1,312-line
-; `.ll` into 248,183 bytes of Machine IR, exit 0. Axiom's own
+; toolchain can write it: `llc -stop-after=finalize-isel -o s1.mir
+; s1.ll` turns a `.ll` into Machine IR. Axiom's own
 ; mid-level IR sits ABOVE LLVM IR and LLVM's sits below it; two
 ; different IRs in one tree cannot share one extension without every
 ; later tool sniffing content to know which it is holding. Hence
@@ -14,20 +12,18 @@
 ;
 ;     axir 1 <target> <version>
 ;
-; WHAT IS IN A RECORD TODAY. Two halves, arriving by two routes. The
-; first is the region-facts record the checker builds and used to
-; throw away unprojected: `FnEnt` word 8, an interprocedural dataflow
+; WHAT IS IN A RECORD. Two halves, arriving by two routes. The
+; first is the region-facts record the checker builds: `FnEnt`'s
+; `rgn` field, an interprocedural dataflow
 ; summary of which parameters a body stores a fresh value into, which
 ; parameters flow into which, and where its result comes from - the
 ; `region` line. The second is the BODY: `blk`, `op` and `term`, one
 ; line per block, instruction and terminator of the SSA IR in
 ; `self_host/mir.ax`, as `mLowerFn` lowered it.
 ;
-; THE BODY LINES WERE SPECIFIED AND READ AND NOT WRITTEN, and this
-; paragraph used to say why: there was no mid-level IR for them to
-; describe. There is one now, so this file imports `mir` and writes
-; them, and the hand-written fixtures under tests/axir/ stopped being
-; the only evidence those reader arms work.
+; THE BODY LINES describe `self_host/mir.ax`'s IR, so this file
+; imports `mir` to write them. The hand-written fixtures under
+; tests/axir/ exercise the reader arms on their own.
 ;
 ; A BODY IS ALL OR NOTHING, AND IT IS VERIFIED BEFORE IT IS WRITTEN.
 ; `mLowerFn` lowers a subset of the checked AST and refuses the whole
@@ -35,8 +31,8 @@
 ; does answer goes through `mirVerify` before a line is rendered. A
 ; record carrying a body its own verifier complains about would
 ; publish a defect in the lowering as a fact about the program. A
-; function that refuses, or whose lowering does not verify, emits
-; exactly what it emitted before this landed and nothing more.
+; function that refuses, or whose lowering does not verify, emits its
+; header, `sig`, `param` and `region` lines and no body.
 ;
 ; UNDER `--mir`, NOT WITHOUT IT. `--mir` is the flag documented as
 ; slow - it forces the region-facts fixpoint, 0.72s to 21.7s on this
@@ -47,15 +43,10 @@
 ;
 ; THE JOIN KEY IS THE WHOLE HEADER TUPLE, NOT THE NID, and that is a
 ; correction to docs/compatibility.md COMPAT-2, which says the nid IS
-; a name's identity. Measured 2026-09-03 over
-; `axiom symbols self_host/main.ax --builtins --diagnostic-format ai`:
-; 4,153 lines, 4,068 carrying a nid, 4,066 distinct. The two
-; collisions are between genuinely different functions - `die` at
-; stdlib/IO.ax:501 and at self_host/main.ax:2009 both hash to
-; @52fb9ccad9feab1b, and `jsonHexDigit` at self_host/render.ax:1184
-; and stdlib/Cereal.ax:453 both to @9adebbbea99ca85b. The nid is FNV-1a
-; 64 over `DKind:name` with the BARE name, so two modules declaring
-; the same unmangled name collide by construction. A record's header
+; a name's identity. The nid is FNV-1a 64 over `DKind:name` with the
+; BARE name, so two modules declaring the same unmangled name collide
+; by construction, and `symbols self_host/main.ax` lists such pairs:
+; different functions under one nid. A record's header
 ; line therefore repeats AXSYM's whole tuple verbatim, and a tool
 ; joining the two streams joins on the tuple.
 ;
@@ -158,17 +149,13 @@
 ; call site rather than a hope.
 (pub :: axirHeader (-> String String String String String))
 (pub fn (axirHeader name loc ty nid)
-  {
-    (let mut s "F ")
-    {
-      (set s (concat s (concat name (concat " " loc))))
-      (set s (concat s (concat " \"" (concat (symFreshNames ty) "\""))))
-      (if (> (strLen nid) 0)
-        (set s (concat s (concat " @" nid)))
-        "")
-      (concat s "\n")
-    }
-  })
+  (concat (concat "F " (concat name (concat " " loc)))
+    (concat (concat " \"" (concat (symFreshNames ty) "\""))
+      (concat
+        (if (> (strLen nid) 0)
+          (concat " @" nid)
+          "")
+        "\n"))))
 
 ; The `region` line: the checker's own words, undecoded.
 ;
@@ -187,21 +174,17 @@
 (pub fn (axirRegionLine f np)
   {
     (let ff (memGetWordVec f 2))
-    (let mut from "")
+    (let masks vecNew)
     {
       (for i in 0..np
-        {
-          (if (> i 0)
-            (set from (concat from ","))
-            "")
-          (set from (concat from
-                      (if (&& (!= (as ff Int) 0) (< i (vecLen ff)))
-                        (fmtInt (vecGet ff i))
-                        "0")))
-        })
-      (if (== np 0)
-        (set from "-")
-        "")
+        (vecPush masks
+          (if (&& (!= (as ff Int) 0) (< i (vecLen ff)))
+            (fmtInt (vecGet ff i))
+            "0")))
+      (let from
+        (if (== np 0)
+          "-"
+          (strJoin masks ",")))
       (concat "region "
         (concat (fmtInt (memGetWord f 1))
           (concat (concat " " from)
@@ -233,11 +216,19 @@
 ; spelling for the block parameters, the call arguments and the block
 ; arguments, for the reason `mirRegList` is one spelling: three that
 ; agreed today would be three to keep in step.
-(pub :: axirRegs (-> Ints Int String String))
-(pub fn (axirRegs v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (axirRegs v (+ i 1) (concat acc (concat " " (mirReg (vecGet v i)))))))
+(pub :: axirRegs (-> Ints String))
+(pub fn (axirRegs v)
+  {
+    (let b (strBuilderNew))
+    {
+      (for r in v
+        {
+          (strBuilderPush b " ")
+          (strBuilderPush b (mirReg r))
+        })
+      (strBuilderFinish b)
+    }
+  })
 
 ; One instruction, or "" for an opcode this grammar does not spell.
 ;
@@ -260,8 +251,7 @@
             (concat n.name (concat " " (concat (mirReg n.a) (concat " " (mirReg n.b))))))))
       (if (== n.op MO_CALL)
         (concat "op "
-          (concat (mirReg n.dst)
-            (concat " call " (concat (saAxSafe n.name) (axirRegs n.args 0 "")))))
+          (concat (mirReg n.dst) (concat " call " (concat (saAxSafe n.name) (axirRegs n.args)))))
         ""))))
 
 ; One terminator, or "" for an opcode this grammar does not spell.
@@ -278,7 +268,7 @@
   (if (== t.op MT_RET)
     (concat "term ret " (mirReg t.a))
     (if (== t.op MT_BR)
-      (concat "term br " (concat (mirBB t.tgt) (axirRegs t.args 0 "")))
+      (concat "term br " (concat (mirBB t.tgt) (axirRegs t.args)))
       (if (== t.op MT_CONDBR)
         ; The block arguments ride after the two targets - the same
         ; suffix `br` carries, because it is the same list. An empty
@@ -287,7 +277,7 @@
         (concat "term condbr "
           (concat (mirReg t.a)
             (concat " "
-              (concat (mirBB t.tgt) (concat " " (concat (mirBB t.alt) (axirRegs t.args 0 "")))))))
+              (concat (mirBB t.tgt) (concat " " (concat (mirBB t.alt) (axirRegs t.args)))))))
         (if (== t.op MT_TRAPZ)
           (concat "term trapz "
             (concat (mirReg t.a) (concat " " (concat (mirBB t.tgt) (concat " " (mirBB t.alt))))))
@@ -307,20 +297,20 @@
   {
     (let mut ok 1)
     {
-      (vecPushStr out (concat "blk " (concat (mirBB b.id) (concat (axirRegs b.params 0 "") "\n"))))
+      (vecPush out (concat "blk " (concat (mirBB b.id) (concat (axirRegs b.params) "\n"))))
       (for i in 0..(vecLen b.instrs)
         {
           (let s (axirOpLine (vecGet b.instrs i)))
           (if (== (strLen s) 0)
             (set ok 0)
-            (vecPushStr out (concat s "\n")))
+            (vecPush out (concat s "\n")))
         })
       (if (== (vecLen b.term) 1)
         {
           (let s (axirTermLine (vecGet b.term 0)))
           (if (== (strLen s) 0)
             (set ok 0)
-            (vecPushStr out (concat s "\n")))
+            (vecPush out (concat s "\n")))
         }
         (set ok 0))
       ok
@@ -345,8 +335,8 @@
         (if (== (axirBlockLines (vecGet f.blocks i) body) 0)
           (set ok 0)))
       (if (== ok 1)
-        (for k in 0..(vecLen body)
-          (vecPush parts (vecGetStr body k))))
+        (for line in body
+          (vecPush parts line)))
       ok
     }
   })
@@ -411,66 +401,49 @@
       (let sm (smBuild decls units))
       {
         (vecPush parts (concat "axir 1 " (concat target (concat " " (concat axiomVersion "\n")))))
-        {
-          (let fns (tcFnsVec tc))
-          (let mut i 0)
-          (while (< i (vecLen fns))
-            {
-              (let e (vecGet fns i))
-              {
-                (let name (memGetWordStr e 0))
-                {
-                  (if (! (== (symFnRowSkipped name (memGetWord e 3) (memGetWord e 4) builtins) 1))
-                    {
-                      (let loc (smLocReal sm 0 1 2 name units))
-                      (let params (saGetNames sm.prmN sm.prmV name))
-                      (let opTy (saGetNode sm.opN sm.opV name))
-                      {
-                        (vecPush parts
-                          (axirHeader (bareOf name)
-                            (if (== (strLen loc) 0)
-                              "-"
-                              loc)
-                            (if (&& (== (memGetWord e 4) 1) (! (nodeSame opTy nilNode)))
-                              (symTy opTy)
-                              (symTy (readAstNode e 1)))
-                            (smNidFor sm name)))
-                        (vecPush parts (concat "sig " (concat (fmtInt (memGetWord e 2)) "\n")))
-                        {
-                          (let mut k 0)
-                          (if (! (== (as params Int) 0))
-                            (while (< k (vecLen params))
-                              {
-                                (vecPush parts
-                                  (concat "param "
-                                    (concat (fmtInt k)
-                                      (concat " " (concat (saAxSafe (vecGetStr params k)) "\n")))))
-                                (set k (+ k 1))
-                              }))
-                        }
-                        {
-                          (let f (memGetWord e 8))
-                          (if (! (== f 0))
-                            (vecPush parts (axirRegionLine f (memGetWord f 7))))
-                        }
-                        ; The body goes AFTER the region line, so a
-                        ; record reads outside-in: who the function is,
-                        ; what its signature is, what the checker
-                        ; concluded about it, and then what it does.
-                        (if (== mir 1)
-                          (axirLowered (axirDeclFor sm name) parts))
-                        (vecPush parts "end\n")
-                      }
-                    })
-                  (set i (+ i 1))
-                }
-              }
-            })
-        }
-        (catStrs parts)
+        (for e in (tcFnsVec tc)
+          (axirRecord e sm units builtins mir parts))
+        (strJoin parts "")
       }
     }
   })
+
+; One `FnEnt`'s record onto `parts`, or nothing for a row
+; `symFnRowSkipped` drops.
+(:: axirRecord (-> FnEnt SymMaps Units Int Int Strings ()))
+(fn (axirRecord e sm units builtins mir parts)
+  (if (! (== (symFnRowSkipped e.name e.isBuiltin e.isEffectOp builtins) 1))
+    {
+      (let name e.name)
+      (let loc (smLocReal sm 0 1 2 name units))
+      (let params (saGetNames sm.prmN sm.prmV name))
+      (let opTy (saGetNode sm.opN sm.opV name))
+      {
+        (vecPush parts
+          (axirHeader (bareOf name)
+            (if (== (strLen loc) 0)
+              "-"
+              loc)
+            (if (&& (== e.isEffectOp 1) (! (nodeSame opTy nilNode)))
+              (symTy opTy)
+              (symTy e.ty))
+            (smNidFor sm name)))
+        (vecPush parts (concat "sig " (concat (fmtInt e.paramCount) "\n")))
+        (if (! (== (as params Int) 0))
+          (for (p k) in params
+            (vecPush parts
+              (concat "param " (concat (fmtInt k) (concat " " (concat (saAxSafe p) "\n")))))))
+        (if (! (== e.rgn 0))
+          (vecPush parts (axirRegionLine e.rgn (memGetWord e.rgn 7))))
+        ; The body goes AFTER the region line, so a
+        ; record reads outside-in: who the function is,
+        ; what its signature is, what the checker
+        ; concluded about it, and then what it does.
+        (if (== mir 1)
+          (axirLowered (axirDeclFor sm name) parts))
+        (vecPush parts "end\n")
+      }
+    }))
 
 ; ------------------------------------------------------------------
 ; Reading.
@@ -501,7 +474,7 @@
               {
                 (while (&& (< k e) (!= (strByte s k) 34))
                   (set k (+ k 1)))
-                (vecPushStr out (strSlice s (+ j 1) (- k (+ j 1))))
+                (vecPush out (strSlice s (+ j 1) (- k (+ j 1))))
                 (set j (+ k 1))
               }
             }
@@ -510,7 +483,7 @@
               {
                 (while (&& (< k e) (!= (strByte s k) 32))
                   (set k (+ k 1)))
-                (vecPushStr out (strSlice s j (- k j)))
+                (vecPush out (strSlice s j (- k j)))
                 (set j k)
               }
             })))
@@ -520,23 +493,23 @@
 
 ; One error record, so that the shape of a refusal is the shape of a
 ; line.
-(pub :: axirErr (-> String Ints))
+(pub :: axirErr (-> String StringRows))
 (pub fn (axirErr msg)
   {
     (let rec vecNew)
     (let out vecNew)
     {
-      (vecPushStr rec "axir-error")
-      (vecPushStr rec msg)
-      (vecPush out (as rec Int))
+      (vecPush rec "axir-error")
+      (vecPush rec msg)
+      (vecPush out rec)
       out
     }
   })
 
-(pub :: axirIsErr (-> Ints Bool))
+(pub :: axirIsErr (-> StringRows Bool))
 (pub fn (axirIsErr recs)
   (if (== (vecLen recs) 1)
-    (strEq (vecGetStr (vecGetVec recs 0) 0) "axir-error")
+    (strEq (vecGet (vecGet recs 0) 0) "axir-error")
     false))
 
 ; Strip a leading sigil byte, refusing the token that does not carry
@@ -544,38 +517,45 @@
 ; and a register from an opcode, and a reader that accepted a bare
 ; token there would re-emit a line the writer could never have
 ; written.
-(pub :: axirUnsigil (-> String Int String))
-;@axiom:effect(unsafe)
+(pub :: axirUnsigil (-> String Int (Option String)))
 (pub fn (axirUnsigil tok b)
   (if (&& (> (strLen tok) 1) (== (strByte tok 0) b))
-    (strSlice tok 1 (- (strLen tok) 1))
-    (as 0 String)))
+    (Some (strSlice tok 1 (- (strLen tok) 1)))
+    None))
 
-; One line's atoms, sigils removed. 0 means the line carried a field
-; the grammar spells with a sigil and the file spelled without one.
-(pub :: axirDecompose (-> String Strings Strings))
-;@axiom:effect(unsafe)
+; Push `tok` onto `rec` without its sigil `b`. Answers 0, and pushes
+; nothing, when the token does not carry it.
+(:: axirPushUnsigiled (-> Strings String Int Int))
+(fn (axirPushUnsigiled rec tok b)
+  (match (axirUnsigil tok b)
+    ((Some bare)
+      {
+        (vecPush rec bare)
+        1
+      }
+    )
+    ((None) 0)))
+
+; One line's atoms, sigils removed. `None` means the line carried a
+; field the grammar spells with a sigil and the file spelled without
+; one.
+(pub :: axirDecompose (-> String Strings (Option Strings)))
 (pub fn (axirDecompose kind toks)
   {
     (let rec vecNew)
     (let mut ok 1)
     {
-      (vecPushStr rec kind)
+      (vecPush rec kind)
       (if (strEq kind "F")
         ; name loc "ty" [@nid] - the nid is optional, and a row for a
         ; name the collector never keyed genuinely has none.
         {
-          (vecPushStr rec (vecGetStr toks 1))
-          (vecPushStr rec (vecGetStr toks 2))
-          (vecPushStr rec (vecGetStr toks 3))
+          (vecPush rec (vecGet toks 1))
+          (vecPush rec (vecGet toks 2))
+          (vecPush rec (vecGet toks 3))
           (if (> (vecLen toks) 4)
-            {
-              (let nid (axirUnsigil (vecGetStr toks 4) 64))
-              (if (== (as nid Int) 0)
-                (set ok 0)
-                (vecPushStr rec nid))
-            }
-            (vecPushStr rec ""))
+            (set ok (axirPushUnsigiled rec (vecGet toks 4) 64))
+            (vecPush rec ""))
         }
         (if (strEq kind "blk")
           ; LABEL %p... - a block's parameters are registers and
@@ -587,15 +567,10 @@
           {
             (let mut k 2)
             {
-              (vecPushStr rec (vecGetStr toks 1))
+              (vecPush rec (vecGet toks 1))
               (while (&& (< k (vecLen toks)) (== ok 1))
                 {
-                  {
-                    (let pr (axirUnsigil (vecGetStr toks k) 37))
-                    (if (== (as pr Int) 0)
-                      (set ok 0)
-                      (vecPushStr rec pr))
-                  }
+                  (set ok (axirPushUnsigiled rec (vecGet toks k) 37))
                   (set k (+ k 1))
                 })
             }
@@ -603,36 +578,20 @@
           (if (strEq kind "op")
             ; %n opcode operand... - the destination carries its sigil
             {
-              (let dst (axirUnsigil (vecGetStr toks 1) 37))
-              (if (== (as dst Int) 0)
-                (set ok 0)
-                {
-                  (let mut k 2)
-                  {
-                    (vecPushStr rec dst)
-                    (while (< k (vecLen toks))
-                      {
-                        (vecPushStr rec (vecGetStr toks k))
-                        (set k (+ k 1))
-                      })
-                  }
-                })
+              (set ok (axirPushUnsigiled rec (vecGet toks 1) 37))
+              (if (== ok 1)
+                (for k in 2..(vecLen toks)
+                  (vecPush rec (vecGet toks k))))
             }
-            {
-              (let mut k 1)
-              (while (< k (vecLen toks))
-                {
-                  (vecPushStr rec (vecGetStr toks k))
-                  (set k (+ k 1))
-                })
-            })))
+            (for k in 1..(vecLen toks)
+              (vecPush rec (vecGet toks k))))))
       (if (== ok 1)
-        rec
-        (as 0 (Vec String)))
+        (Some rec)
+        None)
     }
   })
 
-(pub :: axirRead (-> String Ints))
+(pub :: axirRead (-> String StringRows))
 (pub fn (axirRead text)
   {
     (let n (strLen text))
@@ -648,7 +607,7 @@
               {
                 (let toks (axirTokens text i e))
                 {
-                  (let kind (vecGetStr toks 0))
+                  (let kind (vecGet toks 0))
                   {
                     (let want (axirKindArityMin kind))
                     (if (< want 0)
@@ -656,19 +615,14 @@
                       (if (|| (< (vecLen toks) want)
                             (&& (axirKindExact kind) (> (vecLen toks) want)))
                         (set bad (concat "`" (concat kind "` line has the wrong number of fields")))
-                        {
-                          (let rec (axirDecompose kind toks))
-                          (if (== (as rec Int) 0)
+                        (match (axirDecompose kind toks)
+                          ((Some rec) (vecPush out rec))
+                          ((None)
                             (set bad (concat "`" (concat kind "` line is malformed")))
-                            {
-                              (vecPush out (as rec Int))
-                              ""
-                            })
-                        }))
+                          ))))
                   }
                 }
-              }
-              "")
+              })
             (set i (+ e 1))
           }
         })
@@ -682,44 +636,29 @@
 ; Writing a parse back out. The inverse of `axirDecompose`, and the
 ; two together are what `scripts/check-mir-roundtrip.sh` measures.
 ; ------------------------------------------------------------------
-(pub :: axirWrite (-> Ints String))
+(pub :: axirWrite (-> StringRows String))
 (pub fn (axirWrite recs)
   {
     (let parts vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen recs))
+      (for rec in recs
         {
-          (let rec (vecGetVec recs i))
-          {
-            (let kind (vecGetStr rec 0))
+          (let kind (vecGet rec 0))
+          (if (strEq kind "F")
+            (vecPush parts (axirHeader (vecGet rec 1) (vecGet rec 2) (vecGet rec 3) (vecGet rec 4)))
             {
-              (if (strEq kind "F")
-                (vecPush parts
-                  (axirHeader (vecGetStr rec 1) (vecGetStr rec 2) (vecGetStr rec 3)
-                    (vecGetStr rec 4)))
-                {
-                  (let mut s kind)
-                  (let mut k 1)
-                  {
-                    (while (< k (vecLen rec))
-                      {
-                        (set s (concat s
-                                 (concat " "
-                                   (if (|| (&& (strEq kind "op") (== k 1))
-                                         (&& (strEq kind "blk") (> k 1)))
-                                     (concat "%" (vecGetStr rec k))
-                                     (vecGetStr rec k)))))
-                        (set k (+ k 1))
-                      })
-                    (vecPush parts (concat s "\n"))
-                  }
-                })
-              (set i (+ i 1))
-            }
-          }
+              (let atoms vecNew)
+              {
+                (for (atom k) in rec
+                  (vecPush atoms
+                    (if (|| (&& (strEq kind "op") (== k 1)) (&& (strEq kind "blk") (> k 1)))
+                      (concat "%" atom)
+                      atom)))
+                (vecPush parts (concat (strJoin atoms " ") "\n"))
+              }
+            })
         })
-      (catStrs parts)
+      (strJoin parts "")
     }
   })
 
@@ -739,7 +678,7 @@
     (let recs (axirRead text))
     (if (axirIsErr recs)
       {
-        (vecPushStr msg (vecGetStr (vecGetVec recs 0) 1))
+        (vecPush msg (vecGet (vecGet recs 0) 1))
         ""
       }
       (axirWrite recs))

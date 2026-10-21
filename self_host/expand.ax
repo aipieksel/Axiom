@@ -714,7 +714,6 @@
 ; it is a language change, not a bug fix.
 ; ------------------------------------------------------------------
 (pub :: expCollectMacros (-> (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (expCollectMacros decls acc i)
   (if (>= i (vecLen decls))
     acc
@@ -722,8 +721,7 @@
       {
         (let d (vecGet decls i))
         (if (== (nodeTag d) TAG_D_MACRO)
-          (vecPush acc d)
-          (as 0 (Vec Int)))
+          (vecPush acc d))
       }
       (expCollectMacros decls acc (+ i 1))
     }))
@@ -1504,12 +1502,8 @@
 (pub fn (expCaptureVec xs env bs)
   {
     (let acc vecNew)
-    (let mut i 0)
-    (while (< i (vecLen xs))
-      {
-        (vecPush acc (expCaptureSyntax (vecGet xs i) env bs))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen xs)
+      (vecPush acc (expCaptureSyntax (vecGet xs i) env bs)))
     acc
   })
 
@@ -1540,12 +1534,8 @@
 (pub fn (expSaveSyntaxBindings e bs mark)
   {
     (let saved vecNew)
-    (let mut i mark)
-    (while (< i (vecLen bs))
-      {
-        (vecPush saved (vecGet bs i))
-        (set i (+ i 1))
-      })
+    (for i in mark..(vecLen bs)
+      (vecPush saved (vecGet bs i)))
     (writeNodeWords e 12 saved)
     e
   })
@@ -1784,13 +1774,9 @@
         {
           (let names vecNew)
           (let fs (nodeBChildren d))
-          (let mut i 0)
           {
-            (while (< i (vecLen fs))
-              {
-                (vecPush names (nodeA (vecGet fs i)))
-                (set i (+ i 1))
-              })
+            (for i in 0..(vecLen fs)
+              (vecPush names (nodeA (vecGet fs i))))
             {
               (let r vecNew)
               {
@@ -1834,13 +1820,9 @@
         {
           (let names vecNew)
           (let cs (nodeBChildren d))
-          (let mut i 0)
           {
-            (while (< i (vecLen cs))
-              {
-                (vecPush names (nodeA (vecGet cs i)))
-                (set i (+ i 1))
-              })
+            (for i in 0..(vecLen cs)
+              (vecPush names (nodeA (vecGet cs i))))
             {
               (let r vecNew)
               {
@@ -2140,27 +2122,20 @@
           }
           head))
       (let out vecNew)
-      (let mut i 0)
       {
-        (while (< i (vecLen pargs))
-          {
-            (let a (vecGet pargs i))
-            {
-              (if (&& (== (nodeTag a) TAG_E_APP)
-                    {
-                      (let ah (spineHead a))
-                      (&& (== (nodeTag ah) TAG_E_VAR) (strEq (nodeAName ah) "syntax/binders"))
-                    })
+        (for a in pargs
+          (if (&& (== (nodeTag a) TAG_E_APP)
                 {
-                  (let sr (expEvalSeq env a params args isp))
-                  (if (== (as sr Int) 0)
-                    (vecPush out (mkEVarAt "_" isp))
-                    (expPushBinderVars out (vecGetVec sr 1) isp 0))
-                }
-                (vecPush out (expSubstPatFor a params args env isp)))
-              (set i (+ i 1))
+                  (let ah (spineHead a))
+                  (&& (== (nodeTag ah) TAG_E_VAR) (strEq (nodeAName ah) "syntax/binders"))
+                })
+            {
+              (let sr (expEvalSeq env a params args isp))
+              (if (== (as sr Int) 0)
+                (vecPush out (mkEVarAt "_" isp))
+                (expPushBinderVars out (vecGetVec sr 1) isp 0))
             }
-          })
+            (vecPush out (expSubstPatFor a params args env isp))))
         ; AN EMPTY BINDER SPLICE IS A NULLARY CONSTRUCTOR, NOT A
         ; BINDER. `spineArgVec` of an application never answers
         ; nothing, so `out` is empty only when the one argument was a
@@ -2199,13 +2174,9 @@
 (pub fn (expSubstPatForVec ps params args env isp)
   {
     (let acc vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen ps))
-        {
-          (vecPush acc (expSubstPatFor (vecGet ps i) params args env isp))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen ps)
+        (vecPush acc (expSubstPatFor (vecGet ps i) params args env isp)))
       acc
     }
   })
@@ -3179,13 +3150,9 @@
             {
               (let f (mkEVarAt (expQualify env (expJoinName l r)) isp))
               (let out vecNew)
-              (let mut i 2)
               {
-                (while (< i (vecLen qargs))
-                  {
-                    (vecPush out (substTpl (vecGet qargs i) params args env isp))
-                    (set i (+ i 1))
-                  })
+                (for i in 2..(vecLen qargs)
+                  (vecPush out (substTpl (vecGet qargs i) params args env isp)))
                 (markGeneratedCall (expRebuildSpine f out isp 0))
               }
             })
@@ -3756,29 +3723,25 @@
             {
               (let markA (vecLen args))
               {
-                (let mut j 0)
-                {
-                  (while (< j n)
+                (for j in 0..n
+                  {
+                    (let mut k 0)
                     {
-                      (let mut k 0)
-                      {
-                        (while (< k (vecLen names))
-                          {
-                            (vecPush params (vecGetStr names k))
-                            (vecPush args
-                              (vecGet (expSeqLookup (expSeqBindsVec env) (vecGetStr names k)) j))
-                            (set k (+ k 1))
-                          })
-                        (vecPush out (substTpl app params args env isp))
-                        (while (> (vecLen params) markP)
-                          (vecPop params))
-                        (while (> (vecLen args) markA)
-                          (vecPop args))
-                        (set j (+ j 1))
-                      }
-                    })
-                  0
-                }
+                      (while (< k (vecLen names))
+                        {
+                          (vecPush params (vecGetStr names k))
+                          (vecPush args
+                            (vecGet (expSeqLookup (expSeqBindsVec env) (vecGetStr names k)) j))
+                          (set k (+ k 1))
+                        })
+                      (vecPush out (substTpl app params args env isp))
+                      (while (> (vecLen params) markP)
+                        (vecPop params))
+                      (while (> (vecLen args) markA)
+                        (vecPop args))
+                    }
+                  })
+                0
               }
             }
           }
@@ -4517,13 +4480,9 @@
           }
           head))
       (let out vecNew)
-      (let mut i 0)
       {
-        (while (< i (vecLen pargs))
-          {
-            (vecPush out (expSubstPatSeq (vecGet pargs i) seqs j isp))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen pargs)
+          (vecPush out (expSubstPatSeq (vecGet pargs i) seqs j isp)))
         (expRebuildSpine newHead out isp 0)
       }
     }
@@ -5097,14 +5056,10 @@
 (pub fn (expAsmArgv desc vals)
   {
     (let out vecNew)
-    (let mut i 0)
     {
       (vecPush out desc)
-      (while (< i (vecLen vals))
-        {
-          (vecPush out (vecGet vals i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen vals)
+        (vecPush out (vecGet vals i)))
       out
     }
   })
@@ -5765,13 +5720,9 @@
 (pub fn (expAsmZeros n)
   {
     (let v vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush v 0)
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush v 0))
       v
     }
   })
@@ -5786,24 +5737,19 @@
     (let out vecNew)
     (let mut o 0)
     (let mut j 0)
-    (let mut i 0)
     {
-      (while (< i (vecLen ops))
+      (for p in ops
         {
-          (let p (vecGet ops i))
-          {
-            (if (expAsmOutKind p.kind)
-              {
-                (vecPush out o)
-                (set o (+ o 1))
-              }
-              (if (expAsmInKind p.kind)
-                (vecPush out (+ nOut j))
-                (vecPush out (- 0 1))))
+          (if (expAsmOutKind p.kind)
+            {
+              (vecPush out o)
+              (set o (+ o 1))
+            }
             (if (expAsmInKind p.kind)
-              (set j (+ j 1)))
-            (set i (+ i 1))
-          }
+              (vecPush out (+ nOut j))
+              (vecPush out (- 0 1))))
+          (if (expAsmInKind p.kind)
+            (set j (+ j 1)))
         })
       out
     }
@@ -6439,17 +6385,13 @@
         {
           (let mut v 0)
           (let mut ok true)
-          (let mut i p)
           {
-            (while (< i n)
+            (for i in p..n
               {
-                {
-                  (let c (strByte r i))
-                  (if (&& (>= c 48) (<= c 57))
-                    (set v (+ (* v 10) (- c 48)))
-                    (set ok false))
-                }
-                (set i (+ i 1))
+                (let c (strByte r i))
+                (if (&& (>= c 48) (<= c 57))
+                  (set v (+ (* v 10) (- c 48)))
+                  (set ok false))
               })
             (&& ok (&& (>= v lo) (<= v hi)))
           }
@@ -7191,15 +7133,11 @@
     (if (== n 0)
       false
       {
-        (let mut i 0)
         (let mut ok true)
         {
-          (while (< i (- n 1))
-            {
-              (if (qmHas (vecGet xs i))
-                (set ok false))
-              (set i (+ i 1))
-            })
+          (for i in 0..(- n 1)
+            (if (qmHas (vecGet xs i))
+              (set ok false)))
           ok
         }
       })
@@ -7210,16 +7148,12 @@
   {
     (let out vecNew)
     (let n (vecLen xs))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush out
-            (if (== i (- n 1))
-              (qmRw env (vecGet xs i))
-              (vecGet xs i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush out
+          (if (== i (- n 1))
+            (qmRw env (vecGet xs i))
+            (vecGet xs i))))
       out
     }
   })
@@ -7355,13 +7289,9 @@
 (pub fn (qmTail xs i)
   {
     (let out vecNew)
-    (let mut k i)
     {
-      (while (< k (vecLen xs))
-        {
-          (vecPush out (vecGet xs k))
-          (set k (+ k 1))
-        })
+      (for k in i..(vecLen xs)
+        (vecPush out (vecGet xs k)))
       out
     }
   })
@@ -7370,13 +7300,9 @@
 (pub fn (qmArmBodies arms)
   {
     (let out vecNew)
-    (let mut k 0)
     {
-      (while (< k (vecLen arms))
-        {
-          (vecPush out (nodeBChild (vecGet arms k)))
-          (set k (+ k 1))
-        })
+      (for k in 0..(vecLen arms)
+        (vecPush out (nodeBChild (vecGet arms k))))
       (nodeBuildEBegin out 0 0 0)
     }
   })
@@ -7471,18 +7397,14 @@
               hd
               (qmBindBefore env st hd)))
           (let out vecNew)
-          (let mut i 0)
           {
-            (while (< i (vecLen args))
-              {
-                (vecPush out
-                  (if (< i k)
-                    (qmBindBefore env st (vecGet args i))
-                    (if (== i k)
-                      (qmExtract env st (vecGet args i))
-                      (vecGet args i))))
-                (set i (+ i 1))
-              })
+            (for i in 0..(vecLen args)
+              (vecPush out
+                (if (< i k)
+                  (qmBindBefore env st (vecGet args i))
+                  (if (== i k)
+                    (qmExtract env st (vecGet args i))
+                    (vecGet args i)))))
             (qmRebuild h2 out 0)
           }
         })
@@ -7524,20 +7446,16 @@
   {
     (let xs (nodeAChildren e))
     (let out vecNew)
-    (let mut i 0)
     {
       (let k (qmFirstWith xs 0))
       {
-        (while (< i (vecLen xs))
-          {
-            (if (< i k)
-              (qmRunBefore st (vecGet xs i))
-              (vecPush out
-                (if (== i k)
-                  (qmExtract env st (vecGet xs i))
-                  (vecGet xs i))))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen xs)
+          (if (< i k)
+            (qmRunBefore st (vecGet xs i))
+            (vecPush out
+              (if (== i k)
+                (qmExtract env st (vecGet xs i))
+                (vecGet xs i)))))
         (if (== (vecLen out) 1)
           (vecGet out 0)
           (nodeBuildEBegin out 0 0 (nodeSpan e)))
@@ -7634,27 +7552,18 @@
           (if (>= k 0)
             {
               (let fixed vecNew)
-              (let mut j 0)
-              (while (< j k)
-                {
-                  (expRuleBindersOf (vecGet (expRulePats r) j) fixed)
-                  (set j (+ j 1))
-                })
+              (for j in 0..k
+                (expRuleBindersOf (vecGet (expRulePats r) j) fixed))
               (let ns (expUniqueNames fixed))
               (let reps (expUniqueNames (expRuleBindersOf (vecGet (expRulePats r) k) vecNew)))
-              (let mut n 0)
-              (while (< n (vecLen reps))
-                {
-                  (if (>= (expParamIndex ns (vecGetStr reps n)) 0)
-                    (expEmit env
-                      (mkDiagNote SEV_ERROR "AX3020" "macro-duplicate-parameter" (nodeSpan mac)
-                        (concat
-                          (concat (concat "macro `" (nodeAName mac)) "` binds the parameter `")
-                          (concat (vecGetStr reps n) "` at two repetition depths"))
-                        0 0 "give the fixed and repeated bindings different names"
-                        "a pattern binder may constrain several forms at one depth; one form and a sequence need separate names")))
-                  (set n (+ n 1))
-                })
+              (for n in 0..(vecLen reps)
+                (if (>= (expParamIndex ns (vecGetStr reps n)) 0)
+                  (expEmit env
+                    (mkDiagNote SEV_ERROR "AX3020" "macro-duplicate-parameter" (nodeSpan mac)
+                      (concat (concat (concat "macro `" (nodeAName mac)) "` binds the parameter `")
+                        (concat (vecGetStr reps n) "` at two repetition depths"))
+                      0 0 "give the fixed and repeated bindings different names"
+                      "a pattern binder may constrain several forms at one depth; one form and a sequence need separate names"))))
             })
           (expCheckRuleParams mac env (+ i 1))
         }))
@@ -7664,13 +7573,9 @@
 (pub fn (expUniqueNames ns)
   {
     (let out vecNew)
-    (let mut i 0)
-    (while (< i (vecLen ns))
-      {
-        (if (< (expParamIndex out (vecGetStr ns i)) 0)
-          (vecPush out (vecGetStr ns i)))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen ns)
+      (if (< (expParamIndex out (vecGetStr ns i)) 0)
+        (vecPush out (vecGetStr ns i))))
     out
   })
 
@@ -7775,8 +7680,7 @@
     0
     {
       (if (== (strVecHas union (vecGetStr used i)) 0)
-        (vecPush union (vecGet used i))
-        union)
+        (vecPush union (vecGet used i)))
       (expCollectUsedVec used union (+ i 1))
     }))
 
@@ -7845,8 +7749,7 @@
                     (expFmtInt (+ j 1)))
                   0 0
                   "give the earlier rule a pattern that can FAIL - a literal, or a parenthesised shape of two or more elements - or delete this one. A one-element `(p)` is the bare binder `p`: the parentheses are the same ones an argument loses, so it still matches everything"
-                  "rules are tried IN ORDER and the first whose pattern matches wins (macro-system.md MAC-LANG-18); an earlier rule of the same arity whose elements are all plain binders matches every invocation of that arity, so nothing of that arity after it is reachable"))
-              ())
+                  "rules are tried IN ORDER and the first whose pattern matches wins (macro-system.md MAC-LANG-18); an earlier rule of the same arity whose elements are all plain binders matches every invocation of that arity, so nothing of that arity after it is reachable")))
           }
           ; Its OWN code since 2026-08-16. This shared
           ; `AX3020` while the refusal was "two rules of
@@ -10687,13 +10590,9 @@
 (pub fn (expCtorFlags ftys)
   {
     (let acc vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen ftys))
-        {
-          (vecPush acc (expTyIsFloatCon (vecGet ftys i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen ftys)
+        (vecPush acc (expTyIsFloatCon (vecGet ftys i))))
       acc
     }
   })
@@ -11058,31 +10957,22 @@
   (if (== (as table Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen diags))
+      (for d in diags
+        (if (! (== (diagSpan d) 0))
           {
-            (let d (vecGet diags i))
-            {
-              (if (! (== (diagSpan d) 0))
-                {
-                  (expAttachTo d table units (expUnitMod units (diagUnit d)) 0)
-                  ; MAC-TOOL-5: a diagnostic that acquired a frame
-                  ; is a diagnostic about generated text, and its
-                  ; machine-applicable replacement was computed
-                  ; against text the author's file does not
-                  ; contain. The span it carries is the
-                  ; INVOCATION's - that is what makes the report
-                  ; useful and the FIX wrong, since applying it
-                  ; pastes the replacement over the macro call.
-                  (if (> (diagTraceCount d) 0)
-                    (diagDisarmFixes d))
-                })
-              (set i (+ i 1))
-            }
-          })
-        0
-      }
+            (expAttachTo d table units (expUnitMod units (diagUnit d)) 0)
+            ; MAC-TOOL-5: a diagnostic that acquired a frame
+            ; is a diagnostic about generated text, and its
+            ; machine-applicable replacement was computed
+            ; against text the author's file does not
+            ; contain. The span it carries is the
+            ; INVOCATION's - that is what makes the report
+            ; useful and the FIX wrong, since applying it
+            ; pastes the replacement over the macro call.
+            (if (> (diagTraceCount d) 0)
+              (diagDisarmFixes d))
+          }))
+      0
     }))
 
 ; How many expansion frames one diagnostic will carry.
@@ -11506,24 +11396,18 @@
       (let binds vecNew)
       (let refs vecNew)
       (let ordered vecNew)
-      (let mut i 0)
       {
-        (while (< i (vecLen values))
+        (for i in 0..(vecLen values)
           {
             (let fresh (expFresh env "_field"))
             (let value (vecGet values i))
             {
               (vecPush binds (nodeBuildParallelBinding fresh value (nodeSpan value)))
               (vecPush refs (mkEVarAt fresh (nodeSpan value)))
-              (set i (+ i 1))
             }
           })
-        (set i 0)
-        (while (< i (vecLen names))
-          {
-            (vecPush ordered (vecGet refs (strVecIdx labels (vecGetStr names i))))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen names)
+          (vecPush ordered (vecGet refs (strVecIdx labels (vecGetStr names i)))))
         (foldLets binds (setCtorFieldNames (expBuildSpine callee ordered 0) names)
           (- (vecLen binds) 1))
       }
@@ -11546,9 +11430,8 @@
   {
     (let seen vecNew)
     (let mut good 1)
-    (let mut i 0)
     {
-      (while (< i (vecLen labels))
+      (for i in 0..(vecLen labels)
         {
           (let label (vecGetStr labels i))
           {
@@ -11565,21 +11448,16 @@
                   (set good 0)
                 }))
             (vecPush seen label)
-            (set i (+ i 1))
           }
         })
-      (set i 0)
-      (while (< i (vecLen names))
+      (for i in 0..(vecLen names)
         {
           (let name (vecGetStr names i))
-          {
-            (if (== (strVecHas labels name) 0)
-              {
-                (expNamedBad env (nodeSpan e) (concat "missing struct field `" (concat name "`")))
-                (set good 0)
-              })
-            (set i (+ i 1))
-          }
+          (if (== (strVecHas labels name) 0)
+            {
+              (expNamedBad env (nodeSpan e) (concat "missing struct field `" (concat name "`")))
+              (set good 0)
+            })
         })
       good
     }
@@ -11649,39 +11527,32 @@
   {
     (let mut chosen (ExpStructMissing))
     (let mut priority 0)
-    (let mut i 0)
     {
-      (while (< i (vecLen decls))
-        {
-          (let d (vecGet decls i))
+      (for d in decls
+        (if (&& (== (nodeTag d) TAG_D_STRUCT) (strEq (nodeAName d) bare))
           {
-            (if (&& (== (nodeTag d) TAG_D_STRUCT) (strEq (nodeAName d) bare))
+            (let own (== (expModEq (nodeModule d) site) 1))
+            (let qualified (! (strEq name bare)))
+            (let full
+              (if (== (nodeModule d) 0)
+                bare
+                (concat (nodeModuleName d) (concat "$" bare))))
+            (if (&& (|| own (&& (== (nodeVis d) 1) (!= (nodeModule d) 0)))
+                  (|| (! qualified) (strEq name full)))
               {
-                (let own (== (expModEq (nodeModule d) site) 1))
-                (let qualified (! (strEq name bare)))
-                (let full
-                  (if (== (nodeModule d) 0)
-                    bare
-                    (concat (nodeModuleName d) (concat "$" bare))))
-                (if (&& (|| own (&& (== (nodeVis d) 1) (!= (nodeModule d) 0)))
-                      (|| (! qualified) (strEq name full)))
+                (let rank
+                  (if own
+                    2
+                    1))
+                (if (> rank priority)
                   {
-                    (let rank
-                      (if own
-                        2
-                        1))
-                    (if (> rank priority)
-                      {
-                        (set priority rank)
-                        (set chosen (ExpStructFound d))
-                      }
-                      (if (== rank priority)
-                        (set chosen (ExpStructAmbiguous))))
-                  })
+                    (set priority rank)
+                    (set chosen (ExpStructFound d))
+                  }
+                  (if (== rank priority)
+                    (set chosen (ExpStructAmbiguous))))
               })
-            (set i (+ i 1))
-          }
-        })
+          }))
       chosen
     }
   })

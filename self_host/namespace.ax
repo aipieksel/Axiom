@@ -30,20 +30,12 @@
 ; The name index.
 ;
 ; Every declaration the resolver records asks `bares` once or twice
-; whether a name is already claimed, and `bares` used to answer by
-; scanning itself - so resolving a module of N declarations was N
-; scans of a vector growing to N, quadratic in the declaration count.
-; Measured on the generated modules `scripts/check-name-scale.sh`
-; builds, with the compiler at df60fdb: checking the public module
-; took 0.24 s at N=2000, 0.83 s at N=4000 and 3.26 s at N=8000, a
-; per-doubling ratio of 3.45x and then 3.93x, on its way to 4x; the
-; private module went 0.18 s, 0.56 s, 2.12 s (3.14x, 3.78x). That
-; gate's own header recorded the scan as 55.7% of a check at N=8000
-; and declined to gate a doubling ratio because of it. With this
-; index the same modules read 0.08 s, 0.12 s, 0.22 s public and
-; 0.08 s, 0.12 s, 0.23 s private - 1.63x/1.76x and 1.58x/1.83x per
-; doubling - so at N=8000 the scan was fifteen times the rest of the
-; check, not 55.7% of it, and the gate now asserts the ratio.
+; whether a name is already claimed. Answered by scanning `bares`,
+; resolving a module of N declarations would be N scans of a vector
+; growing to N, quadratic in the declaration count. This index answers
+; instead, and `scripts/check-name-scale.sh` asserts the per-doubling
+; ratio of a check over generated modules of 2,000 to 8,000
+; declarations.
 ;
 ; WHY IT IS NOT INSIDE `bares`. `bares` is a plain `Vec` that every
 ; caller of `resolveImports` (main.ax, repl.ax, lsp.ax) allocates
@@ -51,10 +43,10 @@
 ; Axiom has no global state to keep a side table in. So the index is
 ; a separate structure, created by `resolveImports` and by
 ; `expandProgram` and threaded beside `bares` to every writer in this
-; module. The signatures those callers use - `resolveImports`,
-; `expandProgram`, `lspResolveFor` - are unchanged; what moved is the
-; writers' (`mangleRecord`, `mangleRecordSelf`, `mangleRecordEntry`,
-; `mangleExternItems`, `mangleDecl`), which take `idx` beside `bares`.
+; module. The callers' entry points - `resolveImports`,
+; `expandProgram`, `lspResolveFor` - take no index; the writers
+; (`mangleRecord`, `mangleRecordSelf`, `mangleRecordEntry`,
+; `mangleExternItems`, `mangleDecl`) take `idx` beside `bares`.
 ;
 ; WHY IT CANNOT GO STALE. `bares` is append-only: `vecPush` is the
 ; only operation any writer applies to it (`mangleRecordEntry`'s
@@ -94,7 +86,6 @@
 ; Absorb every entry of `bares` from `done` to its end. Answers the
 ; new `done`.
 (pub :: mangleIdxSync (-> Int Strings Int))
-;@axiom:effect(unsafe)
 (pub fn (mangleIdxSync idx bares)
   {
     (let mut i (memGetWord idx 2))
@@ -104,8 +95,7 @@
           {
             (let id (internIntern (memGetWord idx 0) (vecGetStr bares i)))
             (if (== id (vecLen (memGetWordVec idx 1)))
-              (vecPush (memGetWordVec idx 1) i)
-              (as 0 (Vec Int)))
+              (vecPush (memGetWordVec idx 1) i))
           }
           (set i (+ i 1))
         })
@@ -174,8 +164,8 @@
 ; file holds the bare slot (AN-52). A module can't import the entry
 ; file, so the entry's claim is never in a module's scope, and the
 ; bare slot's winner is the wrong answer there: `IO`'s `println` calls
-; `strLen`, and an entry file declaring its own `strLen` used to
-; capture that call, at check time and at run time.
+; `strLen`, and an entry file declaring its own `strLen` must not
+; capture that call, at check time or at run time.
 ;
 ; The unspellable `$bare` key holds the first imported definition when
 ; the entry file owns the bare slot. Ordinary entry functions map their
@@ -211,9 +201,9 @@
 ; invocation claimed the slot first and a bare call in the entry file
 ; reached the MODULE's function.
 ;
-; Measured before this existed: an entry file generating `tagShape`
-; answering 42, importing a module that generates its own `tagShape`
-; answering 7, checked clean and answered 7.
+; Without it, an entry file generating a `tagShape` that answers 42,
+; importing a module that generates its own `tagShape` answering 7,
+; would check clean and answer 7.
 (pub :: mangleRecordEntry (-> Int Strings Strings String Int))
 (pub fn (mangleRecordEntry idx bares fulls name)
   (match (mangleIdxIndexOf idx bares name)
@@ -404,7 +394,7 @@
 (pub fn (seenHasIn seen name i)
   (if (>= i (vecLen seen))
     false
-    (if (strEq (vecGetStr seen i) name)
+    (if (strEq (vecGet seen i) name)
       true
       (seenHasIn seen name (+ i 1)))))
 

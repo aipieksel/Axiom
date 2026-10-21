@@ -72,13 +72,9 @@
         n))
     {
       (let s (strAlloc m))
-      (let mut i 0)
       {
-        (while (< i m)
-          {
-            (memPutByte (strData s) i ch)
-            (set i (+ i 1))
-          })
+        (for i in 0..m
+          (memPutByte (strData s) i ch))
         s
       }
     }
@@ -327,7 +323,6 @@
 ; whole, a control byte as its picture, a byte that is not UTF-8 as
 ; U+FFFD.
 (pub :: expandWindow (-> String Int Int Int Int String))
-;@axiom:effect(unsafe)
 (pub fn (expandWindow src ls le a b)
   {
     (let parts vecNew)
@@ -344,8 +339,7 @@
                 (while (< col stop)
                   {
                     (if (&& (>= col a) (< col b))
-                      (vecPush parts " ")
-                      (as 0 (Vec String)))
+                      (vecPush parts " "))
                     (set col (+ col 1))
                   })
               }
@@ -355,8 +349,7 @@
               (let w (utf8WellFormedAt src i le))
               {
                 (if (&& (>= col a) (< col b))
-                  (vecPush parts (dispUnitText src i w))
-                  (as 0 (Vec String)))
+                  (vecPush parts (dispUnitText src i w)))
                 (set col (+ col 1))
                 (set i (+ i
                          (if (< w 1)
@@ -548,7 +541,6 @@
 ; A byte that begins no well-formed UTF-8 sequence is written as
 ; U+FFFD, the rule `jsonEsc` states for all three surfaces (2026-09-27).
 (pub :: ctlEsc (-> String String))
-;@axiom:effect(unsafe)
 (pub fn (ctlEsc s)
   (if (== (as s Int) 0)
     s
@@ -571,8 +563,7 @@
               (if (|| (== w 0) (|| (< b 32) (== b 127)))
                 {
                   (if (> i run)
-                    (vecPush parts (strSlice s run (- i run)))
-                    (as 0 (Vec String)))
+                    (vecPush parts (strSlice s run (- i run))))
                   (vecPush parts
                     (if (== w 0)
                       "�"
@@ -593,8 +584,7 @@
           s
           {
             (if (> n run)
-              (vecPush parts (strSlice s run (- n run)))
-              (as 0 (Vec String)))
+              (vecPush parts (strSlice s run (- n run))))
             (catStrs parts)
           })
       }
@@ -681,7 +671,6 @@
 ; segment is the leading or trailing line break and prints nothing;
 ; an empty segment between two others prints its indentation only.
 (pub :: fixBlock (-> Int String String))
-;@axiom:effect(unsafe)
 (pub fn (fixBlock indent repl)
   {
     (let segs (strSplit repl 10))
@@ -699,8 +688,7 @@
           {
             (vecPush acc (spacesN indent))
             (if (> (strLen seg) 0)
-              (vecPush acc (paint SGR_FIX (ctlEsc seg)))
-              (as 0 (Vec String)))
+              (vecPush acc (paint SGR_FIX (ctlEsc seg))))
             (vecPush acc "\n")
             (set i (+ i 1))
           }
@@ -755,9 +743,8 @@
 (pub fn (sortRows rows)
   {
     (let n (vecLen rows))
-    (let mut i 1)
     {
-      (while (< i n)
+      (for i in 1..n
         {
           (let cur (vecGet rows i))
           (let mut j i)
@@ -769,7 +756,6 @@
                 (set j (- j 1))
               })
             (vecSet rows j cur)
-            (set i (+ i 1))
           }
         })
       rows
@@ -794,7 +780,6 @@
   ; colour; a related one is always secondary.
   {
     (let rows vecNew)
-    (let mut i 0)
     {
       (vecPush rows
         (as (SnipRow
@@ -802,17 +787,14 @@
               :ch 94
               :msg (ctlEsc (diagLabel d))
               :sgr (sgrForSev (diagSev d))) Int))
-      (while (< i (diagSecCount d))
-        {
-          (if (== (secDrawable d i units ixs) 1)
-            (vecPush rows
-              (as (SnipRow
-                    :span (diagSecSpan d i)
-                    :ch 45
-                    :msg (ctlEsc (diagSecMsg d i))
-                    :sgr SGR_SEC) Int)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(diagSecCount d)
+        (if (== (secDrawable d i units ixs) 1)
+          (vecPush rows
+            (as (SnipRow
+                  :span (diagSecSpan d i)
+                  :ch 45
+                  :msg (ctlEsc (diagSecMsg d i))
+                  :sgr SGR_SEC) Int))))
       (sortRows rows)
     }
   })
@@ -868,17 +850,13 @@
 (pub :: rowsGutterWidth (-> String Int Ints Int))
 (pub fn (rowsGutterWidth src ix rows)
   {
-    (let mut i 0)
     (let mut w 1)
     {
-      (while (< i (vecLen rows))
+      (for i in 0..(vecLen rows)
         {
           (let n (strLen (fmtInt (lineOfIx ix (spanStart (rowSpan (vecGet rows i)))))))
-          {
-            (if (> n w)
-              (set w n))
-            (set i (+ i 1))
-          }
+          (if (> n w)
+            (set w n))
         })
       w
     }
@@ -887,28 +865,21 @@
 ; The labeled blocks, in order, with a `...` row wherever two adjacent
 ; rows are more than one line apart.
 (pub :: snipBody (-> String Int Int Ints String))
-;@axiom:effect(unsafe)
 (pub fn (snipBody src ix gw rows)
   {
     (let out vecNew)
-    (let mut i 0)
     (let mut prev 0)
     {
-      (while (< i (vecLen rows))
+      (for (r i) in rows
         {
-          (let r (vecGet rows i))
+          (let ln (lineOfIx ix (spanStart (rowSpan r))))
           {
-            (let ln (lineOfIx ix (spanStart (rowSpan r))))
-            {
-              (if (&& (> i 0) (> (- ln prev) 1))
-                (vecPush out (concat (paint SGR_GUT "...") "\n"))
-                (as 0 (Vec String)))
-              (vecPush out
-                (labelBlock src ix gw (spanStart (rowSpan r)) (spanEnd (rowSpan r)) (rowCh r)
-                  (rowMsg r) (rowSgr r)))
-              (set prev ln)
-              (set i (+ i 1))
-            }
+            (if (&& (> i 0) (> (- ln prev) 1))
+              (vecPush out (concat (paint SGR_GUT "...") "\n")))
+            (vecPush out
+              (labelBlock src ix gw (spanStart (rowSpan r)) (spanEnd (rowSpan r)) (rowCh r)
+                (rowMsg r) (rowSgr r)))
+            (set prev ln)
           }
         })
       (catStrs out)
@@ -976,24 +947,20 @@
 (pub :: traceGutterWidth (-> Int Ints Ints Int Int))
 (pub fn (traceGutterWidth d units ixs w0)
   {
-    (let mut i 0)
     (let mut w w0)
     {
-      (while (< i (diagTraceCount d))
-        {
-          (if (== (traceResolvable d i units) 1)
+      (for i in 0..(diagTraceCount d)
+        (if (== (traceResolvable d i units) 1)
+          {
+            (let u (vecGet units (diagTraceUnit d i)))
             {
-              (let u (vecGet units (diagTraceUnit d i)))
-              {
-                (let n
-                  (rowsGutterWidth (memGetWordStr u 1) (vecGet ixs (diagTraceUnit d i))
-                    (traceRows d i)))
-                (if (> n w)
-                  (set w n))
-              }
-            })
-          (set i (+ i 1))
-        })
+              (let n
+                (rowsGutterWidth (memGetWordStr u 1) (vecGet ixs (diagTraceUnit d i))
+                  (traceRows d i)))
+              (if (> n w)
+                (set w n))
+            }
+          }))
       w
     }
   })
@@ -1003,42 +970,37 @@
 (pub fn (traceBlocks d units ixs gw)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (diagTraceCount d))
-        {
-          (if (== (traceResolvable d i units) 1)
-            ; The FRAME's index, not the diagnostic's: this block
-            ; is drawn against the macro's own source.
+      (for i in 0..(diagTraceCount d)
+        (if (== (traceResolvable d i units) 1)
+          ; The FRAME's index, not the diagnostic's: this block
+          ; is drawn against the macro's own source.
+          {
+            (let u (vecGet units (diagTraceUnit d i)))
+            (let rows (traceRows d i))
             {
-              (let u (vecGet units (diagTraceUnit d i)))
-              (let rows (traceRows d i))
+              (let fsrc (memGetWordStr u 1))
+              (let fix (vecGet ixs (diagTraceUnit d i)))
+              (let ffile (memGetWord u 0))
+              (let fs (diagTraceSpan d i))
               {
-                (let fsrc (memGetWordStr u 1))
-                (let fix (vecGet ixs (diagTraceUnit d i)))
-                (let ffile (memGetWord u 0))
-                (let fs (diagTraceSpan d i))
+                (let bar (concat (paint SGR_GUT (concat (spacesN gw) " |")) "\n"))
                 {
-                  (let bar (concat (paint SGR_GUT (concat (spacesN gw) " |")) "\n"))
-                  {
-                    (vecPush out
-                      (concat (concat (spacesN gw) (paint SGR_GUT "--> "))
+                  (vecPush out
+                    (concat (concat (spacesN gw) (paint SGR_GUT "--> "))
+                      (concat
                         (concat
-                          (concat
-                            (concat (concat (as ffile String) ":")
-                              (fmtInt (lineOfIx fix (spanStart fs))))
-                            ":")
-                          (concat (fmtInt (colOfIx fsrc fix (spanStart fs))) "\n"))))
-                    (vecPush out bar)
-                    (vecPush out (snipBody fsrc fix gw rows))
-                    (vecPush out bar)
-                  }
+                          (concat (concat (as ffile String) ":")
+                            (fmtInt (lineOfIx fix (spanStart fs))))
+                          ":")
+                        (concat (fmtInt (colOfIx fsrc fix (spanStart fs))) "\n"))))
+                  (vecPush out bar)
+                  (vecPush out (snipBody fsrc fix gw rows))
+                  (vecPush out bar)
                 }
               }
             }
-            (as 0 (Vec String)))
-          (set i (+ i 1))
-        })
+          }))
       (catStrs out)
     }
   })
@@ -1116,27 +1078,15 @@
               (let notes
                 {
                   (let acc vecNew)
-                  (let mut i 0)
                   {
-                    (while (< i (diagNoteCount d))
-                      {
-                        (vecPush acc (noteLine gw (diagNote d i)))
-                        (set i (+ i 1))
-                      })
-                    (set i 0)
-                    (while (< i (diagSecCount d))
-                      {
-                        (if (! (== (secDrawable d i units ixs) 1))
-                          (vecPush acc (noteLine gw (secNoteText d i units ixs))))
-                        (set i (+ i 1))
-                      })
-                    (set i 0)
-                    (while (< i (diagTraceCount d))
-                      {
-                        (if (! (== (traceResolvable d i units) 1))
-                          (vecPush acc (noteLine gw (traceNoteText d i units ixs))))
-                        (set i (+ i 1))
-                      })
+                    (for i in 0..(diagNoteCount d)
+                      (vecPush acc (noteLine gw (diagNote d i))))
+                    (for i in 0..(diagSecCount d)
+                      (if (! (== (secDrawable d i units ixs) 1))
+                        (vecPush acc (noteLine gw (secNoteText d i units ixs)))))
+                    (for i in 0..(diagTraceCount d)
+                      (if (! (== (traceResolvable d i units) 1))
+                        (vecPush acc (noteLine gw (traceNoteText d i units ixs)))))
                     (catStrs acc)
                   }
                 })
@@ -1144,16 +1094,12 @@
                 (let helps
                   {
                     (let acc vecNew)
-                    (let mut i 0)
                     {
-                      (while (< i (diagHelpCount d))
-                        {
-                          (vecPush acc
-                            (if (== (diagHelpFixSpan d i) 0)
-                              (helpLineEsc gw (diagHelpMsg d i))
-                              (helpLineFix gw (diagHelpMsg d i) (diagHelpFixText d i))))
-                          (set i (+ i 1))
-                        })
+                      (for i in 0..(diagHelpCount d)
+                        (vecPush acc
+                          (if (== (diagHelpFixSpan d i) 0)
+                            (helpLineEsc gw (diagHelpMsg d i))
+                            (helpLineFix gw (diagHelpMsg d i) (diagHelpFixText d i)))))
                       (vecPush acc
                         (helpLine gw
                           (concat (concat "run `axiom explain " code) "` for a full explanation")))
@@ -1184,24 +1130,17 @@
   {
     (let blocks vecNew)
     (let ixs (unitIndexes units))
-    (let mut i 0)
     {
-      (while (< i (vecLen ds))
+      (for d in ds
         {
-          (let d (vecGet ds i))
-          {
-            (let u
-              (vecGet units
-                (if (< (diagUnit d) (vecLen units))
-                  (diagUnit d)
-                  0)))
-            {
-              (vecPush blocks
-                (renderDiagHuman d (memGetWordStr u 1) (memGetWordStr u 0) units
-                  (indexForUnit ixs (diagUnit d)) ixs))
-              (set i (+ i 1))
-            }
-          }
+          (let u
+            (vecGet units
+              (if (< (diagUnit d) (vecLen units))
+                (diagUnit d)
+                0)))
+          (vecPush blocks
+            (renderDiagHuman d (memGetWordStr u 1) (memGetWordStr u 0) units
+              (indexForUnit ixs (diagUnit d)) ixs))
         })
       ; A single linear join, not a concat fold - the fold's peak
       ; is the sum of every intermediate (see catStrs in diag.ax).
@@ -1307,7 +1246,6 @@
 ; the LSP's writer, takes the same rule; the AXDL and human
 ; renderers write the character itself, U+FFFD.
 (pub :: jsonEsc (-> String String))
-;@axiom:effect(unsafe)
 (pub fn (jsonEsc s)
   {
     (let n (strLen s))
@@ -1326,8 +1264,7 @@
             (if (|| (== w 0) (|| (< b 32) (|| (== b 34) (== b 92))))
               {
                 (if (> i run)
-                  (vecPush parts (strSlice s run (- i run)))
-                  (as 0 (Vec String)))
+                  (vecPush parts (strSlice s run (- i run))))
                 (vecPush parts
                   (if (== w 0)
                     "\\ufffd"
@@ -1356,8 +1293,7 @@
         s
         {
           (if (> n run)
-            (vecPush parts (strSlice s run (- n run)))
-            (as 0 (Vec String)))
+            (vecPush parts (strSlice s run (- n run))))
           (catStrs parts)
         })
     }
@@ -1399,22 +1335,18 @@
 
 ; A JSON array of quoted strings.
 (pub :: jsonStrArray (-> Strings String))
-;@axiom:effect(unsafe)
 (pub fn (jsonStrArray items)
   {
     (let parts vecNew)
-    (let mut i 0)
     {
       (vecPush parts "[")
-      (while (< i (vecLen items))
+      (for i in 0..(vecLen items)
         {
           (if (> i 0)
-            (vecPush parts ",")
-            (as 0 (Vec String)))
+            (vecPush parts ","))
           (vecPush parts "\"")
           (vecPush parts (jsonEsc (vecGetStr items i)))
           (vecPush parts "\"")
-          (set i (+ i 1))
         })
       (vecPush parts "]")
       (catStrs parts)
@@ -1425,13 +1357,9 @@
 (pub fn (jsonHelpArray d)
   {
     (let v vecNew)
-    (let mut i 0)
     {
-      (while (< i (diagHelpCount d))
-        {
-          (vecPush v (diagHelpMsg d i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(diagHelpCount d)
+        (vecPush v (diagHelpMsg d i)))
       (jsonStrArray v)
     }
   })
@@ -1440,28 +1368,24 @@
 (pub fn (jsonFixField d src ix file)
   {
     (let parts vecNew)
-    (let mut i 0)
     (let mut count 0)
     {
-      (while (< i (diagHelpCount d))
+      (for i in 0..(diagHelpCount d)
         {
-          {
-            (let span (diagHelpFixSpan d i))
-            (if (!= span 0)
-              {
-                (if (> count 0)
-                  (vecPush parts ","))
-                (vecPush parts "{\"file\":\"")
-                (vecPush parts (jsonEsc file))
-                (vecPush parts "\",\"span\":")
-                (vecPush parts (jsonSpan src ix span))
-                (vecPush parts ",\"replacement\":\"")
-                (vecPush parts (jsonEsc (diagHelpFixText d i)))
-                (vecPush parts "\"}")
-                (set count (+ count 1))
-              })
-          }
-          (set i (+ i 1))
+          (let span (diagHelpFixSpan d i))
+          (if (!= span 0)
+            {
+              (if (> count 0)
+                (vecPush parts ","))
+              (vecPush parts "{\"file\":\"")
+              (vecPush parts (jsonEsc file))
+              (vecPush parts "\",\"span\":")
+              (vecPush parts (jsonSpan src ix span))
+              (vecPush parts ",\"replacement\":\"")
+              (vecPush parts (jsonEsc (diagHelpFixText d i)))
+              (vecPush parts "\"}")
+              (set count (+ count 1))
+            })
         })
       (if (== count 0)
         ""
@@ -1473,13 +1397,9 @@
 (pub fn (jsonNoteArray d)
   {
     (let v vecNew)
-    (let mut i 0)
     {
-      (while (< i (diagNoteCount d))
-        {
-          (vecPush v (diagNote d i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(diagNoteCount d)
+        (vecPush v (diagNote d i)))
       (jsonStrArray v)
     }
   })
@@ -1490,18 +1410,15 @@
 ; resolve. The numbers are the same ones the AXDL LOC prints, which is
 ; what lets verify-json.py derive this array from that field.
 (pub :: jsonTraceArray (-> Int Ints Ints String))
-;@axiom:effect(unsafe)
 (pub fn (jsonTraceArray d units ixs)
   {
     (let parts vecNew)
-    (let mut i 0)
     {
       (vecPush parts "[")
-      (while (< i (diagTraceCount d))
+      (for i in 0..(diagTraceCount d)
         {
           (if (> i 0)
-            (vecPush parts ",")
-            (as 0 (Vec String)))
+            (vecPush parts ","))
           (vecPush parts "{\"macro\":\"")
           (vecPush parts (jsonEsc (diagTraceName d i)))
           (vecPush parts "\"")
@@ -1526,7 +1443,6 @@
               })
           }
           (vecPush parts "}")
-          (set i (+ i 1))
         })
       (vecPush parts "]")
       (catStrs parts)
@@ -1545,14 +1461,12 @@
 (pub fn (jsonRelatedArray d src ix units ixs)
   {
     (let parts vecNew)
-    (let mut i 0)
     {
       (vecPush parts "[")
-      (while (< i (diagSecCount d))
+      (for i in 0..(diagSecCount d)
         {
           (if (> i 0)
-            (vecPush parts ",")
-            (as 0 (Vec String)))
+            (vecPush parts ","))
           (vecPush parts "{")
           ; The span pair is omitted for the same two cases the AXDL
           ; `^-` covers: no location, and a location in a unit this
@@ -1584,7 +1498,6 @@
                 ""
                 (diagSecMsg d i))))
           (vecPush parts "\"}")
-          (set i (+ i 1))
         })
       (vecPush parts "]")
       (catStrs parts)
@@ -1636,24 +1549,19 @@
   {
     (let blocks vecNew)
     (let ixs (unitIndexes units))
-    (let mut i 0)
     {
-      (while (< i (vecLen ds))
+      (for d in ds
         {
-          (let d (vecGet ds i))
+          (let u
+            (vecGet units
+              (if (< (diagUnit d) (vecLen units))
+                (diagUnit d)
+                0)))
           {
-            (let u
-              (vecGet units
-                (if (< (diagUnit d) (vecLen units))
-                  (diagUnit d)
-                  0)))
-            {
-              (vecPush blocks
-                (renderDiagJson d (memGetWordStr u 1) (memGetWordStr u 0) units
-                  (indexForUnit ixs (diagUnit d)) ixs))
-              (vecPush blocks "\n")
-              (set i (+ i 1))
-            }
+            (vecPush blocks
+              (renderDiagJson d (memGetWordStr u 1) (memGetWordStr u 0) units
+                (indexForUnit ixs (diagUnit d)) ixs))
+            (vecPush blocks "\n")
           }
         })
       (catStrs blocks)

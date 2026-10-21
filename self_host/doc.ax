@@ -103,17 +103,12 @@
 (pub :: docDepthPrefix (-> String String))
 (pub fn (docDepthPrefix out)
   {
-    (let n (strLen out))
-    (let mut i 0)
-    (let mut p "")
+    (let p (strBuilderNew))
     {
-      (while (< i n)
-        {
-          (if (== (strByte out i) 47)
-            (set p (concat p "../")))
-          (set i (+ i 1))
-        })
-      p
+      (for i in 0..(strLen out)
+        (if (== (strByte out i) 47)
+          (strBuilderPush p "../")))
+      (strBuilderFinish p)
     }
   })
 
@@ -257,8 +252,8 @@
               (let at (docIndexOf ds.srcs (vecGet order i)))
               {
                 (if (>= at 0)
-                  (vecPush frags (docNavItem prefix (vecGet ds.outs at) (vecGet ds.titles at) here))
-                  frags)
+                  (vecPush frags
+                    (docNavItem prefix (vecGet ds.outs at) (vecGet ds.titles at) here)))
                 (set i (+ i 1))
               }
             })
@@ -266,8 +261,7 @@
         (while (< i (vecLen ds.srcs))
           {
             (if (== (docGroupOf (vecGet ds.srcs i)) group)
-              (vecPush frags (docNavItem prefix (vecGet ds.outs i) (vecGet ds.titles i) here))
-              frags)
+              (vecPush frags (docNavItem prefix (vecGet ds.outs i) (vecGet ds.titles i) here)))
             (set i (+ i 1))
           }))
       (vecPush frags "</ul>\n")
@@ -279,24 +273,18 @@
 (pub fn (docNavModules ds prefix here named heading)
   {
     (let frags vecNew)
-    (let mut i 0)
     (let mut any 0)
     {
-      (while (< i (vecLen ds.modFiles))
-        {
-          (if (== (vecGet ds.modNamed i) named)
-            {
-              (if (== any 0)
-                (vecPush frags (concat (concat "<h2>" heading) "</h2>\n<ul>\n"))
-                frags)
-              (set any 1)
-              (vecPush frags (docNavItem prefix (vecGet ds.modOuts i) (vecGet ds.modNames i) here))
-            })
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen ds.modFiles)
+        (if (== (vecGet ds.modNamed i) named)
+          {
+            (if (== any 0)
+              (vecPush frags (concat (concat "<h2>" heading) "</h2>\n<ul>\n")))
+            (set any 1)
+            (vecPush frags (docNavItem prefix (vecGet ds.modOuts i) (vecGet ds.modNames i) here))
+          }))
       (if (== any 1)
-        (vecPush frags "</ul>\n")
-        frags)
+        (vecPush frags "</ul>\n"))
       (catStrs frags)
     }
   })
@@ -365,33 +353,22 @@
 ;@axiom:effect(io)
 (pub fn (docCopyImages ds fromDir out images)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen images))
-        {
-          (let img (vecGet images i))
+    (for img in images
+      {
+        (let from (pathClean (concat fromDir img)))
+        (let to (concat ds.out (pathClean (concat (pathDir out) img))))
+        (if (fileExists from)
           {
-            (let from (pathClean (concat fromDir img)))
-            (let to (concat ds.out (pathClean (concat (pathDir out) img))))
-            {
-              (if (fileExists from)
-                {
-                  (match (makeDirAll (pathDir to))
-                    ((Ok _) ())
-                    ((Err _) ()))
-                  (match (copyFile from to)
-                    ((Ok _) ())
-                    ((Err _)
-                      (writeStderrStr (concat (concat "warning: could not copy " from) "\n"))
-                    ))
-                }
-                (writeStderrStr (concat (concat "warning: image not found: " from) "\n")))
-              (set i (+ i 1))
-            }
+            (match (makeDirAll (pathDir to))
+              ((Ok _) ())
+              ((Err _) ()))
+            (match (copyFile from to)
+              ((Ok _) ())
+              ((Err _) (writeStderrStr (concat (concat "warning: could not copy " from) "\n"))))
           }
-        })
-      0
-    }
+          (writeStderrStr (concat (concat "warning: image not found: " from) "\n")))
+      })
+    0
   })
 
 ; Render one Markdown source of the set to its page.
@@ -546,8 +523,7 @@
                   (if (! (|| (== (strLen kind) 0) (== (nodeSpan d) 0)))
                     {
                       (if (== count 0)
-                        (vecPush frags "<h2 id=\"public-names\">Public names</h2>\n")
-                        frags)
+                        (vecPush frags "<h2 id=\"public-names\">Public names</h2>\n"))
                       (set count (+ count 1))
                       (vecPush frags (docDeclSection ds ctx src decls kind d))
                     })
@@ -556,8 +532,7 @@
               }
             })
           (if (== count 0)
-            (vecPush frags "<p class=\"nodoc\">No public names.</p>\n")
-            frags)
+            (vecPush frags "<p class=\"nodoc\">No public names.</p>\n"))
           (docWrite ds out (docPage ds out name (catStrs frags)))
         }
       }
@@ -574,27 +549,20 @@
     {
       (let decls (docDecls path src))
       (let ix (lspLineIndex src))
-      (let mut j 0)
       (let mut n 0)
       {
-        (while (< j (vecLen decls))
-          {
-            (let d (vecGet decls j))
+        (for d in decls
+          (if (! (|| (== (strLen (docDeclKind d)) 0) (== (nodeSpan d) 0)))
             {
-              (if (! (|| (== (strLen (docDeclKind d)) 0) (== (nodeSpan d) 0)))
+              (let o (lspFormStart src (spanStart (nodeSpan d))))
+              (if (== (strLen (docCommentMarked src o)) 0)
                 {
-                  (let o (lspFormStart src (spanStart (nodeSpan d))))
-                  (if (== (strLen (docCommentMarked src o)) 0)
-                    {
-                      (writeStr stdout
-                        (concat (concat (concat path ":") (fmtInt (+ (lspLineOfIx ix o) 1)))
-                          (concat (concat ": " (nodeAName d)) "\n")))
-                      (set n (+ n 1))
-                    })
+                  (writeStr stdout
+                    (concat (concat (concat path ":") (fmtInt (+ (lspLineOfIx ix o) 1)))
+                      (concat (concat ": " (nodeAName d)) "\n")))
+                  (set n (+ n 1))
                 })
-              (set j (+ j 1))
-            }
-          })
+            }))
         n
       }
     }
@@ -633,41 +601,31 @@
     (let words lexWords)
     (let keys lexTagKeys)
     (let ctx (DocCtx :pages ds :srcDir "docs" :prefix ""))
-    (let mut i 0)
     {
       (vecPush frags
         "<h1 id=\"language-index\">Language index</h1>\n<p>Every word of the language: keywords, the words that are special inside a form, builtin types, effects, operators and literals, then the AXTAG keys. <code>axiom explain WORD</code> prints the same entry, and hover in your editor shows it.</p>\n<h2 id=\"words\">Words</h2>\n")
-      (while (< i (vecLen words))
+      (for (w i) in words
         {
-          (let w (vecGet words i))
-          {
-            (vecPush frags
-              (concat
-                (concat (concat "<section class=\"decl\" id=\"word-" (fmtInt (+ i 1)))
-                  "\">\n<h3><code>")
-                (concat (mdEscape w) "</code></h3>\n")))
-            (vecPush frags
-              (mdRender (docRefLink (lexEntryMarkdown w)) (lambda (t) (docLink ctx t)) vecNew))
-            (vecPush frags "</section>\n")
-            (set i (+ i 1))
-          }
+          (vecPush frags
+            (concat
+              (concat (concat "<section class=\"decl\" id=\"word-" (fmtInt (+ i 1)))
+                "\">\n<h3><code>")
+              (concat (mdEscape w) "</code></h3>\n")))
+          (vecPush frags
+            (mdRender (docRefLink (lexEntryMarkdown w)) (lambda (t) (docLink ctx t)) vecNew))
+          (vecPush frags "</section>\n")
         })
       (vecPush frags "<h2 id=\"axtag-keys\">AXTAG keys</h2>\n")
-      (set i 0)
-      (while (< i (vecLen keys))
+      (for k in keys
         {
-          (let k (vecGet keys i))
-          {
-            (vecPush frags
-              (concat
-                (concat (concat "<section class=\"decl\" id=\"tag-" (mdEscape k))
-                  "\">\n<h3><code>;@axiom:")
-                (concat (mdEscape k) "</code></h3>\n")))
-            (vecPush frags
-              (mdRender (docRefLink (lexTagMarkdown k "")) (lambda (t) (docLink ctx t)) vecNew))
-            (vecPush frags "</section>\n")
-            (set i (+ i 1))
-          }
+          (vecPush frags
+            (concat
+              (concat (concat "<section class=\"decl\" id=\"tag-" (mdEscape k))
+                "\">\n<h3><code>;@axiom:")
+              (concat (mdEscape k) "</code></h3>\n")))
+          (vecPush frags
+            (mdRender (docRefLink (lexTagMarkdown k "")) (lambda (t) (docLink ctx t)) vecNew))
+          (vecPush frags "</section>\n")
         })
       (docWrite ds "language.html" (docPage ds "language.html" "Language index" (catStrs frags)))
     }
@@ -707,17 +665,14 @@
                 {
                   (vecPush cands (concat on "../"))
                   (vecPush cands (concat on "../../"))
-                }
-                cands)
-            }
-            cands)
+                })
+            })
           (vecPush cands (concat exe "../"))
           (vecPush cands (concat exe "../../"))
           (while (&& (< i (vecLen cands)) (== (strLen found) 0))
             {
               (if (docRootOk (vecGet cands i))
-                (set found (vecGet cands i))
-                "")
+                (set found (vecGet cands i)))
               (set i (+ i 1))
             })
           found
@@ -763,8 +718,7 @@
       (while (&& (< i (vecLen dirs)) (== (strLen found) 0))
         {
           (if (isDir (vecGetStr dirs i))
-            (set found (vecGetStr dirs i))
-            "")
+            (set found (vecGetStr dirs i)))
           (set i (+ i 1))
         })
       found
@@ -786,8 +740,7 @@
             (if (isDir (concat (concat dir rel) name))
               (docWalk dir (concat (concat rel name) "/") acc)
               (if (docEndsWith name ".ax")
-                (vecPush acc (concat rel name))
-                acc))
+                (vecPush acc (concat rel name))))
             (set i (+ i 1))
           }
         })
@@ -891,27 +844,19 @@
     (let names (unwrapOr (listDir (concat root "docs/")) vecNew))
     {
       (let modNamed vecNew)
-      (let mut i 0)
       {
         ; `docs/*.md`, `docs/README.md` as the index.
-        (while (< i (vecLen names))
-          {
-            (let name (vecGet names i))
+        (for name in names
+          (if (docEndsWith name ".md")
             {
-              (if (docEndsWith name ".md")
-                {
-                  (vecPush srcs (concat "docs/" name))
-                  (vecPush outs
-                    (if (strEq name "README.md")
-                      "index.html"
-                      (concat (strSlice name 0 (- (strLen name) 3)) ".html")))
-                  (vecPush titles
-                    (mdTitle (unwrapOr (readFile (concat (concat root "docs/") name)) "")))
-                }
-                titles)
-              (set i (+ i 1))
-            }
-          })
+              (vecPush srcs (concat "docs/" name))
+              (vecPush outs
+                (if (strEq name "README.md")
+                  "index.html"
+                  (concat (strSlice name 0 (- (strLen name) 3)) ".html")))
+              (vecPush titles
+                (mdTitle (unwrapOr (readFile (concat (concat root "docs/") name)) "")))
+            }))
         (docAddRoot root srcs outs titles "README.md" "readme.html")
         (docAddRoot root srcs outs titles "CONTRIBUTING.md" "contributing.html")
         (docAddRoot root srcs outs titles "CHANGELOG.md" "changelog.html")
@@ -923,20 +868,15 @@
             (writeStderrStr "warning: no standard library found; set AXIOM_STDLIB to render it\n")
             {
               (let acc vecNew)
-              (let mut j 0)
               {
                 (let rels (docWalk lib "" acc))
-                (while (< j (vecLen rels))
+                (for rel in rels
                   {
-                    (let rel (vecGet rels j))
-                    {
-                      (vecPush modFiles (concat lib rel))
-                      (vecPush modOuts
-                        (concat (concat "stdlib/" (strSlice rel 0 (- (strLen rel) 3))) ".html"))
-                      (vecPush modNames (docModuleName rel))
-                      (vecPush modNamed 0)
-                      (set j (+ j 1))
-                    }
+                    (vecPush modFiles (concat lib rel))
+                    (vecPush modOuts
+                      (concat (concat "stdlib/" (strSlice rel 0 (- (strLen rel) 3))) ".html"))
+                    (vecPush modNames (docModuleName rel))
+                    (vecPush modNamed 0)
                   })
               }
             })
@@ -945,26 +885,19 @@
         ; the root, rendered as a `docs/` page would be.
         {
           (let ops docOperands)
-          (let mut j 0)
-          (while (< j (vecLen ops))
-            {
-              (let op (vecGet ops j))
+          (for op in ops
+            (if (docEndsWith op ".md")
               {
-                (if (docEndsWith op ".md")
-                  {
-                    (vecPush srcs (docAbsolute op))
-                    (vecPush outs (concat (pathStem op) ".html"))
-                    (vecPush titles (mdTitle (unwrapOr (readFile op) "")))
-                  }
-                  {
-                    (vecPush modFiles op)
-                    (vecPush modOuts (concat (concat "modules/" (pathStem op)) ".html"))
-                    (vecPush modNames (pathStem op))
-                    (vecPush modNamed 1)
-                  })
-                (set j (+ j 1))
+                (vecPush srcs (docAbsolute op))
+                (vecPush outs (concat (pathStem op) ".html"))
+                (vecPush titles (mdTitle (unwrapOr (readFile op) "")))
               }
-            })
+              {
+                (vecPush modFiles op)
+                (vecPush modOuts (concat (concat "modules/" (pathStem op)) ".html"))
+                (vecPush modNames (pathStem op))
+                (vecPush modNamed 1)
+              }))
         }
         (DocSet
           :root root
@@ -1029,46 +962,32 @@
           (docBuildSet (pathWithSlash (docAbsolute root)) (pathWithSlash (docAbsolute docOutDir))))
         (if (hasFlagAnywhere "doc" "--missing")
           {
-            (let mut i 0)
             (let mut n 0)
             {
-              (while (< i (vecLen ds.modFiles))
-                {
-                  (set n (+ n (docMissingIn (vecGet ds.modFiles i))))
-                  (set i (+ i 1))
-                })
+              (for i in 0..(vecLen ds.modFiles)
+                (set n (+ n (docMissingIn (vecGet ds.modFiles i)))))
               (if (> n 0)
                 (sysExitWith 1)
                 0)
             }
           }
           {
-            (let mut i 0)
+            (match (makeDirAll ds.out)
+              ((Ok _) ())
+              ((Err _) (die (concat (concat "error: cannot create " ds.out) "\n") 1)))
+            (docWrite ds "style.css" docStyle)
+            (for i in 0..(vecLen ds.srcs)
+              (docRenderPage ds i))
+            (for i in 0..(vecLen ds.modFiles)
+              (docRenderModule ds i))
+            (docRenderLanguage ds)
             {
-              (match (makeDirAll ds.out)
-                ((Ok _) ())
-                ((Err _) (die (concat (concat "error: cannot create " ds.out) "\n") 1)))
-              (docWrite ds "style.css" docStyle)
-              (while (< i (vecLen ds.srcs))
-                {
-                  (docRenderPage ds i)
-                  (set i (+ i 1))
-                })
-              (set i 0)
-              (while (< i (vecLen ds.modFiles))
-                {
-                  (docRenderModule ds i)
-                  (set i (+ i 1))
-                })
-              (docRenderLanguage ds)
+              (let index (concat ds.out "index.html"))
               {
-                (let index (concat ds.out "index.html"))
-                {
-                  (writeStr stdout (concat index "\n"))
-                  (if (hasFlagAnywhere "doc" "--no-open")
-                    0
-                    (docOpen index))
-                }
+                (writeStr stdout (concat index "\n"))
+                (if (hasFlagAnywhere "doc" "--no-open")
+                  0
+                  (docOpen index))
               }
             }
           })
