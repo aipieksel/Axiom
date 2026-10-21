@@ -90,18 +90,27 @@ srv="$work/echo-server"
 # make the connection count depend on machine speed, and this gate
 # asserts a memory ratio, not a rate.
 cat > "$work/drive.py" <<'PY'
-import socket, sys
+import collections, socket, sys
 port, n = int(sys.argv[1]), int(sys.argv[2])
 ok = 0
+errors = collections.Counter()
+first = None
 for i in range(n):
     try:
         s = socket.create_connection(("127.0.0.1", port), timeout=10)
         s.sendall(bytes([i % 251]))
         if s.recv(1) == bytes([i % 251]):
             ok += 1
+        else:
+            errors["wrong or empty echo"] += 1
         s.close()
-    except OSError:
-        pass
+    except OSError as e:
+        errors[f"{type(e).__name__} errno {e.errno}"] += 1
+        if first is None:
+            first = f"connection {i}: {e!r}"
+# A short run says why on stderr, so a failure names its cause.
+if ok != n:
+    print(f"drive: {n - ok} of {n} failed: {dict(errors)}; first {first}", file=sys.stderr)
 print(ok)
 PY
 
@@ -214,7 +223,12 @@ run_server() {
   fi
 
   local echoed
-  echoed="$(python3 "$work/drive.py" "$port" "$n")"
+  echoed="$(python3 "$work/drive.py" "$port" "$n" 2>"$work/drive.$port.err")"
+  if [[ "$echoed" != "$n" ]]; then
+    sed 's/^/     /' "$work/drive.$port.err" >&2
+    echo "     server output (port $port):" >&2
+    sed 's/^/       /' "$out" | head -20 >&2
+  fi
 
   # Peak across the pool, sampled while the workers are alive: after the
   # SIGTERM there is nothing to read.
@@ -299,13 +313,18 @@ echo "== varying the request size must not ratchet the watermark =="
 read -r v_small_ok v_small_rss < <(run_server 1 $((base_port + 4)) "$conns_small" 1) || status=1
 read -r v_large_ok v_large_rss < <(run_server 1 $((base_port + 5)) "$conns_large" 1) || status=1
 
+if [[ "${v_small_ok:-0}" != "$conns_small" ]]; then
+  echo "FAIL: varied-size run echoed ${v_small_ok:-0} of $conns_small"; status=1
+fi
 if [[ "${v_large_ok:-0}" != "$conns_large" ]]; then
-  echo "FAIL: varied-size run echoed $v_large_ok of $conns_large"; status=1
+  echo "FAIL: varied-size run echoed ${v_large_ok:-0} of $conns_large"; status=1
 fi
 # The floor is the largest single connection's working set, which is
 # real work, not growth. So the comparison is between two runs of the
 # same shape at different lengths.
-if (( v_large_rss > v_small_rss * 2 )); then
+if [[ "${v_small_ok:-0}" != "$conns_small" || "${v_large_ok:-0}" != "$conns_large" ]]; then
+  echo "     varied sizes not measured: the runs above did not echo every connection"
+elif (( v_large_rss > v_small_rss * 2 )); then
   echo "FAIL: with varying request sizes RSS went ${v_small_rss} -> ${v_large_rss} KiB."
   echo "     Free chunks are not being reused across sizes - MM-ALLOC-4b ratcheting."
   status=1
