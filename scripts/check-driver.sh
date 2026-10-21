@@ -130,6 +130,26 @@ fi
 "$s1" hello.ax linux-x86_64 >bare_t.ll 2>bare_t.err; rc=$?
 [[ $rc == 2 ]] && [[ ! -s bare_t.ll ]] && grep -q 'unknown command `hello.ax`' bare_t.err \
   && ok "\`axiom FILE TARGET\` is refused the same way" || bad "\`axiom FILE TARGET\` (rc=$rc)"
+# The single-file commands read one file. A second operand, or one
+# beside `--input`, is a usage error naming it: answering for the first
+# file alone reads to a script as every named file passing. The second
+# file does not exist, so a command that ignored it would exit 0.
+for cmdline in "check hello.ax nope.ax" "emit-llvm hello.ax nope.ax" \
+               "symbols hello.ax nope.ax" "build --input hello.ax nope.ax --output twice"; do
+  read -r -a argv <<< "$cmdline"
+  "$s1" "${argv[@]}" >extra.out 2>extra.err; rc=$?
+  if [[ $rc == 2 ]] && grep -q 'unexpected operand `nope.ax`' extra.err && [[ ! -e twice ]]; then
+    ok "\`$cmdline\` is a usage error naming the extra operand, exit 2"
+  else
+    bad "\`$cmdline\` (rc=$rc): $(head -1 extra.err)"
+  fi
+done
+# `symbols` walks its operands as the other commands do, so a flag's
+# value is never read as the file.
+"$s1" --diagnostic-format=ai symbols --target linux-aarch64 hello.ax >symt.out 2>symt.err; rc=$?
+[[ $rc == 0 ]] && grep -q '^F main ' symt.out \
+  && ok "\`symbols --target T FILE\` reads FILE, not the target" \
+  || bad "\`symbols --target T FILE\` (rc=$rc): $(head -1 symt.err)"
 # Redirected to a file and then grepped, NOT piped into `grep -q`.
 # `set -o pipefail` is on; `grep -q` exits the moment it matches, and
 # the triple is in the first few lines of ~75 KB of IR, so the compiler

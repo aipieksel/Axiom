@@ -16,6 +16,11 @@ its changelog too.
 
 ## Unreleased
 
+- `check`, `build`, `emit-llvm` and `symbols` refuse a second input file
+  with status 2 instead of answering for the first one. `symbols` skips a
+  flag's value when it looks for its file, so `symbols --target T FILE`
+  reads `FILE`. Tested by `scripts/check-driver.sh`.
+
 - Effect handlers cannot retain references allocated inside an operation's
   region or recovery scope. Lambda handlers are checked per invocation;
   named functions need complete lifetime facts, and unseen handler bodies
