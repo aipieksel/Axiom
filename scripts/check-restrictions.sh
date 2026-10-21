@@ -146,35 +146,17 @@ restriction_lines() {
 #
 # A declaration that already carries a `;@axiom:restrict` tag - above
 # its `(::`, or between its `(::` and its `(fn` - is left alone, so the
-# sweep never adds a second field to its AXSYM row. `465` pins this:
-# its tags sit on the `fn` deliberately, and a second tag above the
-# `::` would read as a row the sweep moved rather than as the claim it
-# makes.
+# sweep never adds a second field to its AXSYM row. The full annotation
+# block after the signature is checked, regardless of tag ordering.
 tag_every_fn() {
-  python3 - "$1" "$2" <<'PY'
-import re, sys
-src, dst = sys.argv[1], sys.argv[2]
-lines = open(src, encoding="utf-8").read().split("\n")
-out = list(lines)
-n = len(lines)
-is_sig = re.compile(r"^\((pub )?:: ").match
-is_fn = re.compile(r"^\((pub )?fn ").match
-is_tag = re.compile(r"^;@axiom:restrict[(]").match
-for i in range(1, n):
-    if lines[i-1] != "":
-        continue
-    if is_sig(lines[i]):
-        # A tag between the signature and its body restricts the same
-        # declaration already; tagging the signature as well would add
-        # a second `#restrict=` field to one AXSYM row.
-        if i+1 < n and is_tag(lines[i+1]):
-            continue
-        out[i-1] = ";@axiom:restrict(no-foreign)"
-    elif is_fn(lines[i]):
-        out[i-1] = ";@axiom:restrict(no-foreign)"
-open(dst, "w", encoding="utf-8").write("\n".join(out))
-PY
+  python3 "$repo_root/scripts/lib/restriction-tags.py" "$1" "$2"
 }
+
+if python3 "$repo_root/tests/tools/restriction-tags.py"; then
+  ok "restriction injection preserves annotation blocks and source lines"
+else
+  bad "restriction injection source controls failed"
+fi
 
 echo "== 1. a satisfied restriction changes no emitted byte =="
 # A shadow of `tests/selfhost/` in which every file is a symlink to
