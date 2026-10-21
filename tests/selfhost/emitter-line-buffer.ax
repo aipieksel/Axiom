@@ -126,7 +126,7 @@
 ;@axiom:effect(unsafe)
 (fn (hoistedGetterCount cg)
   {
-    (let value (memGetWordVec cg 44))
+    (let value (probeHoisted cg))
     (__load64 (as value Int) -2)
   })
 
@@ -136,10 +136,10 @@
   {
     (let cg newCG)
     (say 18 (== (countOf (memGetWord cg 44)) 1))
-    (say 19 (== (vecLen (memGetWordVec cg 44)) 0))
+    (say 19 (== (vecLen (probeHoisted cg)) 0))
     (let lines (memGetWord cg 0))
-    (let first (vecPush vecNew 73))
-    (let second (vecPush vecNew 91))
+    (let first (vecPush vecNew (strDup "73")))
+    (let second (vecPush vecNew (strDup "91")))
     (let before (countOf (as first Int)))
     (probeSetHoisted cg first)
     (say 20 (== (countOf (as first Int)) (+ before 1)))
@@ -147,13 +147,13 @@
     (let beforeGetter (countOf (as first Int)))
     (say 22 (== (hoistedGetterCount cg) (+ beforeGetter 1)))
     (say 23 (== (countOf (as first Int)) beforeGetter))
-    (let old (memGetWordVec cg 44))
+    (let old (probeHoisted cg))
     (let beforeReplacement (countOf (as first Int)))
     (probeSetHoisted cg second)
     (say 24 (== (countOf (as first Int)) (- beforeReplacement 1)))
-    (say 25 (== (vecGet old 0) 73))
+    (say 25 (strEq (vecGet old 0) "73"))
     (say 26 (&& (== (memGetWord cg 43) (- 0 1)) (== (memGetWord cg 0) lines)))
-    (say 27 (probeSameHoistedGetter cg 91))
+    (say 27 (probeSameHoistedGetter cg "91"))
     (let beforeSame (countOf (as second Int)))
     (probeSetHoisted cg second)
     (say 28 (== (countOf (as second Int)) beforeSame))
@@ -171,8 +171,8 @@
 (fn (hoistedOverwriteChecks)
   {
     (let cg newCG)
-    (let first (vecPush vecNew 7))
-    (let second (vecPush vecNew 11))
+    (let first (vecPush vecNew (strDup "7")))
+    (let second (vecPush vecNew (strDup "11")))
     (probeSetHoisted cg first)
     (let a (countOf (as first Int)))
     (let b (countOf (as second Int)))
@@ -186,7 +186,7 @@
     (say 30 (== (countOf (as first Int)) a))
     (say 31 (== (countOf (as second Int)) b))
     (say 32 (== growth 0))
-    (say 33 (== (vecGet (memGetWordVec cg 44) 0) 7))
+    (say 33 (strEq (vecGet (probeHoisted cg) 0) "7"))
   })
 
 (:: hoistedAllocaChecks ())
@@ -200,7 +200,7 @@
     (emitLine cg "define i64 @held() #0 {")
     (openAllocaMark cg)
     (say 35 (&& (== (memGetWord cg 43) 1) (!= (memGetWord cg 44) initial)))
-    (let active (memGetWordVec cg 44))
+    (let active (probeHoisted cg))
     (emitAlloca cg "%.a")
     (emitAlloca cg "%.b")
     (emitRecoverCell cg "%.recover" "8")
@@ -231,7 +231,7 @@
     (openAllocaMark cg)
     (emitAlloca cg "%.outer.a")
     (let mark (memGetWord cg 43))
-    (let outer (memGetWordVec cg 44))
+    (let outer (probeHoisted cg))
     (openAllocaMark cg)
     (let mut balanced (== (countOf (as outer Int)) 1))
     (emitAlloca cg "%.inner")
@@ -255,7 +255,7 @@
 (:: freshHoistedOverwrite (-> Int Int Int))
 (fn (freshHoistedOverwrite cg i)
   {
-    (let value (vecPush vecNew i))
+    (let value (vecPush vecNew (concat "hoisted-" (fmtInt (+ i 1000)))))
     (probeSetHoisted cg value)
     0
   })
@@ -275,6 +275,114 @@
     growth
   })
 
+(:: payloadChecks ())
+;@axiom:effect(io)
+(fn (payloadChecks)
+  {
+    (let cg newCG)
+    (openAllocaMark cg)
+    (emitAlloca cg "%.payload")
+    (emitRecoverCell cg "%.recover" "8")
+    (emitRegionCell cg "%.region")
+    (say 44 (vecOwnsRefs (probeHoisted cg)))
+    ; Each producer has retired its ordinary String birth share. The
+    ; queued element and this typed getter alias own one share each.
+    (let alloca (vecGet (probeHoisted cg) 0))
+    (let recover (vecGet (probeHoisted cg) 1))
+    (let region (vecGet (probeHoisted cg) 2))
+    (say 45
+      (&& (== (countOf (as alloca Int)) 2)
+        (&& (== (countOf (as recover Int)) 2) (== (countOf (as region Int)) 2))))
+    (let before (countOf (as alloca Int)))
+    (say 46 (== (probeHoistedPayloadCount cg 0) (+ before 1)))
+    (say 47 (== (countOf (as alloca Int)) before))
+    (let expected
+      "  %.payload = alloca i64\n  %.recover = alloca i64, i64 8, align 16\n  %.region = alloca i64, i64 3, align 16 ; axiom region mark")
+    (say 48
+      (&& (== (joinAllocasSize (probeHoisted cg) 0 0) (strLen expected))
+        (&& (== (countOf (as alloca Int)) 2)
+          (&& (== (countOf (as recover Int)) 2) (== (countOf (as region Int)) 2)))))
+    (say 49
+      (&& (strEq (joinAllocas (probeHoisted cg)) expected)
+        (&& (== (countOf (as alloca Int)) 2)
+          (&& (== (countOf (as recover Int)) 2) (== (countOf (as region Int)) 2)))))
+    (say 50 (== (countOf (memGetWord cg 44)) 1))
+    (closeAllocaMark cg)
+    (say 51
+      (&& (== (countOf (as alloca Int)) 1)
+        (&& (== (countOf (as recover Int)) 1) (== (countOf (as region Int)) 1))))
+    (say 52
+      (&& (strEq alloca "  %.payload = alloca i64")
+        (&& (strEq recover "  %.recover = alloca i64, i64 8, align 16")
+          (strEq region "  %.region = alloca i64, i64 3, align 16 ; axiom region mark"))))
+    (say 53 (== hoistedPayloadGrowth 0))
+    (let direct newCG)
+    (emitAlloca direct "%.direct")
+    (emitRecoverCell direct "%.recover" "8")
+    (emitRegionCell direct "%.region")
+    (say 54
+      (&& (== (vecLen (probeHoisted direct)) 0)
+        (strEq (renderCG direct)
+          "  %.direct = alloca i64\n  %.recover = alloca i64, i64 8, align 16\n  %.region = alloca i64, i64 3, align 16 ; axiom region mark\n")))
+    (say 55 (== directPayloadGrowth 0))
+    (let registered newCG)
+    (pairSetSlot registered 19 1)
+    (emitRegionCell registered "%.registered")
+    (say 56
+      (&& (== (vecLen (probeHoisted registered)) 0)
+        (strEq (renderCG registered)
+          "  %.registered = alloca i64, i64 4, align 16 ; axiom region mark\n")))
+    (say 57
+      (&& (strEq (joinAllocas (probeHoisted cg)) "")
+        (== (joinAllocasSize (probeHoisted cg) 0 0) 0)))
+  })
+
+; Reuse one context and clear its rendered lines, so retained output is
+; not confused with an ordinary producer or getter share that escaped.
+(:: payloadIteration (-> Int Int Bool Int))
+(fn (payloadIteration cg i hoist)
+  {
+    (if hoist
+      (openAllocaMark cg))
+    (emitAlloca cg (concat "%.a." (fmtInt (+ i 1000))))
+    (emitRecoverCell cg "%.recover" "8")
+    (emitRegionCell cg "%.region")
+    (if hoist
+      (closeAllocaMark cg))
+    (vecClear (memGetWordVec cg 0))
+    0
+  })
+
+(:: payloadGrowth (-> Bool Int))
+(fn (payloadGrowth hoist)
+  {
+    (let cg newCG)
+    (for i in 0..16
+      (payloadIteration cg i hoist))
+    (let before (live))
+    (for i in 0..1000
+      (payloadIteration cg i hoist))
+    (- (live) before)
+  })
+
+(:: hoistedPayloadGrowth Int)
+;@axiom:effect(io)
+(fn (hoistedPayloadGrowth)
+  {
+    (let growth (payloadGrowth true))
+    (writeStr stderr (concat "hoisted-payload-soak-growth " (concat (fmtInt growth) "\n")))
+    growth
+  })
+
+(:: directPayloadGrowth Int)
+;@axiom:effect(io)
+(fn (directPayloadGrowth)
+  {
+    (let growth (payloadGrowth false))
+    (writeStr stderr (concat "direct-payload-soak-growth " (concat (fmtInt growth) "\n")))
+    growth
+  })
+
 (:: main Int)
 ;@axiom:effect(io)
 (fn (main)
@@ -290,5 +398,6 @@
     ; Only allocator counts are read after an ablated release-first
     ; setter may have filed the raw ordering descriptor.
     (say 43 probeSoleHoistedSame)
+    payloadChecks
     0
   })

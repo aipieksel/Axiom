@@ -439,7 +439,7 @@
   (tailRetain : (Vec Int))
   (pendingOwned : (Vec Int))
   (allocaMark : Int)
-  (hoisted : (Vec Int))
+  (hoisted : (Vec String))
   (argEv : (Vec Int))
   (pairState : (Vec Int)))
 
@@ -717,7 +717,7 @@
   })
 
 ; This slot owns one vector share, independently of retained getter aliases.
-(:: cgSetHoisted (-> Int (Vec Int) Int))
+(:: cgSetHoisted (-> Int (Vec String) Int))
 ;@axiom:effect(unsafe)
 (fn (cgSetHoisted cg value)
   {
@@ -726,6 +726,11 @@
     (__release old)
     cg
   })
+
+; The queue owns each String until its bytes reach the output buffer.
+(:: cgHoisted (-> Int (Vec String)))
+(fn (cgHoisted cg)
+  (memGetWordVec cg 44))
 
 ; Slot `i` of the register-pair state: 0 mode, 1 arm, 2 names, 3 tag -
 ; and, beside them, 4 `cgThreads` and 5 `parUsed` (see `newCG`).
@@ -30958,7 +30963,7 @@
   (if (< (memGetWord cg 43) 0)
     (emitLine cg (concat (concat "  " ar) " = alloca i64"))
     {
-      (vecPush (memGetWordVec cg 44) (as (concat (concat "  " ar) " = alloca i64") Int))
+      (vecPush (cgHoisted cg) (concat (concat "  " ar) " = alloca i64"))
       cg
     }))
 
@@ -30970,7 +30975,7 @@
     (if (< mark 0)
       cg
       {
-        (let hoisted (memGetWordVec cg 44))
+        (let hoisted (cgHoisted cg))
         {
           (if (> (vecLen hoisted) 0)
             (vecSet (memGetWordVec cg 0) mark (joinAllocas hoisted))
@@ -30985,7 +30990,7 @@
 ; One buffer of the exact size, not a recursive concatenation: 40,000
 ; `mut` bindings in one function joined in 11.6 s by the suffix-
 ; copying form (quadratic, and one frame per binding)
-(pub :: joinAllocas (-> Ints String))
+(pub :: joinAllocas (-> (Vec String) String))
 ;@axiom:effect(unsafe)
 (pub fn (joinAllocas v)
   {
@@ -30999,7 +31004,7 @@
         {
           (while (< j n)
             {
-              (let line (as (vecGet v j) String))
+              (let line (vecGet v j))
               {
                 (if (> j 0)
                   {
@@ -31016,15 +31021,15 @@
       })
   })
 
-(pub :: joinAllocasSize (-> Ints Int Int Int))
-;@axiom:effect(unsafe)
+(pub :: joinAllocasSize (-> (Vec String) Int Int Int))
+;@axiom:effect(pure)
 (pub fn (joinAllocasSize v i acc)
   (if (>= i (vecLen v))
     (+ acc
       (if (> (vecLen v) 1)
         (- (vecLen v) 1)
         0))
-    (joinAllocasSize v (+ i 1) (+ acc (strLen (as (vecGet v i) String))))))
+    (joinAllocasSize v (+ i 1) (+ acc (strLen (vecGet v i))))))
 
 ; A mutable binding: the initialiser's value goes into an alloca, the
 ; name binds the alloca, and reads load. A slot of a reference type
@@ -31935,7 +31940,7 @@
     (if (< (memGetWord cg 43) 0)
       (emitLine cg line)
       {
-        (vecPush (memGetWordVec cg 44) (as line Int))
+        (vecPush (cgHoisted cg) line)
         cg
       })
   })
@@ -31951,7 +31956,7 @@
     (if (< (memGetWord cg 43) 0)
       (emitLine cg line)
       {
-        (vecPush (memGetWordVec cg 44) (as line Int))
+        (vecPush (cgHoisted cg) line)
         cg
       })
   })

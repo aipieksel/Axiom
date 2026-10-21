@@ -14,16 +14,22 @@ import tempfile
 
 BRIDGES = r'''
 ; Private-copy-only probes; production does not export raw CG setters.
-(pub :: probeSetHoisted (-> Int (Vec Int) Int))
+(pub :: probeSetHoisted (-> Int (Vec String) Int))
 (pub fn (probeSetHoisted cg value) (cgSetHoisted cg value))
-(pub :: probeSameHoistedGetter (-> Int Int Bool))
+(pub :: probeHoisted (-> Int (Vec String)))
+(pub fn (probeHoisted cg) (cgHoisted cg))
+(pub :: probeHoistedPayloadCount (-> Int Int Int))
+;@axiom:effect(unsafe)
+(pub fn (probeHoistedPayloadCount cg index)
+  { (let line (vecGet (cgHoisted cg) index)) (__load64 (as line Int) -2) })
+(pub :: probeSameHoistedGetter (-> Int String Bool))
 ;@axiom:effect(unsafe)
 (pub fn (probeSameHoistedGetter cg expected)
   {
-    (let value (memGetWordVec cg 44))
+    (let value (cgHoisted cg))
     (let before (__load64 (as value Int) -2))
     (cgSetHoisted cg value)
-    (&& (== (__load64 (as value Int) -2) before) (== (vecGet value 0) expected))
+    (&& (== (__load64 (as value Int) -2) before) (strEq (vecGet value 0) expected))
   })
 
 ; Mirror Vec's mapped header and raw data ownership, but return its word
@@ -48,10 +54,10 @@ BRIDGES = r'''
   {
     (let cg newCG)
     (let header (probeRawVec))
-    (cgSetHoisted cg (as header (Vec Int)))
+    (cgSetHoisted cg (as header (Vec String)))
     (let sole (== (__load64 header -2) 1))
     (let filed (__axiom_mem_stat 1))
-    (cgSetHoisted cg (as header (Vec Int)))
+    (cgSetHoisted cg (as header (Vec String)))
     (if (!= (__axiom_mem_stat 1) filed)
       false
       (&& sole (== (__load64 header -2) 1)))
@@ -120,7 +126,7 @@ def check_hoisted_routes(binary):
             raise RuntimeError(f"{name}: unbalanced direct hoisted-slot writer remains")
     for name in ("emitAlloca", "emitRecoverCell", "emitRegionCell", "closeAllocaMark"):
         body = emitted_function(module, "codegen$" + name)
-        getter = re.findall(r'(%\S+) = call i64 @raw\$memGetWordVec\(i64 %cg, i64 44\)', body)
+        getter = re.findall(r'(%\S+) = call i64 @codegen\$cgHoisted\(i64 %cg\)', body)
         if len(getter) != 1:
             raise RuntimeError(f"{name}: expected one hoisted-vector getter")
         release = f"call void @axiom_release(i64 {getter[0]})"
@@ -128,15 +134,35 @@ def check_hoisted_routes(binary):
             raise RuntimeError(f"{name}: temporary hoisted getter share must retire once")
         if name != "closeAllocaMark":
             pushes = re.findall(r'@Vec\$vecPush\(i64 [^,]+, i64 [^,]+, i64 ([01])\)', body)
-            if pushes != ["0"]:
-                raise RuntimeError(f"{name}: raw line words must remain unowned Vec Int elements")
+            if pushes != ["1"]:
+                raise RuntimeError(f"{name}: String payload appends must retain their elements")
+            value = re.search(r'@Vec\$vecPush\(i64 [^,]+, i64 (%\S+), i64 1\)', body)[1]
+            cleanup = f"call void @axiom_release(i64 {value})"
+            if body.count(cleanup) != 1 or body.index(cleanup) < body.index("@Vec$vecPush("):
+                raise RuntimeError(f"{name}: ordinary queued String birth must retire after its store")
+    for name in ("emitRecoverCell", "emitRegionCell"):
+        body = emitted_function(module, "codegen$" + name)
+        direct = re.search(r'(%\S+) = (?P<tail>musttail )?call i64 '
+                           r'@codegen\$emitLine\(i64 %cg, i64 (?P<line>%\S+)\)', body)
+        if direct is None or direct["tail"] is not None:
+            raise RuntimeError(f"{name}: fresh line requires a normal emitLine call before cleanup")
+        cleanup = f'call void @axiom_release(i64 {direct["line"]})'
+        if body.count(cleanup) != 1 or body.index(cleanup) <= direct.end():
+            raise RuntimeError(f"{name}: direct line birth must retire after emitLine returns")
+        if body.index(cleanup) >= body.rindex("ret i64 "):
+            raise RuntimeError(f"{name}: direct line cleanup must precede return")
+    for name in ("joinAllocas", "joinAllocasSize"):
+        body = emitted_function(module, "codegen$" + name)
+        reads = re.findall(r'(%\S+) = call i64 @Vec\$vecGet\(i64 [^,]+, i64 [^,]+, i64 1\)', body)
+        if len(reads) != 1 or body.count(f"call void @axiom_release(i64 {reads[0]})") != 1:
+            raise RuntimeError(f"{name}: typed String getter needs one balanced temporary share")
 
 
 def check(axiom, repo, work):
     fixture = repo / "tests/selfhost/emitter-line-buffer.ax"
     expected = (repo / "tests/selfhost/emitter-line-buffer.out").read_text().splitlines()
-    if expected != [f"{i} true" for i in range(1, 44)]:
-        raise RuntimeError("update the explicit 43-case assertion count")
+    if expected != [f"{i} true" for i in range(1, 58)]:
+        raise RuntimeError("update the explicit 57-case assertion count")
     env = dict(os.environ, AXIOM_PATH=str(repo / "self_host"), AXIOM_STDLIB=str(repo / "stdlib"))
 
     def prepare_module(label, source):
@@ -164,17 +190,17 @@ def check(axiom, repo, work):
         if not negative:
             check_hoisted_routes(binary)
         diagnostic = (work / f"{label}.stderr").read_text()
-        growth = re.fullmatch(r"hoisted-soak-growth (-?\d+)\n", diagnostic)
+        growth = re.fullmatch(r"hoisted-soak-growth (-?\d+)\nhoisted-payload-soak-growth (-?\d+)\ndirect-payload-soak-growth (-?\d+)\n", diagnostic)
         if growth is None:
             raise RuntimeError(f"{label}: missing hoisted Vec ownership diagnostic: {diagnostic!r}")
-        print(f"note hoisted fresh-Vec overwrite growth in {label}: {growth[1]} bytes", flush=True)
+        print(f"note fresh-Vec/hoisted/direct payload growth in {label}: {tuple(map(int, growth.groups()))} bytes", flush=True)
         return failures
 
     original = (repo / "self_host/codegen.ax").read_text()
     for level in (0, 2):
         label = f"positive-O{level}"
         build_run(label, level, prepare_module(label, original))
-        print(f"ok   emitter line-buffer ownership: 43 cases at -O{level} with allocation poisoning", flush=True)
+        print(f"ok   emitter line-buffer ownership: 57 cases at -O{level} with allocation poisoning", flush=True)
 
     variants = []
     variants.append(("header-share", replace_once(
@@ -209,7 +235,7 @@ def check(axiom, repo, work):
     variants.append(("displaced-slot", displaced, (14, 15)))
 
     name = "cgSetHoisted"
-    signature = f"(:: {name} (-> Int (Vec Int) Int))\n;@axiom:effect(unsafe)\n"
+    signature = f"(:: {name} (-> Int (Vec String) Int))\n;@axiom:effect(unsafe)\n"
     begin = original.index(f"(fn ({name} cg value)\n")
     end = original.index("\n  })", begin) + len("\n  })")
     body = original[begin:end]
@@ -228,9 +254,28 @@ def check(axiom, repo, work):
     variants.append(("hoisted-release-first", replace_once(
         original, body, ordered, "hoisted setter order"), (43,)))
 
+    # Keep the header's retain/publish/retire ledger intact while making
+    # element storage plain. This deliberately recreates the old payload
+    # leak direction; it never manually spends an ordinary String share.
+    plain_payload = replace_once(body, "    (__release old)\n", """    (let h (as value Int))
+    (if (> h 0)
+      {
+        (let data (memGetWord h 2))
+        (if (> data 0)
+          { (memMarkLeaf data) (memSetWord h 3 2) })
+      })
+    (__release old)
+""", "hoisted payload metadata ablation")
+    variants.append(("hoisted-plain-payload", replace_once(
+        original, body, plain_payload, "hoisted payload map"), (42, 44, 51, 53)))
+
     for label, source, negative in variants:
         module_root = prepare_module(label, source)
         failures = build_run(label, 0, module_root, negative)
+        if label == "hoisted-plain-payload":
+            header_cases = set(range(18, 42)) | {43}
+            if failures & header_cases:
+                raise RuntimeError(f"payload-only control damaged header ledger: {sorted(failures & header_cases)}")
         print(f"ok   negative probe {label}: cases {','.join(map(str, sorted(failures)))} fail", flush=True)
 
 
