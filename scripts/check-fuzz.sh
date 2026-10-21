@@ -41,6 +41,10 @@
 #       does not define it gets a stub definition before `llc` - measured
 #       2026-09-27: all 115 corpus files with no `main` are llc-clean
 #       with the stub and none of them is without it.
+#       Inline-assembly register pressure is outside this implication
+#       when the original corpus input has the same verified LLVM
+#       refusal on this target. Both IR modules must parse; an invalid
+#       module, tool crash or new assembler refusal still fails.
 #
 # SEVEN SECTIONS.
 #
@@ -142,6 +146,7 @@ gate_init
 gate_build_axc axc
 
 command -v llc >/dev/null || { echo "FAIL: llc is not on PATH"; exit 1; }
+command -v llvm-as >/dev/null || { echo "FAIL: llvm-as is not on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "FAIL: python3 is not on PATH"; exit 1; }
 
 seed=20260927
@@ -189,9 +194,10 @@ deadline=120
 # reproducers are judged by the SAME code - a control that re-implemented
 # the check would prove only that the control works.
 #
-# fuzz_one <compiler> <input.ax> <AXIOM_PATH> <deadline>
+# fuzz_one <compiler> <input.ax> <AXIOM_PATH> <deadline> [corpus input]
 #   f_verdict  ok | refused | target (AX4008 at emit, P3's exception)
-#              | asmtext (llc refused only an `asm` template's own text) | fail
+#              | asmtext (llc refused only an `asm` template's own text)
+#              | seedasm (the seed has the same verified register-pressure refusal) | fail
 #   f_stage    where it failed: check | json | emit | llc
 #   f_why      the harness's sentence
 #   f_detail   the failing tool's own first relevant line (for the JSON
@@ -217,8 +223,34 @@ first_line() {  # <file>: its first non-blank line, colour codes stripped, cut t
     | sed $'s/\x1b\\[[0-9;]*m//g' | cut -c1-200
 }
 
+asm_register_pressure() {  # <llc stderr>: only normal register-allocation diagnostics
+  grep -a -q 'error:' "$1" \
+    && ! grep -a 'error:' "$1" | grep -a -v -q -E \
+      '^error: inline assembly requires more registers than available( at line [0-9]+)?$'
+}
+
+seed_assembly_refuses() {  # <compiler> <seed.ax> <AXIOM_PATH> <deadline> <mutant stem>
+  local cc="$1" seed_input="$2" ap="$3" dl="$4" b="$5.seed" rc=0
+  [[ -f "$seed_input" ]] || return 1
+  AXIOM_PATH="$ap" gate_timeout "$dl" "$cc" check "$seed_input" \
+    > "$b.cout" 2> "$b.cerr" < /dev/null || rc=$?
+  (( rc == 0 )) && ! grep -a -q 'error\[AX[0-9]\{4\}\]' "$b.cerr" || return 1
+  AXIOM_PATH="$ap" gate_timeout "$dl" "$cc" emit-llvm "$seed_input" -o "$b.ll" \
+    > "$b.eout" 2> "$b.eerr" < /dev/null || rc=$?
+  (( rc == 0 )) && [[ -s "$b.ll" ]] || return 1
+  grep -a -q '^define [^@]*@__axiom_user_main(' "$b.ll" \
+    || printf '\ndefine i64 @__axiom_user_main() {\n  ret i64 0\n}\n' >> "$b.ll"
+  # llvm-as verifies the whole module without allocating target registers.
+  # A parser/verifier error cannot be excused by a later assembly refusal.
+  gate_timeout "$dl" llvm-as "$b.ll" -o /dev/null > "$b.aerr" 2>&1 || return 1
+  gate_timeout "$dl" llc -O0 -filetype=obj "$b.ll" -o "$b.o" \
+    > "$b.lerr" 2>&1 || rc=$?
+  rm -f "$b.o"
+  (( rc == 1 )) && asm_register_pressure "$b.lerr"
+}
+
 fuzz_one() {
-  local cc="$1" m="$2" ap="$3" rc=0 codes
+  local cc="$1" m="$2" ap="$3" seed_input="${5:-}" rc=0 codes
   local b="${m%.ax}"
   deadline_used="$4"
   f_verdict=fail f_stage="" f_why="" f_detail="" f_json="" f_human=""
@@ -297,6 +329,13 @@ fuzz_one() {
     if (( rc == 1 )) && grep -a -q 'error:' "$b.lerr" \
        && ! grep -a 'error:' "$b.lerr" | grep -a -v -q '^<inline asm>:'; then
       f_verdict=asmtext
+    elif (( rc == 1 )) && [[ -n "$seed_input" ]] && asm_register_pressure "$b.lerr" \
+         && gate_timeout "$4" llvm-as "$b.ll" -o /dev/null > "$b.aerr" 2>&1 \
+         && seed_assembly_refuses "$cc" "$seed_input" "$ap" "$4" "$b"; then
+      # This input is not an assembly-acceptance seed on the current
+      # target. Keep it in the compiler/renderer checks and count the
+      # inherited refusal apart from actual llc acceptance.
+      f_verdict=seedasm
     fi
     return
   fi
@@ -515,16 +554,26 @@ fi
 rm -rf "$work/m2"
 echo "   reproduce any mutant I: scripts/check-fuzz.sh --seed $seed --only I --keep <dir>"
 
+# The assembly-domain boundary has a fixed cross-target seed, so it is
+# exercised even when this run's random mutants contain no pressure case.
+if python3 "$repo_root/tests/tools/fuzz-seed-assembly.py" --axiom "$axc" \
+     --modules "$repo_root" --work "$work/seed-assembly" > "$work/seed-assembly.log" 2>&1; then
+  ok "the seed assembly oracle distinguishes inherited pressure from new tool or IR failures"
+else
+  bad "the seed assembly oracle's focused controls failed"
+  tail -20 "$work/seed-assembly.log" | sed 's/^/    /'
+fi
+
 # ---------------------------------------------------------------------
 echo "== 2. $count mutants through check, the JSON renderer, emit-llvm and llc =="
-n_run=0 n_parsed=0 n_ok=0 n_emitted=0 n_llc=0 n_refused=0 n_fail=0 n_known=0 n_target=0 n_asm=0
+n_run=0 n_parsed=0 n_ok=0 n_emitted=0 n_llc=0 n_refused=0 n_fail=0 n_known=0 n_target=0 n_asm=0 n_seedasm=0
 : > "$work/json.list"; : > "$work/json.names"
 : > "$work/human.list"; : > "$work/human.names"
 ok_names=() refused_names=()
 t0=$SECONDS
 while IFS=$'\t' read -r name src ops; do
   [[ -n "$name" ]] || continue
-  fuzz_one "$axc" "$mdir/$name.ax" "$(dirname "$src")" "$deadline"
+  fuzz_one "$axc" "$mdir/$name.ax" "$(dirname "$src")" "$deadline" "$repo_root/$src"
   n_run=$((n_run + 1))
   n_parsed=$((n_parsed + f_parsed)); n_ok=$((n_ok + f_ok))
   n_emitted=$((n_emitted + f_emitted)); n_llc=$((n_llc + f_llc))
@@ -536,6 +585,7 @@ while IFS=$'\t' read -r name src ops; do
     ok) ok_names+=("$name") ;;
     target) n_target=$((n_target + 1)) ;;
     asmtext) n_asm=$((n_asm + 1)) ;;
+    seedasm) n_seedasm=$((n_seedasm + 1)) ;;
     refused)
       n_refused=$((n_refused + 1)); refused_names+=("$name")
       printf '%s\n' "$f_json" >> "$work/json.list"
@@ -594,9 +644,9 @@ while IFS=$'\t' read -r hf why; do
   fi
 done < "$work/human.bad"
 
-echo "   $n_run run in $((SECONDS - t0))s: $n_parsed parsed, $n_ok checked OK, $n_emitted emitted, $n_llc llc-accepted, $n_target refused at emit by AX4008 for this host, $n_asm asm templates the assembler refused, $n_refused refused ($n_json with well-formed JSON); $n_human human reports terminal-safe; $n_known known-open (XFAIL), $n_fail new failures"
+echo "   $n_run run in $((SECONDS - t0))s: $n_parsed parsed, $n_ok checked OK, $n_emitted emitted, $n_llc llc-accepted, $n_target refused at emit by AX4008 for this host, $n_asm asm templates the assembler refused, $n_seedasm inherited seed register-pressure refusals, $n_refused refused ($n_json with well-formed JSON); $n_human human reports terminal-safe; $n_known known-open (XFAIL), $n_fail new failures"
 if (( n_fail == 0 )); then
-  ok "no mutant crashed, hung, refused without a code, broke the JSON contract, wrote an unsafe human report or produced IR llc rejects ($n_known known-open)"
+  ok "no mutant crashed, hung, refused without a code, broke the JSON contract, wrote an unsafe human report or produced invalid IR or a new llc refusal ($n_known known-open)"
 fi
 
 # ---------------------------------------------------------------------
@@ -752,7 +802,7 @@ SH
   while read -r kind name dl want_stage want_why; do
     cp "$mdir/$name.ax" "$cdir/$name.ax"
     src="$(awk -F'\t' -v n="$name" '$1 == n {print $2}' "$mdir/manifest.tsv")"
-    fuzz_one "$wrap" "$cdir/$name.ax" "$(dirname "$src")" "$dl"
+    fuzz_one "$wrap" "$cdir/$name.ax" "$(dirname "$src")" "$dl" "$repo_root/$src"
     if [[ "$kind" == badjson && "$f_verdict" == refused ]]; then
       printf '%s\n' "$f_json" > "$cdir/json.list"
       json_batch "$cdir/json.list" "$cdir/json.bad"
