@@ -912,7 +912,15 @@ module.exports = grammar({
       ')',
     ),
 
-    if_expression: $ => seq('(', 'if', repeat(field('operand', $._expression)), ')'),
+    if_expression: $ => seq('(', 'if', repeat(field('operand', choice($.let_test, $._expression))), ')'),
+
+    // `(let PATTERN value)` as a test of an `if`: it holds when the value
+    // matches the pattern, whose names are bound in the branch it
+    // chooses. The compiler's parseIfTest reads it at any test position
+    // of a chain and lowers it to a two-arm `match`.
+    let_test: $ => seq(
+      '(', 'let', field('pattern', $._pattern), field('value', $._expression), ')',
+    ),
 
     // `Mod::name`, and `Mod.Sub::name` - the dotted path is already a
     // single identifier token, because `.` continues an identifier.

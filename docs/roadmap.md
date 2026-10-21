@@ -125,6 +125,7 @@ integrator would still need.
 | Explicit numeric conversion uses `(as value Type)`; bit reinterpretation has named Float operations | Done | `tests/stdlib/943-as-numeric.ax`, `tests/diagnostics/1411-as-boundaries.ax` |
 | AXQL select aliases use `(alias expression name)` and keep `as` for language conversions | Done | `tests/axqlite/620-macro-text.ax`, `tests/axqlite/625-macro-forms.ax` |
 | Prefix pipelines evaluate each stage once, with explicit argument placement | Done | `tests/stdlib/945-pipelines.ax`, `tests/diagnostics/1430-pipeline-boundaries.ax` |
+| An `if` test that matches one pattern, `(if (let PATTERN value) then else)`, binding its names for the branch it chooses | Done | `tests/stdlib/993-if-let.ax`, `tests/diagnostics/1496-if-let-scope.ax` |
 | One code-generation route: the MIR route is finished or removed | Done | `scripts/check-mir.sh` |
 
 Numeric values never widen or narrow implicitly. Expected types do not

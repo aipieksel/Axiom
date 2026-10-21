@@ -16,6 +16,14 @@ its changelog too.
 
 ## Unreleased
 
+- `if` takes a pattern test. `(if (let (Some n) o) then else)` runs
+  `then` with `n` bound when `o` matches, and `else` otherwise, at any
+  test position of a chain and with or without an else. It means the
+  two-arm `match` it is written for, so every `match` rule applies. A
+  pattern that always matches, a lowercase name or `_`, is refused.
+  Tested by `tests/stdlib/993-if-let.ax` and
+  `tests/diagnostics/1496-if-let-scope.ax`.
+
 - The checker refuses six shapes it used to accept in silence. A name
   bound twice in one pattern is AX3136, and a bare pattern binder that
   starts with a capital letter is AX3137, because it binds every value

@@ -6646,7 +6646,7 @@
 (pub :: parseIfExpr (-> Ints Int Int))
 (pub fn (parseIfExpr tokens pos)
   {
-    (let testR (parseExpr tokens pos))
+    (let testR (parseIfTest tokens pos))
     (if (== (memGetWord testR 0) 0)
       (if (peekIs tokens pos TK_RPAREN)
         (pErrExp pos
@@ -6677,19 +6677,22 @@
 (pub :: parseIfTail (-> Ints Int ASTNode ASTNode Int))
 (pub fn (parseIfTail tokens pos test thenEx)
   {
-    (let eR (parseExpr tokens pos))
+    (let eR (parseIfTest tokens pos))
     (if (== (memGetWord eR 0) 0)
       (if (peekIs tokens pos TK_RPAREN)
         ; No else: the `if` supplies `()`, so `(if t b)` runs `b` when
         ; `t` holds and answers the unit value either way (the checker
         ; drops `b`'s value, `checkIf`).
-        (pOk (mkEIf test thenEx (mkEUnitAt (tokenSpan (vecGet tokens pos)))) (advance pos))
+        (pOk (mkIfOrLet test thenEx (mkEUnitAt (tokenSpan (vecGet tokens pos)))) (advance pos))
         eR)
       {
         (let e (readAstNode eR 1))
         (let afterE (memGetWord eR 2))
         (if (peekIs tokens afterE TK_RPAREN)
-          (pOk (mkEIf test thenEx e) (advance afterE))
+          (if (isLetTest e)
+            (pErrExp afterE
+              "the branch a `(let ...)` test chooses: `(if (let (Some x) value) then else)`")
+            (pOk (mkIfOrLet test thenEx e) (advance afterE)))
           {
             (let thenR (parseExpr tokens afterE))
             (if (== (memGetWord thenR 0) 0)
@@ -6698,11 +6701,96 @@
                 (let tailR (parseIfTail tokens (memGetWord thenR 2) e (readAstNode thenR 1)))
                 (if (== (memGetWord tailR 0) 0)
                   tailR
-                  (pOk (mkEIf test thenEx (readAstNode tailR 1)) (memGetWord tailR 2)))
+                  (pOk (mkIfOrLet test thenEx (readAstNode tailR 1)) (memGetWord tailR 2)))
               })
           })
       })
   })
+
+; A test of an `if`: an expression, or `(let PATTERN value)`, which
+; holds when `value` matches `PATTERN` and binds the pattern's names
+; for the branch it chooses. `(if (let (Some x) o) x 0)` is
+; `(match o ((Some x) x) (_ 0))`: `mkIfOrLet` builds that match where
+; the chain would build an `if`, so every later pass reads an ordinary
+; `match`, with its exhaustiveness, binder and type rules. A `let` test
+; can stand at any test position of a variadic chain, and the else
+; branches see none of its names.
+(pub :: parseIfTest (-> Ints Int Int))
+(pub fn (parseIfTest tokens pos)
+  (if (&& (peekIs tokens pos TK_LPAREN)
+        (&& (peekIs tokens (advance pos) TK_IDENT)
+          (kwEq (tokenLexeme (vecGet tokens (advance pos))) kwLet)))
+    (parseLetTest tokens (advance (advance pos)))
+    (parseExpr tokens pos)))
+
+; `(let PATTERN value)` after the `let`, as a TAG_M_ARM whose pattern
+; is the test and whose body is the value tested. Only the `if`
+; builders read it. A pattern that cannot fail, a lowercase name or
+; `_`, is refused: its else branch could never run, and the binding
+; it makes is a block's `(let x value)`.
+(pub :: parseLetTest (-> Ints Int Int))
+(pub fn (parseLetTest tokens pos)
+  (if (&& (peekIs tokens pos TK_IDENT) (kwEq (tokenLexeme (vecGet tokens pos)) "mut"))
+    (pErrExp pos
+      "a pattern: a `(let ...)` test binds its names for one branch, and they cannot be `mut`")
+    {
+      (let patR (parseArmPattern tokens pos))
+      (if (== (memGetWord patR 0) 0)
+        patR
+        {
+          (let pat (readAstNode patR 1))
+          (if (== (letTestCannotFail pat) 1)
+            (pErrExp pos
+              "a pattern that can fail to match: `(if (let (Some x) value) then else)` tests a constructor or a literal, and a lowercase name or `_` matches everything, so bind it in a block with `(let x value)`")
+            {
+              (let valR (parseExpr tokens (memGetWord patR 2)))
+              (if (== (memGetWord valR 0) 0)
+                valR
+                {
+                  (let afterVal (memGetWord valR 2))
+                  (if (peekIs tokens afterVal TK_RPAREN)
+                    (pOk (nodeBuildMArmPlain pat (readAstNode valR 1) 0) (advance afterVal))
+                    (pErrExp afterVal "`)` closing the `(let PATTERN value)` test"))
+                })
+            })
+        })
+    }))
+
+; A bare lowercase name or `_`. A bare capitalised name is a
+; constructor test, or AX3137 when it names no constructor, so it is
+; left to the checker; `true` and `false` are literal tests.
+(pub :: letTestCannotFail (-> ASTNode Int))
+(pub fn (letTestCannotFail pat)
+  (if (!= (nodeTag pat) TAG_E_VAR)
+    0
+    {
+      (let name (nodeAName pat))
+      (if (|| (strEq name "true") (strEq name "false"))
+        0
+        (if (strEq name "_")
+          1
+          (if (&& (> (strLen name) 0) (&& (>= (strByte name 0) 97) (<= (strByte name 0) 122)))
+            1
+            0)))
+    }))
+
+(pub :: isLetTest (-> ASTNode Bool))
+(pub fn (isLetTest n)
+  (== (nodeTag n) TAG_M_ARM))
+
+; One link of an `if` chain: an `if` for an expression test, and for a
+; `(let PATTERN value)` test the two-arm match it means. The wildcard
+; arm has no span, so no diagnostic can point at code nobody wrote.
+(pub :: mkIfOrLet (-> ASTNode ASTNode ASTNode ASTNode))
+(pub fn (mkIfOrLet test thenEx elseEx)
+  (if (isLetTest test)
+    {
+      (let arms vecNew)
+      (vecPush arms (nodeBuildMArmPlain (nodeAChild test) thenEx 0))
+      (vecPush arms (nodeBuildMArmPlain (mkEVarAt "_" 0) elseEx 0))
+      (nodeBuildEMatchPlain (nodeBChild test) arms 0)
+    }
+    (mkEIf test thenEx elseEx)))
 
 ; ------------------------------------------------------------------
 ; Parse (match scrutinee (pat body) ...)

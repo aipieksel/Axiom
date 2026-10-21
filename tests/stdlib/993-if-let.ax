@@ -1,0 +1,60 @@
+; `(if (let PATTERN value) then else)`: the test holds when the value
+; matches, and the pattern's names are bound in `then` alone. Option,
+; Result, nested and literal patterns, a chain mixing `let` tests with
+; a Bool test, and the else-less form, which answers `()`.
+(import IO)
+(import Err)
+
+(data Shape
+  (Circle Int)
+  (Rect Int Int))
+
+(:: describe (-> (Option Int) ()))
+;@axiom:effect(io)
+(fn (describe o)
+  (if (let (Some n) o)
+    (println "got {n}")
+    (println "nothing")))
+
+(:: area (-> Shape Bool Int))
+(fn (area s square)
+  (if (let (Circle r) s)
+      (* 3 (* r r))
+    square
+      0
+    (let (Rect w h) s)
+      (* w h)
+    -1))
+
+(:: firstOk (-> (Result Int Error) (Option Int) Int))
+(fn (firstOk r o)
+  (if (let (Ok v) r)
+      v
+    (let (Some (Some x)) (Some o))
+      x
+    -2))
+
+(:: isSeven (-> Int String))
+(fn (isSeven n)
+  (if (let 7 n)
+    "seven"
+    "other"))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (describe (Some 4))
+    (describe None)
+    (println (area (Circle 2) false))
+    (println (area (Rect 2 5) false))
+    (println (area (Rect 2 5) true))
+    (println (firstOk (Ok 9) None))
+    (println (firstOk (Err (mkError 1 "no")) (Some 3)))
+    (println (isSeven 7))
+    (println (isSeven 8))
+    (if (let (Some n) (Some 5))
+      (println "side effect {n}"))
+    (if (let None (Some 1))
+      (println "never"))
+  })

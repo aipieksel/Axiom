@@ -519,6 +519,78 @@ branches must agree as before. Tested by
 `tests/stdlib/892-dropped-branches.ax` and
 `tests/diagnostics/1304-branches-read.ax`.
 
+### if let
+
+Unwrap an `Option` without writing a whole `match`, as Rust's
+`if let` does. `(if (let (Some n) o) then else)` runs `then` with `n`
+bound to the value inside `o`, and `else` when `o` is `None`:
+
+```scheme
+(import IO)
+
+(:: describe (-> (Option Int) ()))
+;@axiom:effect(io)
+(fn (describe o)
+  (if (let (Some n) o)
+    (println "got {n}")
+    (println "nothing")))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (describe (Some 4))
+    (describe None)
+  })
+```
+
+```text
+got 4
+nothing
+```
+
+A `let` test can stand at any test position of a chain, beside ordinary
+`Bool` tests. Without an else, an `if let` answers `()` as any `if`
+does:
+
+```scheme
+(import IO)
+
+(:: firstOf (-> (Option Int) (Option Int) Int))
+(fn (firstOf a b)
+  (if (let (Some n) a)
+      n
+    (let (Some m) b)
+      m
+    0))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (println (firstOf None (Some 5)))
+    (println (firstOf None None))
+    (if (let (Some n) (Some 7))
+      (println "seven is {n}"))
+  })
+```
+
+```text
+5
+0
+seven is 7
+```
+
+The pattern is anything a `match` arm accepts, so `(Ok v)` unwraps a
+`Result` the same way, and nested patterns and literals work too. Its
+names are visible only in the branch it chooses. `(if (let (Some n) o) a b)` means `(match o ((Some n) a) (_ b))`,
+so the same checks apply to it. A pattern that always matches, a
+lowercase name or `_`, is refused, because its else could never run.
+Bind the value with `(let x value)` in a block instead.
+
+Tested by `tests/stdlib/993-if-let.ax` and
+`tests/diagnostics/1496-if-let-scope.ax`.
+
 ### while loops
 
 `while` repeats its body while its `Bool` condition is true. There is
