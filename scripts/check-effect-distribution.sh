@@ -251,6 +251,8 @@ have() { # have <got> <want> <what>
 # helpers. Compared with a37f9cc2 using one compiler, existing rows are unchanged.
 # The typed-argument String setter adds one Mut,Unsafe helper; a same-compiler
 # comparison leaves every existing function's effect row unchanged.
+# The hoisted-vector setter adds one Mut,Unsafe helper; a same-compiler
+# comparison leaves every existing function's effect row unchanged.
 echo "== compiler view: symbols --calls self_host/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
@@ -267,7 +269,7 @@ have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 258 "Alloc,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Unsafe')" 177 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 69 "Alloc,IO,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 39 "Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 40 "Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 10 "Alloc,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Unsafe')" 18 "Alloc,IO,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Mut,Unsafe')" 0 "IO,Mut,Unsafe"
