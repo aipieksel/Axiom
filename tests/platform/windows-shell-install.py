@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,8 +21,14 @@ class DispatchTests(unittest.TestCase):
         self.bin.mkdir()
         self.write("uname", '#!/bin/sh\ncase "$1" in -s) echo MINGW64_NT-10.0 ;; -m) echo x86_64 ;; esac\n')
         self.write("cygpath", '#!/bin/sh\nprintf "%s\\n" "$2"\n')
+        # Keep host pwsh installations out of missing/fallback cases.
+        # These are the real POSIX tools the dispatcher and gate probe use.
+        for tool in ("dirname", "mktemp", "rm"):
+            command = shutil.which(tool)
+            self.assertIsNotNone(command, f"required test dependency: {tool}")
+            (self.bin / tool).symlink_to(command)
         self.capture = self.work / "args.json"
-        self.env = dict(os.environ, PATH=f"{self.bin}:/usr/bin:/bin", AXIOM_TEST_ARGS=str(self.capture))
+        self.env = dict(os.environ, PATH=str(self.bin), AXIOM_TEST_ARGS=str(self.capture))
         for key in ("AXIOM_PREFIX", "AXIOM_VERSION"):
             self.env.pop(key, None)
 
