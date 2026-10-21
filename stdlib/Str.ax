@@ -282,32 +282,17 @@
 ; ------------------------------------------------------------------
 ;; Index of the first `byte` at or after `from`, or `None`.
 ;
-; A LOOP RATHER THAN A SELF TAIL CALL, and that is the whole reason
-; this function could take an `Option` while KEEPING the `no-alloc`
-; claim above it. A function whose every tail is `None` or `(Some e)`
-; is emitted as a two-register pair with no block behind it
-; (docs/error-model.md section 5b) - but `tailCallsSelf` is a
-; refusal in that eligibility test (`self_host/codegen.ax`, the
-; `wantsTCO` arm), so the recursive spelling this function carried
-; until 0.7.5 would have kept the BOXED body and drawn `AX3049`
-; against its own claim. `docs/error-model.md` recorded that as a
-; property of the emitter and a reason the port could not happen; it
-; is a property of the BODY. Measured 2026-09-04 on a copy of the
-; tree: the recursive spelling declared `(Option Int)` draws
+; A loop rather than a self tail call, so that answering an `Option`
+; keeps the `no-alloc` claim above it. A function whose every tail is
+; `None` or `(Some e)` is emitted as a two-register pair with no block
+; behind it (docs/error-model.md section 5b), but a self tail call
+; disqualifies it (`tailCallsSelf` in `self_host/codegen.ax`), and the
+; boxed body would draw AX3049 against the claim. `strFind` below is a
+; loop for the same reason.
 ;
-;   E AX3049 ... `strFindByte` claims `restrict(no-alloc)` and the
-;                body performs Alloc
-;
-; and this spelling checks clean under the same three restrictions.
-; `strFind`, three hundred lines below, was already written as a loop
-; for an unrelated reason and has answered `(Option Int)` all along.
-;
-; `hit` is a separate flag rather than a negative `found`, so that a
-; NEGATIVE `from` behaves exactly as the recursion did: `strByte`
-; answers 0 below index 0, so `(strFindByte s 0 -3)` used to answer
-; -3, and a `found` initialised to -1 would have folded that into
-; `None`. Nothing in the tree calls it that way; the point is that
-; this is a retype and not a behaviour change.
+; `hit` is a separate flag rather than a negative `found`, so a negative
+; `from` is searched like any other index: `strByte` answers 0 below
+; index 0, so `(strFindByte s 0 -3)` answers `(Some -3)`.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: strFindByte (-> String Int Int (Option Int)))
 (pub fn (strFindByte s byte from)
@@ -340,23 +325,13 @@
 ; ------------------------------------------------------------------
 ; Byte classification.
 ;
-; One statement of each rule, because there were three of "what is a
-; space" and two each of "digit" and "alpha", in `lexer.ax`,
-; `format.ax` and `Cereal.ax`, and nothing compared them. That is not a
-; hypothetical: `isFSpace` used to admit VT (11) and FF (12) - they
-; came from the retired compiler's `char::is_whitespace` and the lexer
-; never accepted them - so `fmt` rewrote a file `check` refuses with
-; AX1001 into one it accepts, turning an invalid program into a valid
-; one at exit 0. The comment on `isFSpace` has said "exactly
-; `lexer.ax`'s `isSpace`, byte for byte" ever since, which is a claim
-; a reader has to verify by hand every time either one changes.
-;
-; The predicates in `lexer.ax` and `format.ax` are kept - they are
-; named in diagnostics and imported by name - and now delegate here,
-; so the claim is structural rather than editorial.
-; `tests/selfhost/990-char-class.ax` sweeps all 256 byte values
-; through every one of them and requires the delegations to agree,
-; which is the check that would have caught the VT/FF drift.
+; One statement of each rule. The lexer, the formatter and `Cereal`
+; once each had their own idea of what a space, a digit and a letter
+; are, and a formatter that accepted a byte the lexer refuses could turn
+; an invalid program into a valid one. The predicates in `lexer.ax` and
+; `format.ax` keep their names, because diagnostics name them, and
+; delegate here. `tests/selfhost/990-char-class.ax` sweeps all 256 byte
+; values through every one of them and requires the delegations to agree.
 ; ------------------------------------------------------------------
 ;; Whether the byte is an ASCII digit, `0` to `9`.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
@@ -396,10 +371,9 @@
 ;; The value of a hexadecimal digit byte, 0 to 15, or `None` for any
 ;; other byte.
 ;
-; `None` and not -1 since 2026-09-03, and `no-alloc` above still
-; holds: a function of this shape is emitted as a two-register pair
-; and builds no block on any path, so the claim is checked against
-; the IR rather than withdrawn (`scripts/check-unboxed-sums.sh`,
+; Answering `(Option Int)` keeps `no-alloc`: a function of this shape
+; is emitted as a two-register pair and builds no block on any path, so
+; the claim is checked against the IR (`scripts/check-unboxed-sums.sh`,
 ; tests/diagnostics/384-restrict-no-alloc-ctor.ax).
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: strHexVal (-> Int (Option Int)))
@@ -476,9 +450,9 @@
 
 ;; A one-byte `String` holding `b`.
 ;
-; `Byte` and not `Int` since the store keeps only the low eight bits:
-; a caller with 256 or more used to get a silently truncated byte, and
-; now traps with status 80 at the call boundary instead.
+; `Byte` and not `Int`, because the store keeps only the low eight bits:
+; a value of 256 or more traps with status 80 at the call boundary
+; rather than being silently truncated.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: strFromByte (-> Byte String))
 ;@axiom:effect(unsafe)
@@ -681,14 +655,12 @@
 ; ------------------------------------------------------------------
 ; Case, substring search, trimming and integer parsing.
 ;
-; Four functions an HTTP parser needs and nothing here had - measured
-; by grep on 2026-08-29: no `strLower`, no substring search, no trim,
-; and an integer parser that `tests/net/echo-server.ax` carried
-; privately with a comment saying the library lacked one. They are
-; public and permanent (`scripts/check-compat.sh` holds them from
-; here on), and the two that can fail answer `Option` rather than a
-; sentinel: `compat/SENTINELS` may fall and never rise, and `Option`
-; is built in, so this costs `Str` no import.
+; What a protocol parser needs: an ASCII fold, substring search,
+; trimming and integer parsing. They are public and permanent
+; (`scripts/check-compat.sh` holds them), and the two that can fail
+; answer `Option` rather than a sentinel: `compat/SENTINELS` may fall
+; and never rise, and `Option` is built in, so this costs `Str` no
+; import.
 ; ------------------------------------------------------------------
 ;; `s` with every ASCII upper-case letter lowered, or `s` itself when it
 ;; has none. Bytes above 127 pass through untouched: this is an ASCII
@@ -782,8 +754,8 @@
 ; was taken as a length. Here it is `None`, and so is
 ; `9223372036854775808`, while `9223372036854775807` and
 ; `-9223372036854775808` both parse.
-; `no-alloc` came off with `strFind`'s, on 2026-08-31 and for the same
-; reason: the `(Some ...)` answer allocates.
+; There is no `no-alloc` claim, as for `strFind`: the `(Some ...)`
+; answer allocates.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: strParseInt (-> String (Option Int)))
 (pub fn (strParseInt s)
@@ -844,16 +816,12 @@
 ; `concat` chain with one rendering call per hole. See
 ; docs/macro-system.md MAC-CAP-10 for the grammar and the lowering.
 ;
-; WHY IT LIVES HERE AND NOT IN ITS OWN MODULE. It was `Show.ax`, a
-; 53-line file whose only declaration was this macro and whose header
-; described a `trait` mechanism the language no longer has (`trait`
-; and `impl` are `AX2004`). `show` itself is not declared anywhere:
-; the expander emits a var node named `show` per hole
-; (`expand.ax:2659,2717`) and the CHECKER resolves it from the hole's
-; static type (`showIsHead`, `showBuiltin`, `showResolve`). So the
-; module was a wrapper around one macro, and one import for it.
+; `show` itself is not declared anywhere: the expander emits a var node
+; named `show` per hole and the checker resolves it from the hole's
+; static type (`showIsHead`, `showBuiltin`, `showResolve`), so the
+; macro needs no module of its own.
 ;
-; STR AND NOT FMT, WHICH IS THE PART WORTH READING. Every expansion of
+; It lives in `Str` and not `Fmt`. Every expansion of
 ; this macro emits `concat`, so from here the expander's qualifier
 ; resolves it on its FIRST path instead of the fallback. Fmt was the
 ; other candidate and is the wrong one twice over: `Fmt` imports
@@ -862,6 +830,5 @@
 ; names `fmtFloatPrec` and `fmtPadLeft`, and `expQualify` reaches
 ; those through `expUniqueModuleName` over the MERGED declaration
 ; list, not through import edges, so `{x:.2}` and `{n:>8}` resolve
-; from a program that imports neither this module's old home nor
-; `Fmt`. That is measured, not assumed - see the gate below.
+; in a program that does not import `Fmt`.
 (pub macro (format e) (syntax/format e))

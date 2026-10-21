@@ -129,22 +129,15 @@
 ;     probability near 1/2, so the low bits the mask keeps carry entropy
 ;     from the whole key.
 ;
-; WHY NOT A UNIVERSAL MULTIPLY-MOD-PRIME FAMILY. This file used to hash
-; with h(k) = (A0*l0 + A1*l1 + A2*l2 + C) mod (2^31 - 1) over 22-bit
-; limbs - chosen when Axiom had no `^` or `>>` operators, and argued
-; for by the family's provable 2-universality. Both premises rotted.
-; The operators exist now. And the guarantee never applied: it is a
-; bound over *randomly drawn* multipliers, while these were fixed - and
-; worse, for keys below 2^22 two of the three limbs are constant, so
-; the hash was *affine* in the key. An affine map sends sequential keys
-; onto interleaved arithmetic progressions mod cap, and linear probing
-; over that structure degenerates from occasional collisions into
-; guaranteed pile-ups. Measured on 10^6 sequential keys at cap 2^21:
-; 70,813,730 total probe steps - 71 per insert - against 1,457,580
-; (1.46 per insert) for this finaliser. That 48x in probe volume was
-; nearly the whole of the 15x gap to Rust's HashMap this module used
-; to measure, misattributed for a while to allocator and layout costs
-; that profiling then exonerated one by one.
+; WHY NOT A UNIVERSAL MULTIPLY-MOD-PRIME FAMILY, such as
+; h(k) = (A0*l0 + A1*l1 + A2*l2 + C) mod (2^31 - 1) over 22-bit limbs.
+; Its 2-universality is a bound over randomly drawn multipliers, and
+; fixed ones forfeit it; for keys below 2^22 two of the three limbs are
+; constant, so the hash is affine in the key. An affine map sends
+; sequential keys onto interleaved arithmetic progressions mod cap, and
+; linear probing over that structure degenerates into guaranteed
+; pile-ups: on 10^6 sequential keys at cap 2^21, 71 probe steps per
+; insert against 1.46 for this finaliser.
 ;
 ; THE CONSTANTS ARE FIXED, NOT SEEDED. A per-process seed is what makes
 ; a map resistant to an adversary who feeds it keys that all land in
@@ -477,16 +470,9 @@
 
 ; WHY THE PROBE LOOPS TEST ONE CONDITION PER `if`.
 ;
-; Not a compiler workaround, though it was: this file used to carry a
-; note saying `&&` could not take a comparison operand and that a `Bool`
-; must never be the value of an `if`. Both were real - the first emitted
-; `and i64` over an `i1` and failed in `llc`, the second stored one byte
-; into a word-sized slot and read seven bytes of stale frame back, which
-; is how an early version of this file silently lost 11 of 40 keys - and
-; both are fixed. `&&` and `||` now short-circuit, and a `Bool` is
-; widened to a machine word wherever it is stored. See
-; `tests/stdlib/130-booleans.ax`, which fails against a compiler with
-; either bug.
+; `&&` and `||` short-circuit and a `Bool` is a machine word wherever
+; it is stored (`tests/stdlib/130-booleans.ax`), so this is not a
+; compiler workaround.
 ;
 ; What is left is a genuine three-way distinction that no two-way
 ; conjunction expresses: a slot is empty, live, or a tombstone, and the
@@ -613,11 +599,9 @@
 ; `mapNeedsGrow` reads `used`, and `used` counts tombstones, so a table
 ; under insert-and-remove churn reaches the load factor with a live set
 ; that never moved. Doubling there grows the table for entries that do
-; not exist: measured 2026-08-24 on a 256-entry window over 200,000
-; inserts, the table climbed to about 524,288 slots and the process to
-; 10 MB - a bounded live set with unbounded memory, which is exactly
-; what P3 says must not happen and what nothing in this repository
-; measured until `scripts/check-steady-state.sh`.
+; not exist: a 256-entry window over 200,000 inserts would climb to
+; about 524,288 slots, a bounded live set with unbounded memory, which
+; P3 forbids and `scripts/check-steady-state.sh` measures.
 ;
 ; So growth asks about `len` rather than `used`: when the LIVE entries
 ; would sit at a quarter load or less in the current table, the rehash
@@ -640,15 +624,11 @@
 ; ANSWERS 0, NOT THE HANDLE, and that is load-bearing rather than a
 ; matter of taste. `Map` is a declared struct, so `fldClass` puts it in
 ; class 2 - reference - and codegen retains a reference-typed value at
-; every RETURN. A mutator declared `(-> Map ... Map)` therefore emits an
-; unpaired `axiom_retain(%m)` on each call. Measured 2026-09-03 with a
-; refcount probe on the header word at offset -16: the count ran 1 -> 3
-; -> 6 over 110 inserts, a release could then never reach zero, and
-; `scripts/check-container-reclaim.sh`'s fixture went from 1.30 MiB to
-; 83.1 MiB of max RSS - while 080, 200 and 473 all still matched their
-; goldens. Nothing in the tree chained on the result anyway: there were
-; exactly two such sites, both in tests/stdlib/473-map-iteration.ax.
-; The header is mutated in place and the caller already holds it.
+; every RETURN. A mutator declared `(-> Map ... Map)` would emit an
+; unpaired `axiom_retain(%m)` on each call, so the count would never
+; reach zero again and the map would never be reclaimed
+; (`scripts/check-container-reclaim.sh` measures it). The header is
+; mutated in place and the caller already holds it.
 ;
 ; Growth happens *before* the insert, not after, so the table a caller
 ; gets back is never over its load factor. Growing after would let a
@@ -923,14 +903,9 @@
 ; ------------------------------------------------------------------
 ; Iteration
 ;
-; A table you cannot enumerate is not a table. Until 2026-09-03 this
-; module exported `mapLen` and `mapCap` - a loop bound with nothing to
-; read inside it - and the three slot accessors were private, so no
-; caller outside this file could name the contents of a `Map` at all.
-; The `mapSumKeys`/`mapSumVals` pair below is the evidence: its own
-; comment says the two sums "pin down a small map's contents well
-; enough to test with", which is a workaround written because the
-; obvious thing was unavailable, not a design.
+; A table you cannot enumerate is not a table, so the slot accessors
+; are public and iteration has a cursor. `mapSumKeys` and `mapSumVals`
+; below are kept for tests that pin a small map's contents.
 ;
 ; THE CURSOR, NOT A CALLBACK. `mapLiveFrom` answers a slot index and
 ; the caller reads it with `mapKeyAt`/`mapValAt`, rather than this

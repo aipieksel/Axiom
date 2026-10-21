@@ -4,7 +4,7 @@
 ;;! declares the same names, and the build picks the one for the
 ;;! target being compiled for (this one is `freebsd`).
 ; `Err` for the `(Result Int Error)` the two descriptor calls below
-; answer since 2026-09-03. `Err` imports `Str`, which imports `Mem` and
+; answer. `Err` imports `Str`, which imports `Mem` and
 ; `Vec`, and none of those import this module, so the edge is acyclic.
 (import Err)
 
@@ -27,15 +27,15 @@
 ; templates normalise into `-errno` exactly as the Darwin ones do (see
 ; `targetSyscallAsm` in `self_host/codegen.ax`).
 ;
-; NOTHING IN THIS FILE HAS BEEN EXECUTED. It was written 2026-08-29 on
-; a macOS host with no FreeBSD to run on, every number read from
-; stable/14's `sys/kern/syscalls.master` and the headers under
-; `sys/sys/`, and each legacy near-miss checked against the table
-; rather than assumed - the ones that assemble, run and half-work are
-; named beside the number they must not be confused with. The CI leg
-; that runs `tests/stdlib` on a real FreeBSD kernel is what turns any
-; line here into a measurement; until it exists this target is
-; assembled and never run, exactly as darwin-x86_64 is.
+; FreeBSD is a source-only target (README, Targets). Every number here
+; is read from stable/14's `sys/kern/syscalls.master` and the headers
+; under `sys/sys/`, and each legacy near-miss is checked against the
+; table: the ones that assemble, run and half-work are named beside the
+; number they must not be confused with. CI builds the compiler from the
+; seed in FreeBSD 14 virtual machines, x86_64 and aarch64, runs it to a
+; fixpoint and runs one program with it, which executes the calls the
+; compiler makes; the rest of `tests/stdlib` does not run there. The
+; lines marked MEASURED were run on FreeBSD 14.4 arm64.
 ;
 ; FLOOR: FreeBSD 12. `kevent` 560 with the 64-byte record, `getrandom`
 ; 563 and the current `struct dirent` all arrived in 12; the compiler
@@ -298,12 +298,10 @@
   1)
 
 ;; CLOCK_MONOTONIC IS 4 HERE, AND THIS CONSTANT EXISTS BECAUSE OF THAT.
-;; Until 2026-08-29 `Sys.ax` passed the clock id to `clock_gettime` as
-;; the literal 1, which is CLOCK_MONOTONIC on Linux - and CLOCK_VIRTUAL
-;; on FreeBSD, the process's consumed CPU time. A FreeBSD port that
-;; set `clockHasMonotonic` and changed nothing else would have handed
-;; every timeout a clock that never runs backwards, so no assertion
-;; catches it, and that runs at the ratio of CPU time to wall time.
+;; The literal 1 is CLOCK_MONOTONIC on Linux and CLOCK_VIRTUAL on
+;; FreeBSD, the process's consumed CPU time. That clock never runs
+;; backwards either, so no assertion would catch the mix-up: every
+;; timeout would simply run at the ratio of CPU time to wall time.
 ;; `sys/sys/_clock_id.h`: REALTIME 0, VIRTUAL 1, PROF 2, MONOTONIC 4.
 (pub :: clockMonotonicId Int)
 (pub fn (clockMonotonicId)
@@ -345,7 +343,7 @@
 ;; BSDs share one path. The fourth argument it passes is 0, and ignored
 ;; here as Darwin ignores it.
 ;
-; MEASURED 2026-08-29, FreeBSD 14.4 arm64, and it is the one place
+; MEASURED on FreeBSD 14.4 arm64, and it is the one place
 ; this kernel and Darwin's disagree about the same call: with an
 ; address buffer shorter than the peer's 16 bytes, `accept` writes the
 ; COPIED length back - caps of 4, 8 and 12 answered 4, 8 and 12 -
@@ -629,7 +627,7 @@
 ; `vm.overcommit` is 0 by default, so an anonymous mapping that fits
 ; the ADDRESS SPACE is granted whether or not RAM and swap could back
 ; it, and a program that maps more than exists dies when it TOUCHES the
-; pages, not when it maps them. Measured 2026-08-29 on 14.4/arm64: a
+; pages, not when it maps them. Measured on FreeBSD 14.4 arm64: a
 ; `rawAlloc` of 2^47 bytes - which Linux refuses under its overcommit
 ; heuristic and Darwin refuses as past its user address space - was
 ; granted, because arm64 FreeBSD has 48 bits of user address space.
@@ -976,7 +974,7 @@
 ; host in this working tree - but DERIVED, with the arithmetic shown
 ; beside each number and the derivation itself checked three ways.
 ;
-; The sources, both fetched and read on 2026-08-31, both from
+; The sources, both fetched and read, both from
 ; freebsd-src at releng 14.0.0:
 ;
 ;   * `sys/sys/ioccom.h`, which defines the `_IOC` encoding;
@@ -1172,7 +1170,7 @@
 
 ; ------------------------------------------------------------------
 ; Opening beneath a directory (`Sys.sysOpenBeneath`) and making the
-; links it refuses to follow (`Sys.sysSymlink`). Added 2026-09-26.
+; links it refuses to follow (`Sys.sysSymlink`).
 ; ------------------------------------------------------------------
 ;; openat(dirfd, path, flags, mode) - 499
 (pub :: sysOpenatNum Int)

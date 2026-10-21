@@ -70,12 +70,9 @@
 ;; The code point whose encoding begins at byte offset `i`, or `None`
 ;; when there is none there.
 ;
-; `None`, and until 2026-09-03 it was -1: 0 is a real character (NUL),
-; and an `Option` heap-boxed every answer - this is a compiler's inner
-; loop, and `restrict(no-alloc)` above refused the constructor
-; outright (tests/diagnostics/384-restrict-no-alloc-ctor.ax). Neither
-; holds now. A function of exactly this shape - every tail `None` or
-; `(Some e)` - is emitted as a two-register pair and builds no block
+; `None` rather than a sentinel, because 0 is a real character (NUL).
+; It costs nothing in this inner loop: a function of exactly this shape,
+; every tail `None` or `(Some e)`, is emitted as a two-register pair and builds no block
 ; on any path (`docs/error-model.md`); a caller that matches
 ; the call directly reads the registers, and only a caller that stores
 ; the answer past its match pays for a block, in its own row.
@@ -328,8 +325,7 @@
 ; Strict - Unicode's Table 3-7 at every offset, through
 ; `utf8WellFormedAt` below - so an overlong form, an encoded
 ; surrogate, a code point above U+10FFFF, a stray continuation byte
-; and a truncated sequence all answer false. It used to check
-; structure only, and the name promised more than it asked.
+; and a truncated sequence all answer false.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: utf8Valid (-> String Bool))
 (pub fn (utf8Valid s)
@@ -360,9 +356,9 @@
 ; and replaces what answers 0. `utf8Valid` above is the whole-string
 ; question over this one.
 ;
-; Added 2026-09-27 for exactly that writer: the compiler's JSON
-; diagnostics passed ill-formed bytes from a source file straight
-; through (`tests/fuzz/json-ax1001-partial-char.axfuzz`).
+; The compiler's JSON diagnostics are that writer: they must not pass
+; ill-formed bytes from a source file straight through
+; (`tests/fuzz/json-ax1001-partial-char.axfuzz`).
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: utf8WellFormedAt (-> String Int Int Int))
 (pub fn (utf8WellFormedAt s i end)

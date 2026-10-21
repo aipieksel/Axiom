@@ -4,7 +4,7 @@
 ;;! declares the same names, and the build picks the one for the
 ;;! target being compiled for (this one is `darwin`).
 ; `Err` for the `(Result Int Error)` the two descriptor calls below
-; answer since 2026-09-03. `Err` imports `Str`, which imports `Mem` and
+; answer. `Err` imports `Str`, which imports `Mem` and
 ; `Vec`, and none of those import this module, so the edge is acyclic.
 (import Err)
 
@@ -155,7 +155,7 @@
 ; primitive here can see - that says which one you are. That is why this
 ; number sat unused and why `posix_spawn` was reached for instead.
 ;
-; It is usable anyway, and measured on this host 2026-08-24: the child's
+; It is usable anyway, and measured on Darwin: the child's
 ; x0 equals ITS OWN pid, while the parent's does not equal the parent's.
 ; So `getpid` after the fork distinguishes them with no second register
 ; and no compiler change - parent saw `fork->81242 mypid=81241`, child
@@ -230,7 +230,7 @@
 ; so d_reclen sits at 16 - which Linux's `linux_dirent64` also does,
 ; and portable code relies on - and the name begins at 21 rather than
 ; Linux's 19, because of the d_namlen field Linux has no room for.
-; Probed on this host 2026-08-15: `.` and `..` come back with
+; Probed on Darwin: `.` and `..` come back with
 ; d_reclen 32, d_namlen 1 and 2, d_type 4.
 (pub :: direntNameOffset Int)
 (pub fn (direntNameOffset)
@@ -240,8 +240,8 @@
 ;; The working directory.
 ;
 ; Darwin's syscall table HAS NO `getcwd`. Number 326 was `__getcwd`
-; historically and is a hole in the current table - probed on this
-; host 2026-08-15, a program calling it dies with SIGSYS - so the
+; historically and is a hole in the current table - probed on
+; Darwin, a program calling it dies with SIGSYS - so the
 ; portable spelling cannot be "one number per platform".
 ;
 ; `fcntl(fd, F_GETPATH, buf)` is the way in, and the reason it is
@@ -356,8 +356,8 @@
 ; Sockets
 ;
 ; Every number below is BSD `n` encoded as `0x2000000 | n`, the same way
-; the rest of this file spells one. All of them were EXECUTED on this
-; host on 2026-08-24, not read off a header and hoped for: a listener
+; the rest of this file spells one. All of them were EXECUTED on
+; Darwin, not read off a header and hoped for: a listener
 ; was built end to end - socket, bind, listen, accept - and answered a
 ; real connection from `nc`, and a non-blocking `accept` with nothing
 ; pending answered -35.
@@ -438,7 +438,7 @@
 ;; AF_INET6, AND THIS IS THE DIVERGENCE THE PARAGRAPH ABOVE WARNED
 ;; ABOUT: 30 here against Linux's 10.
 ;
-; Measured on this host 2026-08-24. `socket(30, SOCK_STREAM, 0)`
+; Measured on Darwin: `socket(30, SOCK_STREAM, 0)`
 ; answers a descriptor; `socket(10, SOCK_STREAM, 0)` - Linux's number -
 ; answers -47 EAFNOSUPPORT, and so does `bind` given a `sockaddr_in6`
 ; with `afInet` in its family byte. So a cross-copied number fails
@@ -596,7 +596,7 @@
 ;
 ; The kernel does not enforce sin_len on input - bind succeeded with 0,
 ; 8 and 28 in it - but it WRITES 16 there on output, so `Sys.ax` writes
-; 16 and does not rely on the tolerance. Measured 2026-08-24: the
+; 16 and does not rely on the tolerance. Measured: the
 ; address `accept` filled in for a loopback peer opened `16 2 ...`, so
 ; the length byte comes back as well as going in.
 ;
@@ -610,8 +610,8 @@
 ; this one capability covers both families and `Sys.ax` branches on it
 ; once per builder rather than once per family.
 ;
-; THE 28 IS NOT INTERCHANGEABLE WITH THE 16. Measured on this host
-; 2026-08-24: `bind` of a correct `::1` address answered 0 at length 28
+; THE 28 IS NOT INTERCHANGEABLE WITH THE 16. Measured on Darwin:
+; `bind` of a correct `::1` address answered 0 at length 28
 ; and -22 EINVAL at length 16, which is why `IO.socketBind` and
 ; `IO.socketConnect` read the length off the family in the buffer
 ; instead of passing the literal that only ever suited one family.
@@ -630,7 +630,7 @@
 ; 2 on both systems - leaving exactly one genuine divergence, the filter
 ; selector, and one layout.
 ;
-; `kqueue` and `kevent` were executed on this host on 2026-08-24: a
+; `kqueue` and `kevent` were executed on Darwin: a
 ; listening socket was registered for read, `kevent` blocked, and it
 ; returned 1 with the listening descriptor in `ident` when a connection
 ; arrived.
@@ -718,8 +718,7 @@
 ; getentropy(buf, len) - BSD 500. Answers 0 or -errno, and fills the
 ; buffer completely or not at all - there is no short answer to handle.
 ;
-; LEN IS CAPPED AT 256 AND THE KERNEL ENFORCES IT: probed on this host
-; 2026-08-24, a request for 257 bytes answered -22 EINVAL while 32
+; LEN IS CAPPED AT 256 AND THE KERNEL ENFORCES IT: probed on Darwin, a request for 257 bytes answered -22 EINVAL while 32
 ; answered 0 with the buffer visibly filled. So `sysRandomBytes` chunks,
 ; and the chunking is a requirement rather than caution.
 ;
@@ -755,7 +754,7 @@
 ; of its own, which is then added to the epoll set and read for a
 ; 128-byte record. `signalUsesSignalFd` selects.
 ;
-; Measured on this host 2026-08-24, end to end: `sigprocmask` blocked
+; Measured on Darwin, end to end: `sigprocmask` blocked
 ; SIGUSR1, `kevent` registered `EVFILT_SIGNAL` for it, `kill` to self
 ; answered 0, and the wait returned one event with `ident` 30 - the
 ; signal number - and the low byte of -6 in `filter`.
@@ -1052,7 +1051,7 @@
 ; --------------------------------------------------------------------
 ; Terminals
 ;
-; MEASURED ON THIS HOST on 2026-08-31, not read off a table. The probe
+; MEASURED ON DARWIN, not read off a table. The probe
 ; was a C program compiled with `cc` against this machine's own
 ; `/usr/include/sys/{ioctl,termios,syscall}.h`, printing each macro and
 ; the `sizeof`/`offsetof` of each struct. Its output is quoted beside
@@ -1255,7 +1254,7 @@
 
 ; ------------------------------------------------------------------
 ; Opening beneath a directory (`Sys.sysOpenBeneath`) and making the
-; links it refuses to follow (`Sys.sysSymlink`). Added 2026-09-26.
+; links it refuses to follow (`Sys.sysSymlink`).
 ; ------------------------------------------------------------------
 ;; openat(dirfd, path, flags, mode) - BSD 463
 (pub :: sysOpenatNum Int)

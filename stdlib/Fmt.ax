@@ -1,10 +1,9 @@
 ;;! Fmt - number formatting, in Axiom.
 ;
-; This module is what replaced `printf`. Formatting an integer used to
-; have meant an FFI binding to a C variadic function - a construct Axiom's
-; type system cannot describe and its effect analysis cannot see through.
-; Doing it in Axiom instead is about 40 lines, is fully type-checked, and
-; leaves nothing for a C library to do.
+; Formatting in Axiom rather than through `printf`: a C variadic
+; function is a construct Axiom's type system cannot describe and its
+; effect analysis cannot see through. In Axiom it is fully type-checked
+; and leaves nothing for a C library to do.
 (import Internal.Raw)
 (import Str)
 (import Float (floatToFixed))
@@ -46,8 +45,7 @@
 ; answered outright.
 ;
 ; Detected with `intIsMostNegative`, not by comparing against a literal:
-; the guard here used to read `(== n (- 0 9223372036854775807))`, which
-; is `MIN + 1` and therefore never true of `MIN` itself.
+; `(- 0 9223372036854775807)` is `MIN + 1`, never `MIN` itself.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: fmtInt (-> Int String))
 (pub fn (fmtInt n)
@@ -108,15 +106,11 @@
 ; Hexadecimal is UNSIGNED - the word's bits, as Rust's `{:x}` prints
 ; them - so `-1` is `ffffffffffffffff` and not a one-byte answer.
 ;
-; It printed one byte until 2026-08-15, and the byte was garbage:
-; `(% -1 16)` is `-1` under signed remainder, `48 + -1` is 47, and
-; `(fmtHex -1)` answered `/`. `(/ n 16)` compounded it, rounding
-; toward zero so the loop stopped after one digit. Nothing in the
-; corpus had ever passed a negative - `020-fmt` covers 0, 255 and
-; 48879 - and nothing could reach it from a print until the `{n:x}`
-; specifier existed, which is what surfaced it.
+; Signed arithmetic would get it wrong: `(% -1 16)` is `-1` under signed
+; remainder, so `(fmtHex -1)` would answer `/`, and `(/ n 16)` rounds
+; toward zero, stopping the loop after one digit.
 ;
-; The fix is to divide by SHIFTING and to take digits by MASKING,
+; So this divides by SHIFTING and takes digits by MASKING,
 ; which is unsigned by construction. `>>` sign-extends, so the mask
 ; clears the four bits it dragged in; a logical `>>` would make the
 ; mask a no-op rather than wrong, so this is correct either way.

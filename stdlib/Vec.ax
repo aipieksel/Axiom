@@ -175,42 +175,19 @@
 
 ;; The element at `i`. REFUSES an index outside `0 .. (vecLen v) - 1`.
 ;
-; TWO CLAIMS USED TO STAND HERE AND BOTH ARE GONE. They are written out
-; because every caller in this tree was built against them.
+; Out of range is `(__indexTrap)`, a call that never returns, status 77.
+; A sentinel such as 0 would be a value a caller may have pushed, so a
+; read past the end and a read of a stored zero would be
+; indistinguishable: a wrong answer that keeps going, which on a parser
+; fed by a peer is worse than a crash. `vecTry` below is the checked read
+; for a caller that has a question rather than an invariant.
 ;
-; THE SENTINEL. Out of range answered 0 rather than trapping until
-; 2026-09-01, matching `Str.strByte`, on the argument that Axiom had no
-; way to signal failure that did not either allocate - the builtin
-; `Option` works, but every `data` value is heap-boxed - or abort the
-; process. The cost was stated and it was the wrong side of the trade:
-; 0 IS A VALUE A CALLER MAY HAVE PUSHED, so a read past the end and a
-; read of a stored zero came back the same word and no caller could
-; tell them apart. That is not a crash, it is a wrong answer that keeps
-; going, and on a parser fed by a peer it is the worse failure. Out of
-; range is `(__indexTrap)` now - a call that never returns, status 77 -
-; and `vecTry` below is the checked read for a caller that has a
-; question rather than an invariant.
-;
-; THE ELEMENT TYPE. This was declared `(-> Int Int Int)` over a bare
-; handle, and before that it answered a type VARIABLE over one - which
-; is a stronger claim than a bare handle can support and a false one:
-; the caller named any type it liked and got it, so `(vecPush v 42)`
-; followed by `(rawStrWrap (vecGet v 0) 8)` type-checked and dereferenced
-; 42 as a String. `AX3040` closed that by pinning the answer to `Int`,
-; at the price of a `cast` on every read of anything else.
-;
-; `a` is the VECTOR's element type now, not the caller's wish: a
+; `a` is the vector's element type, not the caller's wish: a
 ; `(Vec String)` reads back `String` with no cast at the call site and
-; a `(Vec Int)` reads back `Int`. That is a fact about the container,
-; not a guarantee about what a word can be made to mean - measured on
-; this tree, `(vecPush v 42)` with `(rawStrWrap (vecGet v 0) 8)` still
-; compiles, because both sides really are `Int` and `rawStrWrap` is the
-; one lying. What ended is the vector that could not say what it held.
-;
-; A vector whose slots genuinely hold different KINDS of thing - the
-; heterogeneous records this compiler builds - still needs a cast to
-; read one back, and it takes the paired accessor that says so at the
-; call in one word: `rawVecGetStr`, `rawVecGetVec`.
+; a `(Vec Int)` reads back `Int`. A vector whose slots hold different
+; kinds of thing, such as the heterogeneous records the compiler builds,
+; needs a cast to read one back, and takes the paired accessor that
+; says so at the call in one word: `rawVecGetStr`, `rawVecGetVec`.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: vecGet (-> (Vec a) Int a))
 ;@axiom:effect(unsafe)
@@ -223,30 +200,18 @@
 
 ;; The element at `i`, or `None` when there is no element at `i`.
 ;
-; `vecGet` above REFUSES an out-of-range index - status 77, via
-; `(__indexTrap)`. It used to answer 0, and 0 IS A VALUE A CALLER MAY
-; HAVE PUSHED - so a caller who reads past the end and one
-; who reads a stored zero receive the same answer and cannot tell which
-; happened. On a parser fed by a peer that is the worse of the two
-; failure modes: not a crash, a wrong answer that keeps going.
+; `vecGet` above refuses an out-of-range index with status 77; this
+; asks instead.
 ;
 ; `Option` is built in and needs no import, so this costs `Vec` no new
-; dependency - which is why the refusal is spelled this way rather than
-; as a `Result`, since `Err` would drag a module in for a distinction
-; that has no error to report.
+; dependency, which is why the refusal is spelled this way rather than
+; as a `Result`: `Err` would drag a module in for a distinction that
+; has no error to report. There is no `no-alloc` claim: `(Some ...)`
+; allocates here, and a sentinel would delete the distinction this
+; function exists to draw.
 ;
-; `vecGet` stays, and is still the right call where the index is
-; already known good - a loop bounded by `vecLen`. What changed is what
-; it does when the index is NOT good: it refuses instead of answering.
-; The old sentence continued: "and making every
-; such read allocate an `Option` would be a cost paid everywhere to
-; describe a case that cannot arise there.
-; `no-alloc` came off on 2026-08-31. The comment above already said it -
-; "making every such read allocate an `Option`" is what `(Some ...)`
-; does here - and the tag claimed the opposite, because a constructor
-; application was invisible to the effect row until that date
-; (`MM-EXEC-9a`). Returning a sentinel instead would delete the
-; distinction this function exists to draw, so the CLAIM is what goes.
+; `vecGet` stays the right call where the index is already known good,
+; such as a loop bounded by `vecLen`.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: vecTry (-> (Vec a) Int (Option a)))
 ;@axiom:effect(unsafe)

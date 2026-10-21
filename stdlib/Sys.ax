@@ -138,11 +138,7 @@
 ; does not make a syscall. `IO` means "reaches the outside world", and
 ; the command line is input this process did not compute: a function
 ; that reads it is not a function of its arguments, which is the thing
-; `MM-EXEC-9b` says a purity claim ought to exclude. Until 2026-08-25
-; `__argc`/`__argv` were registered like `__load64`, which computes, so
-; every one of these was inferred effect-free and `;@axiom:effect(pure)` over
-; one of them was accepted. That was `MM-EXEC-9a`'s second row.
-; The same applies to the environment block below, which `sysEnvp`
+; `MM-EXEC-9b` says a purity claim ought to exclude. The same applies to the environment block below, which `sysEnvp`
 ; reaches through `__argv` past the end of the argument vector.
 ; ------------------------------------------------------------------
 ;; How many arguments the process received, including the program name.
@@ -442,9 +438,7 @@
 ; means it ran, and `c` is what it answered: its exit code, or
 ; 128+signal if a signal killed it, the shell's convention.
 ;
-; The distinction used to be carried by the SIGN of one Int. It is
-; carried by the arms now, which is the difference between a caller
-; that may lose it and one that cannot.
+; The two arms carry the distinction, so a caller cannot lose it.
 ; `path`, `argv` and `envp` are as `sysSpawn` takes them.
 (pub :: sysRun (-> Int Int Int (Result Int Error)))
 ;@axiom:effect(io)
@@ -478,80 +472,32 @@
 ; loses them, and where `exeSuffixTried` is 1 a name with no extension
 ; is looked for as `NAME.exe`, the name `CreateProcessW` would run.
 ;
-; THE CANDIDATE IS TESTED BEFORE IT IS SPAWNED, and it has to be, on one
-; of the two backends. The search used to be done by attempting each
-; candidate and moving on when the attempt came back negative. That is
-; exactly right under `posix_spawn`, which resolves the path itself and
-; answers `-ENOENT` without creating a process - and it is broken under
-; `fork`+`execve`, where the fork ALWAYS succeeds, the failed `execve`
-; happens in the child, and the only thing the parent gets back is the
-; child's exit status. 127 is not negative, so the search stopped at the
-; FIRST `PATH` entry and reported that status as the tool's own.
-;
-; Measured: on both Linux targets `axiom build` answered `AX4003: cc
-; failed` with no output from `cc`, because `cc` had never run - it is
-; in `/usr/bin` and the first `PATH` entry was LLVM's bindir. `llc`
-; worked, from that same first entry, which is what made it look like a
-; linker problem. Darwin was unaffected and no gate could see it: the
-; whole Linux half of CI had been failing an earlier step for six days.
-;
+; The candidate is tested before it is spawned. Under `posix_spawn` an
+; attempt on a missing path answers `-ENOENT` without creating a
+; process, but under `fork` and `execve` the fork always succeeds and a
+; failed `execve` reaches the parent only as the child's exit status,
+; 127, which is not negative. Attempting each candidate in turn would
+; stop at the first `PATH` entry and report 127 as the tool's answer.
 ; `sysOpenPath` is the test, so this needs no new syscall on any
-; platform - it already routes through `openNeedsDirFd` for the AArch64
-; Linux `openat`-only asymmetry, which is the reason the original note
-; gave for not testing first (`access` does not exist there).
+; platform; it routes through `openNeedsDirFd` for AArch64 Linux, which
+; has no `access`.
 ;
-; What that note said about racing is still true, and is accepted: the
-; file can vanish between the test and the spawn. The alternative is a
-; close-on-exec pipe carrying the child's errno, which is the correct
-; POSIX answer and a larger change than the defect justifies. The window
-; is a compiler driver locating `llc`.
+; Not yet: the file can vanish between the test and the spawn, and a
+; candidate that exists but is not executable is refused differently by
+; the two backends. `posix_spawn` refuses it in the parent with
+; `-EACCES` and the walk moves on; under `fork` and `execve` it comes
+; back as 127 and the walk stops. Both need a close-on-exec pipe
+; carrying the child's errno. A guard on 127 is not the fix, because a
+; tool may legitimately exit 127.
 ;
-; One more thing this walk does is a `posix_spawn` property and not a
-; promise, and saying so is the point of this paragraph. THAT backend
-; permission-checks in the parent, so a candidate which exists and is
-; not executable comes back as `-EACCES`, the guard below sees a
-; negative, and the walk moves on - `execvp`'s own behaviour, minus
-; execvp's remembering of the EACCES to report if nothing later
-; succeeds. A driver looking for `llc` wants the next candidate either
-; way, so the difference does not matter.
-;
-; Under `fork`+`execve` it is not true. The open above succeeds on a
-; mode-0644 file, the `execve` then fails in the child, and 127 comes
-; back - non-negative, so the walk STOPS and reports it. Closing that
-; needs the same close-on-exec errno pipe named above and is deferred
-; for the same reason; a guard on 127 here is not the fix, because it
-; would send a tool that legitimately exited 127 round every remaining
-; `PATH` entry, which is the conflation this file spent `sysSpawn`
-; arguing against. No gate reaches the case: every fake tool
-; `check-driver.sh` plants is `chmod +x`.
-;
-; With `PATH` unset or exhausted the answer is `-2` (ENOENT), which is
-; what a caller distinguishing "not installed" from "failed" reads.
-;
-; AN EMPTY `PATH` IS REFUSED HERE and never reaches the walk, because
-; the sentence above was not true of it. `sysEnv` answers "" both for a
-; variable that is unset and for one set to nothing, and an empty `path`
-; used to be SEARCHED: the walk stops on `(> from (strLen path))`, which
-; for the empty string is `0 > 0` and false, so its body ran once on an
-; empty entry, and the rule that read an empty entry as "." made the one
-; candidate `./name`.
-;
-; Measured on this host, 2026-08-23: a directory holding an executable
-; `probe`, and `env -i ./probe` in it. `(sysRunPath "probe" ...)`
-; answered 9 - the exit code of the copy in the WORKING DIRECTORY, which
-; had run - where this comment promises "not found". It refuses now,
-; and since 0.3.4 it refuses in the `Err` arm rather than as -2. That
-; matters because this is the lookup a compiler driver resolves `llc`
-; and `cc` through, so `axiom build` inside a source tree it did not
-; write, with no PATH in the environment, ran that tree's `./llc`.
-;
-; The other way to make the code agree with the comment is `execvp`'s
-; own: fall back to a built-in `/usr/bin:/bin` when the variable is
-; unset. It is not taken, because -2 is what the paragraph above
-; promises and what the driver already reads as "not installed", and
-; because a default would have this library guess at a host layout it is
-; told nothing else about - a guess that is wrong on any target whose
-; toolchain lives elsewhere, and wrong silently.
+; With `PATH` unset or exhausted the answer is `(Err e)` with ENOENT (2),
+; which a caller reads as "not installed". An empty `PATH` is refused
+; before the walk: read as one empty entry it would mean ".", and a
+; compiler driver resolving `llc` with no `PATH` would run the working
+; directory's `./llc`. Nor does the walk fall back to a built-in
+; `/usr/bin:/bin`: that would guess at a host layout this library is
+; told nothing about, and guess wrong silently where the toolchain
+; lives elsewhere.
 ; `argv` must be a NULL-terminated vector of addresses of NUL-terminated
 ; bytes, and `envp` 0 or another such vector.
 (pub :: sysRunPath (-> String Int Int (Result Int Error)))
@@ -788,9 +734,7 @@
 ;; no clock_gettime), Linux and FreeBSD answer CLOCK_MONOTONIC via
 ;; clock_gettime - under the id `clockMonotonicId` names, because the
 ;; id is not portable: 1 on Linux, and on FreeBSD 4, where 1 is
-;; CLOCK_VIRTUAL, the process's CPU time. That one was a literal here
-;; until 2026-08-29, and a clock that measures CPU time never runs
-;; backwards either, so nothing would have caught it. Windows answers
+;; CLOCK_VIRTUAL, the process's CPU time. Windows answers
 ;; its wall clock through the platform module. A target with no clock
 ;; call (bare metal) answers `Err` 78, as `sysNowRealtimeNanos` and
 ;; `sysNowMonotonic` do.
@@ -808,8 +752,7 @@
 ; nothing on the path that answers a time: the `Ok` is two registers
 ; when the caller matches the call, and only the syscall's own failure
 ; builds the `Error` it carries. tv_usec is 32-bit on Darwin with
-; struct padding above it - masked, not trusted. `(Result Int Error)`
-; since 2026-09-03.
+; struct padding above it - masked, not trusted.
 (pub :: sysNowMicros (-> Int (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
@@ -1152,11 +1095,10 @@
 ;
 ; ANYTHING THAT IS NOT v6 TAKES 16, a buffer holding some other family
 ; included, and that is safe rather than lucky because the kernel
-; checks the family before the length. Measured on Darwin 2026-08-24
-; against an IPv6 socket: an address carrying
-; `afInet` with a length of 28 answers -47 EAFNOSUPPORT, and a correct
-; `::1` with a length of 16 answers -22 EINVAL. Family first, then
-; length - so a wrong family is never reported as a wrong size.
+; checks the family before the length: against an IPv6 socket, an
+; `afInet` address with a length of 28 answers -47 EAFNOSUPPORT, and a
+; correct `::1` with a length of 16 answers -22 EINVAL. So a wrong
+; family is never reported as a wrong size.
 (pub :: netAddrSize (-> Int Int))
 (pub fn (netAddrSize addr)
   (if (== (netAddrFamily addr) afInet6)
@@ -1322,12 +1264,11 @@
 ; A ZERO-BYTE REQUEST IS 0 AND MAKES NO SYSCALL, so a caller computing a
 ; length does not have to special-case an empty one.
 ;
-; A TARGET WITH NO KERNEL ENTROPY CALL ANSWERS `Err`, code 78, and makes
-; no call: `windows-x86_64` and `baremetal-aarch64`, where
-; `sysRandomNum` is 0. Before 2026-09-29 the request reached the
-; `__syscallN` trap there and the program exited 74, which was loud but
-; left a caller no way to fall back to another source it trusts.
-; `Crypto.Random` reads the CPU's RNDR register on bare metal.
+; A TARGET WITH NO KERNEL ENTROPY SOURCE ANSWERS `Err`, code 78, and
+; makes no call, so a caller can fall back to another source it trusts.
+; Bare metal is one: there `Crypto.Random` reads the CPU's RNDR
+; register. Windows draws from `ProcessPrng` through its platform
+; module.
 (pub :: sysRandomBytes (-> Int Int (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
