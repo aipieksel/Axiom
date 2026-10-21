@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- Every function is emitted by one route, the walk over the checked
+  syntax tree. The mid-level IR route, which emitted straight-line
+  arithmetic functions from the IR and wrote the same bytes as the
+  walk, is removed, and so is `AXIOM_MIR_EMIT`. The IR stays for
+  `symbols --mir` and `--axir`. Tested by `scripts/check-mir.sh`, which
+  now requires that `self_host/codegen.ax` does not import it.
+
 - The seed lineage replays from the Rust anchor again. `fb0b6bcb`
   copied `2c4a97d1`'s seed back into place, and `bootstrap/CHAIN` records
   that as a `restore` row the gate checks byte for byte; `2c4a97d1` and

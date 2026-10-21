@@ -162,8 +162,8 @@ gate_source_stamp() {
 # The environment the compiler reads while it builds: the `sysEnv`
 # reads in `self_host/` and `stdlib/` that can change what a build of
 # `self_host/main.ax` produces. AXIOM_STDLIB and AXIOM_PATH choose which
-# module files an import resolves to, AXIOM_LINK_SEARCH what the link
-# line finds, and AXIOM_MIR_EMIT switches extra work on. The rest
+# module files an import resolves to, and AXIOM_LINK_SEARCH what the
+# link line finds. The rest
 # (HOME, XDG_CONFIG_HOME, TMPDIR, AXIOM_REPL_HISTORY) are read only by
 # the REPL and the package commands, and PATH is covered
 # by the toolchain stamp's resolved tools. A new build-affecting
@@ -180,8 +180,7 @@ gate_config_stamp() {
   [[ -d "$lib" ]] && lib="$(cd -P "$lib" && pwd -P)"
   printf '%s\n' "stdlib=$lib" \
     "AXIOM_PATH=${AXIOM_PATH:-}" \
-    "AXIOM_LINK_SEARCH=${AXIOM_LINK_SEARCH:-}" \
-    "AXIOM_MIR_EMIT=${AXIOM_MIR_EMIT:-}"
+    "AXIOM_LINK_SEARCH=${AXIOM_LINK_SEARCH:-}"
 }
 
 # Build inputs outside the Axiom source tree. Keep this separate from
@@ -383,8 +382,7 @@ gate_build_tree() {
       gate_sha "$builder"
       gate_toolchain_stamp
       printf '%s\n' "AXIOM_PATH=${AXIOM_PATH:-}" \
-        "AXIOM_LINK_SEARCH=${AXIOM_LINK_SEARCH:-}" \
-        "AXIOM_MIR_EMIT=${AXIOM_MIR_EMIT:-}"
+        "AXIOM_LINK_SEARCH=${AXIOM_LINK_SEARCH:-}"
     } | gate_sha )"
     entry="$cache/tree-$key"
     if [[ -x "$entry" && -f "$entry.sha" ]]; then

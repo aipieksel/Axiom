@@ -2,31 +2,17 @@
 ; THE MID-LEVEL IR: the representation, a lowering, a printer and a
 ; verifier.
 ;
-; WHAT IS HERE AND WHAT IS NOT. Today the compiler goes
+; WHAT IS HERE AND WHAT IS NOT. The compiler goes
 ;
 ;   lex -> parse -> resolveImports -> expand -> typecheck -> codegen
 ;
-; and `codegen.ax` walks the checked AST emitting LLVM text directly:
-; 21k lines in which "what the program means" and "what the text
-; says" are the same walk. This module is the seam between them. It
-; holds an IR that a lowering can produce and a backend can consume.
-;
-; SLICE 1 built it with NOTHING IN THE COMPILER IMPORTING IT, and
-; `check-mir.sh` asserted that: while no module imported `mir`,
-; `axiom emit-llvm self_host/main.ax` was byte-identical with this
-; file present and with it deleted, so adding it could not have moved
-; anything.
-;
-; SLICE 2 DELETED THAT ASSERTION, on purpose. `codegen.ax` imports
-; this module and `mirEmitOrWalk` EMITS FROM it - the LLVM text of a
-; function whose IR is one basic block of constants and arithmetic is
-; written by reading this IR rather than by walking the AST. The
-; claim that nothing moved is now made where it can still be checked:
-; the routing has an off switch, and `check-mir.sh` §6 requires
-; `AXIOM_MIR_EMIT=0` and the default to emit the same bytes for the
-; compiler itself and 325 other programs, with a floor under how many
-; functions took the IR path and an ablation that turns the
-; comparison red.
+; and `codegen.ax` walks the checked AST emitting LLVM text directly.
+; This IR is not on that path: no build emits from it. It is the
+; analysis form `axiom symbols --mir` and `--axir` read, through
+; `axir.ax`, for region facts and `.axir` record files.
+; `check-mir.sh` holds its printer to goldens, its verifier to its
+; rules, and its meaning to `mireval.ax`, which runs a lowered
+; program and must print what the compiled one prints.
 ;
 ; THE SHAPE, AND WHY THIS ONE. Functions of numbered basic blocks,
 ; values as integer registers, and BLOCK PARAMETERS rather than phi
@@ -593,11 +579,9 @@
 ; The spellings `mBinOp` answers, as a predicate the verifier
 ; reads. The opcode NUMBER set is closed in `mvCheckInst`; this
 ; closes the second axis, because a typo'd spelling sails through
-; the number check and then means two different things to the two
-; consumers - the evaluator answers 0 through `mvalCmp`'s
-; fall-through, and `mirEmitInsts` writes it verbatim into LLVM IR
-; where `llc` refuses it. Both are downstream of the verifier, so
-; the spelling is checked here. `check-mir.sh` ABLATION 7 corrupts
+; the number check, and the evaluator would then answer 0 for it
+; through `mvalCmp`'s fall-through. The evaluator is downstream of
+; the verifier, so the spelling is checked here. `check-mir.sh` ABLATION 7 corrupts
 ; one row and requires exactly this complaint.
 (pub :: mIsBinSpelling (-> String Bool))
 (pub fn (mIsBinSpelling nm)

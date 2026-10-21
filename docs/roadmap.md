@@ -125,7 +125,7 @@ integrator would still need.
 | Explicit numeric conversion uses `(as value Type)`; bit reinterpretation has named Float operations | Done | `tests/stdlib/943-as-numeric.ax`, `tests/diagnostics/1411-as-boundaries.ax` |
 | AXQL select aliases use `(alias expression name)` and keep `as` for language conversions | Done | `tests/axqlite/620-macro-text.ax`, `tests/axqlite/625-macro-forms.ax` |
 | Prefix pipelines evaluate each stage once, with explicit argument placement | Done | `tests/stdlib/945-pipelines.ax`, `tests/diagnostics/1430-pipeline-boundaries.ax` |
-| One code-generation route: the MIR route is finished or removed | Not started | |
+| One code-generation route: the MIR route is finished or removed | Done | `scripts/check-mir.sh` |
 
 Numeric values never widen or narrow implicitly. Expected types do not
 insert conversions into calls, returns, assignments or constructor
@@ -206,7 +206,6 @@ including pattern matching, remain work to do.
 | Compiler scratch buffers and backtrace metadata release their owned Strings | Done; `tests/selfhost/emitter-line-buffer.py`, `tests/selfhost/emitter-pending-strings.py`, `tests/selfhost/emitter-line-metadata.py` |
 | Compiler binder summaries and pruning indexes release their temporary interners, memo records and line reads | Done; `tests/selfhost/emitter-binder-summary.py` and `tests/selfhost/emitter-prune-owner.py` |
 | Compiler argument register ledgers own and retire their copied text | Done; `tests/selfhost/emitter-argument-registers.py` |
-| MIR operand ledgers own and retire constant and register spellings | Done; `tests/selfhost/emitter-mir-operands.py` |
 | Extern symbol scans allocate no search string for each emitted line | Done; `tests/tools/emitted-symbol-match.py` |
 | UTF-16 ranged document edits apply in order and atomically, with monotonic versions and versioned diagnostics | Done |
 | The language server cancels obsolete work and serves requests from revisioned background analysis on hosts with process and poller support | Done |
