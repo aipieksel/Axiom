@@ -1396,6 +1396,8 @@ line editor, and `Tui.Term` connects it to terminal I/O. The
 Windows console and pipe reads share a buffer with `Poller`, so a
 readiness check preserves bytes left by an earlier read. Changing
 console mode or closing a file stops its pending reader first.
+Open owned Windows console files with `oRdwr` when using `termRaw`;
+read-only handles return `EACCES` when the mode change is attempted.
 `pollerAddSignals` accepts `sigInt` for Ctrl-C and `sigBreak` for
 Ctrl-Break on Windows. Other signal bits answer `Err` 78. The process
 keeps its control mask after a poller closes; competing pollers consume

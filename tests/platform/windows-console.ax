@@ -373,14 +373,14 @@
 (:: guardAfterFileScope (Result TermGuard Error))
 ;@axiom:effect(io)
 (fn (guardAfterFileScope)
-  (match (openPath "CONIN$" oRdonly)
+  (match (openPath "CONIN$" oRdwr)
     ((Err e) (Err e))
     ((Ok f) (termRaw f false))))
 
 (:: guardAfterClose (-> Int Int Int))
 ;@axiom:effect(io)
 (fn (guardAfterClose h before)
-  (match (openPath "CONIN$" oRdonly)
+  (match (openPath "CONIN$" oRdwr)
     ((Err _) (say false "an owned input File opens for its guard"))
     ((Ok f)
       (match (termRaw f false)
@@ -443,6 +443,35 @@
     bad
   })
 
+(:: readOnlyRawCase (-> Int Int))
+;@axiom:effect(io)
+(fn (readOnlyRawCase h)
+  {
+    (let before (inputMode h))
+    (match (openPath "CONIN$" oRdonly)
+      ((Err e) (errorSay "a read-only console input opens" e))
+      ((Ok f)
+        {
+          (let refused
+            (match (termRaw f false)
+              ((Err e) (== e.code 13))
+              ((Ok guard)
+                {
+                  (let _ (termRestore guard))
+                  false
+                }
+              )))
+          (let mut bad (say refused "read-only console input refuses raw-mode changes with EACCES"))
+          (set bad (+ bad
+                     (say (== (inputMode h) before)
+                       "a refused raw-mode change preserves the console mode")))
+          (set bad (+ bad (say (isTerminal f) "a refused raw-mode change leaves its File usable")))
+          (set bad (+ bad (say (isOk (fileClose f)) "the read-only console input closes safely")))
+          bad
+        }
+      ))
+  })
+
 (:: main Int)
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
@@ -456,7 +485,7 @@
           (!= (& (setConsoleModeRaw h 3) 4294967295) 0)))
       (let result
         (if setup
-          (match (openPath "CONIN$" oRdonly)
+          (match (openPath "CONIN$" oRdwr)
             ((Err _) (say false "console input opens as a File"))
             ((Ok f)
               (match (pollerNew 4)
@@ -466,7 +495,8 @@
           (say false "the private console uses cooked UTF-8 input")))
       (let stdinResult (stdinCases h))
       (let guardResult (guardLifetimeCases h))
+      (let readOnlyResult (readOnlyRawCase h))
       (let _ (setConsoleCPRaw savedCP))
-      (+ result (+ stdinResult guardResult))
+      (+ result (+ stdinResult (+ guardResult readOnlyResult)))
     }
     (say false "a private console preserves runner output")))
