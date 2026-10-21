@@ -1952,7 +1952,7 @@ Rpc.ax — the LSP base protocol's framing, over a file descriptor.
 
 ## `Str`
 
-`stdlib/Str.ax` — 27 public names
+`stdlib/Str.ax` — 36 public names
 
 Str - length-prefixed strings, in Axiom.
 
@@ -1980,6 +1980,15 @@ Str - length-prefixed strings, in Axiom.
 | `strSplit` | value | `(-> String Int (Vec String))` | `Alloc,Mut` |  | Every segment of `s` between occurrences of `byte`, in order. Empty segments are kept, so there is always one more segment than there are separators: `(strSplit "a:" 58)` answers `"a"` and `""`. |
 | `strSplitFrom` | value | `(-> String Int Int (Vec String) Int)` | `Alloc,Mut` |  | Split `s` on `byte` starting at index `from`, pushing each piece onto `out`. Answers how many pieces were pushed. |
 | `strFromByte` | value | `(-> Byte String)` | `Alloc,Mut,Unsafe` |  | A one-byte `String` holding `b`. |
+| `StrBuilder` | struct |  |  |  | A `String` under construction. Appending is amortised constant time per byte, and `strBuilderFinish` answers the bytes as a `String`. Only this module can build one or reach its storage, so no `String` a program holds can change when the builder does. |
+| `strBuilderNew` | value | `StrBuilder` | `Alloc,Mut` |  | An empty builder with room for a few bytes before it first grows. |
+| `strBuilderWithCapacity` | value | `(-> Int StrBuilder)` | `Alloc,Mut` |  | An empty builder with room for `cap` bytes before it first grows. A `cap` of 0 is allowed, and the first push that adds a byte grows it. A negative `cap` stops the program with status 77, as `strAlloc` does. |
+| `strBuilderLen` | value | `(-> StrBuilder Int)` |  |  | How many bytes the builder holds. |
+| `strBuilderCap` | value | `(-> StrBuilder Int)` |  |  | How many bytes the builder can hold before it next grows. |
+| `strBuilderPush` | value | `(-> StrBuilder String StrBuilder)` | `Alloc,Mut` |  | Append the bytes of `s`. Answers the builder. |
+| `strBuilderPushByte` | value | `(-> StrBuilder Byte StrBuilder)` | `Alloc,Mut` |  | Append one byte. Answers the builder. A value outside 0 to 255 stops the program with status 80 at the call, as for `strFromByte`. |
+| `strBuilderFinish` | value | `(-> StrBuilder String)` | `Alloc,Mut` | `;@axiom:post((== (strLen result) (strBuilderLen b)))` | The bytes appended so far, as a `String` of exactly that length. The builder stays usable, and later appends don't change the answer. |
+| `strJoin` | value | `(-> (Vec String) String String)` | `Alloc,Mut` |  | The strings in `parts` with `sep` between each two, as one new `String`: `(strJoin parts ", ")`. No parts join to "", and one part joins to a copy of itself. |
 | `strLower` | value | `(-> String String)` | `Alloc,Mut,Unsafe` | `;@axiom:post((== (strLen result) (strLen s)))` | `s` with every ASCII upper-case letter lowered, or `s` itself when it has none. Bytes above 127 pass through untouched: this is an ASCII fold, not a Unicode case mapping. |
 | `strFind` | value | `(-> String String Int (Option Int))` |  |  | The index of the first occurrence of `needle` in `s` at or after `from`, or `None`. An empty needle is found at `from` whenever `from` is inside `s` or at its end, which is the rule that makes `(strFind s "" (strLen s))` answer `(Some (strLen s))` rather than nothing. |
 | `strTrim` | value | `(-> String String)` | `Alloc,Mut` |  | `s` without the `strIsSpace` bytes at either end. The result is a slice sharing `s`'s storage, so it is not NUL-terminated unless it ends where `s` does. A string that is all space trims to "". |
@@ -2435,7 +2444,7 @@ survives wrapping.
 | `ledYank` | value | `(-> LineEd Int)` | `Alloc,Mut` |  | Insert the newest kill-ring entry at the cursor. Answers how many code points were inserted, 0 with an empty ring. |
 | `ledYankPop` | value | `(-> LineEd Int)` | `Alloc,Mut` |  | Alt-y: replace the text the last yank inserted with the next older kill-ring entry. Pressed anywhere but straight after a yank, it changes nothing. |
 | `tuiVisLen` | value | `(-> String Int)` |  |  | The display width of a string: no `ESC [ ... m` sequence counted, and no UTF-8 continuation byte counted. |
-| `tuiCat` | value | `(-> (Vec String) String)` | `Alloc,Mut` |  | Every fragment in `v`, concatenated, in one allocation. |
+| `tuiCat` | value | `(-> (Vec String) String)` | `Alloc,Mut` |  | Every fragment in `v`, concatenated, with each byte copied once. |
 | `ledCharCols` | value | `(-> Int Int)` |  |  | The display width of one code point: 1 for every code point. Not yet: wide and zero-width characters count as 1 too. |
 | `ledColsBefore` | value | `(-> LineEd Int Int)` |  |  | The columns the first `k` code points occupy. |
 | `ledCols` | value | `(-> LineEd Int)` |  |  | The width to compute with: the terminal's, or 80 when it answered something a division can't use. |
@@ -2538,7 +2547,7 @@ Tui.Term — the only part of the TUI that touches a descriptor.
 
 ## `Utf8`
 
-`stdlib/Utf8.ax` — 13 public names
+`stdlib/Utf8.ax` — 14 public names
 
 Utf8 - the character layer over `Str`'s bytes.
 
@@ -2555,6 +2564,7 @@ Utf8 - the character layer over `Str`'s bytes.
 | `utf8Replacement` | value | `Int` |  |  | U+FFFD REPLACEMENT CHARACTER, what a code point that cannot be encoded becomes. |
 | `utf8Width` | value | `(-> Int Int)` |  |  | How many bytes code point `cp` occupies when encoded - counting what `utf8FromChar` will actually write, so the two never disagree. |
 | `utf8FromChar` | value | `(-> Int String)` | `Alloc,Mut,Unsafe` |  | A freshly allocated `Str` holding `cp` alone. |
+| `utf8PushChar` | value | `(-> StrBuilder Int StrBuilder)` | `Alloc,Mut` |  | Append `cp` to `b`, UTF-8 encoded, and answer `b`. It writes the bytes `utf8FromChar` would answer, U+FFFD included, without allocating a `String` for them. A `Char` is a code point, so `as` turns one into the `Int` this takes: `'é'` is 233, two bytes. |
 | `utf8Valid` | value | `(-> String Bool)` |  |  | Is every byte of `s` part of a well-formed UTF-8 sequence? |
 | `utf8WellFormedAt` | value | `(-> String Int Int Int)` |  |  | The length of the WELL-FORMED UTF-8 sequence that begins at byte `i` of `s` and ends at or before byte `end`: 1 to 4, or 0 when the bytes there are not one. |
 

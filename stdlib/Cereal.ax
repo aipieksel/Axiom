@@ -246,62 +246,11 @@
 ; negative Int. Parsed numbers retain their original text instead.
 ; Tested by tests/stdlib/340-json.ax.
 ; ------------------------------------------------------------------
-; Joining
-;
-; Two walks: sum the lengths, allocate once, copy each piece in. The
-; left-fold alternative is quadratic in a bump allocator and is the
-; single most expensive mistake this project has measured.
-; ------------------------------------------------------------------
-(:: jsonJoin (-> (Vec a) String))
-(fn (jsonJoin pieces)
-  {
-    (let total (jsonJoinLen pieces))
-    {
-      (let out (strAlloc total))
-      {
-        (jsonJoinFill pieces out)
-        out
-      }
-    }
-  })
-
-(:: jsonJoinLen (-> (Vec a) Int))
-(fn (jsonJoinLen pieces)
-  {
-    (let mut k 0)
-    (let mut n 0)
-    {
-      (while (< k (vecLen pieces))
-        {
-          (set n (+ n (strLen (rawVecGetStr pieces k))))
-          (set k (+ k 1))
-        })
-      n
-    }
-  })
-
-(:: jsonJoinFill (-> (Vec a) String Int))
-(fn (jsonJoinFill pieces out)
-  {
-    (let mut off 0)
-    {
-      (for k in 0..(vecLen pieces)
-        {
-          (let p (rawVecGetStr pieces k))
-          {
-            (rawCopy (+ (strData out) off) (strData p) (strLen p))
-            (set off (+ off (strLen p)))
-          }
-        })
-      off
-    }
-  })
-
-; ------------------------------------------------------------------
 ; String escaping
 ;
-; Two walks again, for the same reason. Escaped: `"` and `\` as their
-; two-character forms, the five control characters with short spellings,
+; Two walks: size the escaped text, then allocate it once and fill it.
+; Escaped: `"` and `\` as their two-character forms, the five control
+; characters with short spellings,
 ; and every other byte below 0x20 as `\u00XX`. Bytes above 0x7F that
 ; form WELL-FORMED UTF-8 pass through unchanged: JSON is defined over
 ; Unicode text, so re-encoding them as `\u` escapes would be legal and
@@ -511,7 +460,7 @@
     (let pieces vecNew)
     {
       (jsonWriteInto v pieces)
-      (jsonJoin pieces)
+      (strJoin pieces "")
     }
   })
 
@@ -844,7 +793,7 @@
         (jcSetPos c p)
         (if (jcBad c)
           ""
-          (jsonJoin pieces))
+          (strJoin pieces ""))
       }
     }))
 
@@ -2147,7 +2096,7 @@
           }
         })
       {
-        (let joined (jsonJoin pieces))
+        (let joined (strJoin pieces ""))
         (let text
           (if (strStartsWith joined "+")
             (strSlice joined 1 (- (strLen joined) 1))
@@ -2363,7 +2312,7 @@
           (vecPush pieces (jsonEscape (vecGet path i)))
           (vecPush pieces "\"/")
         })
-      (jsonJoin pieces)
+      (strJoin pieces "")
     }
   })
 
@@ -2685,7 +2634,7 @@
                     (set writer.problem "duplicate dictionary key in YAML output"))
                 ))
               (if (strEq writer.problem "")
-                (Ok (jsonJoin writer.pieces))
+                (Ok (strJoin writer.pieces ""))
                 (cerealError writer.problem))
             }
           })
@@ -2991,7 +2940,7 @@
           (set i (+ i 1))))
       (if (|| (! closed) (!= i (strLen text)))
         (cerealError "invalid or multiline single-quoted YAML scalar")
-        (Ok (jsonJoin pieces)))
+        (Ok (strJoin pieces "")))
     }
   })
 

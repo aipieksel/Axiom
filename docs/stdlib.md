@@ -21,9 +21,10 @@ Import `Err` when working with `Result`, and use `?` to propagate errors.
 
 ## Strings and collections
 
-`Str` works on bytes. Join with `concat`, take a byte range with
-`strSlice`, split with `strSplit`, and compare contents with `strEq` or
-`strCmp`. `Utf8` supplies code-point access and display width.
+`Str` works on bytes. Join two strings with `concat` and many with
+`strJoin` or a `StrBuilder`. Take a byte range with `strSlice`, split
+with `strSplit`, and compare contents with `strEq` or `strCmp`. `Utf8`
+supplies code-point access and display width.
 
 `Vec` is a growable `(Vec a)`. `vecGet` traps on an invalid index;
 `vecTry` returns an `Option`. A `(Map v)` maps integer keys to values
@@ -65,6 +66,42 @@ A `Vec` or `Map` owns the strings, vectors and records you store in
 it, and releases them when its last reference goes. See the
 [memory rules](memory-model.md) for ownership, cycles and region
 resets.
+
+`concat` copies both of its strings, so appending with it in a loop
+takes time that grows with the square of the result. To build a string
+from many pieces, push them into a `StrBuilder` and finish it, or join
+a `Vec` with `strJoin`. Both take time in proportion to the bytes
+appended. The finished `String` keeps its bytes when the builder takes
+more.
+
+```scheme
+(import IO)
+(import Str)
+(import Utf8)
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let b strBuilderNew)
+    (for word in (strSplit "one two three" 32)
+      {
+        (strBuilderPush b word)
+        (utf8PushChar b (as '→' Int))
+      })
+    (strBuilderPush b "done")
+    (println (strBuilderFinish b))
+    (println (strJoin (strSplit "one two three" 32) ", "))
+  })
+```
+
+```text
+one→two→three→done
+one, two, three
+```
+
+Tested by `tests/stdlib/988-str-builder.ax` and
+`tests/stdlib/990-str-builder-scale.ax`.
 
 API: [Str](stdlib-api.md#str), [Utf8](stdlib-api.md#utf8),
 [Vec](stdlib-api.md#vec), [Map](stdlib-api.md#map).

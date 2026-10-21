@@ -1,0 +1,195 @@
+; `StrBuilder` and `strJoin`: an empty builder, a one-byte push, a
+; capacity of 0, pushes that cross every growth boundary up to 4096
+; bytes, one very large push, and finishing and then pushing again.
+;
+; Every expected string here comes from `concat` or a literal, never
+; from the builder itself. A finished `String` is checked byte for byte
+; and for the NUL after its last byte: the builder appends at its
+; length, so a finish that handed out storage the builder could still
+; write would show the next push's first byte there.
+(import IO)
+(import Str)
+(import Vec)
+(import Fmt)
+
+; The byte at `i` of the bytes at `addr`, through this program's own
+; trusted helper, as any program outside the standard library reads raw
+; memory.
+(:: peekByte (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (peekByte addr i)
+  (__load8 addr i))
+
+; Whether `s` holds exactly the bytes of `expected`, and a NUL follows
+; them.
+(:: holds (-> String String Bool))
+(fn (holds s expected)
+  (&& (strEq s expected) (== (peekByte (strData s) (strLen s)) 0)))
+
+; `n` copies of `piece`, by `concat`.
+(:: repeated (-> String Int String))
+(fn (repeated piece n)
+  {
+    (let mut out "")
+    {
+      (for i in 0..n
+        (set out (concat out piece)))
+      out
+    }
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    ; Empty.
+    (let e strBuilderNew)
+    (let eLen (strBuilderLen e))
+    (let eCap (strBuilderCap e))
+    (let es (strBuilderFinish e))
+    (let esOk (holds es ""))
+    (println "empty: len {eLen} cap {eCap} finished {esOk}")
+    ; One byte.
+    (let one strBuilderNew)
+    (strBuilderPushByte one 65)
+    (let oneLen (strBuilderLen one))
+    (let oneOk (holds (strBuilderFinish one) "A"))
+    (println "one byte: len {oneLen} finished {oneOk}")
+    ; A capacity of 0: finishing it is the exactly-full case, and the
+    ; first push moves it to the smallest capacity a builder grows to.
+    (let z (strBuilderWithCapacity 0))
+    (let zCap0 (strBuilderCap z))
+    (let zs0 (strBuilderFinish z))
+    (let zs0Ok (holds zs0 ""))
+    (strBuilderPush z "")
+    (let zCapEmpty (strBuilderCap z))
+    (strBuilderPush z "a")
+    (let zCap1 (strBuilderCap z))
+    (let zs1Ok (holds (strBuilderFinish z) "a"))
+    (let zs0Still (holds zs0 ""))
+    (println
+      "capacity 0: cap {zCap0} finished {zs0Ok}, empty push cap {zCapEmpty}, one push cap {zCap1} finished {zs1Ok}, first still {zs0Still}")
+    ; One byte at a time across every boundary from 16 to 4096.
+    (let g strBuilderNew)
+    (let mut caps (fmtInt (strBuilderCap g)))
+    (let mut last (strBuilderCap g))
+    (let mut want "")
+    (for i in 0..2049
+      {
+        (strBuilderPushByte g (+ 97 (% i 26)))
+        (set want (concat want (strFromByte (+ 97 (% i 26)))))
+        (if (!= (strBuilderCap g) last)
+          {
+            (set last (strBuilderCap g))
+            (set caps (concat caps (concat " " (fmtInt last))))
+          })
+      })
+    (let gLen (strBuilderLen g))
+    (let gOk (holds (strBuilderFinish g) want))
+    (println "bytes: len {gLen} capacities {caps} finished {gOk}")
+    ; Seven bytes at a time, so pushes straddle each boundary.
+    (let s7 strBuilderNew)
+    (let mut caps7 (fmtInt (strBuilderCap s7)))
+    (let mut last7 (strBuilderCap s7))
+    (for i in 0..300
+      {
+        (strBuilderPush s7 "abcdefg")
+        (if (!= (strBuilderCap s7) last7)
+          {
+            (set last7 (strBuilderCap s7))
+            (set caps7 (concat caps7 (concat " " (fmtInt last7))))
+          })
+      })
+    (let s7Len (strBuilderLen s7))
+    (let s7Ok (holds (strBuilderFinish s7) (repeated "abcdefg" 300)))
+    (println "strings: len {s7Len} capacities {caps7} finished {s7Ok}")
+    ; One push far past the capacity moves to exactly the size needed,
+    ; and the next push doubles that.
+    (let mut big "0123456789")
+    (for i in 0..14
+      (set big (concat big big)))
+    (let large (strSlice big 0 100000))
+    (let lg strBuilderNew)
+    (strBuilderPush lg "ab")
+    (strBuilderPush lg large)
+    (let lgCap1 (strBuilderCap lg))
+    (strBuilderPushByte lg 33)
+    (let lgCap2 (strBuilderCap lg))
+    (let lgLen (strBuilderLen lg))
+    (let lgOk (holds (strBuilderFinish lg) (concat (concat "ab" large) "!")))
+    (println "large: cap {lgCap1} then {lgCap2}, len {lgLen} finished {lgOk}")
+    ; Finish with room to spare, then push again: the first answer is a
+    ; copy, and the pushes land in storage it doesn't share.
+    (let u strBuilderNew)
+    (strBuilderPush u "abc")
+    (let u1 (strBuilderFinish u))
+    (strBuilderPush u "XYZ")
+    (let u2 (strBuilderFinish u))
+    (for i in 0..40
+      (strBuilderPush u "0123456789"))
+    (let u3 (strBuilderFinish u))
+    (let u1Ok (holds u1 "abc"))
+    (let u2Ok (holds u2 "abcXYZ"))
+    (let u3Ok (holds u3 (concat "abcXYZ" (repeated "0123456789" 40))))
+    (println "finish with room: first {u1Ok} second {u2Ok} third {u3Ok}")
+    ; Finish exactly full, then push again: the answer is the storage
+    ; itself, and the next push that writes must move to a new buffer.
+    (let x (strBuilderWithCapacity 3))
+    (strBuilderPush x "abc")
+    (let xCap (strBuilderCap x))
+    (let x1 (strBuilderFinish x))
+    (let x1Again (strBuilderFinish x))
+    (strBuilderPush x "")
+    (let xCapEmpty (strBuilderCap x))
+    (strBuilderPushByte x 100)
+    (let xCapByte (strBuilderCap x))
+    (let x2 (strBuilderFinish x))
+    (strBuilderPush x x2)
+    (let x3 (strBuilderFinish x))
+    (let x1Ok (holds x1 "abc"))
+    (let x1AgainOk (holds x1Again "abc"))
+    (let x1CStr (== (strCStr x1) (strData x1)))
+    (let x2Ok (holds x2 "abcd"))
+    (let x3Ok (holds x3 "abcdabcd"))
+    (println "finish full: cap {xCap}, empty push cap {xCapEmpty}, byte push cap {xCapByte}")
+    (println
+      "finish full: first {x1Ok} again {x1AgainOk} terminated {x1CStr} second {x2Ok} self-append {x3Ok}")
+    ; Push a builder's own finished storage back into it: once from a
+    ; binding and once straight from `strBuilderFinish`, so the move to
+    ; new storage happens while the argument still names the old one.
+    (let y (strBuilderWithCapacity 2))
+    (strBuilderPush y "ab")
+    (let y1 (strBuilderFinish y))
+    (strBuilderPush y y1)
+    (let y2 (strBuilderFinish y))
+    (let w (strBuilderWithCapacity 0))
+    (for i in 0..12
+      (strBuilderPush w (strBuilderFinish w)))
+    (strBuilderPushByte w 65)
+    (for i in 0..6
+      (strBuilderPush w (strBuilderFinish w)))
+    (let wLen (strBuilderLen w))
+    (let y1Ok (holds y1 "ab"))
+    (let y2Ok (holds y2 "abab"))
+    (let wOk
+      (holds (strBuilderFinish w)
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
+    (println "own storage: first {y1Ok} doubled {y2Ok} len {wLen} repeated {wOk}")
+    ; strJoin.
+    (let none vecNew)
+    (let solo vecNew)
+    (vecPush solo "solo")
+    (let gaps vecNew)
+    (vecPush gaps "a")
+    (vecPush gaps "")
+    (vecPush gaps "c")
+    (let many vecNew)
+    (for i in 0..1000
+      (vecPush many "x"))
+    (let jNone (holds (strJoin none ", ") ""))
+    (let jSolo (holds (strJoin solo ", ") "solo"))
+    (let jGaps (holds (strJoin gaps "-") "a--c"))
+    (let jBare (holds (strJoin gaps "") "ac"))
+    (let jMany (holds (strJoin many ",") (concat (repeated "x," 999) "x")))
+    (println "join: none {jNone} one {jSolo} gaps {jGaps} no separator {jBare} many {jMany}")
+  })

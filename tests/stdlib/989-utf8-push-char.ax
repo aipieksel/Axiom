@@ -1,0 +1,86 @@
+; `utf8PushChar` writes the bytes `utf8FromChar` answers, at every
+; width boundary of UTF-8, for code points it can't encode, and when a
+; character's bytes straddle the edge of the builder's storage.
+;
+; The expected bytes in the golden are UTF-8 as Unicode defines it,
+; with U+FFFD (`ef bf bd`) for a surrogate, a negative number and
+; anything above U+10FFFF. A `Char` is its code point, so 233 is `é`,
+; 8364 is `€` and 128512 is `😀` (tests/stdlib/330-utf8.ax).
+(import IO)
+(import Str)
+(import Utf8)
+(import Vec)
+(import Fmt)
+
+; The bytes of `s` as two-digit lowercase hex, space-separated.
+(:: hexBytes (-> String String))
+(fn (hexBytes s)
+  {
+    (let mut out "")
+    {
+      (for i in 0..(strLen s)
+        {
+          (if (> i 0)
+            (set out (concat out " ")))
+          (set out (concat out (fmtPadZerosLeft (fmtHex (strByte s i)) 2)))
+        })
+      out
+    }
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let cps vecNew)
+    (vecPush cps 0)
+    (vecPush cps 65)
+    (vecPush cps 127)
+    (vecPush cps 128)
+    (vecPush cps 233)
+    (vecPush cps 2047)
+    (vecPush cps 2048)
+    (vecPush cps 8364)
+    (vecPush cps 55295)
+    (vecPush cps 55296)
+    (vecPush cps 57343)
+    (vecPush cps 57344)
+    (vecPush cps 65535)
+    (vecPush cps 65536)
+    (vecPush cps 128512)
+    (vecPush cps 1114111)
+    (vecPush cps 1114112)
+    (vecPush cps (- 0 1))
+    (for cp in cps
+      {
+        (let b (strBuilderWithCapacity 0))
+        (utf8PushChar b cp)
+        (let s (strBuilderFinish b))
+        (let hex (hexBytes s))
+        (let same (strEq s (utf8FromChar cp)))
+        (let valid (utf8Valid s))
+        (println "{cp}: {hex} same {same} valid {valid}")
+      })
+    ; A 2-, 3- and 4-byte character after 13 to 16 bytes of a 16-byte
+    ; builder: it fits, ends exactly at the edge, or crosses it.
+    (let wide vecNew)
+    (vecPush wide 233)
+    (vecPush wide 8364)
+    (vecPush wide 128512)
+    (for cp in wide
+      (for fill in 13..17
+        {
+          (let b strBuilderNew)
+          (let mut filler "")
+          {
+            (for i in 0..fill
+              (set filler (concat filler "a")))
+            (strBuilderPush b filler)
+            (utf8PushChar b cp)
+            (let cap (strBuilderCap b))
+            (let len (strBuilderLen b))
+            (let ok (strEq (strBuilderFinish b) (concat filler (utf8FromChar cp))))
+            (println "{cp} after {fill}: len {len} cap {cap} {ok}")
+          }
+        }))
+  })

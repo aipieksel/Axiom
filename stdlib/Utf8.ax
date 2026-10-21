@@ -271,30 +271,50 @@
       {
         (let d (strData s))
         {
-          (if (== n 1)
-            (__store8 d 0 cp)
-            (if (== n 2)
-              {
-                (__store8 d 0 (| 192 (>> cp 6)))
-                (__store8 d 1 (| 128 (& cp 63)))
-              }
-              (if (== n 3)
-                {
-                  (__store8 d 0 (| 224 (>> cp 12)))
-                  (__store8 d 1 (| 128 (& (>> cp 6) 63)))
-                  (__store8 d 2 (| 128 (& cp 63)))
-                }
-                {
-                  (__store8 d 0 (| 240 (>> cp 18)))
-                  (__store8 d 1 (| 128 (& (>> cp 12) 63)))
-                  (__store8 d 2 (| 128 (& (>> cp 6) 63)))
-                  (__store8 d 3 (| 128 (& cp 63)))
-                })))
+          (for k in 0..n
+            (__store8 d k (utf8EncodedByte cp n k)))
           s
         }
       }
     }
   })
+
+;; Append `cp` to `b`, UTF-8 encoded, and answer `b`. It writes the
+;; bytes `utf8FromChar` would answer, U+FFFD included, without
+;; allocating a `String` for them. A `Char` is a code point, so `as`
+;; turns one into the `Int` this takes: `'é'` is 233, two bytes.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: utf8PushChar (-> StrBuilder Int StrBuilder))
+(pub fn (utf8PushChar b cp0)
+  {
+    (let cp (utf8Encodable cp0))
+    (let n (utf8Width cp0))
+    {
+      (for k in 0..n
+        (strBuilderPushByte b (utf8EncodedByte cp n k)))
+      b
+    }
+  })
+
+; Byte `k` of the `n`-byte encoding of `cp`, which `utf8Encodable` has
+; already admitted and `utf8Width` has already measured. Both encoders
+; above write through here, so they can't disagree about a byte.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: utf8EncodedByte (-> Int Int Int Int))
+(fn (utf8EncodedByte cp n k)
+  (if (== n 1)
+    cp
+    (if (== k 0)
+      ; the lead byte: 110xxxxx, 1110xxxx or 11110xxx
+      (|
+        (if (== n 2)
+          192
+          (if (== n 3)
+            224
+            240))
+        (>> cp (* 6 (- n 1))))
+      ; a continuation byte, 10xxxxxx
+      (| 128 (& (>> cp (* 6 (- (- n 1) k))) 63)))))
 
 ; ------------------------------------------------------------------
 ; Validation

@@ -287,15 +287,24 @@ have() { # have <got> <want> <what>
 # mirEmitInsts and their operand and scope helpers), 2 Alloc,IO,Mut
 # (mirEmitOrWalk, mirRouting) and 7 pure (the three MIR_* modes and
 # four shape predicates). No row outside those three buckets moves.
+# The string builder adds seven Alloc,Mut rows in `Str` (strBuilderNew,
+# strBuilderWithCapacity, strBuilderReserve, strBuilderPush,
+# strBuilderPushByte, strBuilderFinish, strJoin) and three pure ones
+# (strBuilderLen, strBuilderCap, strBuilderMinCap); `Utf8` adds
+# utf8PushChar (Alloc,Mut) and utf8EncodedByte (pure). The joins it
+# replaces go: jsonJoin (Alloc,Mut), jsonJoinFill (Mut) and jsonJoinLen
+# (pure) from both views, joinParts and joinWith (Alloc,Mut) from the
+# stdlib view. Compiler +7 Alloc,Mut, -1 Mut, +3 pure; stdlib +5, -1,
+# +3. A same-compiler comparison changes no existing row, IO included.
 echo "== compiler view: symbols --calls self_host/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3377 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3384 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 452 "Alloc,IO,Mut"
-have "$(bucket "$work/main.axsym" 'Mut')" 195 "exactly Mut"
+have "$(bucket "$work/main.axsym" 'Mut')" 194 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 117 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
@@ -328,7 +337,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2432 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2435 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 33 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"
@@ -361,9 +370,9 @@ done
 lrows="$(grep -c '^F ' "$work/lib.axsym" || true)"
 (( lrows >= 300 )) && ok "$lrows stdlib functions listed (floor 300)" \
   || fail "only $lrows stdlib functions listed; the floor is 300"
-have "$(bucket "$work/lib.axsym" 'Alloc,Mut')" 737 "exactly Alloc,Mut"
+have "$(bucket "$work/lib.axsym" 'Alloc,Mut')" 742 "exactly Alloc,Mut"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut')" 315 "Alloc,IO,Mut"
-have "$(bucket "$work/lib.axsym" 'Mut')" 180 "exactly Mut"
+have "$(bucket "$work/lib.axsym" 'Mut')" 179 "exactly Mut"
 have "$(bucket "$work/lib.axsym" 'Alloc')" 190 "exactly Alloc"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO')" 27 "Alloc,IO"
 have "$(bucket "$work/lib.axsym" 'IO')" 17 "exactly IO"
@@ -401,7 +410,7 @@ have "$(bucket "$work/lib.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut,Spawn')" 4 "Alloc,IO,Mut,Spawn"
 have "$(bucket "$work/lib.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/lib.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1165 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1168 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/lib.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 38 "distinct stdlib effect rows"
 have "$(grep -c '#effects-incomplete' "$work/lib.axsym" || true)" 25 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/lib.axsym" || true)" 64 "effect-params rows"

@@ -1,0 +1,73 @@
+; A million one-byte pushes, a quarter of a million characters and a
+; join of a hundred thousand parts, with the builder's growth counted.
+;
+; Appending one byte at a time to a `String` with `concat` copies
+; everything built so far on every push: a million pushes would copy
+; about 5 * 10^11 bytes. Here every move to bigger storage is counted
+; with the bytes it carried, and the total has to stay below the final
+; capacity, which is what makes the builder linear.
+(import IO)
+(import Str)
+(import Utf8)
+(import Vec)
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let n 1000000)
+    (let b strBuilderNew)
+    (let mut moves 0)
+    (let mut moved 0)
+    (let mut cap (strBuilderCap b))
+    (for i in 0..n
+      {
+        (let before (strBuilderLen b))
+        (strBuilderPushByte b (+ 48 (% i 10)))
+        (if (!= (strBuilderCap b) cap)
+          {
+            (set moves (+ moves 1))
+            (set moved (+ moved before))
+            (set cap (strBuilderCap b))
+          })
+      })
+    (let s (strBuilderFinish b))
+    (let len (strLen s))
+    (let mut bad 0)
+    (for i in 0..n
+      (if (!= (strByte s i) (+ 48 (% i 10)))
+        (set bad (+ bad 1))))
+    (let linear (< moved cap))
+    (println
+      "bytes: len {len} wrong {bad} moves {moves} moved {moved} cap {cap} below capacity {linear}")
+    ; Characters of every width, so pushes of 1 to 4 bytes cross the
+    ; boundaries in every alignment.
+    (let c strBuilderNew)
+    (for i in 0..62500
+      {
+        (utf8PushChar c 122)
+        (utf8PushChar c 233)
+        (utf8PushChar c 8364)
+        (utf8PushChar c 128512)
+      })
+    (let cs (strBuilderFinish c))
+    (let csBytes (strLen cs))
+    (let csChars (utf8Len cs))
+    (let csValid (utf8Valid cs))
+    (println "chars: bytes {csBytes} chars {csChars} valid {csValid}")
+    ; A join with a separator, checked against its shape.
+    (let parts vecNew)
+    (for i in 0..100000
+      (vecPush parts "ab"))
+    (let joined (strJoin parts "+"))
+    (let jLen (strLen joined))
+    (let mut jBad 0)
+    (for i in 0..jLen
+      (if (!= (strByte joined i)
+            (match (% i 3)
+              (0 97)
+              (1 98)
+              (_ 43)))
+        (set jBad (+ jBad 1))))
+    (println "join: len {jLen} wrong {jBad}")
+  })

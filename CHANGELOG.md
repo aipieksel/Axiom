@@ -16,6 +16,19 @@ its changelog too.
 
 ## Unreleased
 
+- `Str` has a string builder. Push strings, bytes and, through
+  `utf8PushChar`, UTF-8 characters into a `StrBuilder`, then finish it
+  into a `String`; its storage doubles as it fills, so building is
+  linear where a `concat` loop is quadratic: 200,000 one-byte appends
+  take 1.1 ms instead of 8.1 s. `strJoin` joins a `(Vec String)`
+  with a separator. The builder is sealed and needs no
+  `effect(unsafe)`, and a finished `String` never shares storage the
+  builder can still write. `Cereal`, `Axqlite`, the AXQL statement
+  macros and `tuiCat` now join through `strJoin` in place of their own
+  copies, with identical output. Tested by
+  `tests/stdlib/988-str-builder.ax` and
+  `tests/stdlib/990-str-builder-scale.ax`.
+
 - Every function is emitted by one route, the walk over the checked
   syntax tree. The mid-level IR route, which emitted straight-line
   arithmetic functions from the IR and wrote the same bytes as the

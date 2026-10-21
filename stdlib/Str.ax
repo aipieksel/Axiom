@@ -490,6 +490,193 @@
   })
 
 ; ------------------------------------------------------------------
+; Building.
+;
+; `(set s (concat s piece))` in a loop copies everything built so far
+; on every turn, so it is quadratic: 200,000 one-byte appends took 8.1
+; seconds on darwin-aarch64. A `StrBuilder` keeps the bytes in storage
+; of its own that doubles when it fills, so each byte is copied a
+; constant number of times on average and the same loop is linear: 1.1
+; milliseconds, doubling with each doubling of the count.
+;
+; The storage is a `String` this module allocated and never hands out
+; while it can still be written. `bytes` is that storage, and its length
+; is the capacity; `len` is how much of it is in use. Every write lands
+; at `len` or above, in room the storage already has, and nothing
+; writes below `len` again, so an appended byte is final. A builder
+; whose storage is exactly full can therefore give that storage away as
+; the finished `String`: the next push must first move to a bigger
+; buffer, and the one given away is never written again. Any other
+; finish copies the used bytes into a `String` of their exact size.
+; Either way the builder stays usable, and nothing it does later can
+; change a `String` it has finished.
+; ------------------------------------------------------------------
+;; A `String` under construction. Appending is amortised constant time
+;; per byte, and `strBuilderFinish` answers the bytes as a `String`.
+;; Only this module can build one or reach its storage, so no `String`
+;; a program holds can change when the builder does.
+(pub struct StrBuilder sealed
+  (mut bytes : String)
+  (mut len : Int))
+
+; The capacity `strBuilderNew` starts with, and the least a growing
+; builder moves to.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: strBuilderMinCap Int)
+(fn (strBuilderMinCap)
+  16)
+
+;; An empty builder with room for a few bytes before it first grows.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strBuilderNew StrBuilder)
+(pub fn (strBuilderNew)
+  (strBuilderWithCapacity strBuilderMinCap))
+
+;; An empty builder with room for `cap` bytes before it first grows. A
+;; `cap` of 0 is allowed, and the first push that adds a byte grows it.
+;; A negative `cap` stops the program with status 77, as `strAlloc`
+;; does.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strBuilderWithCapacity (-> Int StrBuilder))
+(pub fn (strBuilderWithCapacity cap)
+  (StrBuilder :bytes (strAlloc cap) :len 0))
+
+;; How many bytes the builder holds.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: strBuilderLen (-> StrBuilder Int))
+(pub fn (strBuilderLen b)
+  b.len)
+
+;; How many bytes the builder can hold before it next grows.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: strBuilderCap (-> StrBuilder Int))
+(pub fn (strBuilderCap b)
+  (strLen b.bytes))
+
+; Make room for `n` more bytes. When they don't fit, move to storage of
+; twice the capacity, or of exactly `len + n` bytes when that is more,
+; and never less than `strBuilderMinCap`. Doubling is what makes a run
+; of appends linear: each move at least doubles the capacity, so all the
+; moves together copy fewer bytes than the final capacity
+; (tests/stdlib/990-str-builder-scale.ax counts them).
+;@axiom:restrict(no-io,no-foreign)
+(:: strBuilderReserve (-> StrBuilder Int Int))
+(fn (strBuilderReserve b n)
+  {
+    (let need (+ b.len n))
+    (let cap (strLen b.bytes))
+    {
+      (if (> need cap)
+        {
+          (let doubled
+            (if (> (* cap 2) strBuilderMinCap)
+              (* cap 2)
+              strBuilderMinCap))
+          (let big
+            (strAlloc
+              (if (> need doubled)
+                need
+                doubled)))
+          {
+            (rawCopy (strData big) (strData b.bytes) b.len)
+            (set b.bytes big)
+          }
+        })
+      need
+    }
+  })
+
+;; Append the bytes of `s`. Answers the builder.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strBuilderPush (-> StrBuilder String StrBuilder))
+(pub fn (strBuilderPush b s)
+  {
+    (let n (strLen s))
+    {
+      (strBuilderReserve b n)
+      (rawCopy (+ (strData b.bytes) b.len) (strData s) n)
+      (set b.len (+ b.len n))
+      b
+    }
+  })
+
+;; Append one byte. Answers the builder. A value outside 0 to 255 stops
+;; the program with status 80 at the call, as for `strFromByte`.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strBuilderPushByte (-> StrBuilder Byte StrBuilder))
+(pub fn (strBuilderPushByte b byte)
+  {
+    (strBuilderReserve b 1)
+    (rawPutByte (strData b.bytes) b.len byte)
+    (set b.len (+ b.len 1))
+    b
+  })
+
+;; The bytes appended so far, as a `String` of exactly that length. The
+;; builder stays usable, and later appends don't change the answer.
+;@axiom:restrict(no-io,no-foreign)
+;@axiom:post((== (strLen result) (strBuilderLen b)))
+(pub :: strBuilderFinish (-> StrBuilder String))
+(pub fn (strBuilderFinish b)
+  (if (== b.len (strLen b.bytes))
+    ; Exactly full: no push can write here again (see the banner).
+    b.bytes
+    {
+      (let out (strAlloc b.len))
+      {
+        (rawCopy (strData out) (strData b.bytes) b.len)
+        out
+      }
+    }))
+
+;; The strings in `parts` with `sep` between each two, as one new
+;; `String`: `(strJoin parts ", ")`. No parts join to "", and one part
+;; joins to a copy of itself.
+;
+; Two walks: the first sizes the result, so the builder starts at
+; exactly that capacity, and the second copies each part into its
+; storage once. The fill writes through locals rather than calling
+; `strBuilderPush` per part, which checks for room every time. Measured
+; on ten `jsonWrite`s of a 200,000-element array, which join four
+; pieces per element: pushing each part (and an empty separator)
+; retired 18% more instructions than the private join this replaced,
+; and this spelling 0.6% more (medians of five). The storage ends
+; exactly full, so `strBuilderFinish` answers it without a second copy.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strJoin (-> (Vec String) String String))
+(pub fn (strJoin parts sep)
+  {
+    (let count (vecLen parts))
+    (let ls (strLen sep))
+    (let mut total 0)
+    {
+      (for p in parts
+        (set total (+ total (strLen p))))
+      (if (> count 1)
+        (set total (+ total (* (- count 1) ls))))
+      {
+        (let b (strBuilderWithCapacity total))
+        (let d (strData b.bytes))
+        (let mut at 0)
+        {
+          (for (p i) in parts
+            {
+              (if (&& (> i 0) (> ls 0))
+                {
+                  (rawCopy (+ d at) (strData sep) ls)
+                  (set at (+ at ls))
+                })
+              (rawCopy (+ d at) (strData p) (strLen p))
+              (set at (+ at (strLen p)))
+            })
+          (set b.len at)
+          (strBuilderFinish b)
+        }
+      }
+    }
+  })
+
+; ------------------------------------------------------------------
 ; Case, substring search, trimming and integer parsing.
 ;
 ; Four functions an HTTP parser needs and nothing here had - measured
