@@ -17,6 +17,10 @@
   (setConsoleCtrlHandlerRaw :: (-> Int Int Int) (symbol "SetConsoleCtrlHandler"))
   (setConsoleModeRaw :: (-> Int Int Int) (symbol "SetConsoleMode"))
   (getConsoleModeRaw :: (-> Int Int Int) (symbol "GetConsoleMode"))
+  (getLastErrorRaw :: Int (symbol "GetLastError"))
+  (getTickCount64Raw :: Int (symbol "GetTickCount64"))
+  (getNumberOfConsoleInputEventsRaw :: (-> Int Int Int) (symbol "GetNumberOfConsoleInputEvents"))
+  (peekConsoleInputRaw :: (-> Int Int Int Int Int) (symbol "PeekConsoleInputW"))
   (setConsoleCPRaw :: (-> Int Int) (symbol "SetConsoleCP"))
   (getConsoleCPRaw :: Int (symbol "GetConsoleCP"))
   (writeConsoleInputRaw :: (-> Int Int Int Int Int) (symbol "WriteConsoleInputW")))
@@ -212,15 +216,81 @@
       ((Ok n) (&& (== n 1) (== (readBufferByte buf 0) byte))))
   })
 
-(:: laterKeyRead (-> Poller File Bool))
+; Inspect only after the stream wait has failed. Neither API removes an
+; input record, and PeekConsoleInputW returns immediately on an empty queue.
+(:: laterKeySnapshot (-> Int Int ()))
 ;@axiom:effect(io)
-(fn (laterKeyRead p f)
+;@axiom:effect(unsafe)
+(fn (laterKeySnapshot h elapsed)
   {
+    (let modeCell (strAlloc 8))
+    (let modeOk (!= (& (getConsoleModeRaw h (strData modeCell)) 4294967295) 0))
+    (let modeError
+      (if modeOk
+        0
+        (& getLastErrorRaw 4294967295)))
+    (let mode
+      (if modeOk
+        (& (__load64 (strData modeCell) 0) 4294967295)
+        -1))
+    (let countCell (strAlloc 8))
+    (let countOk (!= (& (getNumberOfConsoleInputEventsRaw h (strData countCell)) 4294967295) 0))
+    (let countError
+      (if countOk
+        0
+        (& getLastErrorRaw 4294967295)))
+    (let queued
+      (if countOk
+        (& (__load64 (strData countCell) 0) 4294967295)
+        -1))
+    (let record (strAlloc 20))
+    (let peekCell (strAlloc 8))
+    (let peekOk
+      (!= (& (peekConsoleInputRaw h (strData record) 1 (strData peekCell)) 4294967295) 0))
+    (let peekError
+      (if peekOk
+        0
+        (& getLastErrorRaw 4294967295)))
+    (let peeked
+      (if peekOk
+        (& (__load64 (strData peekCell) 0) 4294967295)
+        -1))
+    (eprintln
+      "later key state: elapsed-ms={elapsed}; mode={mode}; mode-error={modeError}; queued-events={queued}; queue-error={countError}; peeked={peeked}; peek-error={peekError}")
+    (if (> peeked 0)
+      {
+        (let ptr (strData record))
+        (let kind (+ (__load8 ptr 0) (<< (__load8 ptr 1) 8)))
+        (if (== kind 1)
+          {
+            (let down (__load8 ptr 4))
+            (let repeats (+ (__load8 ptr 8) (<< (__load8 ptr 9) 8)))
+            (let vk (+ (__load8 ptr 10) (<< (__load8 ptr 11) 8)))
+            (let scan (+ (__load8 ptr 12) (<< (__load8 ptr 13) 8)))
+            (let unicode (+ (__load8 ptr 14) (<< (__load8 ptr 15) 8)))
+            (let control
+              (+ (+ (__load8 ptr 16) (<< (__load8 ptr 17) 8))
+                (+ (<< (__load8 ptr 18) 16) (<< (__load8 ptr 19) 24))))
+            (eprintln
+              "later key record: event-type={kind}; key-down={down}; repeat={repeats}; virtual-key={vk}; scan={scan}; unicode={unicode}; control={control}")
+          }
+          (eprintln "later key record: event-type={kind}"))
+      })
+  })
+
+(:: laterKeyRead (-> Poller File Int Bool))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (laterKeyRead p f h)
+  {
+    (let started getTickCount64Raw)
     (let ready (waitCount p 2000))
+    (let elapsed (- getTickCount64Raw started))
     (if (!= ready 1)
       {
         (eprintln
           "later key read: poll={ready}; read-count=not-attempted; byte=not-attempted; error=not-attempted")
+        (laterKeySnapshot h elapsed)
         false
       }
       {
@@ -260,7 +330,7 @@
   {
     (let mut bad 0)
     (set bad (+ bad (say (sendKey h 81 113 0) "a key is queued behind console noise")))
-    (set bad (+ bad (say (laterKeyRead p f) "a later key reaches the stream reader")))
+    (set bad (+ bad (say (laterKeyRead p f h) "a later key reaches the stream reader")))
     (set bad (+ bad (say (sendKey h 32 0 8) "Ctrl-Space with zero Unicode is queued")))
     (set bad (+ bad
                (say (&& (== (waitCount p 2000) 1) (readByteIs f 0))
