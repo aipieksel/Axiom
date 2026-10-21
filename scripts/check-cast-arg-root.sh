@@ -252,13 +252,17 @@ echo "--- 1. user-level cast count does not grow ---"
 # Baseline 1247 adds the pruning probe's Unsafe live Vec-header count
 # readback. It observes the retained line-vector share while its owner
 # remains alive; production conversions are unchanged (MM-VAL-23).
+# Baseline 1248 combines three emitted-symbol oracle conversions with
+# the argument-ledger tests' net removal of two forms: six raw reads
+# become typed, while one live-count read and three ablation/adaptor
+# forms exercise the old raw ledger. These are MM-VAL-23 test subjects.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1247 ]; then
-  ok "user-level (cast count $cast_count <= 1247)"
+elif [ "$cast_count" -le 1248 ]; then
+  ok "user-level (cast count $cast_count <= 1248)"
 else
-  bad "user-level (cast count $cast_count > 1247): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1248): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -423,7 +427,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # tighten the prior 845-site pin; no compiler erasure is exempted.
 # Scoped binder summaries remove two more sites from binderSummary and
 # binderCollectArms in a same-compiler source comparison.
-erasure_pin=787
+# Typed argument-register storage removes emitArgsRegs' String-to-word
+# insertion. Its two typed readbacks also remove the old Unsafe forgeries.
+erasure_pin=786
 erasure_sum() {  # <axsym> -> the #erasures= total over self_host/ rows
   awk '$1 == "F" && index($3, "self_host/") == 1 {
          for (i = 4; i <= NF; i++)

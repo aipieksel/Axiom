@@ -205,6 +205,8 @@ including pattern matching, remain work to do.
 | The test runner runs tests in parallel | Done |
 | Compiler scratch buffers and backtrace metadata release their owned Strings | Done; `tests/selfhost/emitter-line-buffer.py`, `tests/selfhost/emitter-pending-strings.py`, `tests/selfhost/emitter-line-metadata.py` |
 | Compiler binder summaries and pruning indexes release their temporary interners, memo records and line reads | Done; `tests/selfhost/emitter-binder-summary.py` and `tests/selfhost/emitter-prune-owner.py` |
+| Compiler argument register ledgers own and retire their copied text | Done; `tests/selfhost/emitter-argument-registers.py` |
+| Extern symbol scans allocate no search string for each emitted line | Done; `tests/tools/emitted-symbol-match.py` |
 | UTF-16 ranged document edits apply in order and atomically, with monotonic versions and versioned diagnostics | Done |
 | The language server cancels obsolete work and serves requests from revisioned background analysis on hosts with process and poller support | Done |
 | Unsaved imported documents feed checks and navigation, with transitive dependency invalidation and diagnostics for open modules | Done |
