@@ -11,12 +11,10 @@
 ; because that is what stage0's `TypeId::Display` emits and the
 ; criterion is its bytes.
 ;
-; The `@nid` is FNV-1a 64 over `DKind:name`. stage0 used to feed the
-; same key through Rust's `DefaultHasher` - std documents that
-; hasher's algorithm as unspecified and subject to change, so a
-; "stable node ID" was stable only until a toolchain upgrade, and a
-; port would have chained this compiler to std's internals. Both
-; compilers now use FNV-1a 64, which is four lines in either language.
+; The `@nid` is FNV-1a 64 over `DKind:name`, in both compilers: a
+; stable node ID needs a hash whose algorithm is specified, which Rust's
+; `DefaultHasher` is not, and FNV-1a 64 is four lines in either
+; language.
 ;
 ; Fact collection walks the checker's tables and lives beside them,
 ; so this module imports `typecheck.ax` (and `expand.ax` for
@@ -113,7 +111,7 @@
               (if (|| (== (as args Int) 0) (== (vecLen args) 0))
                 (srcSpelling (nodeAName t))
                 {
-                  (let mut s (srcSpelling (nodeAName t)))
+                  (let s (strBuilderPush strBuilderNew (srcSpelling (nodeAName t))))
                   {
                     ; The keyword's range shape mirrors `range` binding
                     ; for binding, so this is a spelling change and
@@ -122,8 +120,8 @@
                     ; and this site is what proves a seeded compiler
                     ; builds a tree that uses it.
                     (for i in 0..(vecLen args)
-                      (set s (concat s (concat " " (symTy (vecGet args i))))))
-                    s
+                      (strBuilderPush s (concat " " (symTy (vecGet args i)))))
+                    (strBuilderFinish s)
                   }
                 })
             }
@@ -133,17 +131,17 @@
               (if (== tag TAG_T_TUP)
                 {
                   (let xs (nodeAChildren t))
-                  (let mut s "(")
+                  (let s (strBuilderPush strBuilderNew "("))
                   {
                     (if (! (== (as xs Int) 0))
                       (for i in 0..(vecLen xs)
                         {
                           (if (> i 0)
-                            (set s (concat s ", "))
+                            (strBuilderPush s ", ")
                             "")
-                          (set s (concat s (symTy (vecGet xs i))))
+                          (strBuilderPush s (symTy (vecGet xs i)))
                         }))
-                    (concat s ")")
+                    (concat (strBuilderFinish s) ")")
                   }
                 }
                 (if (== tag TAG_T_PTR)
@@ -238,7 +236,7 @@
     (let n (strLen ty))
     (let tvars (:: vecNew Ints))
     (let ivars (:: vecNew Ints))
-    (let mut out "")
+    (let out strBuilderNew)
     (let mut from 0)
     (let mut i 0)
     {
@@ -250,18 +248,18 @@
             {
               (let tee (== (strByte ty (+ i 1)) 116))
               {
-                (set out (concat out (strSlice ty from (- i from))))
-                (set out (concat out
-                           (concat
-                             (if tee
-                               "_t"
-                               "_i")
-                             (fmtInt
-                               (symFreshIndex
-                                 (if tee
-                                   tvars
-                                   ivars)
-                                 (symDigitsValue ty (+ i 2) j))))))
+                (strBuilderPush out (strSlice ty from (- i from)))
+                (strBuilderPush out
+                  (concat
+                    (if tee
+                      "_t"
+                      "_i")
+                    (fmtInt
+                      (symFreshIndex
+                        (if tee
+                          tvars
+                          ivars)
+                        (symDigitsValue ty (+ i 2) j)))))
                 (set from j)
                 (set i j)
               }
@@ -269,7 +267,7 @@
         })
       (if (== from 0)
         ty
-        (concat out (strSlice ty from (- n from))))
+        (concat (strBuilderFinish out) (strSlice ty from (- n from))))
     }
   })
 
@@ -284,24 +282,24 @@
 (pub :: symLine (-> String String String String String Strings String))
 (pub fn (symLine kind name loc ty nid metas)
   {
-    (let mut s kind)
+    (let s (strBuilderPush strBuilderNew kind))
     {
-      (set s (concat s (concat " " name)))
-      (set s (concat s (concat " " loc)))
-      (set s (concat s (concat " \"" (concat (symFreshNames ty) "\""))))
+      (strBuilderPush s (concat " " name))
+      (strBuilderPush s (concat " " loc))
+      (strBuilderPush s (concat " \"" (concat (symFreshNames ty) "\"")))
       (if (> (strLen nid) 0)
-        (set s (concat s (concat " @" nid)))
+        (strBuilderPush s (concat " @" nid))
         "")
       {
         (let mut i 0)
         (if (! (== (as metas Int) 0))
           (while (< i (vecLen metas))
             {
-              (set s (concat s (concat " #" (vecGetStr metas i))))
+              (strBuilderPush s (concat " #" (vecGetStr metas i)))
               (set i (+ i 1))
             }))
       }
-      (concat s "\n")
+      (concat (strBuilderFinish s) "\n")
     }
   })
 
@@ -487,16 +485,16 @@
 (pub :: saJoinComma (-> (Vec a) String))
 (pub fn (saJoinComma v)
   {
-    (let mut s "")
+    (let s strBuilderNew)
     {
       (for i in 0..(vecLen v)
         {
           (if (> i 0)
-            (set s (concat s ","))
+            (strBuilderPush s ",")
             "")
-          (set s (concat s (vecGetStr v i)))
+          (strBuilderPush s (vecGetStr v i))
         })
-      s
+      (strBuilderFinish s)
     }
   })
 
@@ -523,27 +521,13 @@
 ;
 ; WHY THIS EXISTS. `symLine` prints each meta as ` #meta` and
 ; `axsymMetaScan` (stdlib/Agent/Tags.ax) opens a NEW token at any `#`
-; that follows a space, so an AXTAG whose value carried one used to
-; forge as many metadata fields as it liked. Measured on a three-line
-; file:
-;
-;   ;@axiom:agent:note(ok #effect=io #effects=Alloc #agent:allowed=all)
-;   (fn (fB n) (+ n 1))
-;
-; `check` printed OK and exited 0, and the row read
-;
-;   F fB tags.ax:2:6-8 "(Int -> Int)" @4de8a934d7defbcf
-;     #agent:note=ok #effect=io #effects=Alloc #agent:allowed=all
-;
-; of which exactly ONE field - `#agent:note=ok` - was a tag anyone
-; wrote. On a function that really performs IO the same shape put
-; `#effects=Alloc` in front of the compiler's own `#effects=IO`, and
-; `symEffects`, which answered the FIRST match, said `Alloc`. The
-; `agent:*` namespace is the perfect carrier because AX3039 never
-; fires on a key containing `:`, so the forgery drew no diagnostic at
-; all. `docs/agent-harness.md` §3.4 has `Agent.Policy` reading exactly
-; those two fields off this line, so what the hole bought was a policy
-; gate reporting whatever the file under inspection asked it to.
+; that follows a space, so an AXTAG whose value carried one could forge
+; metadata fields: `;@axiom:agent:note(ok #effects=Alloc)` would print
+; an `#effects=Alloc` that no analysis produced. The `agent:*` namespace
+; is the natural carrier, because AX3039 never fires on a key containing
+; `:`, and `docs/agent-harness.md` §3.4 has `Agent.Policy` reading those
+; fields off this line, so a policy gate would report whatever the file
+; under inspection asked it to.
 ;
 ; ESCAPED RATHER THAN REJECTED. This runs off the checker's tables,
 ; long after the parse, with no span to point a diagnostic at - so a
@@ -565,22 +549,21 @@
   {
     (let n (strLen s))
     (let mut i 0)
-    (let mut acc "")
+    (let acc strBuilderNew)
     {
       (while (< i n)
         {
           (let b (strByte s i))
           {
             (if (saAxStructural b)
-              (set acc (concat acc
-                         (concat "%"
-                           (concat (strFromByte (saHexDigit (/ b 16)))
-                             (strFromByte (saHexDigit (% b 16)))))))
-              (set acc (concat acc (strSlice s i 1))))
+              (strBuilderPush acc
+                (concat "%"
+                  (concat (strFromByte (saHexDigit (/ b 16))) (strFromByte (saHexDigit (% b 16))))))
+              (strBuilderPush acc (strSlice s i 1)))
             (set i (+ i 1))
           }
         })
-      acc
+      (strBuilderFinish acc)
     }
   })
 
@@ -590,22 +573,14 @@
 ; go through `saAxSafe`; the `=` between them is the compiler's, not
 ; the author's.
 ;
-; `=` IS A STRUCTURAL BYTE, and until 2026-09-04 it was not. The
-; sentence above used to end "and is the only structural byte the
-; token can carry", which was false in both directions. A PARENLESS
-; tag has no halves to join, so its whole content is the key - and
-; `;@axiom:restrict=no-io` therefore rendered `#restrict=no-io`, byte
-; for byte what a VERIFIED `restrict(no-io)` renders, on a body the
-; compiler had refused to make that claim about. Measured: the same
-; function drew `AX3049` under `restrict(no-io)` and exited 0 under
-; `restrict=no-io`, with the two AXSYM rows identical in that key. And
-; a value could carry one too: `;@axiom:pre(== n 0)` rendered
-; `#pre===%20n%200`, where the space was escaped and the two `=` were
-; not.
+; `=` IS A STRUCTURAL BYTE. A PARENLESS tag has no halves to join, so
+; its whole content is the key, and unescaped, `;@axiom:restrict=no-io`
+; would render `#restrict=no-io`, byte for byte what a VERIFIED
+; `restrict(no-io)` renders, on a body the compiler refused to make that
+; claim about. A value could carry one too: `;@axiom:pre(== n 0)`.
 ;
 ; Escaping it makes the separator the compiler writes the only
-; unescaped `=` on the line, which is what the sentence claimed all
-; along. It does not close the whole hole - a key is still forgeable
+; unescaped `=` on the line. It does not close the whole hole - a key is still forgeable
 ; through the PARENTHESISED form - and `axtagReservedKey`
 ; (self_host/typecheck.ax) is that half.
 (pub :: saAxMeta (-> String String))
@@ -687,11 +662,8 @@
   (efU : Ints)
   (fnD : (Vec ASTNode)))
 
-; Macros. `symbols` emitted no row for one until 2026-08-26, so
-; twelve public names in the standard library - `println` and
-; `format` among them - were API that nothing over this stream could
-; see. `compat/UNCOVERED` listed them as a hole; these three slots
-; are what closes it.
+; Macros have rows, so public macros such as `println` and `format` are
+; API this stream can see.
 ; The effect DECLARATION itself. Its operations were already keyed
 ; (slots 18/19), which is what a handler needs; the effect's own name
 ; had no row, so `Assert` was public API outside the stream.
@@ -765,12 +737,10 @@
           {
             (saPut2 sm.fnN sm.fnS sm.fnU name (nodeSpan d) u)
             ; A signature names the function's NID only when no `fn`
-            ; does: moving a `::` below its definition used to make
-            ; the SIGNATURE the last declaration mentioning the name,
-            ; so the function hashed `DSig:` and took a new identity,
-            ; which the compatibility check reads as one function
-            ; removed and another added (AN-41). The `fn` arm below
-            ; always writes `DFn:`.
+            ; does: otherwise moving a `::` below its definition would
+            ; give the function a new identity, which the compatibility
+            ; check reads as one function removed and another added
+            ; (AN-41). The `fn` arm below always writes `DFn:`.
             (saPutIfAbsent sm.nidN sm.nidV name "DSig:")
             (smTags sm d name)
           }
@@ -844,18 +814,12 @@
                       }
                       (if (== tag TAG_D_EFFECT)
                         ; Operation types, keyed under both spellings the checker
-                        ; registers ops with - AND the effect's own name, which
-                        ; had no row until 2026-08-26.
+                        ; registers ops with - AND the effect's own name.
                         ;
-                        ; `smTags` is the call every other declaration arm above
-                        ; makes and this one did not, so an `effect`'s AXTAGs
-                        ; reached the table and were rendered by nobody: the
-                        ; `E` row printed no metas at all. It matters from the
-                        ; day `;@axiom:unhandled(trap)` became a claim the
-                        ; compiler acts on - a policy gate reading AXSYM has to
-                        ; be able to list which effects are allowed to abort,
-                        ; and `#unhandled=trap` on this row is where it reads
-                        ; that.
+                        ; `smTags` renders an `effect`'s AXTAGs on its `E` row:
+                        ; `;@axiom:unhandled(trap)` is a claim the compiler acts
+                        ; on, and a policy gate reading AXSYM lists which effects
+                        ; may abort from `#unhandled=trap` here.
                         {
                           (let fields (nodeCChildren d))
                           (let mut i 0)
@@ -888,16 +852,11 @@
 ; carrying it - a function has two, its `::` and its `fn`, and an author
 ; may write a tag above either.
 ;
-; This kept the LAST NON-EMPTY set until 2026-08-29. Measured, both
-; directions: `;@axiom:effect(pure)` above the `::` and `;@axiom:no_refactor`
-; above the `fn` rendered `#no_refactor` alone, and swapped they
-; rendered `#pure` alone. The checker was never affected - `checkAxtags`
-; reads the two sets separately - so this was a reporting loss, and it
-; is the measurement that made `axiom test` discovery a NAME rule
-; (main.ax). It stops being a reporting loss the moment a policy gate
-; reads a tag off AXSYM - which is what a `#restrict=` manifest does: a
-; restriction written above a signature would have been checked by the
-; compiler and invisible to the manifest.
+; Keeping only one set would lose a tag in the report: an
+; `effect(pure)` above the `::` and a `no_refactor` above the `fn` would
+; render one of the two. The checker reads the two sets separately, but
+; a policy gate reading a `#restrict=` manifest off AXSYM must see a
+; restriction written above a signature.
 ;
 ; The union is built into a NEW Vec. The stored sets are the parser's
 ; own declaration words, and a renderer that appended to one would be
@@ -1070,11 +1029,10 @@
 ;   (fn (leak n) { (println "io") n })
 ;
 ; is a well-formed AXTAG. It draws AX3065 - a reserved key, an error -
-; and used to render `#effects=Alloc #effects=IO`, first match `Alloc`,
-; on a function that writes to stdout. Four of these seven derived keys
-; were emitted BEFORE the author's tags until this change (`D`, `S`,
-; `A`, `T`), which is why the ordering is stated here rather than left
-; to whichever site is read first.
+; and with the author's tags after the derived keys it would render
+; `#effects=Alloc #effects=IO`, first match `Alloc`, on a function that
+; writes to stdout. That is why the ordering is stated here rather than
+; left to whichever site is read first.
 (pub :: smTagMetas (-> SymMaps String Strings Int))
 (pub fn (smTagMetas sm key metas)
   {
@@ -1303,18 +1261,15 @@
 ; WHY THE KEYS ARE OPT-IN AND SLOW. `rgnEnsureFacts` runs on DEMAND -
 ; for a program that names a region or claims `restrict(no-escape)`,
 ; and otherwise never. Asking for these keys forces it over every
-; declaration. Measured 2026-09-03 with `/usr/bin/time -p axc check
-; self_host/main.ax`, three runs each way: 0.73 / 0.71 / 0.72s without
-; the fixpoint, 22.24 / 21.69 / 21.52s with it - 30x, and the whole of
-; it is `rgnEnsureFacts` over 4,095 symbols. That is a flag, never a
-; default.
+; declaration: on `self_host/main.ax` that is about 30 times the cost
+; of a plain `check`, all of it `rgnEnsureFacts`. That is a flag, never
+; a default.
 ;
-; WHY `#mir-truncated` IS NOT OPTIONAL. `rgnRounds` capped at 40 rounds
-; until 2026-09-17 and, before that, returned in silence; a chain deeper
-; than the cap stops propagating before the fixpoint converges and the
-; facts that come out are an UNDER-approximation. The bound is the
-; program's own size now, so the truncation is a net no program
-; reaches - but the key stays, because a net removed is a silence
+; WHY `#mir-truncated` IS NOT OPTIONAL. A chain deeper than the round
+; cap stops propagating before the fixpoint converges, and the facts
+; that come out are an UNDER-approximation. The bound is the program's
+; own size, so the truncation is a net no program reaches - but the key
+; stays, because a net removed is a silence
 ; reintroduced the day a walk stops converging for a new reason. `#mir-escapes=` is
 ; therefore a lower bound in exactly the sense `#effects=` is, and it
 ; gets the same treatment `#effects-incomplete` gets: its own meta,

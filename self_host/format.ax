@@ -213,12 +213,9 @@
 ; disagree, stage0 wins, because the output has to match stage0's.
 ; ------------------------------------------------------------------
 (pub :: isFSpace (-> Int Bool))
-; Exactly `lexer.ax`'s `isSpace`, byte for byte. It used to admit
-; VT (11) and FF (12) as well, inherited from the retired compiler's
-; `char::is_whitespace`, and the lexer never did - so `fmt` rewrote a
-; file `check` refuses with AX1001 into one it accepts, silently
-; turning an invalid program into a valid one. Two implementations of
-; "what is a space" and nothing compared them.
+; Exactly `lexer.ax`'s `isSpace`, byte for byte: a formatter that took
+; a byte the lexer refuses, such as VT or FF, as a space would rewrite
+; a file `check` refuses with AX1001 into one it accepts.
 (pub fn (isFSpace ch)
   (strIsSpace ch))
 
@@ -325,10 +322,8 @@
       false)))
 
 ; There is deliberately no `isFNameChar` here. What continues a name is
-; `lexer`'s `isIdentChar`, asked directly by `fscanName`; the local copy
-; that used to sit at this spot listed letters, digits, `_` and `'` and
-; omitted every operator byte, which is how `empty-list` came to be
-; three tokens to the formatter and one to the compiler.
+; `lexer`'s `isIdentChar`, asked directly by `fscanName`, so `empty-list`
+; is one token to the formatter as it is to the compiler.
 ; ------------------------------------------------------------------
 ; The scan.
 ;
@@ -495,8 +490,8 @@
   })
 
 ; Whether the `;` at `pos` begins an AXTAG (`;@axiom:`), which is a
-; token rather than a comment - it is compiler-checked metadata, and
-; the one category `fmt` used to delete without even a refusal.
+; token rather than a comment: it is compiler-checked metadata, and
+; `fmt` must never delete it.
 (:: isAxtagAt (-> String Int Int Bool))
 (fn (isAxtagAt src pos len)
   (if (> (+ pos 8) len)
@@ -805,24 +800,10 @@
 ; letters, digits and `_`, so `empty-list`, `a+b`, `set!`, `foo'` and
 ; `x-5` are each ONE identifier to `lexTokens`.
 ;
-; This used to stop at the first operator byte, which made each of them
-; THREE tokens, and the consequence was not a refusal - it was a
-; rewrite. Measured on the compiler as it stood:
-;
-;   (fn (g) (h empty-list))   ->  (fn (g) (h empty - list))
-;   (fn (g) (h a+b))          ->  (fn (g) (h a + b))
-;   (fn (g) (h x-5))          ->  (fn (g) (h x -5))
-;
-; written to disk, exit 0, no warning: a one-argument call turned into
-; a three-argument one, which is `fmt` silently destroying a source
-; file - the sixfold defect §2.3 of the roadmap exists to record, in a
-; seventh way. In DECLARATION position the same split poisoned the
-; buffer instead, so `axiom fmt` refused every file that declared a
-; kebab-case name.
-;
-; Nothing in the repository has such a name, which is why 194 files
-; formatted byte-identically with this broken: the corpus is written by
-; people solving problems, and Axiom's own convention is camelCase.
+; Stopping at the first operator byte would make each of them three
+; tokens, and the consequence would be a rewrite, not a refusal:
+; `(h empty-list)` printed as `(h empty - list)`, a one-argument call
+; turned into a three-argument one.
 ;
 ; The dispatch above still routes an operator-INITIAL token to
 ; `fscanOperator`, because a lone `-` has to stay its own kind for the
@@ -1138,19 +1119,12 @@
 ; back on, so the depth of the input is the depth of the machine
 ; stack.
 ;
-; This file used to say that needed no guard, on the grounds that a
-; source nested a thousand deep "would be unreadable long before it
-; were a stack problem". Unreadable is not unreachable. Measured
-; 2026-08-23 at `ulimit -s 8192` against a stage1 built from HEAD, on
-; a one-line `(fn (main) ((((...))))`: at 40,000 delimiters
-; `fmt --check` still answered, at 48,000, 56,000 and 64,000 it died
-; of SIGNAL 11. Brackets, braces and 200,000 unbalanced `(` crash the
-; same way at 60,000, and so does `x` followed by 100,000 `.a`
-; postfixes. `axiom check` answered every one of those inputs in the
-; ordinary way - `error[AX2005]: nesting is too deep (limit is 1024)`
-; - because `parseModuleWith` runs `nestOverflowTok` before
-; `parseDecls`. The crash was the formatter's alone, and what is
-; restored here is that the two subcommands refuse the same file.
+; So the depth is guarded: a source nested tens of thousands deep, or
+; `x` followed by 100,000 `.a` postfixes, would otherwise end in
+; SIGNAL 11 at the default 8 MiB stack. `axiom check` refuses the same
+; inputs with `error[AX2005]: nesting is too deep (limit is 1024)`,
+; because `parseModuleWith` runs `nestOverflowTok` before `parseDecls`,
+; and the two subcommands refuse the same file.
 ;
 ; The LIMIT is imported rather than restated: `parseMaxDepth` is the
 ; one number, and a second 1024 written down here is a number that
@@ -2316,19 +2290,9 @@
 ; migrate them to, so the two subcommands refuse together, as they do
 ; for `deriving` in `fpDeriving`.
 ;
-; This replaced `fpIsReservedWord` on 2026-08-28. That function
-; reproduced the RETIRED Rust compiler's lexer - thirty-two structural
-; words reserved in every position - and refused `(fn (g data) data)`
-; while `check` accepted it. check-fmt.sh found it the day
-; `self_host/lsp.ax` named a parameter `data` (f0a2fa3), and the parity
-; bank had pinned the wrong answer as 070-keyword-in-expr since the day
-; it was materialized. Measured on the compiler built from this tree
-; before the change: every non-head position - parameter, argument,
-; `let` binder, pattern variable, `lambda` and `macro` parameter, `set`
-; target, effect atom - was `check` OK (or a checker error) and `fmt`
-; "formatter refusal"; and in the other direction `fmt` printed
-; `(consume 1)` and `(begin 1)`, which `check` refuses at the parser.
-; tests/fmt/parity/190 to 197 pin both directions; 194 pins the one
+; No word is reserved in every position: a keyword is a keyword only at
+; the head of a form, so `(fn (g data) data)` formats as `check` accepts
+; it. tests/fmt/parity/190 to 197 pin both directions; 194 pins the one
 ; binder position that IS a keyword's, `(let ((mut 1)) mut)`, AX2001
 ; in `check` and refused here.
 (pub :: fpIsRefusedHead (-> String Bool))
@@ -3901,15 +3865,10 @@
               ; All four prefix markers are refused: stage0 refuses each
               ; in every position - the backtick with AX1001, `'`, `,`
               ; and `,@` with AX2001 - so printing any of them would
-              ; accept a program stage0 refuses (MAC-TOOL-6). `,@` was
-              ; the first, refused here since the self-hosted printer
-              ; was written (probed, `,@c` is "expected expression,
-              ; found `@`"); the backtick and the bare comma reached
-              ; the printer the same way until 2026-09-18, and the
-              ; quote reached it before a paren (`'(f x)` formatted
-              ; while `'x` refused only by the fixed-point accident of
-              ; rescanning as a char literal). `tests/fmt/parity/230`,
-              ; `231` and `232` pin one refusal each.
+              ; accept a program stage0 refuses (MAC-TOOL-6), and a
+              ; quote is refused before a paren as well as before a
+              ; name. `tests/fmt/parity/230`, `231` and `232` pin one
+              ; refusal each.
               (fpBad p)
               (if (== k FN_BRACK)
                 (if (== (fnLen n) 0)
@@ -3997,10 +3956,8 @@
                                         ; `consume`, `begin` and now `cond` are the
                                         ; identifier heads `parseInner` refuses by
                                         ; name (AX2004), so the printer refuses
-                                        ; them with it. It used to print
-                                        ; `(consume e)` and `(begin e)` - output
-                                        ; `check` cannot read, which is the one thing
-                                        ; `fmt` may never emit.
+                                        ; them with it rather than emit output
+                                        ; `check` cannot read.
                                         (if (fpIsRefusedHead h)
                                           (fpBad p)
                                           (if (strEq h "sizeof")
@@ -4518,11 +4475,8 @@
 ; `-` against its digits, which the lexer reads as one token. One
 ; otherwise.
 ;
-; The negative literal was refused until 2026-09-29, though `check`
-; accepted it and the program ran: the fuzzer's P4 turned `(2 7)` in
-; `tests/selfhost/380-literal-patterns.ax` into `(-00 7)`, and `fmt`
-; refused with no code. `tests/selfhost/1013-negative-literal-pattern.ax`
-; holds both spellings.
+; A negative literal pattern prints as `check` reads it;
+; `tests/selfhost/1013-negative-literal-pattern.ax` holds both spellings.
 (pub :: fpPatWidth (-> String Ints Int Int))
 (pub fn (fpPatWidth src v i)
   (if (||
@@ -5352,10 +5306,9 @@
                           ; the parser: all three print as written, the
                           ; unreadable type through the expression printer
                           ; where the type printer would refuse, and the
-                          ; checker keeps the refusal. This used to `fpBad`
-                          ; all three, which made the fixture that pins
-                          ; AX3056 unformattable - the same shape the
-                          ; effect printer above was given for AX3055.
+                          ; checker keeps the refusal, so the fixture that
+                          ; pins AX3056 is formattable, as the effect printer
+                          ; above does for AX3055.
                           {
                             (let fb
                               (if (&& (> (fnLen f) 0) (fpIsAtomText src (fnKid f 0) "mut"))
@@ -5902,9 +5855,8 @@
                               ; left at 0, so `(name :: 5)` parses too. The formatter
                               ; follows the parser: both print as written, through the
                               ; expression printer where the type printer would refuse,
-                              ; and the checker keeps the refusal. This used to `fpBad`
-                              ; both shapes, which made the fixture that pins AX3055
-                              ; unformattable (check-fmt, 2026-08-29).
+                              ; and the checker keeps the refusal, so the fixture that
+                              ; pins AX3055 is formattable.
                               false
                               true)
                             (if (== (fnLen op) 1)
@@ -6070,12 +6022,10 @@
                             (if (strEq h "macro")
                               (fpDeclMacro p n)
                               ; Any other head is a DECLARATION MACRO INVOCATION (the parser's
-                              ; TAG_D_MACROCALL since 2026-08-14), printed through the
-                              ; expression printer - which already normalises spacing and glues
-                              ; qualified names - because an invocation IS call-shaped. This
-                              ; used to be `fpBad`, so every file using the feature was
-                              ; unformattable with the least informative refusal in the
-                              ; toolchain. A singleton `(m)` keeps its parens here:
+                              ; TAG_D_MACROCALL), printed through the expression printer -
+                              ; which already normalises spacing and glues qualified names -
+                              ; because an invocation IS call-shaped. A singleton `(m)` keeps
+                              ; its parens here:
                               ; `fpApp`'s singleton unwrap is correct in expression
                               ; position - `(x)` IS `x` - but a bare `m` at top
                               ; level is not a declaration at all, so unwrapping
@@ -6298,7 +6248,7 @@
         ; and the same reason as `parseModuleWith`'s. It routes into the
         ; refusal this function already has for every input it cannot
         ; print, so a file too deep to format is left untouched and
-        ; exits 1, where it used to take the process down with SIGNAL 11.
+        ; exits 1 rather than exhausting the stack.
         ; The refusal names AX2005 in its text slot, which a refusal
         ; otherwise leaves empty: counting each `.name` link as a level,
         ; this walk refuses some files `check` accepts, and the driver
@@ -6494,10 +6444,8 @@
 ; the file as written plus its missing closers.
 ;
 ; A leading byte order mark is lifted off before the scan and put
-; back on the result - the one subcommand that still refused a BOM
-; file after the lexer learned to skip one (2026-08-21): `fscan` is
-; its own scanner, `fscanCovers` asks that every byte be a token or a
-; comment, and three bytes that are neither failed it. The mark is
+; back on the result: `fscan` is its own scanner, and `fscanCovers`
+; asks that every byte be a token or a comment. The mark is
 ; KEPT rather than dropped because the editor that wrote it expects
 ; it, and `fmt --check` compares the rewrite against the file as
 ; read.
