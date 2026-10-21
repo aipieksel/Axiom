@@ -268,13 +268,16 @@ have() { # have <got> <want> <what>
 # compiler totals gain seven Alloc,Mut, one Alloc,Unsafe and one pure row;
 # stdlib totals gain two Alloc,Mut, one Alloc,Unsafe and one pure row.
 # Same-compiler comparisons leave all IO and incomplete rows unchanged.
+# The scalar pruning cursor adds pruneIndexLine with Alloc,Mut,Unsafe;
+# pruneIndexDefs moves to Alloc,Mut with its cast in the private helper.
+# The measured net change is one Alloc,Mut row, with no IO change.
 echo "== compiler view: symbols --calls self_host/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3376 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3377 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 455 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 195 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 117 "exactly Alloc"

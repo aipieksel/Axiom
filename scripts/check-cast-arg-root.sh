@@ -249,13 +249,16 @@ echo "--- 1. user-level cast count does not grow ---"
 # Baseline 1246 adds the pruning probe's Unsafe live String-count
 # readback. Its borrowed String remains alive through the observation;
 # production conversions are unchanged (MM-VAL-23).
+# Baseline 1247 adds the pruning probe's Unsafe live Vec-header count
+# readback. It observes the retained line-vector share while its owner
+# remains alive; production conversions are unchanged (MM-VAL-23).
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1246 ]; then
-  ok "user-level (cast count $cast_count <= 1246)"
+elif [ "$cast_count" -le 1247 ]; then
+  ok "user-level (cast count $cast_count <= 1247)"
 else
-  bad "user-level (cast count $cast_count > 1246): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1247): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
