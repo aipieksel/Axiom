@@ -256,13 +256,17 @@ echo "--- 1. user-level cast count does not grow ---"
 # the argument-ledger tests' net removal of two forms: six raw reads
 # become typed, while one live-count read and three ablation/adaptor
 # forms exercise the old raw ledger. These are MM-VAL-23 test subjects.
+# Baseline 1256 adds one live String-count observation and seven raw
+# operand-table restorations in the MIR ownership control. The controls
+# reproduce the text leak; production removes four reference erasures
+# and the user-level conversions are MM-VAL-23 test subjects.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1248 ]; then
-  ok "user-level (cast count $cast_count <= 1248)"
+elif [ "$cast_count" -le 1256 ]; then
+  ok "user-level (cast count $cast_count <= 1256)"
 else
-  bad "user-level (cast count $cast_count > 1248): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1256): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -429,7 +433,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # binderCollectArms in a same-compiler source comparison.
 # Typed argument-register storage removes emitArgsRegs' String-to-word
 # insertion. Its two typed readbacks also remove the old Unsafe forgeries.
-erasure_pin=786
+# A same-compiler comparison removes mirParamOps' one text erasure and
+# mirEmitInsts' three; the typed operand table introduces none.
+erasure_pin=782
 erasure_sum() {  # <axsym> -> the #erasures= total over self_host/ rows
   awk '$1 == "F" && index($3, "self_host/") == 1 {
          for (i = 4; i <= NF; i++)
