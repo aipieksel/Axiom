@@ -75,6 +75,49 @@ EXPORTS = r'''
       (if (! (checkedSyntaxSame snapshot)) (set same false)))
     same
   })
+(pub :: probeListCount (-> (Vec CheckedSyntax) Int))
+(pub fn (probeListCount snapshots)
+  {
+    (let mut count 0)
+    (for snapshot in snapshots
+      (match snapshot
+        ((CheckedNodes actual accepted) (set count (+ count 1)))
+        (_ 0)))
+    count
+  })
+(pub :: probeNameCount (-> (Vec CheckedSyntax) Int))
+(pub fn (probeNameCount snapshots)
+  {
+    (let mut count 0)
+    (for snapshot in snapshots
+      (match snapshot
+        ((CheckedNames actual accepted) (set count (+ count 1)))
+        (_ 0)))
+    count
+  })
+(pub :: probeNodeSame (-> ASTNode ASTNode Bool))
+(pub fn (probeNodeSame actual accepted)
+  (checkedSyntaxSame (CheckedNode actual accepted)))
+(pub :: probeNodesSame (-> Nodes Nodes Bool))
+(pub fn (probeNodesSame actual accepted)
+  (checkedSyntaxSame (CheckedNodes actual accepted)))
+(pub :: probeNamesSame (-> Names Names Bool))
+(pub fn (probeNamesSame actual accepted)
+  (checkedSyntaxSame (CheckedNames actual accepted)))
+; Every word of a snapshotted node is guarded: bump each in turn.
+(pub :: probeAllWordGuards Bool)
+(pub fn (probeAllWordGuards)
+  {
+    (let mut good true)
+    (for slot in 0..13
+      {
+        (let node (mkEInt 42))
+        (let snapshots (checkedSnapshot (vecPush vecNew node)))
+        (writeNodeWord node slot (+ (nodeWireWord node slot) 1))
+        (if (probeUnchanged snapshots) (set good false))
+      })
+    good
+  })
 '''
 
 
@@ -140,7 +183,7 @@ def assert_owner_release(work):
 
 def rejected(actual, required, name):
     lines = actual.splitlines()
-    assert len(lines) == 41, (name, 'incomplete assertions', actual)
+    assert len(lines) == 62, (name, 'incomplete assertions', actual)
     failed = {int(line.split()[0]) for line in lines if line.endswith(' false')}
     assert required <= failed, (name, 'negative control escaped assertions', failed)
     return sorted(failed)
@@ -154,7 +197,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     compiler = str(Path(args.compiler).resolve())
     source = checked_source(root)
-    expected = ''.join(f'{i} true\n' for i in range(1, 42))
+    expected = ''.join(f'{i} true\n' for i in range(1, 63))
     owner = None
     if args.work is None:
         owner = tempfile.TemporaryDirectory(prefix='axiom-checked-snapshot-')
@@ -179,8 +222,29 @@ def main():
         control = seam.sub(r'\1i\2', source)
         rehash = rejected(run(compiler, root, work, control, 'rehash-control', '0'),
                           {24, 25, 35}, 'rehash')
-        print('ok   checked snapshot: 41 cases at O0/O2; exact owner releases; '
-              f'equality ablation {equality}; rehash ablation {rehash}')
+        seam = '(< slot 13)'
+        assert source.count(seam) == 1, 'node word guard seam changed'
+        words = rejected(run(compiler, root, work, source.replace(seam, '(< slot 12)'),
+                             'node-words-control', '0'), {62}, 'node words')
+        seam = '(== (vecLen actual) (vecLen accepted))'
+        assert source.count(seam) == 2, 'list length guard seams changed'
+        control = source.replace(seam, '(>= (vecLen actual) (vecLen accepted))')
+        lengths = rejected(run(compiler, root, work, control, 'length-control', '0'),
+                           {53, 58}, 'list lengths')
+        seam = '(nodeSame (vecGet actual i) (vecGet accepted i))'
+        assert source.count(seam) == 1, 'child identity guard seam changed'
+        control = source.replace(seam,
+            '(== (nodeTag (vecGet actual i)) (nodeTag (vecGet accepted i)))')
+        children = rejected(run(compiler, root, work, control, 'child-identity-control', '0'),
+                            {55}, 'child identity')
+        seam = '(addrEq (addrOf (vecGet actual i)) (addrOf (vecGet accepted i)))'
+        assert source.count(seam) == 1, 'name identity guard seam changed'
+        control = source.replace(seam, '(strEq (vecGet actual i) (vecGet accepted i))')
+        names = rejected(run(compiler, root, work, control, 'name-identity-control', '0'),
+                         {47, 60}, 'name identity')
+        print('ok   checked snapshot: 62 cases at O0/O2; exact owner releases; '
+              f'equality {equality}; rehash {rehash}; node words {words}; '
+              f'list lengths {lengths}; child identity {children}; name identity {names}')
     finally:
         if owner is not None:
             owner.cleanup()
