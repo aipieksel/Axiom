@@ -237,9 +237,9 @@ work; they do not claim full feature parity.
 | Explicit encoded executable workers preserve process isolation, bounded messages, deadlines and cancellation | Native Windows x64 validated by `tests/platform/worker-pool.py`; ARM64 validation pending |
 | Guarded usable-byte stack budgets for Windows executable workers | Not yet; `NativeStack` is explicit and `StackBytes` is refused before launch |
 | Parent allocator bookkeeping stays flat across repeated executable-worker calls | Not yet; repeated calls can retain bookkeeping despite retired native resources |
-| Windows command pools launch native processes at a bounded width, preserve submit order and own their cleanup | Implemented; native Windows validation pending for `tests/stdlib/987-command-pools.ax` |
-| Windows pollers watch terminal input, pipes, Ctrl-C and Ctrl-Break without losing buffered bytes or retaining closed files | Raw mode requires a read/write handle; native validation pending for `tests/platform/windows-console.ax` and `tests/platform/windows-controls.ax` |
-| Windows seeds and an installer bootstrap the compiler locally | Eight committed target seeds and transactional preview installer implemented; native Windows bootstrap and installation validation pending |
+| Windows command pools launch native processes at a bounded width, preserve submit order and own their cleanup | Native Windows x64 validated by `tests/stdlib/987-command-pools.ax`; ARM64 validation pending |
+| Windows pollers watch terminal input, pipes, Ctrl-C and Ctrl-Break without losing buffered bytes or retaining closed files | Control events validated on Windows x64; raw mode requires a read/write handle and its native validation is pending |
+| Windows seeds and an installer bootstrap the compiler locally | Native Windows x64 seed bootstrap validated; ARM64 bootstrap and transactional preview installation validation pending |
 | The embedded checks run on a named board | Not started |
 | Compatibility rules enforced at 1.0 (`COMPAT-6`) | Planned |
 

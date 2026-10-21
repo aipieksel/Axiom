@@ -218,13 +218,23 @@ echo "--- 1. user-level cast count does not grow ---"
 # checked-function-type tests, including their emitted source strings.
 # The handle conversions use live owners and change no share; the numeric
 # conversions create no reference (MM-VAL-23).
+# Baseline 1214 adds 141 reviewed ownership-probe occurrences: 48 in
+# emitter-line-buffer.ax/.py, 4 in emitter-pending-strings.ax/.py, 53 in
+# emitter-string-slots.ax/.py, 28 in emitter-symbol-scope.ax and 8 in
+# checked-snapshot-capacity.ax/.py. Of these, 102 inspect live reference
+# counts, 9 compare live identities, 3 are typed-return String readers,
+# 8 read the compiler's legacy raw results, 2 call raw setter bridges,
+# 2 restore their live String argument, 1 reads a popped slot, and 8
+# construct sole-share test descriptors. The last 6 are private failing
+# ablations or their source anchors. Every conversion is the ownership
+# behaviour under test (MM-VAL-23); stdlib and examples add none.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1073 ]; then
-  ok "user-level (cast count $cast_count <= 1073)"
+elif [ "$cast_count" -le 1214 ]; then
+  ok "user-level (cast count $cast_count <= 1214)"
 else
-  bad "user-level (cast count $cast_count > 1073): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1214): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
