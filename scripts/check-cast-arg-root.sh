@@ -246,13 +246,16 @@ echo "--- 1. user-level cast count does not grow ---"
 # erasure/restoration casts in its runner. The production factories use
 # ordinary counted results and retain the raw API's one-share obligation.
 # The remaining conversions are MM-VAL-23 ownership test subjects.
+# Baseline 1246 adds the pruning probe's Unsafe live String-count
+# readback. Its borrowed String remains alive through the observation;
+# production conversions are unchanged (MM-VAL-23).
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1245 ]; then
-  ok "user-level (cast count $cast_count <= 1245)"
+elif [ "$cast_count" -le 1246 ]; then
+  ok "user-level (cast count $cast_count <= 1246)"
 else
-  bad "user-level (cast count $cast_count > 1245): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1246): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"

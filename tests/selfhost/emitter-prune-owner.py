@@ -110,6 +110,8 @@ def check(axiom, repo, source_root, work):
     env['PATH'] = '/opt/homebrew/opt/llvm/bin:' + env.get('PATH', '')
     env['AXIOM_STDLIB'] = str(source_root / 'stdlib')
     env['AXIOM_STDLIB_PATH'] = str(source_root / 'stdlib')
+    run_checked([str(axiom), '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],
+                env=env, stdout=work / 'format.stdout', stderr=work / 'format.stderr')
 
     def build_run(label, level, emitter, negative=False):
         modules = private_modules(work / (label + '-modules'), source_root, emitter)
