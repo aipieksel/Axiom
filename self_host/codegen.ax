@@ -18848,16 +18848,27 @@
       (mirZeros v (- n 1))
     }))
 
+; Each operand slot owns its register spelling. Unwritten slots hold an
+; empty String, so replacing or dropping the table follows String ownership.
+(:: mirOperandTexts (-> Int Strings))
+(fn (mirOperandTexts n)
+  {
+    (let values (vecWithCapacity n))
+    (for i in 0..n
+      (vecPush values ""))
+    values
+  })
+
 ; A parameter renders as `%<source name>`, which is the name the
 ; `define` line already wrote (`emitParams`). The IR numbers its own
 ; parameters `%0, %1` for its printer; that numbering is not the LLVM
 ; one and must not reach the text.
-(pub :: mirParamOps (-> Ints Ints Strings Int Int))
+(pub :: mirParamOps (-> Strings Ints Strings Int Int))
 (pub fn (mirParamOps ops regs names i)
   (if (>= i (vecLen regs))
     0
     {
-      (vecSet ops (vecGet regs i) (as (concat "%" (llvmSym (strDup (vecGetStr names i)))) Int))
+      (vecSet ops (vecGet regs i) (concat "%" (llvmSym (strDup (vecGetStr names i)))))
       (mirParamOps ops regs names (+ i 1))
     }))
 
@@ -18870,8 +18881,7 @@
 ; i64 0, 42` - would be legal LLVM and would shift every register
 ; number after it, which is the failure this whole slice is shaped to
 ; make impossible to miss.
-(pub :: mirEmitInsts (-> Int (Vec MInst) Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: mirEmitInsts (-> Int (Vec MInst) Strings Int Int))
 (pub fn (mirEmitInsts cg v ops i)
   (if (>= i (vecLen v))
     cg
@@ -18879,12 +18889,12 @@
       (let n (vecGet v i))
       (if (== n.op MO_CONST)
         {
-          (vecSet ops n.dst (as (constStr n.a) Int))
+          (vecSet ops n.dst (constStr n.a))
           (mirEmitInsts cg v ops (+ i 1))
         }
         {
-          (let a (as (vecGet ops n.a) String))
-          (let b (as (vecGet ops n.b) String))
+          (let a (vecGet ops n.a))
+          (let b (vecGet ops n.b))
           (if (mirIsCmpOp n.name)
             {
               (let cn (allocReg cg))
@@ -18898,7 +18908,7 @@
                       (concat " i64 " (concat (concat a (concat ", " b)) ""))))
                   (emitLine cg
                     (concat (concat "  " r) (concat " = zext i1 " (concat cr " to i64"))))
-                  (vecSet ops n.dst (as r Int))
+                  (vecSet ops n.dst r)
                   (mirEmitInsts cg v ops (+ i 1))
                 }
               }
@@ -18911,7 +18921,7 @@
                   (emitLine cg
                     (concat (concat (concat "  " r) (concat " = " n.name))
                       (concat " i64 " (concat (concat a (concat ", " b)) ""))))
-                  (vecSet ops n.dst (as r Int))
+                  (vecSet ops n.dst r)
                   (mirEmitInsts cg v ops (+ i 1))
                 }
               }
@@ -18931,11 +18941,10 @@
 ; emission byte for byte. Without a count the routing could fall back
 ; to zero functions and every other check there would still pass.
 (pub :: mirEmitFn (-> Int MFunc Int Int))
-;@axiom:effect(unsafe)
 (pub fn (mirEmitFn cg f mode)
   {
     (let b (vecGet f.blocks 0))
-    (let ops (mirZeros vecNew f.nreg))
+    (let ops (mirOperandTexts f.nreg))
     (let cgM
       (if (== mode MIR_MARK)
         (emitLine cg "  ; mir")
@@ -18947,7 +18956,9 @@
         {
           (let tm (vecGet b.term 0))
           {
-            (cgSetResult cgB (as (vecGet ops tm.a) String))
+            ; The raw context gets independent text; the operand ledger
+            ; can then retire before the surrounding function is emitted.
+            (cgSetResult cgB (strDup (vecGet ops tm.a)))
             (memSetWord cgB 14 0)
             cgB
           }

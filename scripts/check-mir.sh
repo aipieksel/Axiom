@@ -672,8 +672,8 @@ p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
 # Whitespace-insensitive between atoms, for the reason the `ablate`
 # seams give: `axiom fmt` can rejoin a long constructor's arguments.
-pat = re.compile(r"\(vecSet\s+ops\s+n\.dst\s+\(as\s+\(constStr\s+n\.a\)\s+Int\)\s*\)")
-rep = "(vecSet ops n.dst (as (regStr (allocReg cg)) Int))"
+pat = re.compile(r"\(vecSet\s+ops\s+n\.dst\s+\(constStr\s+n\.a\)\s*\)")
+rep = "(vecSet ops n.dst (regStr (allocReg cg)))"
 hits = len(pat.findall(s))
 if hits != 1:
     sys.stderr.write("seam 3 appears %d times, expected 1\n" % hits)
