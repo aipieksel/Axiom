@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise the prune interner owner using actual emitted compiler modules.
+"""Exercise prune interner, cursor and line ownership with emitted modules.
 
 The source template becomes a private .ax input. Negative probes change only
-the copied codegen module. Existing parked line getters and raw CG storage
-remain outside this owner change; heap measurements compare like-for-like runs.
+the copied codegen module. The old loop is reconstructed from the current
+per-line helper, so shallow CI checkouts need no historical source files.
+Remaining raw CG storage is measured in like-for-like runs.
 """
 import argparse
 import hashlib
@@ -28,6 +29,13 @@ BRIDGES = r'''
 (pub :: probeStringCount (-> String Int))
 ;@axiom:effect(unsafe)
 (pub fn (probeStringCount value) (__load64 (as value Int) -2))
+(pub :: probeLineHeaderCount (-> Ints Int Int))
+;@axiom:effect(unsafe)
+(pub fn (probeLineHeaderCount lines index)
+  {
+    (let data (__load64 (as lines Int) 2))
+    (__load64 (__load64 data index) -2)
+  })
 '''
 
 
@@ -61,6 +69,8 @@ def check_owner_ir(path):
     required = ('@codegen$pruneIndexDefs(', '@codegen$pruneWalk(',
                 '@codegen$pruneRebuild(', '@raw$memSetWord(i64 %cg, i64 0,',
                 f'call void @axiom_release(i64 {ctx})')
+    old_lines = result(body, 'raw$memGetWord', r'i64 %cg, i64 0\)')
+    required += (f'call void @axiom_release(i64 {old_lines})',)
     drop = body.index(release)
     for operation in required:
         if operation not in body or body.rindex(operation) >= drop:
@@ -74,13 +84,103 @@ def check_owner_ir(path):
         raise RuntimeError('raw context slot0 must keep its unchanged nonowning scalar layout')
     if '@Intern$internNew(' in body or '@Intern$internFree(' in body:
         raise RuntimeError('prune must use ordinary typed ownership rather than a manual raw lifetime')
-    index = function(ir, 'codegen$pruneIndexDefs')
-    getter = result(index, 'raw$vecGetStr')
     return {'owner': owner, 'borrowed_word': raw, 'context': ctx,
             'ordinary_final_releases': 1, 'drop_after_index_walk_rebuild_publish_ctx': True,
-            'raw_context_slot0_evidence': 0,
-            'unchanged_index_getter_release_count': index.count(f'call void @axiom_release(i64 {getter})'),
-            'known_index_getter_loss_out_of_scope': True}
+            'raw_context_slot0_evidence': 0}
+
+
+def check_cursor_ir(path):
+    ir = path.read_text()
+    outer = function(ir, 'codegen$pruneIndexDefs')
+    line = result(outer, 'raw$vecGetStr')
+    if outer.count(f'call void @axiom_release(i64 {line})') != 1:
+        raise RuntimeError('line getter must have one ordinary release per iteration')
+    cursor = result(outer, 'axiom_alloc', r'i64 24\)')
+    if outer.count(f'call void @axiom_release(i64 {cursor})') != 1:
+        raise RuntimeError('scalar cursor must have one ordinary final release')
+    call = outer.index('@codegen$pruneIndexLine(')
+    if outer.index(f'call void @axiom_release(i64 {line})') < call:
+        raise RuntimeError('line getter retires before its per-line borrow ends')
+    if outer.index(f'call void @axiom_release(i64 {cursor})') < call:
+        raise RuntimeError('cursor retires before its per-line uses end')
+    if 'store i64 8, ptr ' not in outer or 'store i64 1, ptr ' not in outer:
+        raise RuntimeError('cursor must start with empty reference map and count1')
+    helper = function(ir, 'codegen$pruneIndexLine')
+    if re.findall(r'^  ret .*', helper, re.M) != ['  ret i64 0']:
+        raise RuntimeError('per-line helper must return literal unit')
+    if re.search(r'@axiom_(?:retain|release)\(i64 %(?:line|cursor)\)', helper):
+        raise RuntimeError('per-line helper must borrow its line and cursor')
+    if helper.count('@Str$strSlice(') != 1 or '@Str$strDup(' in helper:
+        raise RuntimeError('symbol slice must keep its original ownership and spelling')
+    return {'line_release_count': 1, 'cursor_release_count': 1,
+            'cursor_bytes': 24, 'cursor_reference_map': 0,
+            'helper_unit_return': True, 'borrowed_helper_parameters': True}
+
+
+def form_end(source, start):
+    """End of one balanced source form, respecting strings and comments."""
+    depth = 0
+    quoted = escaped = comment = False
+    for index in range(start, len(source)):
+        char = source[index]
+        if comment:
+            if char == '\n':
+                comment = False
+            continue
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == ';':
+            comment = True
+        elif char == '"':
+            quoted = True
+        elif char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise RuntimeError('unbalanced source while reversing cursor extraction')
+
+
+def restore_old_loop(source):
+    """Inline the same per-line algorithm into its original three-local loop."""
+    helper_start = source.index('(fn (pruneIndexLine ')
+    helper = source[helper_start:form_end(source, helper_start)]
+    prefix = helper.index('  {\n') + len('  {\n')
+    suffix = helper.rindex('\n    ()\n  })')
+    body = helper[prefix:suffix]
+    for field, local in (('current', 'cur'), ('function', 'function'), ('depth', 'depth')):
+        body = body.replace('cursor.' + field, local)
+    body = '\n'.join('    ' + line for line in body.splitlines())
+    outer_start = source.index('(pub fn (pruneIndexDefs ')
+    outer_end = form_end(source, outer_start)
+    declaration = '(pub :: pruneIndexDefs (-> Ints Int Ints Ints Ints Ints Ints Int))'
+    if source.count(declaration) != 1:
+        raise RuntimeError('cursor ablation needs the unchanged public index signature')
+    old = declaration + '''
+;@axiom:effect(unsafe)
+(pub fn (pruneIndexDefs lines si idToDef defStart defEnd live defOf)
+  {
+    (let mut i 0)
+    (let mut cur (- 0 1))
+    (let mut function 0)
+    (let mut depth 0)
+    (while (< i (vecLen lines))
+      {
+        (let line (vecGetStr lines i))
+''' + body + '''
+        (set i (+ i 1))
+      })
+    0
+  })'''
+    start = source.index('(struct PruneCursor sealed')
+    return source[:start] + old + source[outer_end:]
 
 
 def private_modules(directory, source_root, source):
@@ -97,8 +197,8 @@ def private_modules(directory, source_root, source):
 def check(axiom, repo, source_root, work):
     template = repo / 'tests/selfhost/emitter-prune-owner.axp'
     expected = template.with_suffix('.out').read_text().splitlines()
-    if expected != [f'{i} true' for i in range(1, 29)]:
-        raise RuntimeError('update the explicit 28-case verdict inventory')
+    if expected != [f'{i} true' for i in range(1, 35)]:
+        raise RuntimeError('update the explicit 34-case verdict inventory')
     fixture = work / 'fixture.ax'
     fixture.write_text(template.read_text())
     source = (source_root / 'self_host/codegen.ax').read_text()
@@ -112,8 +212,9 @@ def check(axiom, repo, source_root, work):
     env['AXIOM_STDLIB_PATH'] = str(source_root / 'stdlib')
     run_checked([str(axiom), '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],
                 env=env, stdout=work / 'format.stdout', stderr=work / 'format.stderr')
+    semantic_reference = []
 
-    def build_run(label, level, emitter, negative=False):
+    def build_run(label, level, emitter, negative=None):
         modules = private_modules(work / (label + '-modules'), source_root, emitter)
         local = dict(env, AXIOM_PATH=str(modules))
         binary = work / label
@@ -124,22 +225,42 @@ def check(axiom, repo, source_root, work):
         output = work / (label + '.stdout')
         error = work / (label + '.stderr')
         run_checked([str(binary)], env=local, stdout=output, stderr=error, timeout=60)
-        check_output(output, expected)
-        growth = re.fullmatch(r'prune-soak-growth (-?\d+) (-?\d+)\n', error.read_text())
+        failures = check_output(output, expected,
+                                 required_failures=range(29, 35) if negative == 'old-loop' else ())
+        if negative == 'old-loop' and failures != set(range(29, 35)):
+            raise RuntimeError(f'{label}: reversing the loop changed more than the header-count verdicts')
+        text = error.read_text()
+        growth = re.search(r'^prune-soak-growth (-?\d+) (-?\d+)\n', text, re.M)
         if growth is None:
             raise RuntimeError(f'{label}: missing exact retained-heap measurements')
+        semantics = text[:growth.start()] + text[growth.end():]
+        if not semantic_reference:
+            semantic_reference.append(semantics)
+            (work / 'semantic-state.txt').write_text(semantics)
+        elif semantic_reference[0] != semantics:
+            raise RuntimeError(f'{label}: index tables, spellings, live state or rebuilt bytes changed')
         row = {'label': label, 'cases': len(expected),
+               'failed_cases': sorted(failures), 'semantic_bytes_identical': True,
                'index_scope_retained_bytes': int(growth[1]),
                'whole_pruner_retained_bytes': int(growth[2])}
         try:
             row['owner_ir'] = check_owner_ir(binary.with_suffix('.ll'))
         except RuntimeError as problem:
-            if not negative:
+            if negative != 'raw-owner':
                 raise
             row['owner_ir_expected_failure'] = str(problem)
         else:
-            if negative:
+            if negative == 'raw-owner':
                 raise RuntimeError(f'{label}: restoring the raw owner unexpectedly passed owner proof')
+        try:
+            row['cursor_ir'] = check_cursor_ir(binary.with_suffix('.ll'))
+        except RuntimeError as problem:
+            if negative != 'old-loop':
+                raise
+            row['cursor_ir_expected_failure'] = str(problem)
+        else:
+            if negative == 'old-loop':
+                raise RuntimeError(f'{label}: restoring the old loop unexpectedly passed cursor proof')
         static_output = work / (label + '.static.stdout')
         static_error = work / (label + '.static.stderr')
         run_checked([str(binary), '--emit-staticlib'], env=local,
@@ -153,14 +274,14 @@ def check(axiom, repo, source_root, work):
     for level in (0, 2):
         row = build_run(f'positive-O{level}', level, source)
         report['positive'].append(row)
-        print(f'ok   prune owner: 28 semantic + 3 static-library cases at O{level}; '
+        print(f'ok   prune owner: 34 semantic + 3 static-library cases at O{level}; '
               f'index retention {row["index_scope_retained_bytes"]}, '
               f'whole-pruner retention {row["whole_pruner_retained_bytes"]}', flush=True)
     raw = replace_once(source,
                        '(let siOwner internNewTyped)\n      (let si (internWordOf siOwner))',
                        '(let si internNew)', 'restore only the raw prune interner')
     for level in (0, 2):
-        row = build_run(f'raw-owner-O{level}', level, raw, negative=True)
+        row = build_run(f'raw-owner-O{level}', level, raw, negative='raw-owner')
         positive = report['positive'][level // 2]['whole_pruner_retained_bytes']
         row['extra_retained_bytes_vs_candidate'] = row['whole_pruner_retained_bytes'] - positive
         if row['extra_retained_bytes_vs_candidate'] <= 0:
@@ -168,6 +289,13 @@ def check(axiom, repo, source_root, work):
         report['negative'].append(row)
         print(f'ok   raw-owner ablation at O{level}: owner proof fails and retains '
               f'{row["extra_retained_bytes_vs_candidate"]} additional bytes', flush=True)
+    old_loop = restore_old_loop(source)
+    for level in (0, 2):
+        row = build_run(f'old-loop-O{level}', level, old_loop, negative='old-loop')
+        report['negative'].append(row)
+        print(f'ok   old-loop ablation at O{level}: header cases 29-34 and cursor proof fail; '
+              'all indexed state and rebuilt bytes agree', flush=True)
+    report['semantic_state_sha256'] = hashlib.sha256(semantic_reference[0].encode()).hexdigest()
     (work / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

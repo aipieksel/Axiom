@@ -15832,71 +15832,84 @@
 ; Each line records its node index plus one; zero remains a top-level root.
 ; Function bodies end at the emitter's bare closing brace. Global nodes
 ; include all initializer and attribute lines before the next statement.
-(pub :: pruneIndexDefs (-> Ints Int Ints Ints Ints Ints Ints Int))
+; A single pass owns this scalar cursor. A line is borrowed only while
+; its classification and numeric indexing updates run.
+(struct PruneCursor sealed
+  (mut current : Int)
+  (mut function : Int)
+  (mut depth : Int))
+
+(:: pruneIndexLine (-> String Int PruneCursor Int Ints Ints Ints Ints Ints ()))
 ;@axiom:effect(unsafe)
+(fn (pruneIndexLine line i cursor si idToDef defStart defEnd live defOf)
+  {
+    (if (&& (>= cursor.current 0)
+          (&& (== cursor.function 0) (&& (== cursor.depth 0) (pruneModuleLine line))))
+      (set cursor.current (- 0 1)))
+    (if (>= cursor.current 0)
+      {
+        (vecPush defOf (+ cursor.current 1))
+        (vecSet defEnd cursor.current i)
+        (if (== cursor.function 1)
+          (if (strEq line "}")
+            (set cursor.current (- 0 1)))
+          (set cursor.depth (pruneGlobalDepth line cursor.depth)))
+      }
+      {
+        (let isFunction (strStartsWith line "define "))
+        (let at
+          (if isFunction
+            (symtabAtOf line 0 (strLen line))
+            (if (strStartsWith line "@")
+              0
+              (- 0 1))))
+        (let end
+          (if (< at 0)
+            (- 0 1)
+            (if isFunction
+              (symtabEndOf line (+ at 1) (strLen line))
+              (pruneRefEnd line (+ at 1) (strLen line)))))
+        (if (if (|| (< at 0) (< end 0))
+          false
+          (|| isFunction (pruneLocalGlobal line end)))
+          {
+            (let sym (strSlice line (+ at 1) (- end (+ at 1))))
+            (let d (vecLen defStart))
+            (vecPush defStart i)
+            (vecPush defEnd i)
+            (vecPush live 0)
+            {
+              (let id (internIntern si sym))
+              (if (== id (vecLen idToDef))
+                (vecPush idToDef d)
+                (as 0 (Vec Int)))
+            }
+            (vecPush defOf (+ d 1))
+            (if isFunction
+              {
+                (set cursor.function 1)
+                (set cursor.current d)
+              }
+              {
+                (set cursor.function 0)
+                (set cursor.depth (pruneGlobalDepth line 0))
+                (set cursor.current d)
+              })
+          }
+          (vecPush defOf 0))
+      })
+    ()
+  })
+
+(pub :: pruneIndexDefs (-> Ints Int Ints Ints Ints Ints Ints Int))
 (pub fn (pruneIndexDefs lines si idToDef defStart defEnd live defOf)
   {
+    (let cursor (PruneCursor :current (- 0 1) :function 0 :depth 0))
     (let mut i 0)
-    (let mut cur (- 0 1))
-    (let mut function 0)
-    (let mut depth 0)
     (while (< i (vecLen lines))
       {
         (let line (vecGetStr lines i))
-        (if (&& (>= cur 0) (&& (== function 0) (&& (== depth 0) (pruneModuleLine line))))
-          (set cur (- 0 1)))
-        (if (>= cur 0)
-          {
-            (vecPush defOf (+ cur 1))
-            (vecSet defEnd cur i)
-            (if (== function 1)
-              (if (strEq line "}")
-                (set cur (- 0 1)))
-              (set depth (pruneGlobalDepth line depth)))
-          }
-          {
-            (let isFunction (strStartsWith line "define "))
-            (let at
-              (if isFunction
-                (symtabAtOf line 0 (strLen line))
-                (if (strStartsWith line "@")
-                  0
-                  (- 0 1))))
-            (let end
-              (if (< at 0)
-                (- 0 1)
-                (if isFunction
-                  (symtabEndOf line (+ at 1) (strLen line))
-                  (pruneRefEnd line (+ at 1) (strLen line)))))
-            (if (if (|| (< at 0) (< end 0))
-              false
-              (|| isFunction (pruneLocalGlobal line end)))
-              {
-                (let sym (strSlice line (+ at 1) (- end (+ at 1))))
-                (let d (vecLen defStart))
-                (vecPush defStart i)
-                (vecPush defEnd i)
-                (vecPush live 0)
-                {
-                  (let id (internIntern si sym))
-                  (if (== id (vecLen idToDef))
-                    (vecPush idToDef d)
-                    (as 0 (Vec Int)))
-                }
-                (vecPush defOf (+ d 1))
-                (if isFunction
-                  {
-                    (set function 1)
-                    (set cur d)
-                  }
-                  {
-                    (set function 0)
-                    (set depth (pruneGlobalDepth line 0))
-                    (set cur d)
-                  })
-              }
-              (vecPush defOf 0))
-          })
+        (pruneIndexLine line i cursor si idToDef defStart defEnd live defOf)
         (set i (+ i 1))
       })
     0

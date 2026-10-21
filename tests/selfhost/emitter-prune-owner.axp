@@ -86,6 +86,13 @@
     (let marked vecNew)
     (let definitions vecNew)
     (pruneIndexDefs lines si ids starts ends marked definitions)
+    (emitNumbers "ids" ids)
+    (emitNumbers "starts" starts)
+    (emitNumbers "ends" ends)
+    (emitNumbers "initial-live" marked)
+    (emitNumbers "definitions" definitions)
+    (for j in 0..(internCount si)
+      (writeStr stderr (concat "name:" (concat (internLookup si j) "\n"))))
     (say 1 (== (internCount si) 6))
     (say 2 (&& (== (vecLen starts) 6) (== (vecLen definitions) 23)))
     (say 3 (&& (== (vecGet starts 0) 1) (== (vecGet ends 0) 5)))
@@ -99,10 +106,12 @@
       (if (== (vecGet definitions i) 0)
         (pruneScanLine ctx (probeLineAt lines i))))
     (pruneWalk ctx lines starts ends)
+    (emitNumbers "live" marked)
     (say 8 (&& (== (vecGet marked 0) 1) (== (vecGet marked 1) 1)))
     (say 9 (&& (== (vecGet marked 2) 0) (== (vecGet marked 3) 0)))
     (say 10 (&& (== (vecGet marked 4) 1) (== (vecGet marked 5) 1)))
     (let out (pruneRebuild lines definitions marked))
+    (emitRows out)
     (say 11 (== (vecLen out) 19))
     (say 12 (strEq (vecGet out 0) "; nonsymbol"))
     (let kept (keptSymbol lines))
@@ -144,7 +153,7 @@
     (let growth (- live before))
     (say 23 (== total 12000))
     (say 24 (strEq (probeLineAt lines 14) "define internal i64 @\"quoted name\"() {"))
-    ; Existing parked line getters and raw CG owners are outside this change.
+    ; Remaining raw CG storage is outside these scoped ownership changes.
     ; Report whole-pruner retention without treating it as a zero-growth claim.
     (let complete inputCG)
     (pruneDeadDefs complete)
@@ -209,6 +218,62 @@
         (productionChecks)
         (soakChecks)
         (largeChecks)
+        (cursorHeaderChecks)
       })
     0
+  })
+
+(:: emitNumbers (-> String Ints ()))
+;@axiom:effect(io)
+(fn (emitNumbers label values)
+  {
+    (writeStr stderr (concat label ":"))
+    (for i in 0..(vecLen values)
+      (writeStr stderr (concat " " (fmtInt (vecGet values i)))))
+    (writeStr stderr "\n")
+  })
+
+(:: emitRows (-> (Vec String) ()))
+;@axiom:effect(io)
+(fn (emitRows rows)
+  (for i in 0..(vecLen rows)
+    (writeStr stderr (concat "row:" (concat (vecGet rows i) "\n")))))
+
+(:: lineCounts (-> Ints Ints))
+(fn (lineCounts lines)
+  {
+    (let values vecNew)
+    (for i in 0..(vecLen lines)
+      (vecPush values (probeLineHeaderCount lines i)))
+    values
+  })
+
+(:: sameLineCounts (-> Ints Ints Bool))
+(fn (sameLineCounts lines before)
+  {
+    (let mut same true)
+    (for i in 0..(vecLen lines)
+      (if (!= (probeLineHeaderCount lines i) (vecGet before i))
+        (set same false)))
+    same
+  })
+
+(:: cursorHeaderChecks ())
+;@axiom:effect(io)
+(fn (cursorHeaderChecks)
+  {
+    (let cg inputCG)
+    (let lines (probeLines cg))
+    (let before (lineCounts lines))
+    (let owner internNewTyped)
+    (let si (internWordOf owner))
+    (pruneIndexDefs lines si vecNew vecNew vecNew vecNew vecNew)
+    (say 29 (== (probeLineHeaderCount lines 0) (vecGet before 0)))
+    (say 30 (== (probeLineHeaderCount lines 1) (vecGet before 1)))
+    (say 31 (== (probeLineHeaderCount lines 14) (vecGet before 14)))
+    (say 32 (== (probeLineHeaderCount lines 18) (vecGet before 18)))
+    (say 33 (sameLineCounts lines before))
+    (for i in 0..1000
+      (indexRoundtrip lines))
+    (say 34 (sameLineCounts lines before))
   })
