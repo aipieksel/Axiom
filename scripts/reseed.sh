@@ -126,6 +126,18 @@ if ! git diff --quiet HEAD -- 'bootstrap/*.ll'; then
 fi
 echo "the committed seed is ${prev}'s"
 
+# The sources the new seed is emitted from must be committed. The seed
+# is read below from the working tree's `stdlib` and `self_host`, so an
+# uncommitted edit there - another session's, in a shared checkout -
+# would become a seed whose tree no commit holds, and the lineage gate
+# could never replay its row. Reseed from a clean worktree instead.
+dirty="$(git status --porcelain --untracked-files=all -- self_host stdlib 2>/dev/null | head -5)"
+if [[ -n "$dirty" ]]; then
+  fail "self_host/ or stdlib/ has uncommitted changes, and the seed would be emitted from them:
+$dirty
+     commit them, or reseed from a clean worktree (git worktree add <dir> HEAD)"
+fi
+
 ln -s "$repo_root/stdlib"    "$work/stdlib"
 ln -s "$repo_root/self_host" "$work/self_host"
 cp "$repo_root/self_host/main.ax" "$work/in.ax"

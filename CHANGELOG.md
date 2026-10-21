@@ -16,6 +16,16 @@ its changelog too.
 
 ## Unreleased
 
+- The seed lineage replays from the Rust anchor again. `fb0b6bcb`
+  copied `2c4a97d1`'s seed back into place, and `bootstrap/CHAIN` records
+  that as a `restore` row the gate checks byte for byte; `2c4a97d1` and
+  `f0f83759` get the rows they were missing. Seeds compare with the
+  directory inside an `; axiom-asm-file` comment read as `<stdlib>`,
+  because compilers before `b81ceef3` wrote the build machine's path
+  there. `scripts/reseed.sh` refuses a tree with uncommitted sources, and
+  `--replay-seed-link FROM SEED` measures one link. Tested by
+  `scripts/check-seed-lineage.sh` and `tests/bootstrap/seed-restores.py`.
+
 - Restriction checks follow the edges a call through a field, or through
   a local that holds one of several functions, may take. `no-foreign`,
   `no-recursion` and `no-cast:deep` prove a claim when none of those

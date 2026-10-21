@@ -279,6 +279,29 @@ bridge builds re-emits its own tree to a fixpoint 67 and 1,282 lines
 from what was committed. `79c8ebc`'s tree reaches a fixpoint from
 `c98924c` that is 87,624 lines from its seed.
 
+### A restored seed, and a build path in a comment
+
+`fb0b6bcb` didn't emit its seed: it copied `2c4a97d1`'s whole
+`bootstrap/` tree back into place. Its row says `restore` with
+`prior=2c4a97d1`. The gate checks that the two `bootstrap/` trees are
+the same Git object, that `2c4a97d1` is an earlier row and an ancestor,
+and that the commit wrote the seed. Nothing is compiled for that row,
+and the next row reproduces from the restored bytes.
+
+Compilers before `b81ceef3` wrote the directory the build ran in into
+one LLVM comment, `; axiom-asm-file N "PATH"`. So the seeds of
+`f0f83759`, `826aa922` and `c779c77e` name a build machine's directory
+there, and a replay from any other directory differs in that line
+alone. The gate compares seeds with that directory read as `<stdlib>`,
+which is what the compiler writes itself now. Every other byte decides,
+the file's own name included, and the gate's negative probes show both
+halves.
+
+`scripts/reseed.sh` refuses to run while `self_host/` or `stdlib/` has
+uncommitted changes, so a seed is always some commit's emission.
+`check-seed-lineage.sh --replay-seed-link FROM SEED` replays one link on
+its own, which is how a new row's stage and time are measured.
+
 ### Two more facts from the replay
 
 The first link, `60445dc -> 3b6d485`, can't be replayed seed to seed.

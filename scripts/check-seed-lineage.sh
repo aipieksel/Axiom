@@ -112,6 +112,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-sums.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-emit.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-restores.sh"
 # `--no-stdlib`: this gate never compiles this checkout's sources, and
 # an exported `AXIOM_STDLIB` naming them is exactly the wrong tree for
 # every emission below. `gate_init` may bootstrap `.axiom-bin/axiom`
@@ -119,10 +120,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/seed-emit.sh"
 gate_init --no-stdlib
 
 full=0
+focused_from=""; focused_seed=""
 case "${1:-}" in
-  --full) full=1 ;;
+  --full) [[ $# == 1 ]] || exit 2; full=1 ;;
+  --replay-seed-link)
+    [[ $# == 3 ]] || { echo "usage: $0 --replay-seed-link FROM SEED" >&2; exit 2; }
+    focused_from="$2"; focused_seed="$3" ;;
   "") ;;
-  *) echo "usage: $0 [--full]   (or AXIOM_LINEAGE_FULL=1 $0)" >&2; exit 2 ;;
+  *) echo "usage: $0 [--full | --replay-seed-link FROM SEED]" >&2; exit 2 ;;
 esac
 # The same switch for a caller that cannot pass an argument - a shared
 # CI `run:` line, a cron wrapper - spelled the way every option in this
@@ -131,6 +136,10 @@ esac
 # the precedent and the second variable here follows it exactly.
 [[ "${AXIOM_LINEAGE_FULL:-0}" == 1 ]] && { full=1; echo "AXIOM_LINEAGE_FULL=1: replaying every row"; }
 bless="${AXIOM_BLESS:-0}"
+if [[ -n "$focused_seed" && ( "$full" == 1 || "$bless" == 1 ) ]]; then
+  echo "FAIL: a focused link replay cannot use --full, AXIOM_LINEAGE_FULL or AXIOM_BLESS" >&2
+  exit 2
+fi
 
 failed=0; checks=0; skipped=0
 # `probe_mode` re-points the two reporters at a scratch counter, so the
@@ -272,6 +281,22 @@ emit() {  # <compiler> <wdir> <out.ll>; sets emit_reason on failure
 }
 lines_differing() { diff "$1" "$2" | grep -c '^[<>]' || true; }
 
+# Two seeds are the same emission when their bytes agree after the
+# directory inside an `; axiom-asm-file N "PATH"` line is written as
+# `<stdlib>`. That line is an LLVM comment naming the assembly file a
+# module took, and it changes no code. Compilers before b81ceef3 wrote
+# the directory the build ran in there, so the seeds of f0f83759,
+# 826aa922 and c779c77e carry an absolute path of the machine that
+# emitted them, and a replay from any other directory differs in that
+# one line. From b81ceef3 on the compiler writes `<stdlib>` itself. Every
+# other byte decides, the file's own name included; the negative probes
+# below show both halves.
+seed_norm() { LC_ALL=C sed -E 's#^(; axiom-asm-file [0-9]+ ")[^"]*/stdlib/#\1<stdlib>/#' "$1"; }
+seed_cmp() {  # <a.ll> <b.ll> -> 0 when the two are the same seed
+  cmp -s "$1" "$2" && return 0
+  cmp -s <(seed_norm "$1") <(seed_norm "$2")
+}
+
 # ladder <compiler> <wdir> <seed.ll> <n> <label>
 #   The compiler emits the tree: if that equals the seed, `matched`
 #   is stage<n>. Otherwise the emission is built and re-emits once:
@@ -283,12 +308,12 @@ ladder() {
   local comp="$1" w="$2" seed="$3" n="$4" label="$5"
   local s1="$w/$label.s$n.ll" s2="$w/$label.s$((n+1)).ll"
   if ! emit "$comp" "$w" "$s1"; then ladder_reason="stage$n was not produced ($emit_reason)"; return 1; fi
-  if cmp -s "$s1" "$seed"; then matched="stage$n"; final_ir="$s1"; return 0; fi
+  if seed_cmp "$s1" "$seed"; then matched="stage$n"; final_ir="$s1"; return 0; fi
   if ! build_compiler "$s1" "$w/$label.stage$n"; then
     ladder_reason="stage$n differs from the seed by $(lines_differing "$s1" "$seed") lines and does not build ($(build_reason "$w/$label.stage$n"))"; return 1
   fi
   if ! emit "$w/$label.stage$n" "$w" "$s2"; then ladder_reason="stage$((n+1)) was not produced ($emit_reason)"; return 1; fi
-  if cmp -s "$s2" "$seed"; then matched="stage$((n+1))"; final_ir="$s2"; stage_note=" (stage$n off by $(lines_differing "$s1" "$seed") lines)"; return 0; fi
+  if seed_cmp "$s2" "$seed"; then matched="stage$((n+1))"; final_ir="$s2"; stage_note=" (stage$n off by $(lines_differing "$s1" "$seed") lines)"; return 0; fi
   ladder_reason="MISMATCH: stage$((n+1)) differs from the seed by $(lines_differing "$s2" "$seed") lines (stage$n by $(lines_differing "$s1" "$seed"))"
   return 1
 }
@@ -431,7 +456,7 @@ replay_walk() {  # <prev> <next> <listfile> <dir>
       emit_as "$c"
       emit "$new" "$nd/w" "$nd/w/re.ll" || { ladder_reason="step $i (${c}): the new compiler cannot re-emit its own tree ($emit_reason)"; return 1; }
       emit_as "$next"
-      if cmp -s "$nd/w/re.ll" "$nd/seed.ll"; then note=" - re-emits its own seed exactly"
+      if seed_cmp "$nd/w/re.ll" "$nd/seed.ll"; then note=" - re-emits its own seed exactly"
       else note=" - an orphan: re-emission differs from its committed seed by $(lines_differing "$nd/w/re.ll" "$nd/seed.ll") lines"; fi
     fi
     echo "     step $i (${c}): ok ($((SECONDS - ts))s)$note"
@@ -445,7 +470,7 @@ replay_walk() {  # <prev> <next> <listfile> <dir>
   # own re-emission is stage2.
   extract "$next" "$d/ftree" self_host stdlib; workdir "$d/ftree" "$d/fw"
   emit "$cur" "$d/fw" "$d/fw/final.ll" || { ladder_reason="the final compiler cannot re-emit the ${next:0:7} tree ($emit_reason)"; return 1; }
-  if cmp -s "$d/fw/final.ll" "$want"; then matched="stage2"; final_ir="$d/fw/final.ll"; stage_note=" ($i steps, $((SECONDS - t0))s)"; return 0; fi
+  if seed_cmp "$d/fw/final.ll" "$want"; then matched="stage2"; final_ir="$d/fw/final.ll"; stage_note=" ($i steps, $((SECONDS - t0))s)"; return 0; fi
   ladder_reason="the walk ends $(lines_differing "$d/fw/final.ll" "$want") lines from the ${next:0:7} seed"
   return 1
 }
@@ -474,7 +499,7 @@ replay_anchor() {  # <next> <dir>
   seed_at "$next" "$d/want.ll"
   anchor_stage1 "$d/tree" "$d/w" || return 1
   ladder "$d/w/stage1" "$d/w" "$d/want.ll" 2 link || return 1
-  if cmp -s "$d/w/stage1.ll" "$d/want.ll"; then ladder_reason="the Rust codegen's own IR equals the seed - the anchor is not a second implementation"; return 1; fi
+  if seed_cmp "$d/w/stage1.ll" "$d/want.ll"; then ladder_reason="the Rust codegen's own IR equals the seed - the anchor is not a second implementation"; return 1; fi
   echo "     the Rust codegen's own IR for stage1 is $(wc -l < "$d/w/stage1.ll" | tr -d ' ') lines against the seed's $(wc -l < "$d/want.ll" | tr -d ' '), as two codegens must differ"
 }
 anchor_stage1() {  # <tree> <wdir>: the Rust compiler builds stage1 from the tree, with its own llc/cc driver
@@ -484,6 +509,52 @@ anchor_stage1() {  # <tree> <wdir>: the Rust compiler builds stage1 from the tre
     || { ladder_reason="the Rust compiler cannot build stage1: $(grep -m1 -iE 'error' "$w/rust-build.log" | cut -c1-120)"; return 1; }
   [[ -x "$w/stage1" && -s "$w/stage1.ll" ]] || { ladder_reason="the Rust compiler produced no stage1"; return 1; }
 }
+
+# A measured link for metadata repair. This uses the same seed replay
+# and byte comparison as the full gate, but exits before chain parsing,
+# checkpoint handling or blessing. Its verdict certifies only this edge.
+if [[ -n "$focused_seed" ]]; then
+  from="$(resolve "$focused_from")"; seed="$(resolve "$focused_seed")"
+  [[ -n "$from" && -n "$seed" && "$from" != "$seed" ]] \
+    || { echo "FAIL: a focused link needs two distinct committed seeds"; exit 1; }
+  git -C "$repo_root" merge-base --is-ancestor "$from" "$seed" \
+    || { echo "FAIL: the predecessor is not an ancestor of the seed"; exit 1; }
+  has_seed "$from" && has_seed "$seed" \
+    || { echo "FAIL: the focused link lacks a $target seed"; exit 1; }
+  echo "== focused seed link: ${from:0:8} -> ${seed:0:8} on $target =="
+  d="$work/focused"; mkdir -p "$d"
+  emit_as "$seed"
+  t0=$SECONDS
+  if ! replay_seed "$from" "$seed" "$d"; then
+    echo "FAIL focused link: $ladder_reason"
+    exit 1
+  fi
+  secs=$((SECONDS - t0))
+  stored="$(git -C "$repo_root" show "$seed:bootstrap/STAMP" | sed -n 's/^Source stamp: *//p' | tr -d '[:space:]')"
+  actual="$(gate_seed_source_stamp "$d/tree")"
+  [[ "$stored" == "$actual" ]] \
+    || { echo "FAIL focused link: the seed's STAMP does not describe its own sources"; exit 1; }
+  echo "ok   own-source stamp $actual"
+  echo "measured row: ${seed:0:8} ${from:0:8} seed $matched $secs"
+  echo "ok   $matched$stage_note is the committed seed (its bytes, with an asm-file comment's directory read as <stdlib>)"
+  cp "$d/want.ll" "$d/flipped.ll"
+  printf X | dd of="$d/flipped.ll" bs=1 seek=100 conv=notrunc 2>/dev/null
+  ! cmp -s "$d/flipped.ll" "$d/want.ll" && ! seed_cmp "$final_ir" "$d/flipped.ll" \
+    || { echo "FAIL focused link: the changed-seed negative comparison passed"; exit 1; }
+  echo "ok   the one-byte changed-seed comparison is refused"
+  echo "FOCUSED PASS: one seed link measured; full ancestry and checkpoint were not certified"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------
+echo
+echo "== restore events: the structural check, against private histories =="
+if python3 -I "$repo_root/tests/bootstrap/seed-restores.py" > "$work/seed-restores.out" 2>&1; then
+  ok "tests/bootstrap/seed-restores.py: $(grep -c '^ok' "$work/seed-restores.out") cases and negative probes pass"
+else
+  fail "tests/bootstrap/seed-restores.py failed"
+  sed 's/^/     /' "$work/seed-restores.out" | tail -8
+fi
 
 # ---------------------------------------------------------------------
 echo
@@ -505,7 +576,7 @@ nrows=0
 # the end can run it over a broken copy.
 validate_chain() {
 local chain="$1" lineno=0 line seed_word from_word method want_stage secs seed_full from_full detail kv
-local chained covered i h o s sf l listed gits c how arg sha pos prev_pos in_rows in_orphans found
+local chained covered i j h o s sf l listed gits c how arg sha pos prev_pos in_rows in_orphans found p
 row_seed=(); row_seed_short=(); row_from=(); row_method=(); row_matched=(); row_secs=(); row_detail=(); row_line=()
 orphans=(); orphans_short=(); nrows=0
 [[ -f "$chain" ]] || { fail "$chain is missing"; return; }
@@ -529,14 +600,15 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -n "$seed_full" ]] || { fail "$chain:$lineno: seed $seed_word is not a commit"; continue; }
   from_full="$(resolve "$from_word")"
   [[ -n "$from_full" ]] || { fail "$chain:$lineno: reproduced-from $from_word is not a commit"; continue; }
-  case "$method" in rust-anchor|seed|mixed-tree|skip|walk|bridge-needed) ;; *) fail "$chain:$lineno: unknown method \`$method\`"; continue ;; esac
+  case "$method" in rust-anchor|seed|mixed-tree|skip|walk|bridge-needed|restore) ;; *) fail "$chain:$lineno: unknown method \`$method\`"; continue ;; esac
+  if [[ "$method" == restore && "$want_stage" != - ]]; then fail "$chain:$lineno: a restore row replays nothing, so its matched field is -"; continue; fi
   case "$want_stage" in stage1|stage2|-) ;; *) fail "$chain:$lineno: matched must be stage1, stage2 or -, not \`$want_stage\`"; continue ;; esac
   [[ "$secs" =~ ^[0-9]+$ ]] || { fail "$chain:$lineno: seconds must be a number, not \`$secs\`"; continue; }
   detail=""
   for kv in "$@"; do
     case "$kv" in
-      skips=*|list=*|generator=*) detail="$detail $kv" ;;
-      *) fail "$chain:$lineno: unknown field \`$kv\` (skips=, list=, generator=)"; continue 2 ;;
+      skips=*|list=*|generator=*|prior=*) detail="$detail $kv" ;;
+      *) fail "$chain:$lineno: unknown field \`$kv\` (skips=, list=, generator=, prior=)"; continue 2 ;;
     esac
   done
   row_seed+=("$seed_full"); row_seed_short+=("$seed_word"); row_from+=("$from_full"); row_method+=("$method")
@@ -648,6 +720,15 @@ for ((i = 0; i < nrows; i++)); do
           *) fail "bootstrap/$l: unknown step annotation \`$how\` on $c" ;;
         esac
       done < "$repo_root/bootstrap/$l" ;;
+    restore)
+      p="$(detail_of "${row_detail[i]}" prior)"
+      [[ -n "$p" ]] || { fail "$chain:${row_line[i]}: a restore row needs prior=<an earlier row's seed>"; continue; }
+      canonical_rows_before "$i" "$work/canonical-rows"
+      if seed_restore_check "$repo_root" "${row_seed[i]}" "$p" "$work/canonical-rows"; then
+        ok "row ${row_seed_short[i]} restores $p: $seed_restore_reason"
+      else
+        fail "$chain:${row_line[i]}: $seed_restore_reason"
+      fi ;;
     bridge-needed)
       fail "$chain:${row_line[i]}: the ${row_seed_short[i]} seed was generated by a compiler that is not the ${row_from[i]:0:7} seed's descendant (${row_detail[i]# })"
       echo "      That link is not replayable as written. Certify it: try \`mixed-tree\` (the previous"
@@ -655,6 +736,14 @@ for ((i = 0; i < nrows; i++)); do
       echo "      and replace this row with the method that reproduces the seed." ;;
   esac
 done
+}
+# The seeds a restore may copy: every row before <i> that is not itself
+# a restore, one full commit per line. A restore of a restore would
+# certify nothing the first restore did not.
+canonical_rows_before() {  # <i> <file>
+  local k; : > "$2"
+  for ((k = 0; k < $1; k++)); do [[ "${row_method[k]}" != restore ]] && printf '%s\n' "${row_seed[k]}" >> "$2"; done
+  return 0
 }
 detail_of() {  # <detail> <key> -> value
   local kv; for kv in $1; do [[ "$kv" == "$2="* ]] && { printf '%s' "${kv#*=}"; return; }; done
@@ -905,6 +994,16 @@ for ((i = first; i < nrows; i++)); do
   matched=""; ladder_reason=""; stage_note=""; final_ir=""
   if [[ "$method" != rust-anchor ]] && ! has_seed "$from"; then skip "no $target seed at ${from:0:7}; this host cannot build that compiler"; continue; fi
   if ! has_seed "$seed"; then skip "no $target seed at ${seed:0:7}; nothing for this host to compare"; continue; fi
+  if [[ "$method" == restore ]]; then
+    canonical_rows_before "$i" "$work/canonical-rows"
+    if seed_restore_check "$repo_root" "$seed" "$(detail_of "${row_detail[i]}" prior)" "$work/canonical-rows"; then
+      ok "${row_seed_short[i]} restores $(detail_of "${row_detail[i]}" prior) byte for byte: $seed_restore_reason"
+      row_replayed[i]=1
+    else
+      fail "${row_seed_short[i]} is not a restore of $(detail_of "${row_detail[i]}" prior): $seed_restore_reason"
+    fi
+    continue
+  fi
   t0=$SECONDS
   emit_as "$seed"
   case "$method" in
@@ -951,13 +1050,37 @@ if [[ -n "$last_final_ir" && -f "$last_final_ir" ]]; then
   printf 'X' | dd of="$flipped" bs=1 seek="$at" conv=notrunc 2>/dev/null
   if cmp -s "$flipped" "$last_want"; then
     fail "the probe's flip at byte $at did not change the copy"
-  elif cmp -s "$last_final_ir" "$flipped"; then
+  elif seed_cmp "$last_final_ir" "$flipped"; then
     fail "a seed with one byte flipped still compares equal to the replay - the comparison is not byte-level"
   else
     ok "one byte flipped at offset $at in a copy of the seed is refused ($(cmp "$last_final_ir" "$flipped" 2>&1 | sed 's/.*differ: //'))"
   fi
 else
   fail "no replay produced an emission, so the flipped-byte probe has nothing to run against"
+fi
+# (a2) The comparison forgives the directory inside an `; axiom-asm-file`
+# comment and nothing else: a copy whose directory there moved compares
+# equal, and a copy whose file name there changed does not.
+if [[ -n "$last_want" && -f "$last_want" ]] && grep -q '^; axiom-asm-file [0-9]* "' "$last_want"; then
+  moved="$work/asm-moved.ll"; renamed="$work/asm-renamed.ll"
+  LC_ALL=C sed -E 's#^(; axiom-asm-file [0-9]+ ")(<stdlib>|[^"]*/stdlib)/#\1/elsewhere/build/stdlib/#' "$last_want" > "$moved"
+  LC_ALL=C sed -E 's#^(; axiom-asm-file [0-9]+ "[^"]*)\.ax"#\1x.ax"#' "$last_want" > "$renamed"
+  if cmp -s "$moved" "$last_want"; then
+    fail "the asm-file probe's directory edit did not change the copy"
+  elif ! seed_cmp "$moved" "$last_want"; then
+    fail "a seed whose asm-file comment names another stdlib directory compares unequal - the comparison does not forgive the path"
+  else
+    ok "a seed whose \`; axiom-asm-file\` comment names another stdlib directory compares equal"
+  fi
+  if cmp -s "$renamed" "$last_want"; then
+    fail "the asm-file probe's rename did not change the copy"
+  elif seed_cmp "$renamed" "$last_want"; then
+    fail "a seed whose asm-file comment names another file compares equal - the comparison forgives too much"
+  else
+    ok "a seed whose \`; axiom-asm-file\` comment names another file is refused"
+  fi
+else
+  fail "the last replayed seed has no \`; axiom-asm-file\` line, so the path probe has nothing to run against"
 fi
 
 # (b) A row re-pointed at a different predecessor must go red, and it
