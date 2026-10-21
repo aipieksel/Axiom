@@ -437,7 +437,7 @@
   (bareIntern : Int)
   (bareFirst : (Vec Int))
   (tailRetain : (Vec Int))
-  (pendingOwned : (Vec Int))
+  (pendingOwned : Strings)
   (allocaMark : Int)
   (hoisted : (Vec String))
   (argEv : (Vec Int))
@@ -731,6 +731,41 @@
 (:: cgHoisted (-> Int (Vec String)))
 (fn (cgHoisted cg)
   (memGetWordVec cg 44))
+
+; Pending entries own the compiler's register spellings. Their contents
+; describe values in emitted code; dropping an entry only retires its text.
+(:: cgPendingStrings (-> Int Strings))
+(fn (cgPendingStrings cg)
+  (memGetWordVec cg 42))
+
+(:: cgPendingPush (-> Int String Int))
+(fn (cgPendingPush cg value)
+  {
+    (vecPush (cgPendingStrings cg) value)
+    0
+  })
+
+(:: cgPendingTruncate (-> Int Int Int))
+(fn (cgPendingTruncate cg size)
+  {
+    (let pending (cgPendingStrings cg))
+    (while (> (vecLen pending) size)
+      {
+        (let retired (vecPop pending))
+        0
+      })
+    0
+  })
+
+(:: cgPendingReset (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (cgPendingReset cg)
+  {
+    (let old (memGetWord cg 42))
+    (memSetWord cg 42 vecNew)
+    (__release old)
+    cg
+  })
 
 ; Slot `i` of the register-pair state: 0 mode, 1 arm, 2 names, 3 tag -
 ; and, beside them, 4 `cgThreads` and 5 `parUsed` (see `newCG`).
@@ -19037,7 +19072,7 @@
       (let _4b (vecClear (memGetWordVec cg 20)))
       (let _5 (memSetWord cg 17 params))
       (let _5r (memSetWord cg 41 (borrowedTailLeaves cg name body params)))
-      (let _5p (memSetWord cg 42 vecNew))
+      (let _5p (cgPendingReset cg))
       (let _5s (memSetWord (pairSlot cg 18) 0 0))
       (let _6 (memSetWord cg 18 (functionFlags cg name)))
       {
@@ -19629,7 +19664,7 @@
       ; and every releasable `let` (and owned scrutinee) still in scope:
       ; their scope ends are past the jump and will not be reached on
       ; this path; the values the slots keep were retained above
-      (releasePending cg (memGetWordVec cg 42) 0)
+      (releasePending cg (cgPendingStrings cg) 0)
       ; and every owning `mut` slot still in scope, by what it holds now
       (releasePendingSlots cg (as (pairSlot cg 17) (Vec Int)) 0)
       (emitLine cg (concat "  br label %" (memGetWordStr cg 29)))
@@ -19672,12 +19707,11 @@
       })
   })
 
-(pub :: releasePending (-> Int Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: releasePending (-> Int Strings Int Int))
 (pub fn (releasePending cg pend i)
   (if (>= i (vecLen pend))
     cg
-    (releasePending (emitReleaseOf cg (as (vecGet pend i) String)) pend (+ i 1))))
+    (releasePending (emitReleaseOf cg (vecGet pend i)) pend (+ i 1))))
 
 ; The owning `mut` slots' half: each entry is a slot record (pair
 ; slot 17), and what the slot holds is loaded at the jump, since a
@@ -20194,7 +20228,6 @@
 ; always branches to it.
 (pub :: emitMatchTail (-> ASTNode Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitMatchTail node cg)
   ; The tail hook, armed only where there is nothing to release -
   ; see `emitPairArmsTail`. `scrutineeReleasable` is asked first
@@ -20248,16 +20281,16 @@
         (if (== held 1)
           1
           (tailScrutineeReleasable node scrutExpr cg1))))
-    (let pmark (vecLen (memGetWordVec cg1 42)))
+    (let pmark (vecLen (cgPendingStrings cg1)))
     (let _p
       (if (== rel 1)
-        (vecPush (memGetWordVec cg1 42) (as sv Int))
-        (as 0 (Vec Int))))
+        (cgPendingPush cg1 sv)
+        0))
     (let cg2
       (if (== gotPair 2)
         (emitPairArmsTail arms tagR sv cell mergeB cg1 0 ff)
         (emitArmsTail arms sv cell mergeB cg1 0 ff)))
-    (let _q (memSetWord (memGetWord cg2 42) 0 pmark))
+    (let _q (cgPendingTruncate cg2 pmark))
     (let _2 (emitLabel cg2 mergeB))
     (let cg3 (loadWordAt cg2 cell 0))
     (let armFlag (memGetWord ff 0))
@@ -21423,13 +21456,13 @@
       (if (== gotPair 2)
         (pairScrutRetTy cg1 scrutExpr)
         nilNode))
-    (let pmark (vecLen (memGetWordVec cg1 42)))
+    (let pmark (vecLen (cgPendingStrings cg1)))
     (let _p
       (if (== rel 1)
         (if (== gotPair 2)
           0
           {
-            (vecPush (memGetWordVec cg1 42) (as sv Int))
+            (cgPendingPush cg1 sv)
             0
           })
         0))
@@ -21437,7 +21470,7 @@
       (if (== gotPair 2)
         (emitPairArms arms tagR sv cell mergeB cg1 0 ff prt rel)
         (emitArms arms sv cell mergeB cg1 0 ff)))
-    (let _q (memSetWord (memGetWord cg2 42) 0 pmark))
+    (let _q (cgPendingTruncate cg2 pmark))
     (let _2 (emitLabel cg2 mergeB))
     (let cg3 (loadWordAt cg2 cell 0))
     (let armFlag (memGetWord ff 0))
@@ -27266,7 +27299,7 @@
           0
           (if (!= (pairSlot cg 6) (+ (vecLen args) takesEv))
             0
-            (if (> (vecLen (memGetWordVec cg 42)) 0)
+            (if (> (vecLen (cgPendingStrings cg)) 0)
               0
               (if (> (ownedArgReleases cg fnName args 0) 0)
                 0
@@ -28802,7 +28835,7 @@
           ; the scope ends this `ret` leaves before, paid here as
           ; `emitPairRet` pays them: the callee has returned, and its
           ; pair holds its own share of anything it answers
-          (releasePending cgA (memGetWordVec cgA 42) 0)
+          (releasePending cgA (cgPendingStrings cgA) 0)
           (releasePendingSlots cgA (vecGetVec (memGetWordVec cgA 46) 17) 0)
           (emitLine cgA (concat "  ret { i64, i64 } " r))
           (memSetWord cgA 31 1)
@@ -29011,7 +29044,7 @@
 (pub fn (emitPairRet e entry cg)
   (if (== (eArity entry) 0)
     {
-      (releasePending cg (memGetWordVec cg 42) 0)
+      (releasePending cg (cgPendingStrings cg) 0)
       (releasePendingSlots cg (vecGetVec (memGetWordVec cg 46) 17) 0)
       (emitLine cg
         (concat (concat "  ret { i64, i64 } { i64 " (constStr (eTag entry))) ", i64 0 }"))
@@ -29057,7 +29090,7 @@
           (emitLine cgA
             (concat (concat "  " (concat r1 (concat " = insertvalue { i64, i64 } " r0)))
               (concat ", i64 " (concat v ", 1"))))
-          (releasePending cgA (memGetWordVec cgA 42) 0)
+          (releasePending cgA (cgPendingStrings cgA) 0)
           (releasePendingSlots cgA (vecGetVec (memGetWordVec cgA 46) 17) 0)
           (emitLine cgA (concat "  ret { i64, i64 } " r1))
           (memSetWord cgA 31 1)
@@ -29357,7 +29390,6 @@
 ; does too and a borrowed leaf there gets event 2's retain.
 (pub :: emitLetAt (-> ASTNode Int Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitLetAt node cg tail)
   ; The binding remembers whether its initialiser was a float, so a
   ; later `(+ x ...)` on the bound name picks the right instruction.
@@ -29473,7 +29505,7 @@
                       }
                       (letReleasable cg1 owned name body))))
                 {
-                  (let pmark (vecLen (memGetWordVec cg1 42)))
+                  (let pmark (vecLen (cgPendingStrings cg1)))
                   {
                     ; A binding whose initialiser IS a string literal is
                     ; not pending either: the register holds a
@@ -29483,15 +29515,15 @@
                     ; marker so and loops by a self tail call
                     ; (check-static-release, the compiler's own IR).
                     (if (&& (== releasable 1) (== (isStaticSentinelNode cg1 valExpr) 0))
-                      (vecPush (memGetWordVec cg1 42) (as valReg Int))
-                      (as 0 (Vec Int)))
+                      (cgPendingPush cg1 valReg)
+                      0)
                     {
                       (let cgB
                         (if (== tail 1)
                           (emitExprTail body cg1)
                           (emitExpr body cg1)))
                       {
-                        (memSetWord (memGetWord cgB 42) 0 pmark)
+                        (cgPendingTruncate cgB pmark)
                         (symRestore cgB mark)
                         ; MM-LIFE-2c event 3. The release goes HERE - at the
                         ; binding's scope end, in the block that defines its
