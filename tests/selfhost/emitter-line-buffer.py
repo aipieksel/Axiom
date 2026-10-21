@@ -159,11 +159,16 @@ def check_hoisted_routes(binary):
 
 
 def check(axiom, repo, work):
-    fixture = repo / "tests/selfhost/emitter-line-buffer.ax"
-    expected = (repo / "tests/selfhost/emitter-line-buffer.out").read_text().splitlines()
+    source = repo / "tests/selfhost/emitter-line-buffer.axp"
+    fixture = work / source.with_suffix(".ax").name
+    fixture.write_bytes(source.read_bytes())
+    expected = source.with_suffix(".out").read_text().splitlines()
     if expected != [f"{i} true" for i in range(1, 58)]:
         raise RuntimeError("update the explicit 57-case assertion count")
     env = dict(os.environ, AXIOM_PATH=str(repo / "self_host"), AXIOM_STDLIB=str(repo / "stdlib"))
+
+    run_checked([str(axiom), "--diagnostic-format=ai", "fmt", "--check", str(fixture)],
+                env=env, stdout=work / "fixture.fmt.stdout", stderr=work / "fixture.fmt.stderr")
 
     def prepare_module(label, source):
         module_root = work / f"{label}-modules"

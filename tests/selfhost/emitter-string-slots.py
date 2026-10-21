@@ -124,12 +124,17 @@ def check_args_routes(binary):
 
 
 def check(axiom, repo, work):
-    fixture = repo / "tests/selfhost/emitter-string-slots.ax"
-    expected = fixture.with_suffix(".out").read_text().splitlines()
+    source = repo / "tests/selfhost/emitter-string-slots.axp"
+    fixture = work / source.with_suffix(".ax").name
+    fixture.write_bytes(source.read_bytes())
+    expected = source.with_suffix(".out").read_text().splitlines()
     if expected != [f"{i} true" for i in range(1, 64)]:
         raise RuntimeError("update the explicit 63-case assertion count")
     env = dict(os.environ, AXIOM_PATH=str(repo / "self_host"), AXIOM_STDLIB=str(repo / "stdlib"))
     original = (repo / "self_host/codegen.ax").read_text()
+
+    run_checked([str(axiom), "--diagnostic-format=ai", "fmt", "--check", str(fixture)],
+                env=env, stdout=work / "fixture.fmt.stdout", stderr=work / "fixture.fmt.stderr")
 
     def build_run(label, level, source, negative=()):
         modules = work / f"{label}-modules"

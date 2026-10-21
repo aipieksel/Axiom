@@ -252,6 +252,12 @@ holds those), and the files `tests/fmt/unformatted.list` names, each
 with its reason. Leave `tests/fmt/parity/*.axp` and the `*.axbad`
 refusal cases alone: they are inputs the formatter must refuse.
 
+Use `.ax` for standalone compiler inputs. Source that needs a driver's
+private modules or injected declarations belongs in an `.axp` file. Its
+driver copies the bytes to a private `.ax`, checks the formatting and
+compiles it in that context. Keep that driver in its gate so the input
+still runs.
+
 ### Migrate local bindings and struct construction
 
 Review a source migration before applying it:

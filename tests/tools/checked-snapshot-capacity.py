@@ -98,11 +98,17 @@ def run(compiler, root, work, source, name, level):
     directory.mkdir(exist_ok=True)
     (directory / 'CheckedSnapshotProbe.ax').write_text(source)
     output = directory / ('snapshot-O' + level)
+    template = root / 'tests/tools/checked-snapshot-capacity.axp'
+    fixture = directory / template.with_suffix('.ax').name
+    fixture.write_bytes(template.read_bytes())
     env = dict(os.environ, AXIOM_STDLIB=str(root / 'stdlib'),
                AXIOM_PATH=os.pathsep.join((str(directory), str(root / 'self_host'))))
+    formatted = subprocess.run([compiler, '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],
+                               env=env, cwd=work, capture_output=True, text=True, timeout=30)
+    assert formatted.returncode == 0, (name, formatted.stdout, formatted.stderr)
     build = subprocess.run(
         [compiler, '--diagnostic-format=ai', 'build',
-         str(root / 'tests/tools/checked-snapshot-capacity.ax'),
+         str(fixture),
          '--opt', level, '--alloc-poison', '--emit-llvm', '-o', str(output)],
         env=env, cwd=work, capture_output=True, text=True, timeout=180)
     (directory / ('build-O' + level + '.log')).write_text(build.stdout + build.stderr)

@@ -219,9 +219,9 @@ echo "--- 1. user-level cast count does not grow ---"
 # The handle conversions use live owners and change no share; the numeric
 # conversions create no reference (MM-VAL-23).
 # Baseline 1214 adds 141 reviewed ownership-probe occurrences: 48 in
-# emitter-line-buffer.ax/.py, 4 in emitter-pending-strings.ax/.py, 53 in
-# emitter-string-slots.ax/.py, 28 in emitter-symbol-scope.ax and 8 in
-# checked-snapshot-capacity.ax/.py. Of these, 102 inspect live reference
+# emitter-line-buffer.axp/.py, 4 in emitter-pending-strings.axp/.py, 53 in
+# emitter-string-slots.axp/.py, 28 in emitter-symbol-scope.ax and 8 in
+# checked-snapshot-capacity.axp/.py. Of these, 102 inspect live reference
 # counts, 9 compare live identities, 3 are typed-return String readers,
 # 8 read the compiler's legacy raw results, 2 call raw setter bridges,
 # 2 restore their live String argument, 1 reads a popped slot, and 8
