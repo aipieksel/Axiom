@@ -204,6 +204,7 @@ including pattern matching, remain work to do.
 | Selective import lists are validated inside every imported module, including unused names | Done | `tests/diagnostics/441-nested-import-name-list.ax` |
 | The test runner runs tests in parallel | Done |
 | Compiler scratch buffers and backtrace metadata release their owned Strings | Done; `tests/selfhost/emitter-line-buffer.py`, `tests/selfhost/emitter-pending-strings.py`, `tests/selfhost/emitter-line-metadata.py` |
+| Compiler binder summaries release their temporary interner and memo records | Done; `tests/selfhost/emitter-binder-summary.py` |
 | UTF-16 ranged document edits apply in order and atomically, with monotonic versions and versioned diagnostics | Done |
 | The language server cancels obsolete work and serves requests from revisioned background analysis on hosts with process and poller support | Done |
 | Unsaved imported documents feed checks and navigation, with transitive dependency invalidation and diagnostics for open modules | Done |

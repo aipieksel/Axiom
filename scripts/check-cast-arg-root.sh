@@ -239,13 +239,20 @@ echo "--- 1. user-level cast count does not grow ---"
 # nonparameter, block, quoted, custom-owner, selective-import and duplicate
 # counterexamples. The conversions are the effect-classification subjects
 # (MM-VAL-23); production and example counts are unchanged.
+# Baseline 1245 adds ten reviewed binder-summary occurrences: two Unsafe
+# count-zero allocation factories and one legacy raw owner-result wrapper
+# in Intern; two live String count readbacks in the probe; one nullable
+# legacy pattern oracle, two source anchors and two intentional failing
+# erasure/restoration casts in its runner. The production factories use
+# ordinary counted results and retain the raw API's one-share obligation.
+# The remaining conversions are MM-VAL-23 ownership test subjects.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1235 ]; then
-  ok "user-level (cast count $cast_count <= 1235)"
+elif [ "$cast_count" -le 1245 ]; then
+  ok "user-level (cast count $cast_count <= 1245)"
 else
-  bad "user-level (cast count $cast_count > 1235): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1245): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -408,7 +415,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # Typed command argument vectors remove 84 reference erasures from the
 # 873-site tree measured before this migration. The resulting 789 sites
 # tighten the prior 845-site pin; no compiler erasure is exempted.
-erasure_pin=789
+# Scoped binder summaries remove two more sites from binderSummary and
+# binderCollectArms in a same-compiler source comparison.
+erasure_pin=787
 erasure_sum() {  # <axsym> -> the #erasures= total over self_host/ rows
   awk '$1 == "F" && index($3, "self_host/") == 1 {
          for (i = 4; i <= NF; i++)

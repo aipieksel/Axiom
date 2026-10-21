@@ -264,8 +264,10 @@ def public_raw_effects(axiom, repo, source_root, work, env, current):
 
 
 def check(axiom, repo, source_root, work):
-    fixture = repo / 'tests/selfhost/emitter-binder-summary.axp'
-    expected = fixture.with_suffix('.out').read_text().splitlines()
+    template = repo / 'tests/selfhost/emitter-binder-summary.axp'
+    fixture = work / template.with_suffix('.ax').name
+    fixture.write_bytes(template.read_bytes())
+    expected = template.with_suffix('.out').read_text().splitlines()
     if expected != [f'{i} true' for i in range(1, 105)]:
         raise RuntimeError('update the explicit 104-case assertion count')
     current = (source_root / 'stdlib/Intern.ax').read_text()
@@ -273,6 +275,8 @@ def check(axiom, repo, source_root, work):
     env = dict(os.environ, AXIOM_PATH=str(source_root / 'self_host'))
     env['PATH'] = '/opt/homebrew/opt/llvm/bin:' + env.get('PATH', '')
     report = {'source_root': str(source_root), 'builder': str(axiom), 'positive': [], 'negative': []}
+    run_checked([str(axiom), '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],
+                env=env, stdout=work / 'fixture.fmt.stdout', stderr=work / 'fixture.fmt.stderr')
 
     def build_run(label, level, source, emitter=codegen, negative=()):
         stdlib = private_stdlib(work / (label + '-stdlib'), source_root, source)
