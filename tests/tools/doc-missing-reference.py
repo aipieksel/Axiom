@@ -104,7 +104,7 @@ class MissingReference(unittest.TestCase):
                     'stdlib/Sys/Platform.linux-aarch64.ax',
                     'stdlib/Sys/Platform.linux-x86_64.ax',
                     'stdlib/Sys/Platform.baremetal-aarch64.ax',
-                    'tests/Example.ax', 'stdlib/../External.ax']
+                    'app/Example.ax', 'stdlib/../External.ax']
         for path in included:
             with self.subTest(path=path):
                 self.assertTrue(public_reference_module(path))
