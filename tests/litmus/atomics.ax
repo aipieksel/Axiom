@@ -59,8 +59,9 @@
 ; for into the program, with the atomics, so the forbidden outcome
 ; becomes one sequential consistency allows: lb stores before it loads,
 ; 2+2w swaps each thread's two stores, and iriw gives each reader its
-; own copy of the other writer's word, stored after a pause, so W0
-; reaches R2 first and W1 reaches R3 first. wrc's R2 loads x first and
+; own copy of the other writer's word, stored after that reader has
+; recorded its result, so W0 reaches R2 first and W1 reaches R3 first.
+; wrc's R2 loads x first and
 ; y once R1 has stored it. isa2's W stores y first and x after a pause,
 ; and its R2 loads x first and z once R1 has stored it. A
 ; `reorder` run that never shows the outcome means this harness could
@@ -560,7 +561,7 @@
     }
   })
 
-; How long `reorder`'s writers pause between a word's two copies.
+; How long the other `reorder` controls pause between accesses.
 (:: pauseSpins Int)
 (fn (pauseSpins)
   64)
@@ -601,14 +602,35 @@
     }
   })
 
-; mode 0 sc, 1 plain, 3 reorder. Stores 1 to round i's word of `near`.
-; `reorder` then pauses and stores 1 to `far`'s too: one write reaching
-; the two readers' copies at different times.
-(:: iriwWriter (-> Int Int Int Int Int Int))
+; Wait for a control event without depending on a fixed scheduling pause.
+; As in arriveAll, a timed wait after spinning lets another participant
+; run on a host with fewer cores than threads. The gate owns the deadline.
+(:: waitIriwWord (-> Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 ;@axiom:effect(block)
-(fn (iriwWriter near far ctr n mode)
+(fn (waitIriwWord word)
+  {
+    (let mut spins 0)
+    {
+      (while (== (__atomic_load word) 0)
+        {
+          (set spins (+ spins 1))
+          (if (> spins 2048)
+            (sysWaitWordTimeout word 0 2000))
+        })
+      spins
+    }
+  })
+
+; mode 0 sc, 1 plain, 3 reorder. Stores 1 to round i's word of `near`.
+; In `reorder`, the reader of `far` publishes its encoded result to
+; `ack` before this writer stores to `far`. Its second read must see 0.
+(:: iriwWriter (-> Int Int Int Int Int Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+;@axiom:effect(block)
+(fn (iriwWriter near far ack ctr n mode)
   {
     (let mut i 0)
     {
@@ -621,7 +643,7 @@
               (__atomic_store (+ near (* 8 i)) 1)
               {
                 (__atomic_store (+ near (* 8 i)) 1)
-                (pause ctr pauseSpins)
+                (waitIriwWord (+ ack (* 8 i)))
                 (__atomic_store (+ far (* 8 i)) 1)
               }))
           (set i (+ i 1))
@@ -633,6 +655,8 @@
 ; mode 1 plain; every other mode with the atomic loads. Loads round i's
 ; word of `first`, then of `second`, and writes 2 * first + second to
 ; res[i]: 2 means this reader saw `first`'s write and not `second`'s.
+; Only `reorder` waits for the near write, then publishes the result
+; atomically as the far writer's acknowledgement after both reads.
 (:: iriwReader (-> Int Int Int Int Int Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
@@ -649,10 +673,16 @@
               (let f (__load64 first i))
               (__store64 res i (+ (* 2 f) (__load64 second i)))
             }
-            {
-              (let f (__atomic_load (+ first (* 8 i))))
-              (__store64 res i (+ (* 2 f) (__atomic_load (+ second (* 8 i)))))
-            })
+            (if (== mode 3)
+              {
+                (waitIriwWord (+ first (* 8 i)))
+                (let f (__atomic_load (+ first (* 8 i))))
+                (__atomic_store (+ res (* 8 i)) (+ (* 2 f) (__atomic_load (+ second (* 8 i)))))
+              }
+              {
+                (let f (__atomic_load (+ first (* 8 i))))
+                (__store64 res i (+ (* 2 f) (__atomic_load (+ second (* 8 i)))))
+              }))
           (set i (+ i 1))
         })
       0
@@ -681,8 +711,10 @@
 ; x: the readers disagree on the order of the writes. The witness is
 ; the rounds showing the rarer half of that, R2's or R3's, so both
 ; orders are seen, if never in the same round. `reorder` gives each
-; reader its own copy of the other writer's word, written after a
-; pause, so W0 reaches R2 first and W1 reaches R3 first.
+; reader its own copy of the other writer's word. Each reader waits for
+; its near copy and acknowledges both reads before its far copy is
+; written. Both control results must therefore be 2 under SC, without
+; depending on a scheduler pause or spontaneous hardware reordering.
 (:: runIriw (-> Int Int Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
@@ -707,8 +739,8 @@
     (let mut weak 0)
     {
       (parallel p (
-        (a (iriwWriter xs xFar ctr n mode))
-        (b (iriwWriter ys yFar ctr n mode))
+        (a (iriwWriter xs xFar rb ctr n mode))
+        (b (iriwWriter ys yFar ra ctr n mode))
         (c (iriwReader xs yFar ra ctr n mode))
         (d (iriwReader ys xFar rb ctr n mode))
       )
