@@ -830,42 +830,23 @@ else
   echo "ok   the fixture renders as the golden says ($(wc -l <"$doc_golden" | tr -d ' ') lines)"
 fi
 
-echo "== doc: --missing names exactly the reference's blank summaries =="
+echo "== doc: --missing validates all declarations and the public reference's blank summaries =="
 (cd "$neutral" && AXIOM_DOC="$repo_root" "$work/axc" doc --missing >"$work/doc.missing" 2>"$work/doc.missing.err"); mrc=$?
-# The reference covers one `Sys/Platform` file (check-stdlib-api.sh
-# names `darwin`); the other five declare the same names and are left
-# out of this comparison for the same reason.
-grep -v 'Sys/Platform\.\(baremetal\|freebsd\|linux\|windows\)' "$work/doc.missing" \
-  | sed -E 's/.*: //' | sort > "$work/doc.missing.names"
-grep '^| `.*| *|$' "$repo_root/docs/stdlib-api.md" | sed -E 's/^\| `([^`]*)`.*/\1/' | sort > "$work/doc.blank.names"
-mn=$(grep -c . "$work/doc.missing.names" || true)
+# The CLI scans every public declaration, including library-only Internal
+# modules and all platform variants. The reference covers importable modules
+# and one platform; its names are compared only within that shared scope.
+# Exit status and declaration locations still use the full CLI report.
+missing_check="$repo_root/tests/tools/doc-missing-reference.py"
+if ! python3 "$missing_check" --selftest; then
+  echo "FAIL doc: --missing oracle controls failed"
+  failed=$((failed + 1))
+fi
 if [[ -s "$work/doc.missing.err" ]]; then
   echo "FAIL doc: --missing wrote to stderr"
   sed 's/^/     /' "$work/doc.missing.err" | head -3
   failed=$((failed + 1))
-elif ! cmp -s "$work/doc.missing.names" "$work/doc.blank.names"; then
-  echo "FAIL doc: --missing and docs/stdlib-api.md disagree about which names have no doc comment"
-  diff "$work/doc.blank.names" "$work/doc.missing.names" | head -8 | sed 's/^/     /'
+elif ! python3 "$missing_check" "$repo_root" "$work/doc.missing" "$mrc" "$repo_root/docs/stdlib-api.md"; then
   failed=$((failed + 1))
-elif { (( mn > 0 )) && [[ $mrc != 1 ]]; } || { (( mn == 0 )) && [[ $mrc != 0 ]]; }; then
-  echo "FAIL doc: --missing listed $mn names and exited $mrc"
-  failed=$((failed + 1))
-elif ! python3 - "$work/doc.missing" <<'PY_MISS'
-import sys
-bad = 0
-for line in open(sys.argv[1], encoding="utf-8"):
-    path, ln, _ = line.rstrip("\n").split(":", 2)
-    text = open(path, encoding="utf-8").read().split("\n")[int(ln) - 1]
-    if not (text.startswith("(pub ") or text.startswith("(effect ")):
-        print(f"     {path}:{ln} is not a public declaration: {text[:50]!r}")
-        bad += 1
-sys.exit(1 if bad else 0)
-PY_MISS
-then
-  echo "FAIL doc: a --missing line names a line that is not a public declaration"
-  failed=$((failed + 1))
-else
-  echo "ok   --missing names $mn declarations, the same $mn the reference leaves blank, each at its own line"
 fi
 
 echo "== doc: refusals =="

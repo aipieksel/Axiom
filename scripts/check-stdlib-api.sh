@@ -133,23 +133,21 @@ mod_list="$(printf '%s' "$modules" | grep -v '^$')"
 # directions, because a list that is checked in one direction rots in
 # the other - which is the lesson `gate_prose_docs` carries.
 checks=$((checks + 1))
+tree_modules="$(cd "$repo_root" && find stdlib -name '*.ax' -type f | LC_ALL=C sort \
+  | python3 "$repo_root/scripts/lib/stdlib-reference.py")"
 listed_missing=""
 while IFS= read -r m; do
-  [[ -f "$repo_root/$m" ]] || listed_missing="$listed_missing $m"
+  printf '%s\n' "$tree_modules" | grep -qx "$m" || listed_missing="$listed_missing $m"
 done <<< "$mod_list"
 tree_unlisted=""
 while IFS= read -r m; do
-  case "$m" in
-      stdlib/Sys/Platform.linux-*|stdlib/Sys/Platform.freebsd.ax|stdlib/Sys/Platform.windows.ax|stdlib/Sys/Platform.baremetal-aarch64.ax) continue ;;
-      stdlib/Internal/*) continue ;;
-  esac
   printf '%s\n' "$mod_list" | grep -qx "$m" || tree_unlisted="$tree_unlisted $m"
-done < <(cd "$repo_root" && find stdlib -name '*.ax' -type f | LC_ALL=C sort)
+done <<< "$tree_modules"
 if [[ -z "$listed_missing$tree_unlisted" ]]; then
   ok "the module list and stdlib/ agree, $(printf '%s\n' "$mod_list" | grep -c .) modules"
 else
   bad "the module list has drifted"
-  [[ -n "$listed_missing" ]] && echo "     named here, not in the tree:$listed_missing"
+  [[ -n "$listed_missing" ]] && echo "     named here, not a public reference module in the tree:$listed_missing"
   [[ -n "$tree_unlisted" ]]  && echo "     in the tree, not named here:$tree_unlisted"
 fi
 
