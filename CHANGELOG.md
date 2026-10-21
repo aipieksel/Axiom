@@ -36,6 +36,13 @@ its changelog too.
   `tests/diagnostics/1486-isr-waits-through-local.ax`,
   `scripts/check-restrictions.sh` and `scripts/check-isr.sh`.
 
+- `as` from a word struct to another type is AX3086 outside the struct's
+  module, as reading its field by name is. A word struct is one word, so
+  the conversion read its private field. Converting to its own type
+  stays allowed, and so does a declaration that says `effect(unsafe)`,
+  which may already forge one. Tested by
+  `tests/diagnostics/1487-word-struct-as-read.ax`.
+
 - `check`, `build`, `emit-llvm` and `symbols` refuse a second input file
   with status 2 instead of answering for the first one. `symbols` skips a
   flag's value when it looks for its file, so `symbols --target T FILE`

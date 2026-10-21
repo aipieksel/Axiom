@@ -1,0 +1,35 @@
+; A word struct is one `Int` word, so `as` from one to another type
+; reads its field. Outside the declaring module that is AX3086, as
+; reading the field by name is. `Duration` is `Chrono`'s word struct:
+; `peek` converts one to `Int` and is refused. `same` converts it to
+; its own type, which reads nothing, and `nanos` asks the module's own
+; accessor: both are silent. `stash` keeps the word in raw memory, as
+; AXQLite keeps its pager, and says `effect(unsafe)`: a boundary that
+; vouches for representations may read the word, as it may forge one,
+; so it is silent too.
+(import Chrono)
+
+(:: peek (-> Duration Int))
+(fn (peek d)
+  (as d Int))
+
+(:: same (-> Duration Duration))
+(fn (same d)
+  (as d Duration))
+
+(:: nanos (-> Duration Int))
+(fn (nanos d)
+  (durationNanos d))
+
+(:: stash (-> Duration Int))
+;@axiom:effect(unsafe)
+(fn (stash d)
+  {
+    (let cell (__alloc 8))
+    (__store64 cell 0 (as d Int))
+    (__load64 cell 0)
+  })
+
+(:: main Int)
+(fn (main)
+  (+ (peek durationZero) (+ (nanos (same durationZero)) (stash durationZero))))

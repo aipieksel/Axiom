@@ -15242,6 +15242,46 @@
           (castSameVec tc xs ys (+ i 1))
           0)))))
 
+; A word struct is one `Int` word, so `as` from one to any other type
+; reads its field. Outside its module that is AX3086, as `w.slot` is,
+; unless the declaration says `effect(unsafe)`: a trusted boundary may
+; keep a sealed word in raw memory and forge it back, as AXQLite keeps
+; its pager in a connection block, and forging is already its to vouch
+; for. A conversion to the same type reads nothing and stays allowed.
+(pub :: castCheckWordRead (-> Int ASTNode ASTNode Int Int))
+(pub fn (castCheckWordRead tc tgt src span)
+  {
+    (let s (tyResolve src))
+    (if (!= (nodeTag s) TAG_T_CON)
+      0
+      {
+        (let ent (findStructAnyVis tc (nodeAName s)))
+        (if (|| (== ent 0) (== (& (memGetWord ent 4) 1) 0))
+          0
+          (if (|| (== (wordSealedHere tc ent) 0)
+                (|| (== (castSameTy tc tgt src) 1) (== (curDeclTrusted tc) 1)))
+            0
+            (emitWordSealedRead tc ent (nodeAName (vecGet (memGetWordVec ent 1) 0)) span)))
+      })
+  })
+
+; 1 when the declaration being checked says `effect(unsafe)`: its
+; FnEnt's word 9, which `tcUnsafeRoles` sets from its tags before any
+; body is checked. Word 24 is the declaration, as `curFnSigTy` reads it.
+(pub :: curDeclTrusted (-> Int Int))
+(pub fn (curDeclTrusted tc)
+  {
+    (let d (readAstNode tc 24))
+    (if (nodeSame d nilNode)
+      0
+      {
+        (let ent (findFnEnt tc (nodeAName d)))
+        (if (== ent 0)
+          0
+          (memGetWord ent 9))
+      })
+  })
+
 ; 1 when `(cast tgt x)`, with `x` of type `src`, forges a reference.
 ; The target decides whether the cast can forge at all
 ; (`castMayForge`); the source only whether it already IS that
@@ -15488,7 +15528,10 @@
                         ; its written alias again after the body is checked
                         ; could capture a nominal type from another module.
                         (if (>= (vecLen args) 2)
-                          (castNoteForge tc e targetTy srcTy (vecGet args 1)))
+                          {
+                            (castNoteForge tc e targetTy srcTy (vecGet args 1))
+                            (castCheckWordRead tc targetTy srcTy (spanOf (vecGet args 1)))
+                          })
                         (if (== (asNumericKind tc targetTy) 2)
                           (writeNodeChild (nodeAChild e) 2
                             (mkEVarAt "Float" (spanOf (vecGet args 0)))))
