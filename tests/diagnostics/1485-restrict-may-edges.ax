@@ -1,0 +1,126 @@
+; Restrictions follow the edges a call MAY take. A call through a
+; field, or through a local that holds one of several functions, may
+; reach each function the field or local can hold. The effect walk
+; follows those edges, and so do `no-foreign` and `no-recursion`: a
+; path that needs one is unverifiable, and names the path, and no path
+; through either kind proves the claim.
+;
+;   `fieldDirty`  restrict(no-foreign), calls a `Hook` field; another
+;                 store into `Hook.run` is `viaDanger`, which calls an
+;                 extern                                -> AX3051 (W)
+;   `localDirty`  restrict(no-foreign), a local picks `inc` or
+;                 `viaDanger`                           -> AX3051 (W)
+;   `loopsMay`    restrict(no-recursion), a `Step` field call may
+;                 reach `spin`, which calls back through the field
+;                                                       -> AX3051 (W)
+;   `localClean`  restrict(no-foreign), a local picks `inc` or `dec`,
+;                 and neither reaches an extern         -> silent
+;   `fieldClean`  restrict(no-foreign), `Pure.calc` only ever holds
+;                 `inc`                                 -> silent
+;
+; A field's possible functions are gathered by field NAME, so `Pure`
+; names its field `calc`: a field also called `run` would share
+; `Hook.run`'s stores, and `fieldClean` would be unverifiable too.
+(extern "axiom_demo"
+  (danger :: (-> Int Int) (symbol "axffi_danger")))
+
+(struct Hook
+  (run : (-> Int Int)))
+
+(struct Pure
+  (calc : (-> Int Int)))
+
+(struct Step
+  (go : (-> Int Int)))
+
+(:: inc (-> Int Int))
+(fn (inc n)
+  (+ n 1))
+
+(:: dec (-> Int Int))
+(fn (dec n)
+  (- n 1))
+
+(:: viaDanger (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (viaDanger n)
+  (danger n))
+
+(:: runHook (-> Hook Int Int))
+(fn (runHook h n)
+  {
+    (let f h.run)
+    (f n)
+  })
+
+(:: runPure (-> Pure Int Int))
+(fn (runPure p n)
+  {
+    (let f p.calc)
+    (f n)
+  })
+
+(:: runStep (-> Step Int Int))
+(fn (runStep s n)
+  {
+    (let f s.go)
+    (f n)
+  })
+
+(:: spin (-> Int Int))
+(fn (spin n)
+  (if (> n 0)
+    (runStep (Step :go spin) (- n 1))
+    0))
+
+(:: fieldDirty (-> Int Int))
+;@axiom:restrict(no-foreign)
+(fn (fieldDirty n)
+  (runHook (Hook :run inc) n))
+
+(:: native (-> Int Int))
+;@axiom:effect(io)
+(fn (native n)
+  (runHook (Hook :run viaDanger) n))
+
+(:: localDirty (-> Bool Int Int))
+;@axiom:restrict(no-foreign)
+;@axiom:effect(io)
+(fn (localDirty up n)
+  {
+    (let f
+      (if up
+        inc
+        viaDanger))
+    (f n)
+  })
+
+(:: loopsMay (-> Int Int))
+;@axiom:restrict(no-recursion)
+(fn (loopsMay n)
+  (runStep (Step :go inc) n))
+
+(:: localClean (-> Bool Int Int))
+;@axiom:restrict(no-foreign)
+(fn (localClean up n)
+  {
+    (let f
+      (if up
+        inc
+        dec))
+    (f n)
+  })
+
+(:: fieldClean (-> Int Int))
+;@axiom:restrict(no-foreign)
+(fn (fieldClean n)
+  (runPure (Pure :calc inc) n))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (+ (fieldDirty 1)
+    (+ (native 1)
+      (+ (localDirty true 1)
+        (+ (loopsMay 1) (+ (spin 1) (+ (localClean true 1) (fieldClean 1))))))))

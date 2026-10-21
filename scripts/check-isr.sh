@@ -176,7 +176,7 @@ fi
 echo
 echo "== 4. the bound handlers: the fault hook's shape, recursion, waiting =="
 # --------------------------------------------------------------------
-# docs/memory-model.md MM-EXEC-18 and MM-EXEC-19. Four fixtures, each
+# docs/memory-model.md MM-EXEC-18 and MM-EXEC-19. Five fixtures, each
 # with a control inside it that must stay silent:
 #   1090  `isr(fault)` takes five `Int`s and answers one. Two wrong
 #         shapes draw AX3010; the declared one draws nothing.
@@ -186,14 +186,20 @@ echo "== 4. the bound handlers: the fault hook's shape, recursion, waiting =="
 #   1092  every `isr` implies `restrict(no-recursion)`: two handlers
 #         reaching a self-call draw AX3049 naming it.
 #   1093  `isr(fault)` implies `no-alloc` like every `isr`.
+#   1486  a handler that picks its callee through a local MAY reach
+#         `wfi`, and that is AX4009 too; picking between two
+#         functions that wait for nothing is silent.
 # Then one ablation per rule: a shadow tree with that rule's check
 # answering nothing, under which its fixture must check clean. That
-# shows each refusal comes from its rule.
+# shows each refusal comes from its rule. The `waitsmay` ablation
+# keeps the waits check and drops only its may edges, so 1486 shows
+# the refusal comes from following them.
 fx1090="$repo_root/tests/diagnostics/1090-isr-fault-signature.ax"
 fx1091="$repo_root/tests/diagnostics/1091-isr-waits.ax"
 fx1092="$repo_root/tests/diagnostics/1092-isr-recursion.ax"
 fx1093="$repo_root/tests/diagnostics/1093-isr-fault-alloc.ax"
-for f in "$fx1090" "$fx1091" "$fx1092" "$fx1093"; do
+fx1486="$repo_root/tests/diagnostics/1486-isr-waits-through-local.ax"
+for f in "$fx1090" "$fx1091" "$fx1092" "$fx1093" "$fx1486"; do
   [[ -f "$f" ]] || { echo "FAIL: $f is missing"; exit 1; }
 done
 # `refused <fixture> <want lines as code:needle, one per expected diagnostic>`
@@ -223,6 +229,7 @@ refused "$fx1091" 'AX4009:`onIrq` is bound by `isr(irq)` and waits for an interr
 refused "$fx1092" 'AX3049:`tick` claims `restrict(no-recursion)`.*tick -> countdown -> countdown' \
                   'AX3049:`onFault` claims `restrict(no-recursion)`.*onFault -> countdown -> countdown'
 refused "$fx1093" 'AX3049:`onFault` claims `restrict(no-alloc)` and the body performs Alloc'
+refused "$fx1486" 'AX4009:`onIrq` is bound by `isr(irq)` and waits for an interrupt with IRQs masked: onIrq -> settle -> __arm_wfi'
 
 # One shadow tree per rule, as `name~anchor~replacement~fixture`. The
 # separator is `~` because an anchor holds `||`. The edit must land
@@ -258,6 +265,7 @@ done <<'ABL'
 faultsig~(if (== (isrFaultSigOk tc d) 1)~(if (== (isrFaultSigOk tc d) (isrFaultSigOk tc d))~1090-isr-fault-signature.ax
 waits~(checkIsrWaits tc d (isrVectorOf sig own) eff)~0~1091-isr-waits.ax
 norec~(if (! (== (strInVec rs "no-recursion" 0) 1))~(if false~1092-isr-recursion.ax
+waitsmay~(let w (graphWitnessAny tc ent "wfi"))~(let w (graphWitness tc ent "wfi"))~1486-isr-waits-through-local.ax
 ABL
 
 echo

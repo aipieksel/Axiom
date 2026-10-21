@@ -1,0 +1,47 @@
+; A handler bound to a vector may not wait through a function value
+; either. `onIrq` picks `calm` or `settle` through a local, and `settle`
+; executes `wfi` with IRQs masked: the call MAY reach the wait, so it is
+; AX4009 with the path. `quietIrq` picks between two functions that wait
+; for nothing, and is silent.
+(:: settle (-> Int Int))
+;@axiom:effect(io)
+(fn (settle n)
+  {
+    __arm_wfi
+    n
+  })
+
+(:: calm (-> Int Int))
+(fn (calm n)
+  n)
+
+(:: still (-> Int Int))
+(fn (still n)
+  (+ n 0))
+
+(:: onIrq Int)
+;@axiom:isr(irq)
+;@axiom:effect(io)
+(fn (onIrq)
+  {
+    (let cb
+      (if (== (calm 0) 0)
+        calm
+        settle))
+    (cb 1)
+  })
+
+(:: quietIrq Int)
+;@axiom:isr(irq)
+(fn (quietIrq)
+  {
+    (let cb
+      (if (== (calm 0) 0)
+        calm
+        still))
+    (cb 1)
+  })
+
+(:: main ())
+(fn (main)
+  ())

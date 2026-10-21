@@ -1173,8 +1173,12 @@ The rules:
   A call path from the handler to `__arm_wfi`, which sleeps with the
   interrupt that should wake it masked, or to a `__syscallN`, where
   every blocking library call ends and which traps 74 on this target,
-  is refused as `AX4009` with the path. A loop polling a word is a wait
-  the walk can't see, and stays the program's obligation below.
+  is refused as `AX4009` with the path. The walk follows every function
+  a call through a field, or through a local that holds one of several
+  functions, may reach, so a handler that may wait is refused too
+  (`tests/diagnostics/1486-isr-waits-through-local.ax`). A loop polling
+  a word is a wait the walk can't see, and stays the program's
+  obligation below.
 - **No recovery across the boundary** (implementation obligation). The
   dispatch clears the recovery slot for the handler's extent and puts
   it back before returning, so a trap inside a handler - a division by

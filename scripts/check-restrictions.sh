@@ -362,6 +362,7 @@ fixture_expectations() {
 393-restrict-strict      AX3057 3 provable strictOnly lexStrict
 394-restrict-no-wrap-exempt AX3049 3 counts iterates floats
 396-restrict-no-trap AX3049 4 delegates compares honest floats
+1485-restrict-may-edges AX3051 3 localClean fieldClean
 EXP
 }
 
@@ -391,7 +392,7 @@ fixtures_answer() {
 }
 
 if fixtures_answer "$axc"; then
-  ok "371-379, 383, 393, 394, 396 draw their codes and every control is silent"
+  ok "371-379, 383, 393, 394, 396, 1485 draw their codes and every control is silent"
 else
   bad "a restriction fixture did not answer as its header promises (above)"
 fi

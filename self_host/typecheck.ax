@@ -3102,8 +3102,9 @@
 ; `mayCalls` are the edges the body MAY take: a call through a field or
 ; a local that holds one of several functions reaches each of them,
 ; but no one of them for certain. The fixpoint follows them, so a row
-; that depends on one is recomputed; the call-graph checks do not, and
-; a body that reaches one cannot be cleared by them (`graphReachesMay`).
+; that depends on one is recomputed, and so do the call-graph checks
+; (`graphWitnessMay`, `graphCycleMay`): a path that needs one makes a
+; claim unverifiable, and no path through either kind proves it.
 ;
 ; `unsafe` is the declaration's place in the unsafe boundary (R-B6,
 ; `MM-EXEC-9d`), read off its tags by `tcUnsafeRoles` before the
@@ -25070,6 +25071,9 @@
 ;            in `wfi`, because a hook that never returns is one of the
 ;            answers it exists to give, and a low-power halt is the
 ;            usual safe state.
+; The walk follows the edges a call through a field, or through a local
+; that holds one of several functions, may take (`graphWitnessAny`): a
+; handler that MAY wait is refused, as one that certainly waits is.
 ; A poll of a volatile word the handler waits on is a wait this walk
 ; can't see: that stays the program's obligation (MM-EXEC-18).
 (pub :: checkIsrWaits (-> Int ASTNode String Strings Int))
@@ -25087,7 +25091,7 @@
         0
         {
           {
-            (let sys (graphWitness tc ent "syscall"))
+            (let sys (graphWitnessAny tc ent "syscall"))
             (if (! (== (as sys Int) 0))
               (emitIsrWaits tc d v
                 (concat
@@ -25099,7 +25103,7 @@
           }
           (if (strEq v "irq")
             {
-              (let w (graphWitness tc ent "wfi"))
+              (let w (graphWitnessAny tc ent "wfi"))
               (if (== (as w Int) 0)
                 0
                 (emitIsrWaits tc d v
@@ -25509,11 +25513,19 @@
         (emitRestrictUnverifiable tc d r
           "the body calls a value the compiler could not resolve, and the call graph has no edge for it"
           (as 0 (Vec Int)))
-        (if (== (graphReachesMay tc (restrictOwnEnt tc d)) 1)
-          (emitRestrictUnverifiable tc d r
-            "the body reaches a call through a field or a local that holds one of several functions, and the call graph does not follow an edge it may not take"
-            (as 0 (Vec Int)))
-          0)))
+        {
+          (let mayPath (graphWitnessMay tc (restrictOwnEnt tc d) "extern"))
+          (if (== (as mayPath Int) 0)
+            0
+            (emitRestrictUnverifiable tc d r
+              (concat
+                (concat
+                  (concat "the body may reach the `extern` item `"
+                    (bareOf (memGetWordStr (vecGet mayPath (- (vecLen mayPath) 1)) 0)))
+                  "` through a call through a field or a local that holds one of several functions: ")
+                (graphRender mayPath))
+              mayPath))
+        }))
   })
 
 ; `no-recursion`: `graphCycle` from this declaration's own entry. A
@@ -25549,11 +25561,19 @@
         (emitRestrictUnverifiable tc d r
           "the body calls a value the compiler could not resolve, and that call may close a cycle the graph does not show"
           (as 0 (Vec Int)))
-        (if (== (graphReachesMay tc (restrictOwnEnt tc d)) 1)
-          (emitRestrictUnverifiable tc d r
-            "the body reaches a call through a field or a local that holds one of several functions, and that call may close a cycle the graph does not show"
-            (as 0 (Vec Int)))
-          0)))
+        {
+          (let mayPath (graphCycleMay tc (restrictOwnEnt tc d)))
+          (if (== (as mayPath Int) 0)
+            0
+            (emitRestrictUnverifiable tc d r
+              (concat
+                (concat
+                  (concat "the call graph may close a cycle at `"
+                    (bareOf (memGetWordStr (vecGet mayPath (- (vecLen mayPath) 1)) 0)))
+                  "` through a call through a field or a local that holds one of several functions: ")
+                (graphRender mayPath))
+              mayPath))
+        }))
   })
 
 ; The first cycle reachable from `start`, as the walk's own path: every
@@ -25571,19 +25591,35 @@
 ; sufficient, because any cycle reachable from it would have been
 ; found when it was searched.
 (pub :: graphCycle (-> Int Int Ints))
-;@axiom:effect(unsafe)
 (pub fn (graphCycle tc start)
+  (graphCycleVia tc start 0))
+
+; The first cycle through certain and may edges alike, for the reason
+; `graphWitnessMay` gives.
+(pub :: graphCycleMay (-> Int Int Ints))
+(pub fn (graphCycleMay tc start)
+  (graphCycleVia tc start 1))
+
+(pub :: graphCycleVia (-> Int Int Int Ints))
+;@axiom:effect(unsafe)
+(pub fn (graphCycleVia tc start withMay)
   (if (== start 0)
     (as 0 (Vec Int))
-    (as (graphCycleFrom tc start vecNew vecNew) (Vec Int))))
+    (as (graphCycleFrom tc start vecNew vecNew withMay) (Vec Int))))
 
-(pub :: graphCycleFrom (-> Int Int Ints Strings Int))
+(pub :: graphCycleFrom (-> Int Int Ints Strings Int Int))
 ;@axiom:effect(unsafe)
-(pub fn (graphCycleFrom tc ent stack done)
+(pub fn (graphCycleFrom tc ent stack done withMay)
   {
     (vecPush stack ent)
     {
-      (let found (graphCycleEdges tc (memGetWordVec ent 7) 0 stack done))
+      (let found
+        {
+          (let certain (graphCycleEdges tc (memGetWordVec ent 7) 0 stack done withMay))
+          (if (|| (!= certain 0) (== withMay 0))
+            certain
+            (graphCycleEdges tc (memGetWordVec ent 11) 0 stack done withMay))
+        })
       {
         (vecPop stack)
         (if (== found 0)
@@ -25594,8 +25630,8 @@
     }
   })
 
-(pub :: graphCycleEdges (-> Int Ints Int Ints Strings Int))
-(pub fn (graphCycleEdges tc calls i stack done)
+(pub :: graphCycleEdges (-> Int Ints Int Ints Strings Int Int))
+(pub fn (graphCycleEdges tc calls i stack done withMay)
   (if (>= i (vecLen calls))
     0
     {
@@ -25606,17 +25642,17 @@
         )
         ((None)
           (if (== (strInVec done name 0) 1)
-            (graphCycleEdges tc calls (+ i 1) stack done)
+            (graphCycleEdges tc calls (+ i 1) stack done withMay)
             {
               (let e (fnEntExact tc name))
               {
                 (let found
                   (if (== e 0)
                     0
-                    (graphCycleFrom tc e stack done)))
+                    (graphCycleFrom tc e stack done withMay)))
                 (if (!= found 0)
                   found
-                  (graphCycleEdges tc calls (+ i 1) stack done))
+                  (graphCycleEdges tc calls (+ i 1) stack done withMay))
               }
             })
         ))
@@ -25767,8 +25803,37 @@
 ; Every entry's word 7 is a Vec - `regFn`, `regFnEff`, `tcAddExtern`
 ; and `tcCollectFn` all construct one - so no edge list needs a guard.
 (pub :: graphWitness (-> Int Int String Ints))
-;@axiom:effect(unsafe)
 (pub fn (graphWitness tc start kind)
+  (graphWitnessVia tc start kind 0))
+
+; The witness through the edges a body MAY take as well as the certain
+; ones. `FnEnt` word 11 holds the functions a call through a field, or
+; through a local that holds one of several functions, may reach. The
+; effect fixpoint follows those edges and records what they bring as
+; POSSIBLE, so a check that reads the graph follows them too: a path
+; that needs one shows where a claim may fail, and no path through
+; either kind proves the claim as far as the graph goes. A call the
+; walk could not resolve has no edge of either kind, which is why
+; every caller tests `effUnresolved` first.
+(pub :: graphWitnessMay (-> Int Int String Ints))
+(pub fn (graphWitnessMay tc start kind)
+  (graphWitnessVia tc start kind 1))
+
+; A certain path when there is one, else a path through may edges: what
+; a check asks when it must refuse anything the body may reach, and
+; should still name the certain route.
+(pub :: graphWitnessAny (-> Int Int String Ints))
+(pub fn (graphWitnessAny tc start kind)
+  {
+    (let certain (graphWitness tc start kind))
+    (if (!= (as certain Int) 0)
+      certain
+      (graphWitnessMay tc start kind))
+  })
+
+(pub :: graphWitnessVia (-> Int Int String Int Ints))
+;@axiom:effect(unsafe)
+(pub fn (graphWitnessVia tc start kind withMay)
   (if (== start 0)
     (as 0 (Vec Int))
     {
@@ -25791,8 +25856,13 @@
                 (set hit qi)
                 (if (== (graphOwnSource tc ent kind) 1)
                   (set hit qi)
-                  (graphEnqueue tc (memGetWordVec ent 7) 0 queue parent seen qi
-                    (graphStopsAtTrusted kind))))
+                  {
+                    (graphEnqueue tc (memGetWordVec ent 7) 0 queue parent seen qi
+                      (graphStopsAtTrusted kind))
+                    (if (== withMay 1)
+                      (graphEnqueue tc (memGetWordVec ent 11) 0 queue parent seen qi
+                        (graphStopsAtTrusted kind)))
+                  }))
               (set qi (+ qi 1))
             }
           })
@@ -25904,38 +25974,6 @@
 ; `graphSeeds` answers 0 for it under every kind, so before this guard
 ; an operation was already counted by neither arm for IO, Alloc,
 ; `extern` or `cast`. It changes exactly the custom case.
-; Does `start`, or anything it reaches by a certain edge, also have an
-; edge it MAY take (`FnEnt` word 11)? A call-graph check that found
-; nothing cannot clear such a body: the edge it does not follow may be
-; the one that reaches the answer.
-(pub :: graphReachesMay (-> Int Int Int))
-(pub fn (graphReachesMay tc start)
-  (if (== start 0)
-    0
-    {
-      (let queue vecNew)
-      (let seen vecNew)
-      (let mut qi 0)
-      (let mut hit 0)
-      {
-        (vecPush queue start)
-        (vecPush seen (memGetWordStr start 0))
-        (while (if (== hit 0)
-          (< qi (vecLen queue))
-          false)
-          {
-            (let ent (vecGet queue qi))
-            {
-              (if (> (vecLen (memGetWordVec ent 11)) 0)
-                (set hit 1)
-                (graphEnqueue tc (memGetWordVec ent 7) 0 queue vecNew seen qi 0))
-              (set qi (+ qi 1))
-            }
-          })
-        hit
-      }
-    }))
-
 (pub :: graphAnyCalleeCarries (-> Int Ints Int String Int))
 (pub fn (graphAnyCalleeCarries tc calls i kind)
   (if (>= i (vecLen calls))
@@ -26119,10 +26157,20 @@
                 (emitRestrictUnverifiable tc d r
                   "the body calls a value the compiler could not resolve, so its closure cannot be enumerated"
                   (as 0 (Vec Int)))
-                (if (&& (== (vecLen local) 0) (== (graphReachesMay tc (restrictOwnEnt tc d)) 1))
-                  (emitRestrictUnverifiable tc d r
-                    "the body reaches a call through a field or a local that holds one of several functions, so its closure cannot be enumerated"
-                    (as 0 (Vec Int)))
+                (if (== (vecLen local) 0)
+                  {
+                    (let mayPath (graphWitnessMay tc (restrictOwnEnt tc d) "cast"))
+                    (if (== (as mayPath Int) 0)
+                      0
+                      (emitRestrictUnverifiable tc d r
+                        (concat
+                          (concat
+                            (concat "the closure may reach a cast in `"
+                              (bareOf (memGetWordStr (vecGet mayPath (- (vecLen mayPath) 1)) 0)))
+                            "` through a call through a field or a local that holds one of several functions: ")
+                          (graphRender mayPath))
+                        mayPath))
+                  }
                   0)))
           })
       }

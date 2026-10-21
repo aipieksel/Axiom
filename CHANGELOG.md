@@ -16,6 +16,16 @@ its changelog too.
 
 ## Unreleased
 
+- Restriction checks follow the edges a call through a field, or through
+  a local that holds one of several functions, may take. `no-foreign`,
+  `no-recursion` and `no-cast:deep` prove a claim when none of those
+  functions reaches an `extern`, a cycle or a cast, and name the path
+  when one may. An `isr` handler that may reach a wait this way is now
+  refused with AX4009, as one that certainly waits was. Tested by
+  `tests/diagnostics/1485-restrict-may-edges.ax`,
+  `tests/diagnostics/1486-isr-waits-through-local.ax`,
+  `scripts/check-restrictions.sh` and `scripts/check-isr.sh`.
+
 - `check`, `build`, `emit-llvm` and `symbols` refuse a second input file
   with status 2 instead of answering for the first one. `symbols` skips a
   flag's value when it looks for its file, so `symbols --target T FILE`

@@ -362,8 +362,9 @@ MM-EXEC-18:
 - No allocation and no recursion, both checked (`AX3049`).
 - No waiting. A path to `__arm_wfi`, which would sleep with the
   interrupt that should wake it masked, or to a system call, is
-  `AX4009`. A poll of a word the main loop writes waits too, and the
-  compiler can't see it.
+  `AX4009`. That includes a call through a field, or through a local
+  that holds one of several functions, that may reach one. A poll of
+  a word the main loop writes waits too, and the compiler can't see it.
 - No recovery across the boundary: a trap inside the handler exits
   with its own status.
 - State shared with the main loop goes only through the unsafe layer:
