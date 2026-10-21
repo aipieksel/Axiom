@@ -70,7 +70,7 @@
 ;; is what followed `;@axiom:`, such as `nolint(lint-unused-let, all)`:
 ;; the key is the bytes before the first `(`, and the value runs to
 ;; the last `)` (`ctCloseAt`'s rule).
-(pub :: nolintNames (-> String Ints))
+(pub :: nolintNames (-> String Strings))
 (pub fn (nolintNames content)
   {
     (let out vecNew)
@@ -85,19 +85,13 @@
           {
             (let parts (strSplit (strSlice content (+ op 1) (- (ctCloseAt content) (+ op 1))) 44))
             {
-              (let mut i 0)
-              {
-                (while (< i (vecLen parts))
-                  {
-                    {
-                      (let t (strTrim (vecGetStr parts i)))
-                      (if (! (== (strLen t) 0))
-                        (vecPushStr out t))
-                    }
-                    (set i (+ i 1))
-                  })
-                out
-              }
+              (for part in parts
+                {
+                  (let t (strTrim part))
+                  (if (! (== (strLen t) 0))
+                    (vecPush out t))
+                })
+              out
             }
           }
           out))
@@ -107,136 +101,91 @@
 ;; Whether a set of names quiets `code`. `kind` is 1 for an editor
 ;; hint and 0 for a checker warning: `all` quiets both, `hints` the
 ;; hints and `warnings` the warnings, and a name quiets its own code.
-(pub :: nolintCovers (-> Ints String Int Bool))
+(pub :: nolintCovers (-> Strings String Int Bool))
 (pub fn (nolintCovers names code kind)
   {
-    (let mut i 0)
     (let mut hit false)
     {
-      (while (< i (vecLen names))
-        {
-          {
-            (let n (vecGetStr names i))
-            (if (|| (strEq n code)
-                  (|| (strEq n "all")
-                    (if (== kind 1)
-                      (strEq n "hints")
-                      (strEq n "warnings"))))
-              (set hit true))
-          }
-          (set i (+ i 1))
-        })
+      (for n in names
+        (if (|| (strEq n code)
+              (|| (strEq n "all")
+                (if (== kind 1)
+                  (strEq n "hints")
+                  (strEq n "warnings"))))
+          (set hit true)))
       hit
     }
   })
 
-; The table: word 0 the file-wide names, word 1 the owners (declaration
-; names) and word 2 their name vectors, parallel. Built once per
-; document from the tags `attachAxtags` put in word 7 of each
-; declaration.
-(pub :: nolintTable (-> (Vec ASTNode) Int))
-(pub fn (nolintTable decls)
+; The table: the file-wide names, and the owners (declaration names)
+; with their name vectors, parallel. Built once per document from the
+; tags `attachAxtags` hangs on each declaration.
+(struct NolintTable
+  (files : Strings)
+  (owners : Strings)
+  (sets : StringRows))
+
+(:: nolintTable (-> (Vec ASTNode) NolintTable))
+(fn (nolintTable decls)
   {
-    (let t (memAlloc 32))
+    (let t (NolintTable :files vecNew :owners vecNew :sets vecNew))
     {
-      (memSetWord t 0 vecNew)
-      (memSetWord t 1 vecNew)
-      (memSetWord t 2 vecNew)
-      {
-        (let mut i 0)
-        (while (< i (vecLen decls))
-          {
-            (nolintTableDecl t (vecGet decls i))
-            (set i (+ i 1))
-          })
-      }
+      (for d in decls
+        (nolintTableDecl t d))
       t
     }
   })
 
-(:: nolintTableDecl (-> Int ASTNode Int))
+(:: nolintTableDecl (-> NolintTable ASTNode ()))
 (fn (nolintTableDecl t d)
-  (if (== (nodeAxtagsWord d) 0)
-    0
-    {
-      (let tags (nodeAxtagsWords d))
-      (let mut i 0)
+  (if (!= (nodeAxtagsWord d) 0)
+    (for tag in (nodeAxtagsWords d)
       {
-        (while (< i (vecLen tags))
-          {
-            {
-              (let names (nolintNames (memGetWordStr (vecGet tags i) 1)))
-              (if (! (== (vecLen names) 0))
-                (if (== (nodeTag d) TAG_D_IMPORT)
-                  (nolintAppend (memGetWordVec t 0) names)
-                  (nolintTableAdd t (nodeAName d) names)))
-            }
-            (set i (+ i 1))
-          })
-        0
-      }
-    }))
+        (let names (nolintNames (memGetWordStr tag 1)))
+        (if (! (== (vecLen names) 0))
+          (if (== (nodeTag d) TAG_D_IMPORT)
+            (nolintAppend t.files names)
+            (nolintTableAdd t (nodeAName d) names)))
+      })))
 
-(:: nolintAppend (-> Ints Ints Int))
+(:: nolintAppend (-> Strings Strings ()))
 (fn (nolintAppend into names)
-  {
-    (let mut i 0)
-    {
-      (while (< i (vecLen names))
-        {
-          (vecPush into (vecGet names i))
-          (set i (+ i 1))
-        })
-      0
-    }
-  })
+  (for n in names
+    (vecPush into n)))
 
 ; Merge under an owner: a tag above each half of a `::`/`fn` pair is
 ; two entries for one declaration.
-(:: nolintTableAdd (-> Int String Ints Int))
+(:: nolintTableAdd (-> NolintTable String Strings ()))
 (fn (nolintTableAdd t owner names)
   {
-    (let owners (memGetWordVec t 1))
-    (let sets (memGetWordVec t 2))
-    (let mut j 0)
     (let mut at (- 0 1))
     {
-      (while (< j (vecLen owners))
-        {
-          (if (strEq (vecGetStr owners j) owner)
-            (set at j))
-          (set j (+ j 1))
-        })
+      (for (o j) in t.owners
+        (if (strEq o owner)
+          (set at j)))
       (if (< at 0)
         {
-          (vecPushStr owners owner)
-          (vecPushVec sets names)
-          0
+          (vecPush t.owners owner)
+          (vecPush t.sets names)
         }
-        (nolintAppend (vecGetVec sets at) names))
+        (nolintAppend (vecGet t.sets at) names))
     }
   })
 
 ;; Whether the table quiets `code` (of `kind`: 1 hint, 0 warning) on
 ;; the declaration named `owner`: by the file-wide names, or by the
 ;; owner's own.
-(pub :: nolintQuiets (-> Int String String Int Bool))
-(pub fn (nolintQuiets t owner code kind)
-  (if (nolintCovers (memGetWordVec t 0) code kind)
+(:: nolintQuiets (-> NolintTable String String Int Bool))
+(fn (nolintQuiets t owner code kind)
+  (if (nolintCovers t.files code kind)
     true
     {
-      (let owners (memGetWordVec t 1))
-      (let sets (memGetWordVec t 2))
-      (let mut j 0)
       (let mut hit false)
       {
-        (while (< j (vecLen owners))
-          {
-            (if (strEq (vecGetStr owners j) owner)
-              (if (nolintCovers (vecGetVec sets j) code kind)
-                (set hit true)))
-            (set j (+ j 1))
-          })
+        (for (o j) in t.owners
+          (if (strEq o owner)
+            (if (nolintCovers (vecGet t.sets j) code kind)
+              (set hit true))))
         hit
       }
     }))
@@ -246,24 +195,15 @@
 ; `::` and its `fn` share a name, so a warning anywhere in either half
 ; resolves to the owner both halves' tags were merged under. "" when
 ; no declaration starts before the offset.
-(pub :: nolintOwnerAt (-> (Vec ASTNode) Int String))
-(pub fn (nolintOwnerAt decls off)
+(:: nolintOwnerAt (-> (Vec ASTNode) Int String))
+(fn (nolintOwnerAt decls off)
   {
-    (let mut i 0)
     (let mut owner "")
     {
-      (while (< i (vecLen decls))
-        {
-          {
-            (let d (vecGet decls i))
-            (if (!= (nodeSpan d) 0)
-              (if (<= (spanStart (nodeSpan d)) off)
-                (set owner (nodeAName d))
-                owner)
-              owner)
-          }
-          (set i (+ i 1))
-        })
+      (for d in decls
+        (if (!= (nodeSpan d) 0)
+          (if (<= (spanStart (nodeSpan d)) off)
+            (set owner (nodeAName d)))))
       owner
     }
   })
@@ -277,27 +217,20 @@
 (pub fn (nolintQuietDiags decls diags)
   {
     (let t (nolintTable decls))
-    (if (&& (== (vecLen (memGetWordVec t 0)) 0) (== (vecLen (memGetWordVec t 1)) 0))
+    (if (&& (== (vecLen t.files) 0) (== (vecLen t.owners) 0))
       diags
       {
         (let out vecNew)
-        (let mut i 0)
         {
-          (while (< i (vecLen diags))
-            {
-              {
-                (let d (vecGet diags i))
-                (if (! (nolintDropDiag t decls d))
-                  (vecPush out d))
-              }
-              (set i (+ i 1))
-            })
+          (for d in diags
+            (if (! (nolintDropDiag t decls d))
+              (vecPush out d)))
           out
         }
       })
   })
 
-(:: nolintDropDiag (-> Int (Vec ASTNode) Int Bool))
+(:: nolintDropDiag (-> NolintTable (Vec ASTNode) Int Bool))
 (fn (nolintDropDiag t decls d)
   (if (!= (diagSev d) SEV_WARNING)
     false

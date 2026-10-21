@@ -102,12 +102,8 @@
   {
     (let empty (as 0 (Vec a)))
     (let buckets vecNew)
-    (let mut i 0)
-    (while (< i slots)
-      {
-        (vecPush buckets empty)
-        (set i (+ i 1))
-      })
+    (for i in 0..slots
+      (vecPush buckets empty))
     buckets
   })
 
@@ -215,7 +211,6 @@
 ; A `while`, not a recursion: its depth would be the line count, and
 ; this backend eliminates only self tail calls.
 (pub :: lspLineIndex (-> String Ints))
-;@axiom:effect(unsafe)
 (pub fn (lspLineIndex src)
   {
     (let out vecNew)
@@ -232,8 +227,7 @@
               (vecPush out (+ i 1))
             }
             (if (== (strByte src i) 10)
-              (vecPush out (+ i 1))
-              (as 0 (Vec Int))))
+              (vecPush out (+ i 1))))
           (set i (+ i 1))
         })
       out
@@ -344,7 +338,6 @@
 (pub fn (lspDiagText d)
   {
     (let parts vecNew)
-    (let mut i 0)
     {
       (vecPush parts (diagMsg d))
       ; THE LABEL IS WHAT THE CARET SAYS, and it goes directly under
@@ -372,14 +365,12 @@
             (vecPush parts lab)
           })
       }
-      (while (< i (diagNoteCount d))
+      (for i in 0..(diagNoteCount d)
         {
           (vecPush parts "\n\nnote: ")
           (vecPush parts (diagNote d i))
-          (set i (+ i 1))
         })
-      (set i 0)
-      (while (< i (diagTraceCount d))
+      (for i in 0..(diagTraceCount d)
         {
           ; Name only: this function has no unit table in reach, and
           ; the editor's cursor is already AT the invocation the
@@ -387,14 +378,11 @@
           (vecPush parts "\n\nnote: in this expansion of `")
           (vecPush parts (diagTraceName d i))
           (vecPush parts "`")
-          (set i (+ i 1))
         })
-      (set i 0)
-      (while (< i (diagHelpCount d))
+      (for i in 0..(diagHelpCount d)
         {
           (vecPush parts "\n\nhelp: ")
           (vecPush parts (diagHelpMsg d i))
-          (set i (+ i 1))
         })
       (catStrs parts)
     }
@@ -430,19 +418,15 @@
 (pub fn (lspDiagRelated d src ix uri)
   {
     (let out jsonArr)
-    (let mut i 0)
     {
-      (while (< i (diagSecCount d))
-        {
-          (if (== (lspSecHere d i) 1)
-            (jsonArrPush out
-              (jsonObjPut
-                (jsonObjPut jsonObj "location"
-                  (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
-                    (lspRangeIx src ix (diagSecSpan d i))))
-                "message" (jsonStr (diagSecMsg d i)))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(diagSecCount d)
+        (if (== (lspSecHere d i) 1)
+          (jsonArrPush out
+            (jsonObjPut
+              (jsonObjPut jsonObj "location"
+                (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
+                  (lspRangeIx src ix (diagSecSpan d i))))
+              "message" (jsonStr (diagSecMsg d i))))))
       out
     }
   })
@@ -465,21 +449,6 @@
   (if (>= i (diagSecCount d))
     n
     (lspSecPublishable d (+ i 1) (+ n (lspSecHere d i)))))
-
-; A one-diagnostic array, for the failures that happen before the
-; checker runs and therefore have no span to report. `lspRange` already
-; answers the top-of-file range for a span of 0 - that is the spanless
-; case it exists to handle - so it is reused rather than rebuilt here.
-(pub :: lspOneDiag (-> String String String Int))
-(pub fn (lspOneDiag src code msg)
-  (jsonArrPush jsonArr
-    (jsonObjPut
-      (jsonObjPut
-        (jsonObjPut
-          (jsonObjPut (jsonObjPut jsonObj "range" (lspRange src 0)) "severity" (jsonNum 1)) "code"
-          (jsonStr code))
-        "source" (jsonStr "axiom"))
-      "message" (jsonStr msg))))
 
 ; ------------------------------------------------------------------
 ; Import pre-flight
@@ -562,20 +531,16 @@
 (pub fn (lspWorkspaceNew uris texts meta)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen uris))
-        {
-          (if (lspDocIsOpen meta i)
-            (vecPush out
-              (as (CUnit2
-                    :file (lspUriToPath (vecGetStr uris i))
-                    :src (vecGetStr texts i)
-                    :name (as 0 String)
-                    :imports vecNew
-                    :library false) Int)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen uris)
+        (if (lspDocIsOpen meta i)
+          (vecPush out
+            (as (CUnit2
+                  :file (lspUriToPath (vecGetStr uris i))
+                  :src (vecGetStr texts i)
+                  :name (as 0 String)
+                  :imports vecNew
+                  :library false) Int))))
       (LspWorkspace :open out :files vecNew :searches vecNew)
     }
   })
@@ -913,17 +878,10 @@
                           (let out jsonArr)
                           (let ix (lspLineIndex src))
                           (let uri (lspPathToUri path))
-                          (let mut i 0)
                           {
-                            (while (< i (vecLen ds))
-                              {
-                                (let d (vecGet ds i))
-                                {
-                                  (if (== (diagUnit d) 0)
-                                    (jsonArrPush out (lspDiagJson d src ix uri)))
-                                  (set i (+ i 1))
-                                }
-                              })
+                            (for d in ds
+                              (if (== (diagUnit d) 0)
+                                (jsonArrPush out (lspDiagJson d src ix uri))))
                             (lspJsonAppend out lints 0)
                             out
                           }
@@ -1213,9 +1171,8 @@
     (let scope (memGetWordVec lx 1))
     (let idxs (memGetWordVec lx 6))
     (let binders (memGetWordVec lx 2))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let idx (vecGet idxs (- (vecLen idxs) 1)))
           {
@@ -1227,7 +1184,6 @@
                 (lspLintRecord lx (memGetWord b 1) (lintUnusedLet)
                   (concat (concat "`" (memGetWordStr b 0)) "` is bound here and never read")))
             }
-            (set i (+ i 1))
           }
         })
       0
@@ -1494,13 +1450,9 @@
       (if (== tag TAG_D_FN)
         {
           (let params (nodeBNames d))
-          (let mut i 0)
           {
-            (while (< i (vecLen params))
-              {
-                (lspLintPush lx (vecGetStr params i) 0 0)
-                (set i (+ i 1))
-              })
+            (for i in 0..(vecLen params)
+              (lspLintPush lx (vecGetStr params i) 0 0))
             (lspLintWalk lx (nodeCChild d))
             (lspLintPop lx (vecLen params))
           }
@@ -1520,25 +1472,16 @@
 (pub :: lspLintSuppBuild (-> Int (Vec ASTNode) Int))
 (pub fn (lspLintSuppBuild lx decls)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen decls))
-        {
-          (let d (vecGet decls i))
-          {
-            ; An import's tag is the file's, under the owner "" that
-            ; `lspLintSuppressed` asks about for every record.
-            (if (!= (nodeAxtagsWord d) 0)
-              (lspLintSuppDecl lx
-                (if (== (nodeTag d) TAG_D_IMPORT)
-                  ""
-                  (nodeAName d))
-                (nodeAxtagsWords d) 0))
-            (set i (+ i 1))
-          }
-        })
-      0
-    }
+    (for d in decls
+      (if (!= (nodeAxtagsWord d) 0)
+        ; An import's tag is the file's, under the owner "" that
+        ; `lspLintSuppressed` asks about for every record.
+        (lspLintSuppDecl lx
+          (if (== (nodeTag d) TAG_D_IMPORT)
+            ""
+            (nodeAName d))
+          (nodeAxtagsWords d) 0)))
+    0
   })
 
 ; One declaration's tags into the map. Only the `nolint` key is
@@ -1565,39 +1508,33 @@
     (if (== (vecLen codes) 0)
       0
       {
-        (let mut i 0)
-        {
-          (while (< i (vecLen codes))
+        (for i in 0..(vecLen codes)
+          (if (! (nolintKnownName (vecGetStr codes i)))
+            ; The squiggle sits on the name itself: `off` is the
+            ; tag's byte offset and the content starts 8 bytes in,
+            ; after `;@axiom:`.
             {
-              (if (! (nolintKnownName (vecGetStr codes i)))
-                ; The squiggle sits on the name itself: `off` is the
-                ; tag's byte offset and the content starts 8 bytes in,
-                ; after `;@axiom:`.
-                {
-                  (let at
-                    (match (strFind content (vecGetStr codes i) 0)
-                      ((None) 0)
-                      ((Some k) k)))
-                  {
-                    (memSetWord lx 5 owner)
-                    (lspLintRecord lx
-                      (mkSpan (+ off (+ 8 at)) (+ off (+ 8 (+ at (strLen (vecGetStr codes i))))))
-                      lintUnknownNolint
-                      (concat (concat "no lint or warning named `" (vecGetStr codes i))
-                        "`; `nolint` takes lint-dead-branch, lint-bool-if, lint-unused-let, lint-axql, hints, warnings, all, or a warning code such as AX3037"))
-                  }
-                })
-              (set i (+ i 1))
-            })
-          (lspLintSuppAdd lx owner codes 0)
-        }
+              (let at
+                (match (strFind content (vecGetStr codes i) 0)
+                  ((None) 0)
+                  ((Some k) k)))
+              {
+                (memSetWord lx 5 owner)
+                (lspLintRecord lx
+                  (mkSpan (+ off (+ 8 at)) (+ off (+ 8 (+ at (strLen (vecGetStr codes i))))))
+                  lintUnknownNolint
+                  (concat (concat "no lint or warning named `" (vecGetStr codes i))
+                    "`; `nolint` takes lint-dead-branch, lint-bool-if, lint-unused-let, lint-axql, hints, warnings, all, or a warning code such as AX3037"))
+              }
+            }))
+        (lspLintSuppAdd lx owner codes 0)
       })
   })
 
 ; Merge one declaration's codes under its owner: an entry already
 ; there gains the codes (a tag above each half is two entries for
 ; one declaration), else the owner is entered with them.
-(pub :: lspLintSuppAdd (-> Int String Ints Int Int))
+(pub :: lspLintSuppAdd (-> Int String Strings Int Int))
 (pub fn (lspLintSuppAdd lx owner codes i)
   (if (>= i (vecLen codes))
     0
@@ -1605,15 +1542,11 @@
       (let code (vecGetStr codes i))
       (let owners (memGetWordVec lx 4))
       (let codevecs (memGetWordVec lx 7))
-      (let mut j 0)
       (let mut at (- 0 1))
       {
-        (while (< j (vecLen owners))
-          {
-            (if (strEq (vecGetStr owners j) owner)
-              (set at j))
-            (set j (+ j 1))
-          })
+        (for j in 0..(vecLen owners)
+          (if (strEq (vecGetStr owners j) owner)
+            (set at j)))
         (if (< at 0)
           {
             (let v vecNew)
@@ -1637,17 +1570,13 @@
   {
     (let owners (memGetWordVec lx 4))
     (let codevecs (memGetWordVec lx 7))
-    (let mut j 0)
     (let mut out false)
     {
-      (while (< j (vecLen owners))
-        {
+      (for j in 0..(vecLen owners)
+        (if (|| (strEq (vecGetStr owners j) owner) (== (strLen (vecGetStr owners j)) 0))
           ; The owner's own names, and the file's under "".
-          (if (|| (strEq (vecGetStr owners j) owner) (== (strLen (vecGetStr owners j)) 0))
-            (if (nolintCovers (vecGetVec codevecs j) code 1)
-              (set out true)))
-          (set j (+ j 1))
-        })
+          (if (nolintCovers (vecGetVec codevecs j) code 1)
+            (set out true))))
       out
     }
   })
@@ -1763,9 +1692,8 @@
           {
             (let mut args 0)
             (let mut d 0)
-            (let mut k (+ last 1))
             {
-              (while (< k hit)
+              (for k in (+ last 1)..hit
                 {
                   (let kk (kindInt (tokenKind (vecGet toks k))))
                   (if (lspAxqlOpens kk)
@@ -1778,7 +1706,6 @@
                       (set d (- d 1))
                       (if (== d 0)
                         (set args (+ args 1)))))
-                  (set k (+ k 1))
                 })
               (if (!= args want)
                 0
@@ -2053,9 +1980,8 @@
     (let n (vecLen toks))
     (let tables vecNew)
     (let columns vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let t (vecGet toks i))
           (let k (kindInt (tokenKind t)))
@@ -2069,7 +1995,6 @@
             (if (&& (== k (kindInt TK_IDENT)) (> i 0))
               (if (== (kindInt (tokenKind (vecGet toks (- i 1)))) (kindInt TK_LPAREN))
                 (lspAxqlSchemaFromForm tables columns toks i))))
-          (set i (+ i 1))
         })
       {
         (let b (memAlloc 16))
@@ -2358,18 +2283,11 @@
 (pub fn (lspLintFlush lx out src ix)
   {
     (let recs (memGetWordVec lx 3))
-    (let mut i 0)
     {
-      (while (< i (vecLen recs))
-        {
-          (let r (vecGet recs i))
-          {
-            (if (! (lspLintSuppressed lx (memGetWordStr r 3) (memGetWordStr r 1)))
-              (jsonArrPush out
-                (lspLintJson src ix (memGetWord r 0) (memGetWordStr r 1) (memGetWordStr r 2))))
-            (set i (+ i 1))
-          }
-        })
+      (for r in recs
+        (if (! (lspLintSuppressed lx (memGetWordStr r 3) (memGetWordStr r 1)))
+          (jsonArrPush out
+            (lspLintJson src ix (memGetWord r 0) (memGetWordStr r 1) (memGetWordStr r 2)))))
       0
     }
   })
@@ -2383,14 +2301,10 @@
 (pub fn (lspLintDoc out src ix decls)
   {
     (let lx (lspLintContext src))
-    (let mut i 0)
     {
       (lspLintSuppBuild lx decls)
-      (while (< i (vecLen decls))
-        {
-          (lspLintWalkDecl lx (vecGet decls i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen decls)
+        (lspLintWalkDecl lx (vecGet decls i)))
       (lspLintFlush lx out src ix)
     }
   })
@@ -2625,12 +2539,11 @@
   {
     (let stack vecNew)
     (let n (vecLen toks))
-    (let mut i 0)
     (let mut start 0)
     (let mut lastEnd 0)
     (let mut lossy 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let t (vecGet toks i))
           {
@@ -2638,56 +2551,53 @@
             (let op (lspRecOpener t))
             (let cl (lspRecCloser t))
             (let s (spanStart (tokenSpan t)))
-            {
-              (if (|| (== k (kindInt TK_ERROR)) (== k (kindInt TK_ERROR_ESC)))
-                (set lossy 1)
-                (if (> op 0)
-                  {
-                    ; A `(` at column zero while a form is open: the
-                    ; open form ended before it, at its last token.
-                    (if (&& (== op 1) (&& (> (vecLen stack) 0) (lspRecColZero src s)))
-                      {
-                        (lspRecCloseAll stack flat lastEnd)
-                        (vecPush bounds start)
-                        (vecPush bounds (vecLen flat))
-                      })
-                    (if (== (vecLen stack) 0)
-                      (set start (vecLen flat)))
-                    (vecPush stack op)
-                    (vecPush flat t)
-                    (set lastEnd (spanEnd (tokenSpan t)))
-                  }
-                  (if (> cl 0)
-                    (if (lspRecHas stack cl)
-                      {
-                        ; A closer ends the form it matches, and
-                        ; every form still open inside that one.
-                        (while (!= (vecLast stack) cl)
-                          (vecPush flat (lspRecClose (vecPop stack) lastEnd)))
-                        (vecPop stack)
-                        (vecPush flat t)
-                        (set lastEnd (spanEnd (tokenSpan t)))
-                        (if (== (vecLen stack) 0)
-                          {
-                            (vecPush bounds start)
-                            (vecPush bounds (vecLen flat))
-                          })
-                      }
-                      (set lossy 1))
-                    (if (!= k (kindInt TK_EOF))
-                      {
-                        (if (== (vecLen stack) 0)
-                          (set start (vecLen flat)))
-                        (vecPush flat t)
-                        (set lastEnd (spanEnd (tokenSpan t)))
-                        (if (== (vecLen stack) 0)
-                          {
-                            (vecPush bounds start)
-                            (vecPush bounds (vecLen flat))
-                          })
-                      }))))
-              (set i (+ i 1))
-            }
+            (if (|| (== k (kindInt TK_ERROR)) (== k (kindInt TK_ERROR_ESC)))
+              (set lossy 1)
+              (if (> op 0)
+                {
+                  ; A `(` at column zero while a form is open: the
+                  ; open form ended before it, at its last token.
+                  (if (&& (== op 1) (&& (> (vecLen stack) 0) (lspRecColZero src s)))
+                    {
+                      (lspRecCloseAll stack flat lastEnd)
+                      (vecPush bounds start)
+                      (vecPush bounds (vecLen flat))
+                    })
+                  (if (== (vecLen stack) 0)
+                    (set start (vecLen flat)))
+                  (vecPush stack op)
+                  (vecPush flat t)
+                  (set lastEnd (spanEnd (tokenSpan t)))
+                }
+                (if (> cl 0)
+                  (if (lspRecHas stack cl)
+                    {
+                      ; A closer ends the form it matches, and
+                      ; every form still open inside that one.
+                      (while (!= (vecLast stack) cl)
+                        (vecPush flat (lspRecClose (vecPop stack) lastEnd)))
+                      (vecPop stack)
+                      (vecPush flat t)
+                      (set lastEnd (spanEnd (tokenSpan t)))
+                      (if (== (vecLen stack) 0)
+                        {
+                          (vecPush bounds start)
+                          (vecPush bounds (vecLen flat))
+                        })
+                    }
+                    (set lossy 1))
+                  (if (!= k (kindInt TK_EOF))
+                    {
+                      (if (== (vecLen stack) 0)
+                        (set start (vecLen flat)))
+                      (vecPush flat t)
+                      (set lastEnd (spanEnd (tokenSpan t)))
+                      (if (== (vecLen stack) 0)
+                        {
+                          (vecPush bounds start)
+                          (vecPush bounds (vecLen flat))
+                        })
+                    }))))
           }
         })
       (if (> (vecLen stack) 0)
@@ -2715,13 +2625,9 @@
 (pub fn (lspRecSlice flat s e)
   {
     (let out vecNew)
-    (let mut i s)
     {
-      (while (< i e)
-        {
-          (vecPush out (vecGet flat i))
-          (set i (+ i 1))
-        })
+      (for i in s..e
+        (vecPush out (vecGet flat i)))
       {
         (let at
           (if (> e s)
@@ -2785,17 +2691,13 @@
 (pub :: lspRecRealCount (-> Ints Int))
 (pub fn (lspRecRealCount toks)
   {
-    (let mut i 0)
     (let mut c 0)
     {
-      (while (< i (vecLen toks))
+      (for i in 0..(vecLen toks)
         {
           (let sp (tokenSpan (vecGet toks i)))
-          {
-            (if (> (spanEnd sp) (spanStart sp))
-              (set c (+ c 1)))
-            (set i (+ i 1))
-          }
+          (if (> (spanEnd sp) (spanStart sp))
+            (set c (+ c 1)))
         })
       c
     }
@@ -2989,21 +2891,13 @@
 (pub fn (lspRecWithHole toks a b sa sb)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i a)
-        {
-          (vecPush out (vecGet toks i))
-          (set i (+ i 1))
-        })
+      (for i in 0..a
+        (vecPush out (vecGet toks i)))
       (vecPush out (mkToken TK_LPAREN "(" (mkSpan sa sa)))
       (vecPush out (mkToken TK_RPAREN ")" (mkSpan sb sb)))
-      (set i b)
-      (while (< i (vecLen toks))
-        {
-          (vecPush out (vecGet toks i))
-          (set i (+ i 1))
-        })
+      (for i in b..(vecLen toks)
+        (vecPush out (vecGet toks i)))
       out
     }
   })
@@ -3013,14 +2907,10 @@
 (pub fn (lspRecWithout toks a b)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen toks))
-        {
-          (if (|| (< i a) (> i b))
-            (vecPush out (vecGet toks i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen toks)
+        (if (|| (< i a) (> i b))
+          (vecPush out (vecGet toks i))))
       out
     }
   })
@@ -3183,23 +3073,16 @@
       out
       {
         (let ms (nodeBChildren d))
-        (let mut i 0)
         {
-          (while (< i (vecLen ms))
-            {
-              (let m (vecGet ms i))
-              {
-                (if (!= (nodeSpan m) 0)
-                  (jsonArrPush out
-                    (jsonObjPut
-                      (jsonObjPut
-                        (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr (nodeAName m))) "kind"
-                          (jsonNum kind))
-                        "range" (lspRangeIx src ix (nodeSpan m)))
-                      "selectionRange" (lspRangeIx src ix (nodeSpan m)))))
-                (set i (+ i 1))
-              }
-            })
+          (for m in ms
+            (if (!= (nodeSpan m) 0)
+              (jsonArrPush out
+                (jsonObjPut
+                  (jsonObjPut
+                    (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr (nodeAName m))) "kind"
+                      (jsonNum kind))
+                    "range" (lspRangeIx src ix (nodeSpan m)))
+                  "selectionRange" (lspRangeIx src ix (nodeSpan m))))))
           out
         }
       })
@@ -3418,17 +3301,13 @@
           (pathJoin (unwrapOr cwd "") path))))
     {
       (let n (strLen abs))
-      (let mut i 0)
       (let mut out "file://")
       {
-        (while (< i n)
-          {
-            (set out (concat out
-                       (if (lspUriSafe (strByte abs i))
-                         (strSlice abs i 1)
-                         (lspPercent (strByte abs i)))))
-            (set i (+ i 1))
-          })
+        (for i in 0..n
+          (set out (concat out
+                     (if (lspUriSafe (strByte abs i))
+                       (strSlice abs i 1)
+                       (lspPercent (strByte abs i))))))
         out
       }
     }
@@ -3993,7 +3872,7 @@
       (while (if (< k n)
         (if (== (strByte line k) 40)
           false
-          (if (lspIsBlank (strByte line k))
+          (if (docIsBlank (strByte line k))
             false
             true))
         false)
@@ -4021,11 +3900,11 @@
   {
     (let ls (lspLineStartAt src off))
     {
-      (let e (lspLineEndFrom src ls))
+      (let e (docLineEndFrom src ls))
       {
         (let line (strSlice src ls (- e ls)))
         {
-          (let b (lspLineBody line))
+          (let b (docLineBody line))
           (if (strStartsWith (strSlice line b (- (strLen line) b)) ";@axiom:")
             {
               (let ks (+ b 8))
@@ -4101,7 +3980,7 @@
               {
                 (let unit (vecGet units u))
                 {
-                  (let doc (lspModuleDoc (memGetWordStr unit 1)))
+                  (let doc (docModuleDoc (memGetWordStr unit 1)))
                   (lspMarkdownHover
                     (concat (concat (concat "```axiom\n(import " w) ")\n```\n\n*module* `")
                       (concat (concat (memGetWordStr unit 0) "`\n")
@@ -4491,7 +4370,6 @@
 ; Selection includes brace blocks. Call-oriented features keep their
 ; parenthesis-only stack by passing false.
 (pub :: lspEnclosingDelimiters (-> String Int Bool Ints))
-;@axiom:effect(unsafe)
 (pub fn (lspEnclosingDelimiters src off blocks)
   {
     (let n (strLen src))
@@ -4516,8 +4394,7 @@
                         (set i (findNewline src i n))
                         {
                           (if (|| (== ch 40) (&& blocks (== ch 123)))
-                            (vecPush stack i)
-                            (as 0 (Vec Int)))
+                            (vecPush stack i))
                           (if (&& (|| (== ch 41) (&& blocks (== ch 125))) (> (vecLen stack) 0))
                             (vecPop stack))
                           (set i (+ i 1))
@@ -4544,7 +4421,7 @@
 ; under "Doc comments". A block with no `;;` line answers all of its
 ; `;` lines, so code written before the convention still reads. A
 ; `;;!` line documents the module and belongs to no declaration, so it
-; is left out either way (`lspModuleDoc` reads it).
+; is left out either way (`docModuleDoc` reads it).
 ;
 ; This is the half of hover a signature cannot give. Every file this
 ; compiler reads documents a declaration in the lines above it - this
@@ -4566,73 +4443,9 @@
 (pub fn (lspDocComment src o)
   (docCommentAbove src o))
 
-; The index of the first non-blank byte of `line`, or its length.
-(pub :: lspLineBody (-> String Int))
-(pub fn (lspLineBody line)
-  (docLineBody line))
-
-; A `;;` line: documentation for the declaration below its block.
-(pub :: lspIsDocMark (-> String Bool))
-(pub fn (lspIsDocMark line)
-  (docIsDocMark line))
-
-; A `;;!` line: documentation for the module the file is.
-(pub :: lspIsModuleDocLine (-> String Bool))
-(pub fn (lspIsModuleDocLine line)
-  (docIsModuleDocLine line))
-
-; The index of the newline that ends the line starting at `p`, or
-; the length of `src` when the last line has none.
-(pub :: lspLineEndFrom (-> String Int Int))
-(pub fn (lspLineEndFrom src p)
-  (docLineEndFrom src p))
-
-; The module's own documentation: the `;;!` lines at the head of the
-; file, with blank lines allowed before them and the block ending at
-; the first line that is anything else. "" when the file has none.
-(pub :: lspModuleDoc (-> String String))
-(pub fn (lspModuleDoc src)
-  (docModuleDoc src))
-
-; The start of the line whose newline sits at `e - 1`.
-(pub :: lspPrevLineStart (-> String Int Int))
-(pub fn (lspPrevLineStart src e)
-  (docPrevLineStart src e))
-
-; A line that is entirely a comment, and is not a banner.
-(pub :: lspIsDocLine (-> String Bool))
-(pub fn (lspIsDocLine line)
-  (docIsDocLine line))
-
-; A comment body of nothing but `-` or `=` is a rule across the page,
-; not a sentence about the declaration below it.
-;
-; AN EMPTY BODY IS NOT ONE. A bare `;` is the paragraph break inside a
-; doc block and is how nearly every multi-paragraph comment in this
-; repository is written, so a banner test that fired on "no text" cut
-; every such block down to its last paragraph - measured on `bump`,
-; whose first sentence disappeared. A banner needs a rule character
-; PRESENT and nothing else beside it.
-(pub :: lspNotBanner (-> String Int Bool))
-(pub fn (lspNotBanner line i)
-  (docNotBanner line i))
-
-(pub :: lspIsBlank (-> Int Bool))
-(pub fn (lspIsBlank b)
-  (docIsBlank b))
-
 (pub :: lspIsSpace (-> Int Bool))
 (pub fn (lspIsSpace b)
-  (|| (lspIsBlank b) (|| (== b 10) (== b 13))))
-
-; One comment line as prose: the leading blanks, the `;` (or the `;;`
-; of a doc line, or the `;;!` of a module line), and one space after
-; it. `;@axiom:effect(io)` keeps its `@`, because an AXTAG is
-; part of what the declaration claims about itself and a reader hovering
-; it wants to see the claim.
-(pub :: lspDocStrip (-> String String))
-(pub fn (lspDocStrip line)
-  (docStrip line))
+  (|| (docIsBlank b) (|| (== b 10) (== b 13))))
 
 ; At most `max` lines of `s`, with the cut said out loud in the fence's
 ; own comment syntax. Hover is a tooltip: a two-hundred-constructor
@@ -4742,26 +4555,19 @@
         (let decls (readAstNodes pr 1))
         (let out jsonArr)
         (let ix (lspLineIndex src))
-        (let mut i 0)
         {
-          (while (< i (vecLen decls))
-            {
-              (let n (vecGet decls i))
-              {
-                ; A `(syntax/join a b)` name parses to the marker
-                ; string "syntax/join a b" (space-joined). The
-                ; outline reads the RAW parse tree - deliberately,
-                ; see the header - so a half-written derive macro's
-                ; marker would otherwise publish its space-bearing
-                ; spelling to the editor. Skipped: the expander is
-                ; what resolves or refuses it, and either way the
-                ; marker is not a name anyone can navigate to.
-                (if (&& (lspWantsSymbol (nodeTag n))
-                      (&& (!= (nodeSpan n) 0) (== (expIsJoinMarker (nodeAName n)) 0)))
-                  (jsonArrPush out (lspSymbolJson src ix n)))
-                (set i (+ i 1))
-              }
-            })
+          (for n in decls
+            (if (&& (lspWantsSymbol (nodeTag n))
+                  (&& (!= (nodeSpan n) 0) (== (expIsJoinMarker (nodeAName n)) 0)))
+              ; A `(syntax/join a b)` name parses to the marker
+              ; string "syntax/join a b" (space-joined). The
+              ; outline reads the RAW parse tree - deliberately,
+              ; see the header - so a half-written derive macro's
+              ; marker would otherwise publish its space-bearing
+              ; spelling to the editor. Skipped: the expander is
+              ; what resolves or refuses it, and either way the
+              ; marker is not a name anyone can navigate to.
+              (jsonArrPush out (lspSymbolJson src ix n))))
           out
         }
       })
@@ -4983,7 +4789,7 @@
   {
     (let ls (lspLineStartAt src off))
     {
-      (let line (strTrim (strSlice src ls (- (lspLineEndFrom src ls) ls))))
+      (let line (strTrim (strSlice src ls (- (docLineEndFrom src ls) ls))))
       (if (|| (strStartsWith line ";@axiom:pre(") (strStartsWith line ";@axiom:post("))
         (lspComplContractAt out seen src decls (contractSigIndex decls) off prefix))
     }
@@ -4992,45 +4798,24 @@
 (pub :: lspComplContractAt (-> Int Strings String (Vec ASTNode) (Vec ASTNode) Int String ()))
 (pub fn (lspComplContractAt out seen src decls sigs off prefix)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen decls))
+    (for d in decls
+      (if (== (nodeTag d) TAG_D_FN)
         {
-          (let d (vecGet decls i))
-          {
-            (if (== (nodeTag d) TAG_D_FN)
+          (let tags (contractTagsFor sigs d))
+          (for t in tags
+            (if (&& (>= off (memGetWord t 0))
+                  (<= off (findNewline src (memGetWord t 0) (strLen src))))
               {
-                (let tags (contractTagsFor sigs d))
-                (let mut j 0)
-                (while (< j (vecLen tags))
-                  {
-                    (let t (vecGet tags j))
-                    {
-                      (if (&& (>= off (memGetWord t 0))
-                            (<= off (findNewline src (memGetWord t 0) (strLen src))))
-                        {
-                          (let ps (nodeBNames d))
-                          (let mut k 0)
-                          {
-                            (while (< k (vecLen ps))
-                              {
-                                (lspComplOffer out seen (vecGetStr ps k) 6 "contract parameter"
-                                  prefix)
-                                (set k (+ k 1))
-                              })
-                            (if (strEq (contractKeyOf t) "post")
-                              (lspComplOffer out seen "result" 6 "function result" prefix))
-                          }
-                        })
-                      (set j (+ j 1))
-                    }
-                  })
-              })
-            (set i (+ i 1))
-          }
-        })
-      ()
-    }
+                (let ps (nodeBNames d))
+                {
+                  (for k in 0..(vecLen ps)
+                    (lspComplOffer out seen (vecGetStr ps k) 6 "contract parameter" prefix))
+                  (if (strEq (contractKeyOf t) "post")
+                    (lspComplOffer out seen "result" 6 "function result" prefix))
+                }
+              }))
+        }))
+    ()
   })
 
 (pub :: lspCompletion (-> LspWorkspace String String Int Int))
@@ -5149,9 +4934,8 @@
           typed
           (strSlice typed (+ dot 1) (- (strLen typed) (+ dot 1)))))
       (let dirs (moduleSearchDirs (pathDir path)))
-      (let mut i 0)
       {
-        (while (< i (vecLen dirs))
+        (for i in 0..(vecLen dirs)
           {
             (let root (vecGetStr dirs i))
             {
@@ -5162,28 +4946,19 @@
                       (concat "./" rel)
                       (concat root rel)))
                   vecNew))
-              {
+              (for j in 0..(vecLen names)
                 {
-                  (let mut j 0)
-                  (while (< j (vecLen names))
-                    {
-                      (let nm (vecGetStr names j))
+                  (let nm (vecGetStr names j))
+                  (if (! (|| (== (strLen nm) 0) (== (strByte nm 0) 46)))
+                    (if (lspFixEndsWith nm ".ax")
                       {
-                        (if (! (|| (== (strLen nm) 0) (== (strByte nm 0) 46)))
-                          (if (lspFixEndsWith nm ".ax")
-                            {
-                              (let stem (lspFixStemOf nm tcode))
-                              (if (! (== (strLen stem) 0))
-                                (lspComplOffer out seen stem 9 "module" part))
-                            }
-                            (if (&& (lspFixIsSegment nm) (isDir (concat root (concat rel nm))))
-                              (lspComplOffer out seen nm 19 "namespace" part))))
-                        (set j (+ j 1))
+                        (let stem (lspFixStemOf nm tcode))
+                        (if (! (== (strLen stem) 0))
+                          (lspComplOffer out seen stem 9 "module" part))
                       }
-                    })
-                }
-                (set i (+ i 1))
-              }
+                      (if (&& (lspFixIsSegment nm) (isDir (concat root (concat rel nm))))
+                        (lspComplOffer out seen nm 19 "namespace" part))))
+                })
             }
           })
         0
@@ -5211,15 +4986,11 @@
   {
     (let parts (strSplit s 46))
     (let mut out "")
-    (let mut i 0)
     {
-      (while (< i (vecLen parts))
-        {
-          (set out (if (== i 0)
-            (vecGetStr parts 0)
-            (concat out (concat "/" (vecGetStr parts i)))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen parts)
+        (set out (if (== i 0)
+          (vecGetStr parts 0)
+          (concat out (concat "/" (vecGetStr parts i))))))
       out
     }
   })
@@ -5233,16 +5004,12 @@
     (let out vecNew)
     (let all lspKeywords)
     (let removed lspHlRemovedWords)
-    (let mut i 0)
     {
-      (while (< i (vecLen all))
+      (for i in 0..(vecLen all)
         {
           (let word (vecGetStr all i))
-          {
-            (if (! (lspSeenHas removed word))
-              (vecPush out word))
-            (set i (+ i 1))
-          }
+          (if (! (lspSeenHas removed word))
+            (vecPush out word))
         })
       out
     }
@@ -5253,13 +5020,9 @@
   {
     (let kws lspCompletionKeywords)
     (let n (vecLen kws))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (lspComplOffer out seen (vecGetStr kws i) 14 "keyword" prefix)
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (lspComplOffer out seen (vecGetStr kws i) 14 "keyword" prefix))
       0
     }
   })
@@ -5273,22 +5036,18 @@
 (pub fn (lspComplLocal out seen src decls prefix)
   {
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet decls i))
-          {
-            (if (&& (lspWantsSymbol (nodeTag d)) (!= (nodeSpan d) 0))
-              {
-                (if (lspComplWants seen (nodeAName d) prefix)
-                  (lspComplOffer out seen (nodeAName d) (lspComplKind (nodeTag d))
-                    (lspComplDetail src decls d) prefix))
-                (if (== (nodeTag d) TAG_D_DATA)
-                  (lspComplCtors out seen (nodeBChildren d) prefix))
-              })
-            (set i (+ i 1))
-          }
+          (if (&& (lspWantsSymbol (nodeTag d)) (!= (nodeSpan d) 0))
+            {
+              (if (lspComplWants seen (nodeAName d) prefix)
+                (lspComplOffer out seen (nodeAName d) (lspComplKind (nodeTag d))
+                  (lspComplDetail src decls d) prefix))
+              (if (== (nodeTag d) TAG_D_DATA)
+                (lspComplCtors out seen (nodeBChildren d) prefix))
+            })
         })
       0
     }
@@ -5315,13 +5074,9 @@
 (pub fn (lspComplCtors out seen ctors prefix)
   {
     (let n (vecLen ctors))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (lspComplOffer out seen (nodeAName (vecGet ctors i)) 20 "" prefix)
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (lspComplOffer out seen (nodeAName (vecGet ctors i)) 20 "" prefix))
       0
     }
   })
@@ -5346,22 +5101,17 @@
         (let units (memGetWord r 1))
         {
           (let n (vecLen allDecls))
-          (let mut i 0)
           {
-            (while (< i n)
+            (for i in 0..n
               {
                 (let d (vecGet allDecls i))
-                {
-                  (if (&& (lspWantsSymbol (nodeTag d))
-                        (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
-                    {
-                      (lspComplOffer out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
-                        (lspModOf (nodeAName d)) prefix)
-                      (if (== (nodeTag d) TAG_D_DATA)
-                        (lspComplCtors out seen (nodeBChildren d) prefix))
-                    })
-                  (set i (+ i 1))
-                }
+                (if (&& (lspWantsSymbol (nodeTag d)) (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
+                  {
+                    (lspComplOffer out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
+                      (lspModOf (nodeAName d)) prefix)
+                    (if (== (nodeTag d) TAG_D_DATA)
+                      (lspComplCtors out seen (nodeBChildren d) prefix))
+                  })
               })
             0
           }
@@ -5568,37 +5318,25 @@
   {
     (let files jsonArr)
     (let searches jsonArr)
-    (let mut i 0)
     {
-      (while (< i (vecLen workspace.files))
+      (for unit in workspace.files
+        (jsonArrPush files
+          (jsonObjPut (jsonObjPut jsonObj "path" (jsonStr (memGetWordStr unit 0))) "text"
+            (jsonStr (memGetWordStr unit 1)))))
+      (for item in workspace.searches
         {
+          (let paths jsonArr)
+          (let mut j 0)
           {
-            (let unit (vecGet workspace.files i))
-            (jsonArrPush files
-              (jsonObjPut (jsonObjPut jsonObj "path" (jsonStr (memGetWordStr unit 0))) "text"
-                (jsonStr (memGetWordStr unit 1))))
+            (while (< j (vecLen (memGetWordVec item 1)))
+              {
+                (jsonArrPush paths (jsonStr (vecGetStr (memGetWordVec item 1) j)))
+                (set j (+ j 1))
+              })
+            (jsonArrPush searches
+              (jsonObjPut (jsonObjPut jsonObj "directory" (jsonStr (memGetWordStr item 0))) "roots"
+                paths))
           }
-          (set i (+ i 1))
-        })
-      (set i 0)
-      (while (< i (vecLen workspace.searches))
-        {
-          {
-            (let item (vecGet workspace.searches i))
-            (let paths jsonArr)
-            (let mut j 0)
-            {
-              (while (< j (vecLen (memGetWordVec item 1)))
-                {
-                  (jsonArrPush paths (jsonStr (vecGetStr (memGetWordVec item 1) j)))
-                  (set j (+ j 1))
-                })
-              (jsonArrPush searches
-                (jsonObjPut (jsonObjPut jsonObj "directory" (jsonStr (memGetWordStr item 0)))
-                  "roots" paths))
-            }
-          }
-          (set i (+ i 1))
         })
       (jsonObjPut (jsonObjPut jsonObj "files" files) "searches" searches)
     }
@@ -5628,15 +5366,11 @@
           {
             (let item (jsonArrGet searches i))
             (let paths jsonArr)
-            (let mut j 0)
             {
               (let dirs (moduleSearchDirs (jsonGetStr item "directory")))
               {
-                (while (< j (vecLen dirs))
-                  {
-                    (jsonArrPush paths (jsonStr (vecGetStr dirs j)))
-                    (set j (+ j 1))
-                  })
+                (for j in 0..(vecLen dirs)
+                  (jsonArrPush paths (jsonStr (vecGetStr dirs j))))
                 (set current (strEq (jsonWrite paths) (jsonWrite (jsonGet item "roots"))))
               }
             }
@@ -5686,14 +5420,10 @@
     0
     {
       (let mut bytes 0)
-      (let mut i 0)
       (let mut admit true)
       {
-        (while (< i (vecLen cache))
-          {
-            (set bytes (+ bytes (strLen (vecGetStr cache i))))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen cache)
+          (set bytes (+ bytes (strLen (vecGetStr cache i)))))
         (while (&& admit
                  (|| (>= (vecLen cache) 16) (> (+ bytes (+ (strLen key) (strLen entry))) 4194304)))
           {
@@ -5845,46 +5575,33 @@
     {
       (let head (* 8 (+ 4 (+ k (* 6 n)))))
       (let mut total 0)
-      (let mut i 0)
       {
         (set total (+ head u))
-        (while (< i k)
-          {
-            (set total (+ total (strLen (vecGetStr cache i))))
-            (set i (+ i 1))
-          })
-        (set i 0)
-        (while (< i n)
-          {
-            (set total (+ total
-                         (+ (strLen (vecGetStr uris i))
-                           (+ (strLen (vecGetStr texts i))
-                             (+ (strLen (lspGenAt gens i)) (strLen (lspHlCacheAt highlights i)))))))
-            (set i (+ i 1))
-          })
+        (for i in 0..k
+          (set total (+ total (strLen (vecGetStr cache i)))))
+        (for i in 0..n
+          (set total (+ total
+                       (+ (strLen (vecGetStr uris i))
+                         (+ (strLen (vecGetStr texts i))
+                           (+ (strLen (lspGenAt gens i)) (strLen (lspHlCacheAt highlights i))))))))
         {
           (let b (memAlloc total))
-          (let mut j 0)
           (let mut at head)
           {
             (memSetWord b 0 total)
             (memSetWord b 1 n)
             (memSetWord b 2 u)
             (memSetWord b 3 k)
-            (while (< j k)
+            (for j in 0..k
               {
+                (let text (vecGetStr cache j))
                 {
-                  (let text (vecGetStr cache j))
-                  {
-                    (memSetWord b (+ 4 j) (strLen text))
-                    (memCopy (+ b at) (strData text) (strLen text))
-                    (set at (+ at (strLen text)))
-                  }
+                  (memSetWord b (+ 4 j) (strLen text))
+                  (memCopy (+ b at) (strData text) (strLen text))
+                  (set at (+ at (strLen text)))
                 }
-                (set j (+ j 1))
               })
-            (set j 0)
-            (while (< j n)
+            (for j in 0..n
               {
                 (memSetWord b (+ (+ 4 k) (* 6 j)) (strLen (vecGetStr uris j)))
                 (memSetWord b (+ (+ 5 k) (* 6 j)) (strLen (vecGetStr texts j)))
@@ -5892,12 +5609,10 @@
                 (memSetWord b (+ (+ 7 k) (* 6 j)) (vecGet meta (* 2 j)))
                 (memSetWord b (+ (+ 8 k) (* 6 j)) (vecGet meta (+ 1 (* 2 j))))
                 (memSetWord b (+ (+ 9 k) (* 6 j)) (strLen (lspHlCacheAt highlights j)))
-                (set j (+ j 1))
               })
             (memCopy (+ b at) (strData (rdPending r)) u)
             (set at (+ at u))
-            (set j 0)
-            (while (< j n)
+            (for j in 0..n
               {
                 (let uu (vecGetStr uris j))
                 (let tt (vecGetStr texts j))
@@ -5912,7 +5627,6 @@
                   (set at (+ at (strLen gg)))
                   (memCopy (+ b at) (strData hh) (strLen hh))
                   (set at (+ at (strLen hh)))
-                  (set j (+ j 1))
                 }
               })
             b
@@ -5954,22 +5668,19 @@
     (let cached vecNew)
     (let r (rdNew stdin))
     {
-      (let mut j 0)
       (let mut at (* 8 (+ 4 (+ k (* 6 n)))))
       {
-        (while (< j k)
+        (for j in 0..k
           {
             (let length (memGetWord b (+ 4 j)))
             {
               (vecPush cached (strDup (strWrap (+ b at) length)))
               (set at (+ at length))
-              (set j (+ j 1))
             }
           })
         (rdReseat r (+ b at) u)
         (set at (+ at u))
-        (set j 0)
-        (while (< j n)
+        (for j in 0..n
           {
             (let ul (memGetWord b (+ (+ 4 k) (* 6 j))))
             (let tl (memGetWord b (+ (+ 5 k) (* 6 j))))
@@ -5986,7 +5697,6 @@
               (set at (+ at gl))
               (vecPush fh (strDup (strWrap (+ b at) hl)))
               (set at (+ at hl))
-              (set j (+ j 1))
             }
           })
         {
@@ -6559,13 +6269,9 @@
 (pub fn (lspNavOccurrencesProbe src decls probe)
   {
     (let nv (lspNavContext src decls probe))
-    (let mut i 0)
     {
-      (while (< i (vecLen decls))
-        {
-          (lspNavWalkDecl nv (vecGet decls i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen decls)
+        (lspNavWalkDecl nv (vecGet decls i)))
       (memGetWordVec nv 1)
     }
   })
@@ -6608,14 +6314,10 @@
   {
     (let nv (lspNavContext src decls 0))
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (if (lspNavDeclMeets decls i (strLen src) rs re)
-            (lspNavWalkDecl nv (vecGet decls i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (if (lspNavDeclMeets decls i (strLen src) rs re)
+          (lspNavWalkDecl nv (vecGet decls i))))
       (lspNavLocalStarts (memGetWordVec nv 1))
     }
   })
@@ -6655,17 +6357,10 @@
   {
     (let nb (fnIdxBuckets (vecLen occs)))
     (let bs (lspBucketsNew nb))
-    (let mut i 0)
     {
-      (while (< i (vecLen occs))
-        {
-          (let o (vecGet occs i))
-          {
-            (if (&& (!= (memGetWord o 1) 0) (lspNavIsLocal (memGetWordStr o 3)))
-              (lspNavIntPut bs (spanStart (memGetWord o 1))))
-            (set i (+ i 1))
-          }
-        })
+      (for o in occs
+        (if (&& (!= (memGetWord o 1) 0) (lspNavIsLocal (memGetWordStr o 3)))
+          (lspNavIntPut bs (spanStart (memGetWord o 1)))))
       bs
     }
   })
@@ -6692,15 +6387,11 @@
         false
         {
           (let v (vecGet bs b))
-          (let mut i 0)
           (let mut found false)
           {
-            (while (< i (vecLen v))
-              {
-                (if (== (vecGet v i) off)
-                  (set found true))
-                (set i (+ i 1))
-              })
+            (for i in 0..(vecLen v)
+              (if (== (vecGet v i) off)
+                (set found true)))
             found
           }
         })
@@ -6748,21 +6439,14 @@
   {
     (let nb (fnIdxBuckets (vecLen decls)))
     (let bs (lspBucketsNew nb))
-    (let mut i 0)
     {
-      (while (< i (vecLen decls))
-        {
-          (let d (vecGet decls i))
+      (for d in decls
+        (if (lspNavIsNamedDecl d)
           {
-            (if (lspNavIsNamedDecl d)
-              {
-                (lspNavTopPut bs (nodeAName d) (nodeAName d))
-                (if (== (nodeTag d) TAG_D_DATA)
-                  (lspNavTopPutCtors bs (nodeAName d) (nodeBChildren d) 0))
-              })
-            (set i (+ i 1))
-          }
-        })
+            (lspNavTopPut bs (nodeAName d) (nodeAName d))
+            (if (== (nodeTag d) TAG_D_DATA)
+              (lspNavTopPutCtors bs (nodeAName d) (nodeBChildren d) 0))
+          }))
       bs
     }
   })
@@ -6801,18 +6485,11 @@
   {
     (let nb (fnIdxBuckets (vecLen decls)))
     (let bs (lspBucketsNew nb))
-    (let mut i 0)
     {
-      (while (< i (vecLen decls))
-        {
-          (let d (vecGet decls i))
-          {
-            (if (&& (lspNavIsTypeTag (nodeTag d))
-                  (&& (!= (nodeSpan d) 0) (== (expIsJoinMarker (nodeAName d)) 0)))
-              (lspNavTopPut bs (nodeAName d) (nodeAName d)))
-            (set i (+ i 1))
-          }
-        })
+      (for d in decls
+        (if (&& (lspNavIsTypeTag (nodeTag d))
+              (&& (!= (nodeSpan d) 0) (== (expIsJoinMarker (nodeAName d)) 0)))
+          (lspNavTopPut bs (nodeAName d) (nodeAName d))))
       bs
     }
   })
@@ -6905,13 +6582,11 @@
 (pub fn (lspNavPopN nv k)
   {
     (let scope (memGetWordVec nv 2))
-    (let mut i 0)
     {
-      (while (< i k)
+      (for i in 0..k
         {
           (vecPop scope)
           (vecPop scope)
-          (set i (+ i 1))
         })
       0
     }
@@ -7385,41 +7060,36 @@
       (let ctors (nodeBChildren d))
       (let tvs (nodeTyNames d))
       (let mut ci 0)
-      (let mut i 0)
       {
         (let spans (lspNavIdents src (spanEnd (nodeSpan d)) (lspNavDeclEnd src d)))
         {
-          (while (< i (vecLen spans))
+          (for sp in spans
             {
-              (let sp (vecGet spans i))
-              {
-                ; A constructor whose span is 0 or already behind
-                ; this identifier cannot be matched; step past it.
-                (while (if (< ci (vecLen ctors))
-                  (if (== (nodeSpan (vecGet ctors ci)) 0)
-                    true
-                    (< (spanStart (nodeSpan (vecGet ctors ci))) (spanStart sp)))
-                  false)
-                  (set ci (+ ci 1)))
-                (if (if (< ci (vecLen ctors))
-                  (== (spanStart (nodeSpan (vecGet ctors ci))) (spanStart sp))
-                  false)
+              ; A constructor whose span is 0 or already behind
+              ; this identifier cannot be matched; step past it.
+              (while (if (< ci (vecLen ctors))
+                (if (== (nodeSpan (vecGet ctors ci)) 0)
+                  true
+                  (< (spanStart (nodeSpan (vecGet ctors ci))) (spanStart sp)))
+                false)
+                (set ci (+ ci 1)))
+              (if (if (< ci (vecLen ctors))
+                (== (spanStart (nodeSpan (vecGet ctors ci))) (spanStart sp))
+                false)
+                {
+                  (let c (vecGet ctors ci))
                   {
-                    (let c (vecGet ctors ci))
-                    {
-                      (lspNavEmit nv (nodeAName c) (nodeSpan c) NAV_DECL
-                        (lspNavCtorKey (nodeAName d) (nodeAName c)) 0 0)
-                      (set ci (+ ci 1))
-                    }
+                    (lspNavEmit nv (nodeAName c) (nodeSpan c) NAV_DECL
+                      (lspNavCtorKey (nodeAName d) (nodeAName c)) 0 0)
+                    (set ci (+ ci 1))
                   }
-                  (if (! (lspNavColonAfter src sp))
-                    {
-                      (let name (lspNavSpanText src sp))
-                      (if (! (lspNavIsTyvar tvs name))
-                        (lspNavTypeRef nv name sp))
-                    }))
-                (set i (+ i 1))
-              }
+                }
+                (if (! (lspNavColonAfter src sp))
+                  {
+                    (let name (lspNavSpanText src sp))
+                    (if (! (lspNavIsTyvar tvs name))
+                      (lspNavTypeRef nv name sp))
+                  }))
             })
           0
         }
@@ -7435,24 +7105,17 @@
     0
     {
       (let src (memGetWordStr nv 0))
-      (let mut i 0)
       {
         (let spans (lspNavIdents src (spanEnd (nodeSpan d)) (lspNavDeclEnd src d)))
         {
-          (while (< i (vecLen spans))
-            {
-              (let sp (vecGet spans i))
-              {
-                (if (! (lspNavColonAfter src sp))
-                  (if (!
-                        (&& (strEq (lspNavSpanText src sp) "mut")
-                          (if (< (+ i 1) (vecLen spans))
-                            (lspNavColonAfter src (vecGet spans (+ i 1)))
-                            false)))
-                    (lspNavTypeRef nv (lspNavSpanText src sp) sp)))
-                (set i (+ i 1))
-              }
-            })
+          (for (sp i) in spans
+            (if (! (lspNavColonAfter src sp))
+              (if (!
+                    (&& (strEq (lspNavSpanText src sp) "mut")
+                      (if (< (+ i 1) (vecLen spans))
+                        (lspNavColonAfter src (vecGet spans (+ i 1)))
+                        false)))
+                (lspNavTypeRef nv (lspNavSpanText src sp) sp))))
           0
         }
       }
@@ -7485,26 +7148,19 @@
     0
     {
       (let src (memGetWordStr nv 0))
-      (let mut i 0)
       (let mut seenIs 0)
       (let mut done 0)
       {
         (let spans (lspNavIdents src (spanEnd (nodeSpan d)) (lspNavDeclEnd src d)))
         {
-          (while (< i (vecLen spans))
-            {
-              (let sp (vecGet spans i))
-              {
-                (if (! (== done 1))
-                  (if (== seenIs 1)
-                    (if (strEq (lspNavSpanText src sp) "range")
-                      (set done 1)
-                      (lspNavTypeRef nv (lspNavSpanText src sp) sp))
-                    (if (strEq (lspNavSpanText src sp) "is")
-                      (set seenIs 1))))
-                (set i (+ i 1))
-              }
-            })
+          (for sp in spans
+            (if (! (== done 1))
+              (if (== seenIs 1)
+                (if (strEq (lspNavSpanText src sp) "range")
+                  (set done 1)
+                  (lspNavTypeRef nv (lspNavSpanText src sp) sp))
+                (if (strEq (lspNavSpanText src sp) "is")
+                  (set seenIs 1)))))
           0
         }
       }
@@ -7536,10 +7192,9 @@
           vecNew))
       {
         (let ok (== (vecLen spans) np))
-        (let mut i 0)
         {
           (lspNavDeclName nv d NAV_DECL)
-          (while (< i np)
+          (for i in 0..np
             {
               (let p (vecGetStr params i))
               (let sp
@@ -7551,7 +7206,6 @@
                 {
                   (lspNavEmitBinder nv p sp key NAV_B_PARAM i)
                   (lspNavPush nv p key)
-                  (set i (+ i 1))
                 }
               }
             })
@@ -7715,15 +7369,9 @@
 (pub :: lspNavWalkVec (-> Int (Vec ASTNode) Int))
 (pub fn (lspNavWalkVec nv xs)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen xs))
-        {
-          (lspNavWalk nv (vecGet xs i))
-          (set i (+ i 1))
-        })
-      0
-    }
+    (for i in 0..(vecLen xs)
+      (lspNavWalk nv (vecGet xs i)))
+    0
   })
 
 ; A reference, under the key it resolves to. `_` is a wildcard and
@@ -8021,24 +7669,17 @@
 ; Every occurrence carrying `key`, in source order; declarations,
 ; signatures and binders only when `incl` is 1.
 (pub :: lspNavSameKey (-> Ints String Int Ints))
-;@axiom:effect(unsafe)
 (pub fn (lspNavSameKey occs key incl)
   {
     (let n (vecLen occs))
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let o (vecGet occs i))
-          {
-            (if (strEq (memGetWordStr o 3) key)
-              (if (|| (== incl 1) (lspNavNot (lspNavIsDeclRole (memGetWord o 2))))
-                (vecPush out o)
-                (as 0 (Vec Int)))
-              (as 0 (Vec Int)))
-            (set i (+ i 1))
-          }
+          (if (strEq (memGetWordStr o 3) key)
+            (if (|| (== incl 1) (lspNavNot (lspNavIsDeclRole (memGetWord o 2))))
+              (vecPush out o)))
         })
       out
     }
@@ -8179,17 +7820,11 @@
 (pub :: lspNavLocations (-> Int String String Ints Ints Int))
 (pub fn (lspNavLocations out uri src ix sel)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen sel))
-        {
-          (jsonArrPush out
-            (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
-              (lspRangeIx src ix (memGetWord (vecGet sel i) 1))))
-          (set i (+ i 1))
-        })
-      0
-    }
+    (for i in 0..(vecLen sel)
+      (jsonArrPush out
+        (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
+          (lspRangeIx src ix (memGetWord (vecGet sel i) 1)))))
+    0
   })
 
 ; TextEdits, one per occurrence, in source order - which is offset
@@ -8198,16 +7833,12 @@
 (pub fn (lspNavEdits src ix sel newName)
   {
     (let out jsonArr)
-    (let mut i 0)
     {
-      (while (< i (vecLen sel))
-        {
-          (jsonArrPush out
-            (jsonObjPut
-              (jsonObjPut jsonObj "range" (lspRangeIx src ix (memGetWord (vecGet sel i) 1)))
-              "newText" (jsonStr newName)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen sel)
+        (jsonArrPush out
+          (jsonObjPut
+            (jsonObjPut jsonObj "range" (lspRangeIx src ix (memGetWord (vecGet sel i) 1)))
+            "newText" (jsonStr newName))))
       out
     }
   })
@@ -8267,30 +7898,25 @@
     (let tcode (checkedTargetCode hostTarget))
     (let out vecNew)
     (let n (vecLen uris))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let ouri (vecGetStr uris i))
           (let otext (vecGetStr texts i))
-          {
-            (if (! (|| (strEq ouri uri) (== (strLen otext) 0)))
-              {
-                (let odecls (lspNavParse otext))
-                (if (! (== (as odecls Int) 0))
-                  (if (lspNavImportsPath workspace odecls tcode (pathDir (lspUriToPath ouri))
-                        target)
+          (if (! (|| (strEq ouri uri) (== (strLen otext) 0)))
+            {
+              (let odecls (lspNavParse otext))
+              (if (! (== (as odecls Int) 0))
+                (if (lspNavImportsPath workspace odecls tcode (pathDir (lspUriToPath ouri)) target)
+                  {
+                    (let pair (memAlloc 16))
                     {
-                      (let pair (memAlloc 16))
-                      {
-                        (memSetWord pair 0 i)
-                        (memSetWord pair 1 odecls)
-                        (vecPush out pair)
-                      }
-                    }))
-              })
-            (set i (+ i 1))
-          }
+                      (memSetWord pair 0 i)
+                      (memSetWord pair 1 odecls)
+                      (vecPush out pair)
+                    }
+                  }))
+            })
         })
       out
     }
@@ -8393,20 +8019,12 @@
 (pub fn (lspNavForeignLocations workspace out uri bare uris texts)
   {
     (let imps (lspNavImporters workspace uri uris texts))
-    (let mut i 0)
     {
-      (while (< i (vecLen imps))
+      (for pair in imps
         {
-          (let pair (vecGet imps i))
-          {
-            (let otext (vecGetStr texts (memGetWord pair 0)))
-            (let ouri (vecGetStr uris (memGetWord pair 0)))
-            {
-              (lspNavLocations out ouri otext (lspLineIndex otext)
-                (lspNavForeignSel texts pair bare))
-              (set i (+ i 1))
-            }
-          }
+          (let otext (vecGetStr texts (memGetWord pair 0)))
+          (let ouri (vecGetStr uris (memGetWord pair 0)))
+          (lspNavLocations out ouri otext (lspLineIndex otext) (lspNavForeignSel texts pair bare))
         })
       0
     }
@@ -8466,19 +8084,11 @@
             {
               (let sel (lspNavSameKey occs (memGetWordStr o 3) 1))
               (let out jsonArr)
-              (let mut i 0)
               {
-                (while (< i (vecLen sel))
-                  {
-                    (let s (vecGet sel i))
-                    {
-                      (jsonArrPush out
-                        (jsonObjPut
-                          (jsonObjPut jsonObj "range" (lspRangeIx src ix (memGetWord s 1))) "kind"
-                          (jsonNum (lspNavHighlightKind (memGetWord s 2)))))
-                      (set i (+ i 1))
-                    }
-                  })
+                (for s in sel
+                  (jsonArrPush out
+                    (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix (memGetWord s 1)))
+                      "kind" (jsonNum (lspNavHighlightKind (memGetWord s 2))))))
                 out
               }
             })
@@ -9433,7 +9043,7 @@
     (let mut s (lineStartOf src off))
     (let e (lineEndFrom src off))
     {
-      (while (&& (< s e) (lspIsBlank (strByte src s)))
+      (while (&& (< s e) (docIsBlank (strByte src s)))
         (set s (+ s 1)))
       (if (>= s e)
         ""
@@ -9702,20 +9312,15 @@
     {
       (let nb (fnIdxBuckets (vecLen offs)))
       (let bs (lspBucketsNew nb))
-      (let mut i 0)
       {
-        (while (< i (vecLen offs))
-          {
-            (lspNavIntPut bs (vecGet offs i))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen offs)
+          (lspNavIntPut bs (vecGet offs i)))
         bs
       }
     }
   })
 
 (pub :: lspChHeadOffsets (-> String Ints))
-;@axiom:effect(unsafe)
 (pub fn (lspChHeadOffsets src)
   {
     (let n (strLen src))
@@ -9734,8 +9339,7 @@
             (if (isIdentStart ch)
               {
                 (if (== pending 1)
-                  (vecPush out i)
-                  (as 0 (Vec Int)))
+                  (vecPush out i))
                 (set pending 0)
                 (set i (skipIdent src (+ i 1) n))
               }
@@ -9781,27 +9385,18 @@
 ; themselves - word 0 the callee's bare name, word 1 its span, word 5
 ; the caller.
 (pub :: lspChSites (-> String (Vec ASTNode) Ints))
-;@axiom:effect(unsafe)
 (pub fn (lspChSites src decls)
   {
     (let occs (lspNavOccurrences src decls))
     (let heads (lspChHeads src))
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen occs))
-        {
-          (let o (vecGet occs i))
-          {
-            (if (&& (== (memGetWord o 2) NAV_READ)
-                  (&& (!= (memGetWord o 1) 0)
-                    (&& (lspNavLocalIndexHas heads (spanStart (memGetWord o 1)))
-                      (lspChCallable (memGetWordStr o 3)))))
-              (vecPush out o)
-              (as 0 (Vec Int)))
-            (set i (+ i 1))
-          }
-        })
+      (for o in occs
+        (if (&& (== (memGetWord o 2) NAV_READ)
+              (&& (!= (memGetWord o 1) 0)
+                (&& (lspNavLocalIndexHas heads (spanStart (memGetWord o 1)))
+                  (lspChCallable (memGetWordStr o 3)))))
+          (vecPush out o)))
       out
     }
   })
@@ -9934,31 +9529,17 @@
     (let oix (lspLineIndex osrc))
     (let sites (lspChSites osrc odecls))
     (let owners vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen sites))
+      (for o in sites
+        (if (&& (strEq (memGetWordStr o 0) name) (strEq (memGetWordStr o 3) want))
+          (lspChGroupPush owners (memGetWordStr o 5) (memGetWord o 1))))
+      (for g in owners
         {
-          (let o (vecGet sites i))
-          {
-            (if (&& (strEq (memGetWordStr o 0) name) (strEq (memGetWordStr o 3) want))
-              (lspChGroupPush owners (memGetWordStr o 5) (memGetWord o 1)))
-            (set i (+ i 1))
-          }
-        })
-      (set i 0)
-      (while (< i (vecLen owners))
-        {
-          (let g (vecGet owners i))
-          {
-            {
-              (let d (lspFindFn odecls (memGetWordStr g 0) (- (vecLen odecls) 1)))
-              (if (! (nodeSame d nilNode))
-                (jsonArrPush out
-                  (jsonObjPut (jsonObjPut jsonObj "from" (lspChItem osrc oix ouri d)) "fromRanges"
-                    (lspChRanges osrc oix (memGetWordVec g 1)))))
-            }
-            (set i (+ i 1))
-          }
+          (let d (lspFindFn odecls (memGetWordStr g 0) (- (vecLen odecls) 1)))
+          (if (! (nodeSame d nilNode))
+            (jsonArrPush out
+              (jsonObjPut (jsonObjPut jsonObj "from" (lspChItem osrc oix ouri d)) "fromRanges"
+                (lspChRanges osrc oix (memGetWordVec g 1)))))
         })
       0
     }
@@ -9970,17 +9551,10 @@
 (pub fn (lspChIncomingImporters workspace out uri name uris texts)
   {
     (let imps (lspNavImporters workspace uri uris texts))
-    (let mut i 0)
     {
-      (while (< i (vecLen imps))
-        {
-          (let pair (vecGet imps i))
-          {
-            (lspChIncomingIn out (vecGetStr uris (memGetWord pair 0))
-              (vecGetStr texts (memGetWord pair 0)) (readAstNodes pair 1) name 1)
-            (set i (+ i 1))
-          }
-        })
+      (for pair in imps
+        (lspChIncomingIn out (vecGetStr uris (memGetWord pair 0))
+          (vecGetStr texts (memGetWord pair 0)) (readAstNodes pair 1) name 1))
       0
     }
   })
@@ -10023,13 +9597,9 @@
 (pub fn (lspChRanges src ix spans)
   {
     (let out jsonArr)
-    (let mut i 0)
     {
-      (while (< i (vecLen spans))
-        {
-          (jsonArrPush out (lspRangeIx src ix (vecGet spans i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen spans)
+        (jsonArrPush out (lspRangeIx src ix (vecGet spans i))))
       out
     }
   })
@@ -10057,44 +9627,30 @@
           (let sites (lspChSites src decls))
           (let groups vecNew)
           (let out jsonArr)
-          (let mut i 0)
           (let mut r (- 0 1))
           {
-            (while (< i (vecLen sites))
+            (for o in sites
+              (if (strEq (memGetWordStr o 5) name)
+                (lspChGroupPush groups (memGetWordStr o 0) (memGetWord o 1))))
+            (for g in groups
               {
-                (let o (vecGet sites i))
-                {
-                  (if (strEq (memGetWordStr o 5) name)
-                    (lspChGroupPush groups (memGetWordStr o 0) (memGetWord o 1)))
-                  (set i (+ i 1))
-                }
-              })
-            (set i 0)
-            (while (< i (vecLen groups))
-              {
-                (let g (vecGet groups i))
-                {
+                (let d (lspFindFn decls (memGetWordStr g 0) (- (vecLen decls) 1)))
+                (if (! (nodeSame d nilNode))
+                  (jsonArrPush out
+                    (jsonObjPut (jsonObjPut jsonObj "to" (lspChItem src ix uri d)) "fromRanges"
+                      (lspChRanges src ix (memGetWordVec g 1))))
                   {
-                    (let d (lspFindFn decls (memGetWordStr g 0) (- (vecLen decls) 1)))
-                    (if (! (nodeSame d nilNode))
-                      (jsonArrPush out
-                        (jsonObjPut (jsonObjPut jsonObj "to" (lspChItem src ix uri d)) "fromRanges"
-                          (lspChRanges src ix (memGetWordVec g 1))))
+                    (if (< r 0)
+                      (set r (lspResolveFor workspace (lspUriToPath uri) src decls)))
+                    (if (! (<= r 0))
                       {
-                        (if (< r 0)
-                          (set r (lspResolveFor workspace (lspUriToPath uri) src decls)))
-                        (if (! (<= r 0))
-                          {
-                            (let item (lspChImportedItem r (memGetWordStr g 0)))
-                            (if (! (== item 0))
-                              (jsonArrPush out
-                                (jsonObjPut (jsonObjPut jsonObj "to" item) "fromRanges"
-                                  (lspChRanges src ix (memGetWordVec g 1)))))
-                          })
+                        (let item (lspChImportedItem r (memGetWordStr g 0)))
+                        (if (! (== item 0))
+                          (jsonArrPush out
+                            (jsonObjPut (jsonObjPut jsonObj "to" item) "fromRanges"
+                              (lspChRanges src ix (memGetWordVec g 1)))))
                       })
-                  }
-                  (set i (+ i 1))
-                }
+                  })
               })
             out
           }
@@ -10322,23 +9878,16 @@
     0
     {
       (let spans (lspNavIdents src (spanEnd (nodeSpan d)) (lspNavDeclEnd src d)))
-      (let mut i 0)
       (let mut seenIs 0)
       (let mut found 0)
       {
-        (while (< i (vecLen spans))
-          {
-            (let sp (vecGet spans i))
-            {
-              (if (! (!= found 0))
-                (if (== seenIs 1)
-                  (if (strEq (lspNavSpanText src sp) head)
-                    (set found sp))
-                  (if (strEq (lspNavSpanText src sp) "is")
-                    (set seenIs 1))))
-              (set i (+ i 1))
-            }
-          })
+        (for sp in spans
+          (if (! (!= found 0))
+            (if (== seenIs 1)
+              (if (strEq (lspNavSpanText src sp) head)
+                (set found sp))
+              (if (strEq (lspNavSpanText src sp) "is")
+                (set seenIs 1)))))
         found
       }
     }))
@@ -10539,22 +10088,18 @@
         (let uri (memGetWordStr s 0))
         (let name (memGetWordStr s 1))
         (let out jsonArr)
-        (let mut i 0)
         {
           (lspThSubtypesIn out uri (memGetWordStr s 2) (readAstNodes s 3) name)
-          (while (< i (vecLen uris))
-            {
-              (if (! (strEq (vecGetStr uris i) uri))
+          (for i in 0..(vecLen uris)
+            (if (! (strEq (vecGetStr uris i) uri))
+              {
+                (let osrc (vecGetStr texts i))
                 {
-                  (let osrc (vecGetStr texts i))
-                  {
-                    (let odecls (lspNavParse osrc))
-                    (if (! (== (as odecls Int) 0))
-                      (lspThSubtypesIn out (vecGetStr uris i) osrc odecls name))
-                  }
-                })
-              (set i (+ i 1))
-            })
+                  (let odecls (lspNavParse osrc))
+                  (if (! (== (as odecls Int) 0))
+                    (lspThSubtypesIn out (vecGetStr uris i) osrc odecls name))
+                }
+              }))
           out
         }
       })
@@ -10566,18 +10111,11 @@
 (pub fn (lspThSubtypesIn out ouri osrc odecls name)
   {
     (let oix (lspLineIndex osrc))
-    (let mut i 0)
     {
-      (while (< i (vecLen odecls))
-        {
-          (let d (vecGet odecls i))
-          {
-            (if (&& (== (nodeTag d) TAG_D_SUBTYPE)
-                  (&& (!= (nodeSpan d) 0) (strEq (lspThBaseHead d) name)))
-              (jsonArrPush out (lspThItem osrc oix ouri d)))
-            (set i (+ i 1))
-          }
-        })
+      (for d in odecls
+        (if (&& (== (nodeTag d) TAG_D_SUBTYPE)
+              (&& (!= (nodeSpan d) 0) (strEq (lspThBaseHead d) name)))
+          (jsonArrPush out (lspThItem osrc oix ouri d))))
       0
     }
   })
@@ -11213,23 +10751,19 @@
     (let starts vecNew)
     (let ends vecNew)
     (let mut label (concat "(" (bareOf (nodeAName d))))
-    (let mut i 0)
     {
-      (while (< i (vecLen ps))
+      (for i in 0..(vecLen ps)
         {
           (set label (concat label " "))
           (vecPush starts (strLen label))
           (set label (concat label (vecGetStr ps i)))
           (vecPush ends (strLen label))
-          (set i (+ i 1))
         })
       (set label (concat label ")"))
       (if (! (nodeSame sig nilNode))
-        (set label (concat (concat label " : ") (lspSigType dsrc sig)))
-        label)
+        (set label (concat (concat label " : ") (lspSigType dsrc sig))))
       (if (> (strLen origin) 0)
-        (set label (concat (concat label " from ") origin))
-        label)
+        (set label (concat (concat label " from ") origin)))
       (lspViewSigInfo label starts ends (lspViewSigDoc dsrc ddecls d sig))
     }
   })
@@ -11291,16 +10825,12 @@
 (pub fn (lspViewSigInfo label starts ends doc)
   {
     (let params jsonArr)
-    (let mut i 0)
     {
-      (while (< i (vecLen starts))
-        {
-          (jsonArrPush params
-            (jsonObjPut jsonObj "label"
-              (jsonArrPush (jsonArrPush jsonArr (jsonNum (lspCharFrom label 0 (vecGet starts i))))
-                (jsonNum (lspCharFrom label 0 (vecGet ends i))))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen starts)
+        (jsonArrPush params
+          (jsonObjPut jsonObj "label"
+            (jsonArrPush (jsonArrPush jsonArr (jsonNum (lspCharFrom label 0 (vecGet starts i))))
+              (jsonNum (lspCharFrom label 0 (vecGet ends i)))))))
       {
         (let base (jsonObjPut (jsonObjPut jsonObj "label" (jsonStr label)) "parameters" params))
         (if (== (strLen doc) 0)
@@ -11354,14 +10884,10 @@
 (pub fn (lspViewIdxSlot name)
   {
     (let n (strLen name))
-    (let mut i 0)
     (let mut h 5381)
     {
-      (while (< i n)
-        {
-          (set h (% (+ (* h 33) (strByte name i)) 16777216))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (set h (% (+ (* h 33) (strByte name i)) 16777216)))
       (% h LSP_VIEW_IDX_SLOTS)
     }
   })
@@ -11396,20 +10922,16 @@
       nilNode
       {
         (let n (vecLen bucket))
-        (let mut i 0)
         (let mut local nilNode)
         (let mut other nilNode)
         {
-          (while (< i n)
+          (for i in 0..n
             {
-              {
-                (let entry (vecGet bucket i))
-                (if (strEq entry.name name)
-                  (if (== (nodeModule entry.node) 0)
-                    (set local entry.node)
-                    (set other entry.node)))
-              }
-              (set i (+ i 1))
+              (let entry (vecGet bucket i))
+              (if (strEq entry.name name)
+                (if (== (nodeModule entry.node) 0)
+                  (set local entry.node)
+                  (set other entry.node)))
             })
           (if (! (nodeSame local nilNode))
             local
@@ -11437,16 +10959,12 @@
   {
     (let idx lspViewIdxNew)
     (let n (vecLen list))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet list i))
-          {
-            (if (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0))
-              (lspViewIdxAdd idx (bareOf (nodeAName d)) d))
-            (set i (+ i 1))
-          }
+          (if (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0))
+            (lspViewIdxAdd idx (bareOf (nodeAName d)) d))
         })
       idx
     }
@@ -11460,16 +10978,12 @@
   {
     (let idx lspViewIdxNew)
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet decls i))
-          {
-            (if (&& (== (nodeTag d) TAG_D_SIG) (!= (nodeSpan d) 0))
-              (lspViewIdxAdd idx (nodeAName d) d))
-            (set i (+ i 1))
-          }
+          (if (&& (== (nodeTag d) TAG_D_SIG) (!= (nodeSpan d) 0))
+            (lspViewIdxAdd idx (nodeAName d) d))
         })
       idx
     }
@@ -11645,7 +11159,7 @@
     (let mut i (- s 1))
     {
       (while (if (> i 0)
-        (lspIsBlank (strByte src i))
+        (docIsBlank (strByte src i))
         false)
         (set i (- i 1)))
       (if (< i 0)
@@ -11791,15 +11305,9 @@
   (if (== (as xs Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen xs))
-          {
-            (lspViewHintsExpr out src ix fns locals decls occs (vecGet xs i) rs re)
-            (set i (+ i 1))
-          })
-        0
-      }
+      (for i in 0..(vecLen xs)
+        (lspViewHintsExpr out src ix fns locals decls occs (vecGet xs i) rs re))
+      0
     }))
 
 ; The arms of a `match` (bodies alone - the pattern is not a call).
@@ -11811,19 +11319,10 @@
   (if (== (as arms Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen arms))
-          {
-            (let arm (vecGet arms i))
-            {
-              (if (== (nodeTag arm) TAG_M_ARM)
-                (lspViewHintsExpr out src ix fns locals decls occs (nodeBChild arm) rs re))
-              (set i (+ i 1))
-            }
-          })
-        0
-      }
+      (for arm in arms
+        (if (== (nodeTag arm) TAG_M_ARM)
+          (lspViewHintsExpr out src ix fns locals decls occs (nodeBChild arm) rs re)))
+      0
     }))
 
 ; An application: `(f a b)` is App(App(f, a), b), so the arguments
@@ -11946,7 +11445,6 @@
 ; is never seen, because the string was stepped over.
 ; ------------------------------------------------------------------
 (pub :: lspFoldingRanges (-> String Int))
-;@axiom:effect(unsafe)
 (pub fn (lspFoldingRanges src)
   {
     (let n (strLen src))
@@ -11974,8 +11472,7 @@
                   (if (== ch 59)
                     {
                       (if (lspViewLineBlankBefore src ix i)
-                        (vecPush comments (lspLineOfIx ix i))
-                        (as 0 (Vec Int)))
+                        (vecPush comments (lspLineOfIx ix i)))
                       (set i (findNewline src i n))
                     }
                     {
@@ -11998,8 +11495,7 @@
                                 (set topImport 0)
                               }))
                           (vecPush stack i)
-                        }
-                        (as 0 (Vec Int)))
+                        })
                       (if (|| (== ch 41) (== ch 125))
                         (if (> (vecLen stack) 0)
                           {
@@ -12088,7 +11584,7 @@
         (== blank 1)
         false)
         {
-          (if (! (lspIsBlank (strByte src i)))
+          (if (! (docIsBlank (strByte src i)))
             (set blank 0))
           (set i (+ i 1))
         })
@@ -12104,25 +11600,21 @@
 (pub fn (lspViewFoldComments out lines)
   {
     (let n (vecLen lines))
-    (let mut i 0)
     (let mut runStart (- 0 1))
     (let mut runEnd (- 0 1))
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let ln (vecGet lines i))
-          {
-            (if (if (>= runStart 0)
-              (== ln (+ runEnd 1))
-              false)
+          (if (if (>= runStart 0)
+            (== ln (+ runEnd 1))
+            false)
+            (set runEnd ln)
+            {
+              (lspViewFold out runStart runEnd "comment")
+              (set runStart ln)
               (set runEnd ln)
-              {
-                (lspViewFold out runStart runEnd "comment")
-                (set runStart ln)
-                (set runEnd ln)
-              })
-            (set i (+ i 1))
-          }
+            })
         })
       (lspViewFold out runStart runEnd "comment")
       0
@@ -12166,7 +11658,6 @@
   })
 
 (pub :: lspViewSelChain (-> String Ints Int Int))
-;@axiom:effect(unsafe)
 (pub fn (lspViewSelChain src ix off)
   {
     (let n (strLen src))
@@ -12181,8 +11672,7 @@
       (if (if (< off n)
         (|| (== (strByte src off) 40) (== (strByte src off) 123))
         false)
-        (vecPush opens off)
-        (as 0 (Vec Int)))
+        (vecPush opens off))
       (if (> (vecLen opens) lspSelMaxDepth)
         (set i (- (vecLen opens) lspSelMaxDepth)))
       {
@@ -12235,13 +11725,9 @@
     (let n (strLen src))
     (let k (vecLen opens))
     (let ends vecNew)
-    (let mut z 0)
     {
-      (while (< z k)
-        {
-          (vecPush ends n)
-          (set z (+ z 1))
-        })
+      (for z in 0..k
+        (vecPush ends n))
       (if (> k 0)
         {
           (let mut i (vecGet opens (- k 1)))
@@ -12307,34 +11793,26 @@
         (let tcode (checkedTargetCode hostTarget))
         (let entryDir (pathDir (lspUriToPath uri)))
         (let out jsonArr)
-        (let mut i 0)
         {
-          (while (< i (vecLen decls))
-            {
-              (let d (vecGet decls i))
+          (for d in decls
+            (if (&& (== (nodeTag d) TAG_D_IMPORT) (!= (nodeSpan d) 0))
               {
-                (if (&& (== (nodeTag d) TAG_D_IMPORT) (!= (nodeSpan d) 0))
+                (let p (lspWorkspaceModulePath workspace (nodeAName d) tcode entryDir))
+                (if (! (== (strLen p) 0))
                   {
-                    (let p (lspWorkspaceModulePath workspace (nodeAName d) tcode entryDir))
-                    (if (! (== (strLen p) 0))
-                      {
-                        (let s (spanStart (nodeSpan d)))
-                        (let mut e (spanStart (nodeSpan d)))
-                        {
-                          (while (if (< e n)
-                            (|| (isIdentChar (strByte src e)) (== (strByte src e) 46))
-                            false)
-                            (set e (+ e 1)))
-                          (jsonArrPush out
-                            (jsonObjPut
-                              (jsonObjPut jsonObj "range" (lspRangeIx src ix (mkSpan s e)))
-                              "target" (jsonStr (lspPathToUri p))))
-                        }
-                      })
+                    (let s (spanStart (nodeSpan d)))
+                    (let mut e (spanStart (nodeSpan d)))
+                    {
+                      (while (if (< e n)
+                        (|| (isIdentChar (strByte src e)) (== (strByte src e) 46))
+                        false)
+                        (set e (+ e 1)))
+                      (jsonArrPush out
+                        (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix (mkSpan s e)))
+                          "target" (jsonStr (lspPathToUri p))))
+                    }
                   })
-                (set i (+ i 1))
-              }
-            })
+              }))
           out
         }
       })
@@ -12921,30 +12399,21 @@
   {
     (let seen (lspBucketsNew LSP_VIEW_IDX_SLOTS))
     (let mut conflict false)
-    (let mut i 0)
-    (while (< i (vecLen decls))
-      {
-        (let d (vecGet decls i))
-        (if (!= (nodeModule d) 0)
-          {
-            (if (|| (== (nodeTag d) TAG_D_MACRO)
-                  (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT)))
-              (if (lspOrganizeRemember seen (nodeAName d) d)
-                (set conflict true)))
-            (if (== (nodeTag d) TAG_D_DATA)
-              {
-                (let constructors (nodeBChildren d))
-                (let mut j 0)
-                (while (< j (vecLen constructors))
-                  {
-                    (if (lspOrganizeRemember seen (nodeAName (vecGet constructors j)) d)
-                      (set conflict true))
-                    (set j (+ j 1))
-                  })
-              })
-          })
-        (set i (+ i 1))
-      })
+    (for d in decls
+      (if (!= (nodeModule d) 0)
+        {
+          (if (|| (== (nodeTag d) TAG_D_MACRO)
+                (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT)))
+            (if (lspOrganizeRemember seen (nodeAName d) d)
+              (set conflict true)))
+          (if (== (nodeTag d) TAG_D_DATA)
+            {
+              (let constructors (nodeBChildren d))
+              (for j in 0..(vecLen constructors)
+                (if (lspOrganizeRemember seen (nodeAName (vecGet constructors j)) d)
+                  (set conflict true)))
+            })
+        }))
     conflict
   })
 
@@ -13022,14 +12491,10 @@
 (pub :: lspOrganizeBlank (-> String Int Int Bool))
 (pub fn (lspOrganizeBlank src start end)
   {
-    (let mut i start)
     (let mut blank true)
-    (while (< i end)
-      {
-        (if (! (lspIsSpace (strByte src i)))
-          (set blank false))
-        (set i (+ i 1))
-      })
+    (for i in start..end
+      (if (! (lspIsSpace (strByte src i)))
+        (set blank false)))
     blank
   })
 
@@ -13086,9 +12551,8 @@
 (pub fn (lspOrganizeSorted src uri chunks sorted tags)
   {
     (let n (vecLen sorted))
-    (let mut i 1)
     (let mut valid true)
-    (while (< i n)
+    (for i in 1..n
       {
         (let chunk (vecGet sorted i))
         (let mut j i)
@@ -13103,11 +12567,9 @@
             (set j (- j 1))
           })
         (vecSet sorted j chunk)
-        (set i (+ i 1))
       })
     (let mut text "")
-    (set i 0)
-    (while (< i n)
+    (for i in 0..n
       {
         (let chunk (vecGet sorted i))
         (if (> i 0)
@@ -13120,7 +12582,6 @@
             (set text (concat text (strSlice src previous.end (- current.start previous.end))))
           })
         (set text (concat text (strSlice src chunk.start (- chunk.end chunk.start))))
-        (set i (+ i 1))
       })
     (let first (vecGet chunks 0))
     (let last (vecGet chunks (- n 1)))
@@ -13128,13 +12589,9 @@
     (let end last.end)
     ; Tags attach by source offset, including inside and trailing
     ; comments and tags separated from the header by blank lines.
-    (set i 0)
-    (while (< i (vecLen tags))
-      {
-        (if (< (memGetWord (vecGet tags i) 0) end)
-          (set valid false))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen tags)
+      (if (< (memGetWord (vecGet tags i) 0) end)
+        (set valid false)))
     (if (|| (! valid) (strEq text (strSlice src start (- end start))))
       0
       (lspEditJson uri (lspRangeIx src (lspLineIndex src) (mkSpan start end)) text))
@@ -13240,16 +12697,12 @@
 (pub fn (lspQuickfixes out ds src uri ix want)
   {
     (let n (vecLen ds))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet ds i))
-          {
-            (if (== (diagUnit d) 0)
-              (lspQuickfixesOf out d src uri ix want))
-            (set i (+ i 1))
-          }
+          (if (== (diagUnit d) 0)
+            (lspQuickfixesOf out d src uri ix want))
         })
       0
     }
@@ -13259,16 +12712,12 @@
 (pub fn (lspQuickfixesOf out d src uri ix want)
   {
     (let n (diagHelpCount d))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let fsp (diagHelpFixSpan d i))
-          {
-            (if (&& (!= fsp 0) (|| (lspSpanMeets (diagSpan d) want) (lspSpanMeets fsp want)))
-              (jsonArrPush out (lspQuickfixJson d i fsp src uri ix)))
-            (set i (+ i 1))
-          }
+          (if (&& (!= fsp 0) (|| (lspSpanMeets (diagSpan d) want) (lspSpanMeets fsp want)))
+            (jsonArrPush out (lspQuickfixJson d i fsp src uri ix)))
         })
       0
     }
@@ -13310,18 +12759,14 @@
   {
     (let out vecNew)
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet decls i))
-          {
-            (vecPush out
-              (if (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0))
-                (nodeVis d)
-                (- 0 1)))
-            (set i (+ i 1))
-          }
+          (vecPush out
+            (if (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0))
+              (nodeVis d)
+              (- 0 1)))
         })
       out
     }
@@ -13345,30 +12790,26 @@
 (pub fn (lspSigAssists out decls rawVis sigs entries src uri ix want)
   {
     (let n (vecLen rawVis))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet decls i))
           (let vis (vecGet rawVis i))
-          {
-            (if (&& (>= vis 0) (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0)))
-              {
-                (let o (lspFormStart src (spanStart (nodeSpan d))))
-                (if (&& (<= o (spanEnd want)) (>= (lspFormEnd src o) (spanStart want)))
-                  (if (! (! (nodeSame (lspViewIdxFind sigs (nodeAName d)) nilNode)))
-                    {
-                      (let e (lspFixEntryFind entries (nodeAName d)))
-                      (if (! (== e 0))
-                        {
-                          (let ty (readAstNode e 1))
-                          (if (lspTyKnown ty)
-                            (jsonArrPush out (lspSigAssistJson d vis ty src uri ix o)))
-                        })
-                    }))
-              })
-            (set i (+ i 1))
-          }
+          (if (&& (>= vis 0) (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0)))
+            {
+              (let o (lspFormStart src (spanStart (nodeSpan d))))
+              (if (&& (<= o (spanEnd want)) (>= (lspFormEnd src o) (spanStart want)))
+                (if (! (! (nodeSame (lspViewIdxFind sigs (nodeAName d)) nilNode)))
+                  {
+                    (let e (lspFixEntryFind entries (nodeAName d)))
+                    (if (! (== e 0))
+                      {
+                        (let ty (readAstNode e 1))
+                        (if (lspTyKnown ty)
+                          (jsonArrPush out (lspSigAssistJson d vis ty src uri ix o)))
+                      })
+                  }))
+            })
         })
       0
     }
@@ -13384,21 +12825,17 @@
   {
     (let idx (lspBucketsNew LSP_VIEW_IDX_SLOTS))
     (let n (vecLen fns))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
-          {
-            (let entry (vecGet fns i))
-            (let name (memGetWordStr entry 0))
-            (let slot (lspViewIdxSlot name))
-            (if (lspBucketMissing (vecGet idx slot))
-              (vecSet idx slot vecNew))
-            (let bucket (vecGet idx slot))
-            (vecPushStr bucket name)
-            (vecPush bucket entry)
-          }
-          (set i (+ i 1))
+          (let entry (vecGet fns i))
+          (let name (memGetWordStr entry 0))
+          (let slot (lspViewIdxSlot name))
+          (if (lspBucketMissing (vecGet idx slot))
+            (vecSet idx slot vecNew))
+          (let bucket (vecGet idx slot))
+          (vecPushStr bucket name)
+          (vecPush bucket entry)
         })
       idx
     }
@@ -13564,28 +13001,17 @@
 (pub fn (lspLintRecs src decls)
   {
     (let lx (lspLintContext src))
-    (let mut i 0)
     {
       (lspLintSuppBuild lx decls)
-      (while (< i (vecLen decls))
-        {
-          (lspLintWalkDecl lx (vecGet decls i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen decls)
+        (lspLintWalkDecl lx (vecGet decls i)))
       {
         (let all (memGetWordVec lx 3))
         (let live vecNew)
-        (let mut j 0)
         {
-          (while (< j (vecLen all))
-            {
-              (let r (vecGet all j))
-              {
-                (if (! (lspLintSuppressed lx (memGetWordStr r 3) (memGetWordStr r 1)))
-                  (vecPush live r))
-                (set j (+ j 1))
-              }
-            })
+          (for r in all
+            (if (! (lspLintSuppressed lx (memGetWordStr r 3) (memGetWordStr r 1)))
+              (vecPush live r)))
           live
         }
       }
@@ -13616,24 +13042,17 @@
 (pub fn (lspLintAssists out src uri ix decls recs want)
   {
     (let seen vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen recs))
+      (for r in recs
         {
-          (let r (vecGet recs i))
-          {
+          (let sp (memGetWord r 0))
+          (if (lspSpanMeets sp want)
             {
-              (let sp (memGetWord r 0))
-              (if (lspSpanMeets sp want)
-                {
-                  (lspNolintOffer out src uri ix decls want (memGetWordStr r 1) (memGetWordStr r 3)
-                    sp (memGetWordStr r 2) seen)
-                  (if (strEq (memGetWordStr r 1) (lintBoolIf))
-                    (lspBoolIfOffer out src uri ix sp (memGetWordStr r 2) seen))
-                })
-            }
-            (set i (+ i 1))
-          }
+              (lspNolintOffer out src uri ix decls want (memGetWordStr r 1) (memGetWordStr r 3) sp
+                (memGetWordStr r 2) seen)
+              (if (strEq (memGetWordStr r 1) (lintBoolIf))
+                (lspBoolIfOffer out src uri ix sp (memGetWordStr r 2) seen))
+            })
         })
       0
     }
@@ -13779,16 +13198,11 @@
     false
     {
       (let tags (nodeAxtagsWords d))
-      (let mut i 0)
       (let mut out false)
       {
-        (while (< i (vecLen tags))
-          {
-            (if (strStartsWith (memGetWordStr (vecGet tags i) 1) key)
-              (set out true)
-              false)
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen tags)
+          (if (strStartsWith (memGetWordStr (vecGet tags i) 1) key)
+            (set out true)))
         out
       }
     }))
@@ -13800,43 +13214,38 @@
   {
     (let n (vecLen ds))
     (let seen vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet ds i))
-          {
-            (if (&& (== (diagUnit d) 0)
-                  (&& (strEq (diagCode d) "AX3053") (lspSpanMeets (diagSpan d) want)))
-              {
-                (let eff (lspEffectQuoted (diagMsg d)))
-                (if (! (== (strLen eff) 0))
-                  (if (! (>= (strVecIdx seen eff) 0))
-                    {
-                      (let ed (lspFindEffect decls eff (- (vecLen decls) 1)))
-                      (if (! (nodeSame ed nilNode))
-                        (if (! (lspDeclHasTagKey ed "unhandled"))
-                          {
-                            (vecPush seen eff)
-                            (jsonArrPush out
+          (if (&& (== (diagUnit d) 0)
+                (&& (strEq (diagCode d) "AX3053") (lspSpanMeets (diagSpan d) want)))
+            {
+              (let eff (lspEffectQuoted (diagMsg d)))
+              (if (! (== (strLen eff) 0))
+                (if (! (>= (strVecIdx seen eff) 0))
+                  {
+                    (let ed (lspFindEffect decls eff (- (vecLen decls) 1)))
+                    (if (! (nodeSame ed nilNode))
+                      (if (! (lspDeclHasTagKey ed "unhandled"))
+                        {
+                          (vecPush seen eff)
+                          (jsonArrPush out
+                            (jsonObjPut
                               (jsonObjPut
                                 (jsonObjPut
-                                  (jsonObjPut
-                                    (jsonObjPut jsonObj "title"
-                                      (jsonStr
-                                        (concat (concat "Treat unhandled `" eff)
-                                          "` as a deliberate abort")))
-                                    "kind" (jsonStr "quickfix"))
-                                  "diagnostics" (jsonArrPush jsonArr (lspDiagJson d src ix uri)))
-                                "edit"
-                                (lspFixInsert uri src ix
-                                  (lineStartOf src (spanStart (nodeSpan ed)))
-                                  ";@axiom:unhandled(trap)\n")))
-                          }))
-                    }))
-              })
-            (set i (+ i 1))
-          }
+                                  (jsonObjPut jsonObj "title"
+                                    (jsonStr
+                                      (concat (concat "Treat unhandled `" eff)
+                                        "` as a deliberate abort")))
+                                  "kind" (jsonStr "quickfix"))
+                                "diagnostics" (jsonArrPush jsonArr (lspDiagJson d src ix uri)))
+                              "edit"
+                              (lspFixInsert uri src ix (lineStartOf src (spanStart (nodeSpan ed)))
+                                ";@axiom:unhandled(trap)\n")))
+                        }))
+                  }))
+            })
         })
       0
     }
@@ -13873,19 +13282,15 @@
   {
     (let n (vecLen ds))
     (let seen vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let d (vecGet ds i))
-          {
-            (if (&& (== (diagUnit d) 0) (lspSpanMeets (diagSpan d) want))
-              (if (strEq (diagCode d) "AX3001")
-                (lspImportAssists out d src uri ix decls path seen)
-                (if (strEq (diagCode d) "AX3023")
-                  (lspPublicAssist out d src uri ix decls allDecls units seen))))
-            (set i (+ i 1))
-          }
+          (if (&& (== (diagUnit d) 0) (lspSpanMeets (diagSpan d) want))
+            (if (strEq (diagCode d) "AX3001")
+              (lspImportAssists out d src uri ix decls path seen)
+              (if (strEq (diagCode d) "AX3023")
+                (lspPublicAssist out d src uri ix decls allDecls units seen))))
         })
       0
     }
@@ -13933,13 +13338,9 @@
           0
           {
             (let mods (lspFixSearch name path))
-            (let mut i 0)
             {
-              (while (< i (vecLen mods))
-                {
-                  (lspImportOffer out d src uri ix decls (vecGetStr mods i) name seen)
-                  (set i (+ i 1))
-                })
+              (for i in 0..(vecLen mods)
+                (lspImportOffer out d src uri ix decls (vecGetStr mods i) name seen))
               0
             }
           })
@@ -14045,13 +13446,9 @@
     (let seen vecNew)
     {
       (let dirs (moduleSearchDirs entryDir))
-      (let mut i 0)
       {
-        (while (< i (vecLen dirs))
-          {
-            (lspFixScanDir (vecGetStr dirs i) "" "" 0 name path tcode entryDir found seen)
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen dirs)
+          (lspFixScanDir (vecGetStr dirs i) "" "" 0 name path tcode entryDir found seen))
         found
       }
     }
@@ -14076,29 +13473,25 @@
         vecNew))
     {
       (let n (vecLen names))
-      (let mut i 0)
       {
-        (while (< i n)
+        (for i in 0..n
           {
             (let nm (vecGetStr names i))
-            {
-              (if (! (|| (== (strLen nm) 0) (== (strByte nm 0) 46)))
-                {
-                  (let full (concat dir (concat rel nm)))
-                  (if (lspFixEndsWith nm ".ax")
-                    {
-                      (let stem (lspFixStemOf nm tcode))
-                      (if (! (== (strLen stem) 0))
-                        (lspFixConsider full (concat modPrefix stem) name path tcode entryDir found
-                          seen))
-                    }
-                    (if (&& (< depth 3) (&& (lspFixIsSegment nm) (isDir full)))
-                      (lspFixScanDir dir (concat rel (concat nm "/"))
-                        (concat modPrefix (concat nm ".")) (+ depth 1) name path tcode entryDir
-                        found seen)))
-                })
-              (set i (+ i 1))
-            }
+            (if (! (|| (== (strLen nm) 0) (== (strByte nm 0) 46)))
+              {
+                (let full (concat dir (concat rel nm)))
+                (if (lspFixEndsWith nm ".ax")
+                  {
+                    (let stem (lspFixStemOf nm tcode))
+                    (if (! (== (strLen stem) 0))
+                      (lspFixConsider full (concat modPrefix stem) name path tcode entryDir found
+                        seen))
+                  }
+                  (if (&& (< depth 3) (&& (lspFixIsSegment nm) (isDir full)))
+                    (lspFixScanDir dir (concat rel (concat nm "/"))
+                      (concat modPrefix (concat nm ".")) (+ depth 1) name path tcode entryDir found
+                      seen)))
+              })
           })
         0
       }
@@ -14647,15 +14040,11 @@
 (pub fn (lspFixStatementAt src chain)
   {
     (let n (/ (vecLen chain) 4))
-    (let mut j 0)
     (let mut at (- 0 1))
     {
-      (while (< j n)
-        {
-          (if (== (strByte src (vecGet chain (* j 4))) 123)
-            (set at j))
-          (set j (+ j 1))
-        })
+      (for j in 0..n
+        (if (== (strByte src (vecGet chain (* j 4))) 123)
+          (set at j)))
       at
     }
   })
@@ -14993,7 +14382,7 @@
     (let mut o (- nameStart 1))
     {
       (while (if (> o 0)
-        (lspIsBlank (strByte src o))
+        (docIsBlank (strByte src o))
         false)
         (set o (- o 1)))
       (if (&& (>= o 0) (== (strByte src o) 40))
@@ -15355,26 +14744,22 @@
         (let out jsonArr)
         (let ix (lspLineIndex src))
         (let n (vecLen (memGetWordVec pr 1)))
-        (let mut i 0)
         {
-          (while (< i n)
+          (for i in 0..n
             {
               (let d (vecGet decls i))
-              {
-                (if (! (== (nodeSpan d) 0))
-                  (if (&& (== (nodeTag d) TAG_D_FN)
-                        (&& (strEq (nodeAName d) "main") (== (vecLen (nodeBNames d)) 0)))
+              (if (! (== (nodeSpan d) 0))
+                (if (&& (== (nodeTag d) TAG_D_FN)
+                      (&& (strEq (nodeAName d) "main") (== (vecLen (nodeBNames d)) 0)))
+                  (jsonArrPush out
+                    (lspLensJson (lspRangeIx src ix (nodeSpan d)) "▶ Run" "axiom.run"
+                      (jsonArrPush jsonArr (jsonStr (lspUriToPath uri)))))
+                  (if (&& (== (nodeTag d) TAG_D_MACRO) (== (nodeVis d) 1))
                     (jsonArrPush out
-                      (lspLensJson (lspRangeIx src ix (nodeSpan d)) "▶ Run" "axiom.run"
-                        (jsonArrPush jsonArr (jsonStr (lspUriToPath uri)))))
-                    (if (&& (== (nodeTag d) TAG_D_MACRO) (== (nodeVis d) 1))
-                      (jsonArrPush out
-                        (lspLensJson (lspRangeIx src ix (nodeSpan d)) "Expand macro"
-                          "axiom.expandMacro"
-                          (jsonArrPush (jsonArrPush jsonArr (jsonStr uri))
-                            (lspPosIx src ix (spanStart (nodeSpan d)))))))))
-                (set i (+ i 1))
-              }
+                      (lspLensJson (lspRangeIx src ix (nodeSpan d)) "Expand macro"
+                        "axiom.expandMacro"
+                        (jsonArrPush (jsonArrPush jsonArr (jsonStr uri))
+                          (lspPosIx src ix (spanStart (nodeSpan d)))))))))
             })
           out
         }
@@ -15443,22 +14828,16 @@
 ; Indices of the top-level declarations that are macro invocations
 ; with a span to answer at.
 (pub :: lspGenCallSites (-> (Vec ASTNode) Ints))
-;@axiom:effect(unsafe)
 (pub fn (lspGenCallSites decls)
   {
     (let out vecNew)
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
-          {
-            (let d (vecGet decls i))
-            (if (&& (== (nodeTag d) TAG_D_MACROCALL) (!= (nodeSpan d) 0))
-              (vecPush out i)
-              (as 0 (Vec Int)))
-          }
-          (set i (+ i 1))
+          (let d (vecGet decls i))
+          (if (&& (== (nodeTag d) TAG_D_MACROCALL) (!= (nodeSpan d) 0))
+            (vecPush out i))
         })
       out
     }
@@ -15491,13 +14870,9 @@
   {
     (let out vecNew)
     (let nc (vecLen calls))
-    (let mut c 0)
     {
-      (while (< c nc)
-        {
-          (lspGenOneCall workspace path src decls (vecGet calls c) out)
-          (set c (+ c 1))
-        })
+      (for c in 0..nc
+        (lspGenOneCall workspace path src decls (vecGet calls c) out))
       (lspGenToJson out)
     }
   })
@@ -15544,16 +14919,12 @@
           (let tmp vecNew)
           (let tsig vecNew)
           (let n (vecLen decls2))
-          (let mut i 0)
           {
-            (while (< i n)
+            (for i in 0..n
               {
                 (let g (vecGet decls2 i))
-                {
-                  (if (lspIsProductOf g i before wasCall gens macName true)
-                    (lspGenTempMerge tmp tsig g))
-                  (set i (+ i 1))
-                }
+                (if (lspIsProductOf g i before wasCall gens macName true)
+                  (lspGenTempMerge tmp tsig g))
               })
             (lspGenTempFlush tmp tsig out macName hs (+ hs (strLen macName)))
             0
@@ -15633,14 +15004,10 @@
 (pub fn (lspGenTempFlush tmp tsig out macName hs he)
   {
     (let n (vecLen tmp))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (lspGenOutPush out (memGetWordStr (vecGet tmp i) 0) (memGetWordStr (vecGet tmp i) 1)
-            macName hs he)
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (lspGenOutPush out (memGetWordStr (vecGet tmp i) 0) (memGetWordStr (vecGet tmp i) 1)
+          macName hs he))
       0
     }
   })
@@ -15684,23 +15051,19 @@
   {
     (let arr jsonArr)
     (let n (vecLen out))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let e (vecGet out i))
-          {
-            (jsonArrPush arr
+          (jsonArrPush arr
+            (jsonObjPut
               (jsonObjPut
                 (jsonObjPut
-                  (jsonObjPut
-                    (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr (memGetWordStr e 0))) "code"
-                      (jsonStr (memGetWordStr e 1)))
-                    "macro" (jsonStr (memGetWordStr e 2)))
-                  "invStart" (jsonNum (memGetWord e 3)))
-                "invEnd" (jsonNum (memGetWord e 4))))
-            (set i (+ i 1))
-          }
+                  (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr (memGetWordStr e 0))) "code"
+                    (jsonStr (memGetWordStr e 1)))
+                  "macro" (jsonStr (memGetWordStr e 2)))
+                "invStart" (jsonNum (memGetWord e 3)))
+              "invEnd" (jsonNum (memGetWord e 4))))
         })
       arr
     }
@@ -15871,27 +15234,20 @@
 ; one at `idx` left out, so what phase D makes of it is one
 ; invocation's expansion.
 (pub :: lspKeepOneCall (-> (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (lspKeepOneCall decls2 idx)
   {
     (let out vecNew)
     (let n (vecLen decls2))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (if (|| (== i idx) (!= (nodeTag (vecGet decls2 i)) TAG_D_MACROCALL))
-            (vecPush out (vecGet decls2 i))
-            (as 0 (Vec Int)))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (if (|| (== i idx) (!= (nodeTag (vecGet decls2 i)) TAG_D_MACROCALL))
+          (vecPush out (vecGet decls2 i))))
       out
     }
   })
 
 (pub :: lspExpandAt (-> LspWorkspace String String (Vec ASTNode) Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (lspExpandAt workspace path src decls idx)
   {
     (let site (vecGet decls idx))
@@ -15919,21 +15275,16 @@
                     (let gens (memGetWordVec ex 3))
                     (let parts vecNew)
                     (let n (vecLen decls2))
-                    (let mut i 0)
                     {
-                      (while (< i n)
+                      (for i in 0..n
                         {
                           (let g (vecGet decls2 i))
-                          {
-                            (if (lspIsProductOf g i before wasCall gens macName byCall)
-                              {
-                                (if (> (vecLen parts) 0)
-                                  (vecPush parts "\n\n")
-                                  (as 0 (Vec String)))
-                                (vecPush parts (lspRenderDecl g 0))
-                              })
-                            (set i (+ i 1))
-                          }
+                          (if (lspIsProductOf g i before wasCall gens macName byCall)
+                            {
+                              (if (> (vecLen parts) 0)
+                                (vecPush parts "\n\n"))
+                              (vecPush parts (lspRenderDecl g 0))
+                            })
                         })
                       (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr macName)) "expansion"
                         (jsonStr (catStrs parts)))
@@ -15953,13 +15304,9 @@
   {
     (let out vecNew)
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush out (vecGet decls i))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush out (vecGet decls i)))
       out
     }
   })
@@ -15969,16 +15316,12 @@
   {
     (let out vecNew)
     (let n (vecLen decls))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush out
-            (if (== (nodeTag (vecGet decls i)) TAG_D_MACROCALL)
-              1
-              0))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush out
+          (if (== (nodeTag (vecGet decls i)) TAG_D_MACROCALL)
+            1
+            0)))
       out
     }
   })
@@ -16083,25 +15426,21 @@
 ; are rendered at `ind + 2` by every caller, so their continuation
 ; lines are right in both layouts.
 (pub :: lspRenderForm (-> (Vec a) Int String))
-;@axiom:effect(unsafe)
 (pub fn (lspRenderForm parts ind)
   {
     (let n (vecLen parts))
     (let out vecNew)
     (let broken (lspAnyNl parts 0))
-    (let mut i 0)
     {
       (vecPush out "(")
-      (while (< i n)
+      (for i in 0..n
         {
           (if (> i 0)
             (vecPush out
               (if broken
                 (concat "\n" (lspPad (+ ind 2)))
-                " "))
-            (as 0 (Vec String)))
+                " ")))
           (vecPush out (vecGetStr parts i))
-          (set i (+ i 1))
         })
       (vecPush out ")")
       (catStrs out)
@@ -16144,16 +15483,12 @@
     {
       (let n (strLen s))
       (let out (strAlloc (strLen s)))
-      (let mut i 0)
       {
-        (while (< i n)
-          {
-            (__store8 (strData out) i
-              (if (isIdentChar (strByte s i))
-                (strByte s i)
-                95))
-            (set i (+ i 1))
-          })
+        (for i in 0..n
+          (__store8 (strData out) i
+            (if (isIdentChar (strByte s i))
+              (strByte s i)
+              95)))
         (strSlice out 0 n)
       }
     }))
@@ -16192,14 +15527,10 @@
     {
       (let n (strLen s))
       (let parts vecNew)
-      (let mut i 0)
       {
         (vecPush parts "\"")
-        (while (< i n)
-          {
-            (vecPush parts (lspEscByte (strByte s i) 34 (strSlice s i 1)))
-            (set i (+ i 1))
-          })
+        (for i in 0..n
+          (vecPush parts (lspEscByte (strByte s i) 34 (strSlice s i 1))))
         (vecPush parts "\"")
         (catStrs parts)
       }
@@ -16712,13 +16043,9 @@
   {
     (let parts vecNew)
     (let n (vecLen es))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush parts (concat (concat "\n" (lspPad ind)) (lspRenderExpr (vecGet es i) ind)))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush parts (concat (concat "\n" (lspPad ind)) (lspRenderExpr (vecGet es i) ind))))
       (catStrs parts)
     }
   })
@@ -16748,14 +16075,12 @@
 ; `(handle body (Effect...) handler)`, the effect list left out when
 ; it is empty - the parser reads it as optional.
 (pub :: lspRenderHandle (-> ASTNode Int String))
-;@axiom:effect(unsafe)
 (pub fn (lspRenderHandle e ind)
   {
     (let parts (lspParts2 "handle" (lspRenderExpr (nodeAChild e) (+ ind 2))))
     {
       (if (> (vecLen (nodeBChildren e)) 0)
-        (vecPush parts (concat (concat "(" (lspJoinExprs (nodeBChildren e) 0 ind)) ")"))
-        (as 0 (Vec String)))
+        (vecPush parts (concat (concat "(" (lspJoinExprs (nodeBChildren e) 0 ind)) ")")))
       (vecPush parts (lspRenderExpr (nodeCChild e) (+ ind 2)))
       (lspRenderForm parts ind)
     }
@@ -16779,10 +16104,9 @@
     (let names (nodeBChildren e))
     (let pats (nodeCChildren e))
     (let parts vecNew)
-    (let mut i 0)
     {
       (vecPush parts (concat (concat "(" (lspRenderName (nodeAName e))) " {"))
-      (while (< i (vecLen names))
+      (for i in 0..(vecLen names)
         {
           (vecPush parts
             (if (== i 0)
@@ -16791,7 +16115,6 @@
           (vecPush parts (lspRenderName (nodeAName (vecGet names i))))
           (vecPush parts " = ")
           (vecPush parts (lspRenderExpr (vecGet pats i) (+ ind 2)))
-          (set i (+ i 1))
         })
       (vecPush parts " })")
       (catStrs parts)
@@ -16815,13 +16138,9 @@
   {
     (let parts vecNew)
     (let n (vecLen ds))
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush parts (concat (concat "\n" (lspPad ind)) (lspRenderDecl (vecGet ds i) ind)))
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush parts (concat (concat "\n" (lspPad ind)) (lspRenderDecl (vecGet ds i) ind))))
       (catStrs parts)
     }
   })
@@ -16843,15 +16162,11 @@
     {
       (let parts vecNew)
       (let n (vecLen tags))
-      (let mut i 0)
       {
-        (while (< i n)
-          {
-            (vecPush parts
-              (concat (concat ";@axiom:" (memGetWordStr (vecGet tags i) 1))
-                (concat "\n" (lspPad ind))))
-            (set i (+ i 1))
-          })
+        (for i in 0..n
+          (vecPush parts
+            (concat (concat ";@axiom:" (memGetWordStr (vecGet tags i) 1))
+              (concat "\n" (lspPad ind)))))
         (catStrs parts)
       }
     }))
@@ -16871,13 +16186,9 @@
   {
     (let ms (structMarkers d))
     (let parts vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen ms))
-        {
-          (vecPush parts (concat " " (nodeAName (vecGet ms i))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen ms)
+        (vecPush parts (concat " " (nodeAName (vecGet ms i)))))
       (catStrs parts)
     }
   })
@@ -16967,17 +16278,13 @@
   {
     (let ctors (nodeBChildren d))
     (let parts vecNew)
-    (let mut i 0)
     {
       (vecPush parts (concat (concat (lspPubOf d) "data ") (lspRenderDeclName (nodeAName d))))
       (if (! (== (nodeTy d) 0))
         (if (! (== (vecLen (nodeTyNames d)) 0))
           (vecPush parts (concat (concat " (" (lspJoinStrs (nodeTyNames d) 0 " ")) ")"))))
-      (while (< i (vecLen ctors))
-        {
-          (vecPush parts (concat (concat "\n" (lspPad (+ ind 2))) (lspRenderCtor (vecGet ctors i))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen ctors)
+        (vecPush parts (concat (concat "\n" (lspPad (+ ind 2))) (lspRenderCtor (vecGet ctors i)))))
       (vecPush parts ")")
       (catStrs parts)
     }
@@ -17046,19 +16353,15 @@
   {
     (let parts vecNew)
     (let n (vecLen fields))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let f (vecGet fields i))
-          {
-            (vecPush parts
-              (concat (concat (concat "\n" (lspPad ind)) (concat "(" (nodeAName f)))
-                (if (lspTyKnown (nodeTyChild f))
-                  (concat (concat " : " (lspRenderType (nodeTyChild f))) ")")
-                  ")")))
-            (set i (+ i 1))
-          }
+          (vecPush parts
+            (concat (concat (concat "\n" (lspPad ind)) (concat "(" (nodeAName f)))
+              (if (lspTyKnown (nodeTyChild f))
+                (concat (concat " : " (lspRenderType (nodeTyChild f))) ")")
+                ")")))
         })
       (catStrs parts)
     }
@@ -17070,18 +16373,14 @@
   {
     (let parts vecNew)
     (let n (vecLen items))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let it (vecGet items i))
-          {
-            (vecPush parts
-              (concat (concat (concat "\n" (lspPad ind)) (concat "(" (nodeAName it)))
-                (concat (concat " :: " (lspRenderType (nodeBChild it)))
-                  (concat (concat " (symbol \"" (nodeCName it)) "\"))"))))
-            (set i (+ i 1))
-          }
+          (vecPush parts
+            (concat (concat (concat "\n" (lspPad ind)) (concat "(" (nodeAName it)))
+              (concat (concat " :: " (lspRenderType (nodeBChild it)))
+                (concat (concat " (symbol \"" (nodeCName it)) "\"))"))))
         })
       (catStrs parts)
     }
@@ -17286,13 +16585,9 @@
 (pub fn (lspHlStrArr names)
   {
     (let a jsonArr)
-    (let mut i 0)
     {
-      (while (< i (vecLen names))
-        {
-          (jsonArrPush a (jsonStr (vecGetStr names i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen names)
+        (jsonArrPush a (jsonStr (vecGetStr names i))))
       a
     }
   })
@@ -17598,15 +16893,11 @@
 (pub fn (lspHlIn w set)
   {
     (let parts (strSplit set 32))
-    (let mut i 0)
     (let mut hit false)
     {
-      (while (< i (vecLen parts))
-        {
-          (if (strEq (vecGetStr parts i) w)
-            (set hit true))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen parts)
+        (if (strEq (vecGetStr parts i) w)
+          (set hit true)))
       hit
     }
   })
@@ -18055,13 +17346,9 @@
       (if (|| (!= prefix oldLen) (!= prefix nextLen))
         {
           (let inserted jsonArr)
-          (let mut i prefix)
           {
-            (while (< i (- nextLen suffix))
-              {
-                (jsonArrPush inserted (jsonArrGet next i))
-                (set i (+ i 1))
-              })
+            (for i in prefix..(- nextLen suffix)
+              (jsonArrPush inserted (jsonArrGet next i)))
             (jsonArrPush edits
               (jsonObjPut
                 (jsonObjPut (jsonObjPut jsonObj "start" (jsonNum prefix)) "deleteCount"
@@ -18162,14 +17449,6 @@
     }
   })
 
-; `result` is JSON emitted by this server, never client-supplied text.
-(pub :: lspReplyEncoded (-> Int String Int))
-;@axiom:effect(io)
-(pub fn (lspReplyEncoded id result)
-  (rpcWrite stdout
-    (concat "{\"jsonrpc\":\"2.0\",\"id\":"
-      (concat (jsonWrite id) (concat ",\"result\":" (concat result "}"))))))
-
 ; ------------------------------------------------------------------
 ; The indexes, each `fnIdxBuckets` slots of 0 or a Vec.
 ; ------------------------------------------------------------------
@@ -18192,19 +17471,12 @@
 (pub fn (lspHlOccIndex occs)
   {
     (let bs (lspHlBuckets (vecLen occs)))
-    (let mut i 0)
     {
       (let nb (vecLen bs))
       {
-        (while (< i (vecLen occs))
-          {
-            (let o (vecGet occs i))
-            {
-              (if (!= (memGetWord o 1) 0)
-                (lspHlBucketPut bs (% (spanStart (memGetWord o 1)) nb) o))
-              (set i (+ i 1))
-            }
-          })
+        (for o in occs
+          (if (!= (memGetWord o 1) 0)
+            (lspHlBucketPut bs (% (spanStart (memGetWord o 1)) nb) o)))
         bs
       }
     }
@@ -18246,19 +17518,12 @@
 (pub fn (lspHlBinderIndex occs)
   {
     (let bs (lspHlBuckets (vecLen occs)))
-    (let mut i 0)
     {
       (let nb (vecLen bs))
       {
-        (while (< i (vecLen occs))
-          {
-            (let o (vecGet occs i))
-            {
-              (if (== (memGetWord o 2) NAV_BINDER)
-                (lspHlBucketPut bs (% (fnIdxHash (memGetWordStr o 3)) nb) o))
-              (set i (+ i 1))
-            }
-          })
+        (for o in occs
+          (if (== (memGetWord o 2) NAV_BINDER)
+            (lspHlBucketPut bs (% (fnIdxHash (memGetWordStr o 3)) nb) o)))
         bs
       }
     }
@@ -18303,19 +17568,12 @@
 (pub fn (lspHlKinds decls)
   {
     (let idx lspViewIdxNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen decls))
-        {
-          (let d (vecGet decls i))
-          {
-            (if (|| (lspNavIsNamedDecl d)
-                  (&& (== (nodeTag d) TAG_D_SIG)
-                    (&& (!= (nodeSpan d) 0) (nodeSame (lspViewIdxFind idx (nodeAName d)) nilNode))))
-              (lspViewIdxAdd idx (nodeAName d) d))
-            (set i (+ i 1))
-          }
-        })
+      (for d in decls
+        (if (|| (lspNavIsNamedDecl d)
+              (&& (== (nodeTag d) TAG_D_SIG)
+                (&& (!= (nodeSpan d) 0) (nodeSame (lspViewIdxFind idx (nodeAName d)) nilNode))))
+          (lspViewIdxAdd idx (nodeAName d) d)))
       idx
     }
   })
@@ -18827,7 +18085,7 @@
   {
     (let mut i (- start 1))
     {
-      (while (&& (>= i 0) (lspIsBlank (strByte src i)))
+      (while (&& (>= i 0) (docIsBlank (strByte src i)))
         (set i (- i 1)))
       (&& (>= i 0) (&& (== (strByte src i) 58) (|| (== i 0) (!= (strByte src (- i 1)) 58))))
     }
@@ -18967,7 +18225,7 @@
     (let mut p (- s 1))
     {
       (while (if (>= p 0)
-        (lspIsBlank (strByte src p))
+        (docIsBlank (strByte src p))
         false)
         (set p (- p 1)))
       (if (< p 2)
@@ -19199,30 +18457,24 @@
   {
     (let parts vecNew)
     (let mut total 32)
-    (let mut i 0)
     {
       (vecPush parts metadata)
       (vecPush parts response)
       (vecPush parts cached)
       (vecPush parts highlight)
-      (while (< i 4)
-        {
-          (set total (+ total (strLen (vecGetStr parts i))))
-          (set i (+ i 1))
-        })
+      (for i in 0..4
+        (set total (+ total (strLen (vecGetStr parts i)))))
       {
         (let out (strAlloc total))
         (let mut at 32)
         {
-          (set i 0)
-          (while (< i 4)
+          (for i in 0..4
             {
               (let part (vecGetStr parts i))
               {
                 (memSetWord (strData out) i (strLen part))
                 (memCopy (+ (strData out) at) (strData part) (strLen part))
                 (set at (+ at (strLen part)))
-                (set i (+ i 1))
               }
             })
           out
@@ -19259,13 +18511,9 @@
 (pub fn (lspResultPart text index)
   {
     (let mut at 32)
-    (let mut i 0)
     {
-      (while (< i index)
-        {
-          (set at (+ at (memGetWord (strData text) i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..index
+        (set at (+ at (memGetWord (strData text) i))))
       (strSlice text at (memGetWord (strData text) index))
     }
   })
@@ -19339,34 +18587,30 @@
     (let gens (memGetWordVec store 2))
     (let meta (memGetWordVec store 3))
     (let out jsonArr)
-    (let mut i 0)
     {
       (let workspace (lspWorkspaceNew uris texts meta))
       (let changed (lspUriToPath changedUri))
       {
-        (while (< i (vecLen uris))
-          {
-            (if (lspDocIsOpen meta i)
+        (for i in 0..(vecLen uris)
+          (if (lspDocIsOpen meta i)
+            {
+              (let uri (vecGetStr uris i))
+              (let src (vecGetStr texts i))
               {
-                (let uri (vecGetStr uris i))
-                (let src (vecGetStr texts i))
-                {
-                  (let path (lspUriToPath uri))
-                  (if (|| all
-                        (|| (strEq uri changedUri)
-                          (|| (lspWorkspaceDepends before path src changed)
-                            (lspWorkspaceDepends workspace path src changed))))
-                    (jsonArrPush out
+                (let path (lspUriToPath uri))
+                (if (|| all
+                      (|| (strEq uri changedUri)
+                        (|| (lspWorkspaceDepends before path src changed)
+                          (lspWorkspaceDepends workspace path src changed))))
+                  (jsonArrPush out
+                    (jsonObjPut
                       (jsonObjPut
-                        (jsonObjPut
-                          (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "version"
-                            (jsonNum (vecGet meta (* 2 i))))
-                          "generated" (jsonStr (lspGenFill workspace path src)))
-                        "diagnostics" (lspCheckDoc workspace path src))))
-                }
-              })
-            (set i (+ i 1))
-          })
+                        (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "version"
+                          (jsonNum (vecGet meta (* 2 i))))
+                        "generated" (jsonStr (lspGenFill workspace path src)))
+                      "diagnostics" (lspCheckDoc workspace path src))))
+              }
+            }))
         (lspResultPack
           (jsonWrite (jsonObjPut (jsonObjPut jsonObj "kind" (jsonStr "analysis")) "documents" out))
           "" "" "")
@@ -19381,9 +18625,8 @@
 (pub fn (lspWorkState store)
   {
     (let out vecNew)
-    (let mut part 0)
     {
-      (while (< part 3)
+      (for part in 0..3
         {
           (let v
             (memGetWordVec store
@@ -19392,15 +18635,10 @@
                 (if (== part 1)
                   8
                   9))))
-          (let mut i 0)
           {
             (vecPush out (fmtInt (vecLen v)))
-            (while (< i (vecLen v))
-              {
-                (vecPush out (vecGetStr v i))
-                (set i (+ i 1))
-              })
-            (set part (+ part 1))
+            (for i in 0..(vecLen v)
+              (vecPush out (vecGetStr v i)))
           }
         })
       out
@@ -19411,13 +18649,9 @@
 (pub fn (lspWorkPart state start count)
   {
     (let out vecNew)
-    (let mut i 0)
     {
-      (while (< i count)
-        {
-          (vecPush out (vecGetStr state (+ start i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..count
+        (vecPush out (vecGetStr state (+ start i))))
       out
     }
   })
@@ -19459,13 +18693,9 @@
 (pub fn (lspStoreNew)
   {
     (let s (memAlloc 144))
-    (let mut i 0)
     {
-      (while (< i 6)
-        {
-          (memSetWord s i vecNew)
-          (set i (+ i 1))
-        })
+      (for i in 0..6
+        (memSetWord s i vecNew))
       (memSetWord s 6 0)
       (memSetWord s 7 0)
       (memSetWord s 8 vecNew)
@@ -19744,7 +18974,6 @@
     (let key (jsonWrite id))
     (let queue (memGetWordVec store 8))
     (let next vecNew)
-    (let mut i 0)
     (let meta (memGetWordVec store 9))
     {
       (if (&& (lspWorkActive store)
@@ -19752,18 +18981,15 @@
               (&& (strEq (vecGetStr meta 0) "request")
                 (strEq key (jsonWrite (jsonGet (jsonParse (vecGetStr meta 1)) "id"))))))
         (lspWorkStop store (- 0 32800) "request cancelled by client"))
-      (while (< i (vecLen queue))
+      (for i in 0..(vecLen queue)
         {
+          (let body (vecGetStr queue i))
           {
-            (let body (vecGetStr queue i))
-            {
-              (let requestId (jsonGet (jsonParse body) "id"))
-              (if (&& (!= requestId 0) (strEq key (jsonWrite requestId)))
-                (lspError requestId (- 0 32800) "request cancelled by client")
-                (vecPush next body))
-            }
+            (let requestId (jsonGet (jsonParse body) "id"))
+            (if (&& (!= requestId 0) (strEq key (jsonWrite requestId)))
+              (lspError requestId (- 0 32800) "request cancelled by client")
+              (vecPush next body))
           }
-          (set i (+ i 1))
         })
       (memSetWord store 8 next)
       0
@@ -19876,17 +19102,13 @@
 (pub fn (lspShutdownWork store)
   {
     (let queue (memGetWordVec store 8))
-    (let mut i 0)
     {
       (lspWorkStop store (- 0 32800) "server is shutting down")
-      (while (< i (vecLen queue))
+      (for i in 0..(vecLen queue)
         {
-          {
-            (let id (jsonGet (jsonParse (vecGetStr queue i)) "id"))
-            (if (!= id 0)
-              (lspError id (- 0 32800) "server is shutting down"))
-          }
-          (set i (+ i 1))
+          (let id (jsonGet (jsonParse (vecGetStr queue i)) "id"))
+          (if (!= id 0)
+            (lspError id (- 0 32800) "server is shutting down"))
         })
       (vecClear queue)
       0
@@ -19990,13 +19212,9 @@
 (pub fn (lspQueueRoom queue)
   {
     (let mut bytes 0)
-    (let mut i 0)
     {
-      (while (< i (vecLen queue))
-        {
-          (set bytes (+ bytes (strLen (vecGetStr queue i))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen queue)
+        (set bytes (+ bytes (strLen (vecGetStr queue i)))))
       (&& (< (vecLen queue) 32) (< bytes 8388608))
     }
   })
