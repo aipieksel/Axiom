@@ -435,7 +435,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # insertion. Its two typed readbacks also remove the old Unsafe forgeries.
 # A same-compiler comparison removes mirParamOps' one text erasure and
 # mirEmitInsts' three; the typed operand table introduces none.
-erasure_pin=782
+# Typed records and string vectors in the driver, REPL, highlighter,
+# history, completion, AXIR and nolint modules leave 666.
+erasure_pin=666
 erasure_sum() {  # <axsym> -> the #erasures= total over self_host/ rows
   awk '$1 == "F" && index($3, "self_host/") == 1 {
          for (i = 4; i <= NF; i++)
