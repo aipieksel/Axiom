@@ -278,6 +278,38 @@
       })
   })
 
+; After a lost key, a second one: if it arrives, the first was taken by
+; a read the reader no longer waits on, such as one cancelled by the
+; mode change before it. Diagnostic only, on standard error.
+(:: laterKeyProbe (-> Poller File Int ()))
+;@axiom:effect(io)
+(fn (laterKeyProbe p f h)
+  {
+    (let sent (sendKey h 89 121 0))
+    (let ready (waitCount p 1000))
+    (if (!= ready 1)
+      (eprintln "later key probe: sent={sent}; poll={ready}; byte=not-attempted")
+      {
+        (let buf (readBufferNew 1))
+        (match (fileRead f buf 0 1)
+          ((Err e)
+            {
+              (let code e.code)
+              (eprintln "later key probe: sent={sent}; poll={ready}; error={code}")
+            }
+          )
+          ((Ok n)
+            {
+              (let byte
+                (if (> n 0)
+                  (readBufferByte buf 0)
+                  -1))
+              (eprintln "later key probe: sent={sent}; poll={ready}; read-count={n}; byte={byte}")
+            }
+          ))
+      })
+  })
+
 (:: laterKeyRead (-> Poller File Int Bool))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
@@ -291,6 +323,7 @@
         (eprintln
           "later key read: poll={ready}; read-count=not-attempted; byte=not-attempted; error=not-attempted")
         (laterKeySnapshot h elapsed)
+        (laterKeyProbe p f h)
         false
       }
       {
