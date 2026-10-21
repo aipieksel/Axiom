@@ -2,7 +2,6 @@
 """Execute the emitted Windows control runtime with host-side WinAPI mocks."""
 
 import argparse
-import json
 import re
 import subprocess
 from pathlib import Path
@@ -12,14 +11,193 @@ def run(args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
 
 
+class Atom(str):
+    pass
+
+
+class Block(tuple):
+    pass
+
+
+def source_tokens(text):
+    """Read the emitter's small source fragment without evaluating Axiom code."""
+    escapes = {'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', "'": "'", '0': '\0'}
+    i = 0
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+        elif text[i] == ';':
+            end = text.find('\n', i)
+            i = len(text) if end < 0 else end + 1
+        elif text.startswith('#|', i):
+            depth = 1
+            i += 2
+            while depth and i < len(text):
+                if text.startswith('#|', i):
+                    depth += 1
+                    i += 2
+                elif text.startswith('|#', i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            if depth:
+                raise ValueError('unterminated emitter block comment')
+        elif text[i] in '(){}':
+            yield ('delimiter', text[i])
+            i += 1
+        elif text[i] == '"':
+            i += 1
+            value = []
+            while i < len(text) and text[i] != '"':
+                if text[i] == '\\':
+                    i += 1
+                    if i == len(text) or text[i] not in escapes:
+                        raise ValueError('unsupported or unterminated emitter string escape')
+                    value.append(escapes[text[i]])
+                else:
+                    value.append(text[i])
+                i += 1
+            if i == len(text):
+                raise ValueError('unterminated emitter string')
+            i += 1
+            yield ('string', ''.join(value))
+        else:
+            start = i
+            while i < len(text) and not text[i].isspace() and text[i] not in '(){};"':
+                i += 1
+            yield ('atom', text[start:i])
+
+
+def source_form(tokens, first=None):
+    token = next(tokens, None) if first is None else first
+    if token is None:
+        raise ValueError('incomplete emitter form')
+    kind, value = token
+    if kind == 'atom':
+        return Atom(value)
+    if kind == 'string':
+        return value
+    if value not in '({':
+        raise ValueError(f'unexpected emitter delimiter {value!r}')
+    end = ')' if value == '(' else '}'
+    children = []
+    while True:
+        token = next(tokens, None)
+        if token is None:
+            raise ValueError('unterminated emitter form')
+        if token[0] == 'delimiter' and token[1] in ')}':
+            if token[1] != end:
+                raise ValueError('mismatched emitter delimiters')
+            return Block(children) if value == '{' else tuple(children)
+        children.append(source_form(tokens, token))
+
+
+def constant_expression(form):
+    """The supported forms are closed; an unknown expression is a failure."""
+    if isinstance(form, Atom):
+        if not re.fullmatch(r'-?[0-9]+', form):
+            raise ValueError(f'nonconstant emitter atom {form!r}')
+        value = int(form)
+        if not -(1 << 63) <= value < (1 << 63):
+            raise ValueError('emitter integer is outside signed 64-bit range')
+        return value
+    if isinstance(form, str):
+        return form
+    if type(form) is not tuple or not form or not isinstance(form[0], Atom):
+        raise ValueError(f'unsupported emitter expression {form!r}')
+    operation, *arguments = form
+    arities = {'concat': 2, 'fmtInt': 1, '<<': 2}
+    if operation not in arities or len(arguments) != arities[operation]:
+        raise ValueError(f'unsupported emitter operation or arity: {operation!r}')
+    values = [constant_expression(value) for value in arguments]
+    if operation == 'concat':
+        if any(type(value) is not str for value in values):
+            raise ValueError('constant concat requires two Strings')
+        return ''.join(values)
+    if any(type(value) is not int for value in values):
+        raise ValueError(f'constant {operation} requires Int arguments')
+    if operation == 'fmtInt':
+        return str(values[0])
+    value, shift = values
+    if not 0 <= shift < 64:
+        raise ValueError('constant shift count is outside 0..63')
+    value = (value << shift) & ((1 << 64) - 1)
+    return value if value < (1 << 63) else value - (1 << 64)
+
+
+def emitted_lines(text):
+    marker = '(pub fn (emitWinConsoleRuntime cg)'
+    if text.count(marker) != 1:
+        raise ValueError('expected exactly one console emitter definition')
+    form = source_form(iter(source_tokens(text[text.index(marker):])))
+    if (type(form) is not tuple or len(form) != 4 or form[:2] != (Atom('pub'), Atom('fn'))
+            or form[2] != (Atom('emitWinConsoleRuntime'), Atom('cg'))
+            or not isinstance(form[3], Block)):
+        raise ValueError('unsupported console emitter definition')
+    statements = form[3]
+    if not statements or type(statements[-1]) is not Atom or statements[-1] != 'cg':
+        raise ValueError('console emitter must return its context')
+    lines = []
+    for statement in statements[:-1]:
+        if (type(statement) is not tuple or len(statement) != 3
+                or any(type(value) is not Atom for value in statement[:2])
+                or statement[:2] != (Atom('emitLine'), Atom('cg'))):
+            raise ValueError(f'unsupported console emitter statement {statement!r}')
+        value = constant_expression(statement[2])
+        if type(value) is not str:
+            raise ValueError('emitLine requires a constant String')
+        lines.append(value)
+    return lines
+
+
 def emitted_source(source):
-    text = source.read_text()
-    start = text.index("(pub fn (emitWinConsoleRuntime cg)")
-    end = text.index("\n(pub ::", start)
-    literals = re.findall(r'\(emitLine\s+cg\s+("(?:[^"\\]|\\.)*")\)', text[start:end])
-    body = "\n".join(json.loads(value) for value in literals) + "\n"
+    body = '\n'.join(emitted_lines(source.read_text())) + '\n'
     assert "define internal i64 @__axiom_console_take" in body
     return body
+
+
+def source_reader_selftest():
+    def emitter(body):
+        return '(pub fn (emitWinConsoleRuntime cg) { ' + body + ' cg })'
+
+    positive = [
+        ('(emitLine cg "literal (parentheses)")', ['literal (parentheses)']),
+        ('(emitLine cg (concat "prefix " (concat (fmtInt (<< 1 20)) " suffix")))',
+         ['prefix 1048576 suffix']),
+        ('(emitLine cg (fmtInt (<< 1 63)))', ['-9223372036854775808']),
+        ('(emitLine cg (fmtInt (<< -1 0)))', ['-1']),
+        (r'(emitLine cg "quote\" slash\\ zero\0 newline\n")', ['quote" slash\\ zero\0 newline\n']),
+        ('; (emitLine cg unknown)\n(emitLine cg "one") #| (emitLine cg bad) #| nested |# |#', ['one']),
+        ('(emitLine cg "(emitLine cg unknown)")', ['(emitLine cg unknown)']),
+    ]
+    for source, expected in positive:
+        assert emitted_lines(emitter(source)) == expected, source
+    negative = [
+        '(emitLine cg unknown)', '(emitLine cg (unknown "x"))', '(emitLine cg 1)',
+        '(emitLine cg (concat "x"))', '(emitLine cg (concat "x" "y" "z"))',
+        '(emitLine cg (concat "x" 1))', '(emitLine cg (fmtInt "1"))',
+        '(emitLine cg (fmtInt 1 2))', '(emitLine cg (<< 1 "2"))',
+        '(emitLine cg (fmtInt (<< 1 -1)))', '(emitLine cg (fmtInt (<< 1 64)))',
+        '(emitLine cg (fmtInt 9223372036854775808))', '(emitLine other "x")',
+        '(emitLine "cg" "x")', '("emitLine" cg "x")',
+        '(emitLine cg "x" "y")', '(if true (emitLine cg "x") (emitLine cg "y"))',
+        '(let value "x")', r'(emitLine cg "bad\q")', '(emitLine cg "unterminated)',
+        '(emitLine cg "x"}', '#| unterminated', '(emitLine cg "x"',
+    ]
+    refused = [emitter(source) for source in negative] + [
+        '(pub fn (other cg) { cg })',
+        emitter('') + emitter(''),
+        '(pub fn (emitWinConsoleRuntime cg) { (emitLine cg "x") })',
+        '(pub fn (emitWinConsoleRuntime cg) { "cg" })',
+    ]
+    for source in refused:
+        try:
+            emitted_lines(source)
+        except ValueError:
+            continue
+        raise AssertionError(f'unsupported emitter expression was accepted: {source}')
+    print(f'ok   strict console source reader: {len(positive)} accepted and {len(refused)} refused forms')
 
 
 def module_source(module):
@@ -193,6 +371,7 @@ int main(void) {
 
 
 def verify(source, work, module=None):
+    source_reader_selftest()
     body = emitted_source(source)
     if module:
         actual = module_source(module)
@@ -249,8 +428,14 @@ def verify(source, work, module=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path, help="self_host/codegen.ax")
-    parser.add_argument("work", type=Path, help="isolated output directory")
+    parser.add_argument("source", type=Path, nargs='?', help="self_host/codegen.ax")
+    parser.add_argument("work", type=Path, nargs='?', help="isolated output directory")
     parser.add_argument("--module", type=Path, help="also verify the actual emitted LLVM module")
+    parser.add_argument("--selftest", action='store_true', help="test the static source reader without a toolchain")
     args = parser.parse_args()
-    verify(args.source, args.work, args.module)
+    if args.selftest:
+        source_reader_selftest()
+    elif args.source is None or args.work is None:
+        parser.error('source and work are required unless --selftest is used')
+    else:
+        verify(args.source, args.work, args.module)
