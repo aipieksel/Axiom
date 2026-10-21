@@ -1,0 +1,41 @@
+; A call through a field that declares its effects is charged the
+; declaration, as a call to a function is charged its row. `report`
+; calls through `Log.emit`, declared `effect(io)`, and must say so
+; (AX3042). The declaration speaks for effects, not for the call graph:
+; `run` reaches itself through the function stored in `Tick.step`, and
+; its `restrict(no-recursion)` is AX3049. `reportIo` is the control.
+(import IO)
+
+(struct Log
+  ;@axiom:effect(io)
+  (emit : (-> String Int)))
+
+(struct Tick
+  ;@axiom:effect(alloc)
+  (step : (-> Int Int)))
+
+(:: report (-> Log Int))
+(fn (report l)
+  (l.emit "done"))
+
+(:: reportIo (-> Log Int))
+;@axiom:effect(io)
+(fn (reportIo l)
+  (l.emit "done"))
+
+(:: run (-> Tick Int Int))
+;@axiom:restrict(no-recursion)
+(fn (run t n)
+  (t.step n))
+
+(:: loop Tick)
+(fn (loop)
+  (Tick :step (lambda (n) (run loop n))))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (reportIo (Log :emit (lambda (s) (println s))))
+    ()
+  })

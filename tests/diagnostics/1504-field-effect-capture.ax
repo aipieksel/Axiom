@@ -1,0 +1,48 @@
+; A stored lambda is checked with what it captures. One that calls a
+; parameter of the function building it depends on each caller, and is
+; AX3143 (`byKey`). One that calls a captured function the compiler
+; can see is checked through it: `byLoud` reaches `shout`'s IO and is
+; AX3142, and `byNamed` is the control.
+(import IO)
+
+(struct Rank
+  ;@axiom:effect(pure)
+  (score : (-> Int Int)))
+
+(:: shout (-> Int Int))
+;@axiom:effect(io)
+(fn (shout n)
+  {
+    (println "scored")
+    n
+  })
+
+(:: negate (-> Int Int))
+(fn (negate n)
+  (- 0 n))
+
+(:: byKey (-> (-> Int Int) Rank))
+(fn (byKey key)
+  (Rank :score (lambda (n) (+ (key n) 1))))
+
+(:: byLoud Rank)
+;@axiom:effect(io)
+(fn (byLoud)
+  {
+    (let k shout)
+    (Rank :score (lambda (n) (+ (k n) 1)))
+  })
+
+(:: byNamed Rank)
+(fn (byNamed)
+  {
+    (let k negate)
+    (Rank :score (lambda (n) (+ (k n) 1)))
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let r byNamed)
+    (r.score 1)
+  })

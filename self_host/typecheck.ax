@@ -3359,6 +3359,14 @@
 ;                    performs is unknown rather than nothing.
 ;  14 `regionWalkCtx` the reusable region walk frame, allocated on first
 ;                    demand and reset between function bodies.
+;  15 `fieldDecls`  every struct field that declares its effects, with
+;                    the row a call through it is charged
+;                    (`fieldDeclsBuild`), read before the fixpoint.
+;  16 `fieldDeclNames` the same rows by field name, for a read whose
+;                    struct the walk cannot see (`fieldDeclRowAt`).
+;  17 `fieldStoreSpans` the stores into declared fields already
+;                    answered, so a value walked twice draws one
+;                    diagnostic (`fieldStoreCheck`).
 (struct UState
   (unsafeSink : Nodes)
   (forgeSites : Nodes)
@@ -3374,7 +3382,10 @@
   (walkCtx : (Vec BCtx))
   (mut discard : Int)
   (unknownCallees : (Vec Int))
-  (regionWalkCtx : Int))
+  (regionWalkCtx : Int)
+  (fieldDecls : (Vec FieldDecl))
+  (fieldDeclNames : (Vec FieldDeclName))
+  (fieldStoreSpans : (Vec Int)))
 
 ; One evidence witness kept for `evSettle`: a call is checked in program
 ; order, and the pin that decides its witness may come later in the
@@ -4637,7 +4648,10 @@
                     :walkCtx (bsCtxOf vecNew vecNew 0 vecNew)
                     :discard 0
                     :unknownCallees vecNew
-                    :regionWalkCtx 0)
+                    :regionWalkCtx 0
+                    :fieldDecls vecNew
+                    :fieldDeclNames vecNew
+                    :fieldStoreSpans vecNew)
                 :parLends vecNew
                 :exprChecks
                   (ExprChecks
@@ -17556,7 +17570,9 @@
           (if (== tag TAG_E_FIELD)
             {
               (walkEffects tc (nodeAChild e) bound acc)
-              (fieldValsOf tc (nodeBName e))
+              (match (fieldDeclRowAt tc e bound)
+                ((Some row) (fieldDeclaredVals row))
+                ((None) (fieldValsOf tc (nodeBName e))))
             }
             (if (== tag TAG_E_IF)
               {
@@ -18305,6 +18321,767 @@
       ))
   })
 
+; ------------------------------------------------------------------
+; DECLARED FIELD EFFECTS: what a function-typed field promises.
+;
+; A field can say what anything stored in it performs, with the
+; `;@axiom:effect(...)` lines a function claims its effects with,
+; written above the field (`attachAxtagsFields`):
+;
+;     (struct Eq (a)
+;       ;@axiom:effect(alloc)
+;       (eq : (-> a a Bool)))
+;
+; The declaration is a contract with two halves.
+;
+; A call through the field is charged the declared row and nothing else
+; (`fieldDeclaredCall`). The sets above join every function stored into
+; any field of the name, so one record that prints made `IO` possible
+; at every call through every `eq` in the program, and a
+; `restrict(no-io,strict)` over a comparison could not be proven. The
+; stored functions are still walked, for their call edges alone: the
+; declaration speaks for effects, and a claim about the call graph
+; (`no-recursion`, `no-foreign`, `no-cast:deep`, an `isr`) still follows
+; what the field can hold. Where the walk cannot list that, the row
+; carries `effGraphOpen`, a hole in the graph and not in the effects.
+;
+; Every value that enters the field is checked where it enters
+; (`fieldStoreCheck`): each construction and each `(set e.f v)`, in the
+; validation walk, when every row is final. A value whose effects the
+; walk cannot determine is refused (AX3143) rather than trusted, so the
+; row holds of everything safe code can put there. A raw store or a
+; forging cast is the unsafe layer's, as it is for every other claim.
+;
+; The row is the named effects plus `Alloc` and `Mut`, which a function
+; performs without declaring them; `effect(pure)` is the empty row. A
+; stored function must not call its own function arguments
+; (`#effect-params`): what those perform is the caller's, and a call
+; through the field charges the declaration alone.
+;
+; Which struct a field read belongs to is a typing question, and the
+; fixpoint runs before any body is typed. A read through a parameter
+; whose declared type names the struct is charged that struct's row.
+; Any other read is resolved by name, as `fieldValsOf` resolves it,
+; and charged the union of the declared rows only when every struct
+; with a callable field of that name declares one; otherwise the
+; name-based set stands, and it covers the declared stores too. A
+; program that declares no field effect takes none of these paths.
+; ------------------------------------------------------------------
+(pub struct FieldDecl
+  (owner : Int)
+  (name : String)
+  (row : Strings)
+  (said : String))
+
+(pub struct FieldDeclName
+  (name : String)
+  (all : Bool)
+  (row : Strings))
+
+(pub data FieldStoreVerdict
+  (FieldStoreOk)
+  (FieldStoreExceeds String Strings)
+  (FieldStoreUnknown String))
+
+; A hole in the call graph that is not one in the effect row. Effects
+; read the declaration; a claim about the call graph reads this as a
+; call it could not resolve (`effGraphUnresolved`).
+(pub :: effGraphOpen String)
+(pub fn (effGraphOpen)
+  "?:graph")
+
+(pub :: effGraphUnresolved (-> Strings Int))
+(pub fn (effGraphUnresolved v)
+  (if (== (effUnresolved v) 1)
+    1
+    (effIn v effGraphOpen)))
+
+; Only the graph is open: no unresolved call stands beside the hole, so
+; the message names the field rather than an unresolved value.
+(pub :: effGraphOnly (-> Strings Bool))
+(pub fn (effGraphOnly v)
+  (&& (== (effUnresolved v) 0) (== (effIn v effGraphOpen) 1)))
+
+(pub :: tcUState (-> Int UState))
+;@axiom:effect(unsafe)
+(pub fn (tcUState tc)
+  {
+    (let checker (as tc TC))
+    checker.unsafe
+  })
+
+; Every field's tags, read once before the fixpoint. A diagnostic lands
+; in the declaring module's unit, as `strayAxtagsInUnit`'s does.
+(pub :: fieldDeclsBuild (-> Int ()))
+(pub fn (fieldDeclsBuild tc)
+  {
+    (let u (tcUState tc))
+    (let was (memGetWord tc 14))
+    (for s in (tcStructsVec tc)
+      (for f in (readAstNodes s 1)
+        (if (!= (nodeAxtags f) 0)
+          {
+            (memSetWord tc 14 (unitIndexFor (memGetWordVec tc 13) (memGetWord s 2)))
+            (match (fieldDeclRead tc f)
+              ((None) ())
+              ((Some decl)
+                {
+                  (vecPush u.fieldDecls
+                    (FieldDecl :owner s :name (nodeAName f) :row decl.row :said decl.said))
+                  ()
+                }
+              ))
+          })))
+    (memSetWord tc 14 was)
+    (for d in u.fieldDecls
+      (match (fieldDeclNameAt u.fieldDeclNames d.name)
+        ((Some entry)
+          {
+            (effUnion entry.row d.row 0)
+            ()
+          }
+        )
+        ((None)
+          {
+            (vecPush u.fieldDeclNames
+              (FieldDeclName
+                :name d.name
+                :all (fieldNameAllDeclared tc u d.name)
+                :row (effCopy d.row)))
+            ()
+          }
+        )))
+  })
+
+; One field's tags: its declaration, or `None` when it declares nothing
+; or the declaration was refused. A key other than `effect` is answered
+; as it is on any declaration that cannot carry it.
+(pub :: fieldDeclRead (-> Int ASTNode (Option FieldDecl)))
+(pub fn (fieldDeclRead tc f)
+  {
+    (let named vecNew)
+    (let said vecNew)
+    (let mut seen false)
+    (let mut pure false)
+    (let mut good true)
+    (for t in (nodeAxtagsWords f)
+      {
+        (let key (axtagKeyOf t))
+        (if (strEq key "effect")
+          {
+            (set seen true)
+            (let val (axtagTextValue t))
+            (let names (effTagWords val))
+            (if (> (vecLen names) 1)
+              {
+                (emitEffectTagList tc f val names)
+                (set good false)
+              }
+              {
+                (let word
+                  (if (== (vecLen names) 1)
+                    (vecGetStr names 0)
+                    ""))
+                (vecPushStr said (concat (concat "`effect(" word) ")`"))
+                (if (strEq word "pure")
+                  (set pure true)
+                  {
+                    (let why (fieldEffectRefusal tc word))
+                    (if (== (strLen why) 0)
+                      {
+                        (effAdd named (axtagEffectOf tc word))
+                        ()
+                      }
+                      {
+                        (emitFieldDeclBad tc f
+                          (concat
+                            (concat (concat (concat "`effect(" word) ")` on the field `")
+                              (nodeAName f))
+                            "` names no effect a field can declare")
+                          why)
+                        (set good false)
+                      })
+                  })
+              })
+          }
+          {
+            (if (== (axtagKnownKey key) 1)
+              (emitAxtagStray tc f key)
+              (axtagKeyTypo tc f key))
+            ()
+          })
+      })
+    (if (|| (! seen) (! good))
+      None
+      (if (&& (!= (nodeTy f) 0) (!= (nodeTag (nodeTyChild f)) TAG_T_ARR))
+        {
+          (emitFieldDeclBad tc f
+            (concat
+              (concat
+                (concat (concat "the field `" (nodeAName f)) "` declares its effects but holds `")
+                (tyRender (nodeTyChild f)))
+              "`, which is not a function type")
+            "an effect declaration describes the functions a field holds, so it needs an arrow type such as `(-> Int Int)`")
+          None
+        }
+        (if (&& pure (> (vecLen named) 0))
+          {
+            (emitFieldDeclBad tc f
+              (concat (concat "the field `" (nodeAName f))
+                "` declares `effect(pure)` beside another effect")
+              "`effect(pure)` says the field's functions perform nothing; keep it alone, or drop it and list the effects they may perform")
+            None
+          }
+          (if (== (nodeTy f) 0)
+            None
+            (Some
+              (FieldDecl
+                :owner 0
+                :name (nodeAName f)
+                :row
+                  (if pure
+                    vecNew
+                    {
+                      (let row (effCopy named))
+                      (effAdd row (builtinEff "Alloc"))
+                      (effAdd row (builtinEff "Mut"))
+                      row
+                    })
+                :said (fieldSaidJoin said)))))))
+  })
+
+(pub :: fieldSaidJoin (-> Strings String))
+(pub fn (fieldSaidJoin said)
+  {
+    (let seen vecNew)
+    (let mut out "")
+    (for one in said
+      (if (== (strInVec seen one 0) 0)
+        {
+          (vecPushStr seen one)
+          (set out (if (strEq out "")
+            one
+            (concat (concat out " and ") one)))
+        }))
+    out
+  })
+
+; Why `word` is not an effect a field can declare, or "" when it is.
+; The names are a function's (`axtagEffectOf`), less the two that
+; describe no stored function: `unsafe` marks a trusted encapsulation,
+; and nothing infers `div`.
+(pub :: fieldEffectRefusal (-> Int String String))
+(pub fn (fieldEffectRefusal tc word)
+  {
+    (let want (axtagEffectOf tc word))
+    (if (== (strLen want) 0)
+      "an `effect(...)` tag names one effect"
+      (if (strEq want (builtinEff "Unsafe"))
+        "`effect(unsafe)` marks a trusted function; each function a field holds keeps its own unsafe boundary"
+        (if (strEq want (builtinEff "Div"))
+          "nothing infers `Div`, so no stored function could be checked against it"
+          (if (== (axtagCouldExist tc want) 0)
+            (concat (concat "no effect named `" word) "` is declared")
+            ""))))
+  })
+
+(pub :: emitFieldDeclBad (-> Int ASTNode String String Int))
+(pub fn (emitFieldDeclBad tc f msg note)
+  (if (== (nodeSpan f) 0)
+    0
+    (emitDiag tc
+      (diagSetLabel
+        (mkDiagNote SEV_ERROR "AX3144" "field-effect-declaration" (nodeSpan f) msg 0 0
+          "a function-typed field declares `;@axiom:effect(pure)`, or one line per effect its functions may perform: `io`, `alloc`, `mut`, `spawn`, `block`, `entropy` or a declared effect"
+          note)
+        "declaration not read"))))
+
+(pub :: fieldDeclNameAt (-> (Vec FieldDeclName) String (Option FieldDeclName)))
+(pub fn (fieldDeclNameAt names name)
+  {
+    (let mut found None)
+    (for entry in names
+      (if (strEq entry.name name)
+        (set found (Some entry))))
+    found
+  })
+
+(pub :: fieldDeclFor (-> UState Int String (Option FieldDecl)))
+(pub fn (fieldDeclFor u sent fname)
+  {
+    (let mut found None)
+    (for d in u.fieldDecls
+      (if (&& (== d.owner sent) (strEq d.name fname))
+        (set found (Some d))))
+    found
+  })
+
+; Does every struct with a callable field `name` declare that field's
+; effects? Only then can a read whose struct the walk cannot see be
+; charged the union of their rows.
+(pub :: fieldNameAllDeclared (-> Int UState String Bool))
+(pub fn (fieldNameAllDeclared tc u name)
+  {
+    (let mut all true)
+    (for s in (tcStructsVec tc)
+      {
+        (let ty (structFieldTy s name))
+        (if (&& (! (nodeSame ty nilNode)) (== (tyIsCallable ty) 1))
+          (match (fieldDeclFor u s name)
+            ((None)
+              (set all false)
+            )
+            ((Some _) ())))
+      })
+    all
+  })
+
+; The declared row a read of the field `e` is charged, or `None` for the
+; name-based set. See the section header for the two resolutions.
+(pub :: fieldDeclRowAt (-> Int ASTNode Int (Option Strings)))
+(pub fn (fieldDeclRowAt tc e bound)
+  {
+    (let u (tcUState tc))
+    (if (== (vecLen u.fieldDeclNames) 0)
+      None
+      (match (fieldDeclNameAt u.fieldDeclNames (nodeBName e))
+        ((None) None)
+        ((Some entry)
+          (match (fieldParamStruct tc (nodeAChild e) bound)
+            ((Some sent)
+              (match (fieldDeclFor u sent (nodeBName e))
+                ((None) None)
+                ((Some d) (Some d.row)))
+            )
+            ((None)
+              (if entry.all
+                (Some entry.row)
+                None)
+            ))
+        )))
+  })
+
+; The struct a field read's base names, when the base is a parameter
+; (or a local aliasing one) whose declared type is that struct.
+(pub :: fieldParamStruct (-> Int ASTNode Int (Option Int)))
+(pub fn (fieldParamStruct tc base bound)
+  (if (!= (nodeTag base) TAG_E_VAR)
+    None
+    {
+      (let ty (bsParamTy bound (bsParamAlias bound (nodeAName base))))
+      (if (nodeSame ty nilNode)
+        None
+        (if (!= (nodeTag ty) TAG_T_CON)
+          None
+          {
+            (let sent (findStruct tc (nodeAName ty)))
+            (if (== sent 0)
+              None
+              (Some sent))
+          }))
+    }))
+
+; A call through a declared field: the row, and the stored functions'
+; edges. The members are called with no arguments - no stored function
+; calls its own (`fieldStoreVerdict`), so nothing of the caller's is
+; handed to one - and into a row the call does not keep.
+(pub :: fieldDeclaredCall (-> Int String Strings Int Strings Int ()))
+(pub fn (fieldDeclaredCall tc fname row bound acc unboxed)
+  {
+    (let scratch vecNew)
+    (let listed
+      (match (fieldValsOf tc fname)
+        ((None) false)
+        ((Some fv)
+          {
+            (fnValsCall tc fv vecNew bound scratch unboxed)
+            (&& (== fv.complete 1) (== (effPartial scratch) 0))
+          }
+        )))
+    (effUnionRow acc row 0)
+    (if (|| (! listed) (== (effIn scratch effGraphOpen) 1))
+      {
+        (effAdd acc effGraphOpen)
+        ()
+      })
+  })
+
+; A declared field read as a value: one function whose row is the
+; declaration. Where it is called the walk cannot list what the field
+; holds, so the graph is open there.
+(pub :: fieldDeclaredVals (-> Strings (Option FnVals)))
+(pub fn (fieldDeclaredVals row)
+  {
+    (let r (effCopy row))
+    (effAdd r effGraphOpen)
+    (Some (fnValsOne (LambdaFn (LambdaEffects :row r :uses vecNew :casts false))))
+  })
+
+; The struct a construction head or a field node's stamp names. The
+; checker stamps a field node with the struct's own name, or
+; `Mod$Name` for one an import declared (`stampFieldStruct`), and the
+; expander writes a construction's head the same way; a head a macro
+; wrote bare is looked up as any type name is.
+(pub :: fieldStructNamed (-> Int String Int))
+(pub fn (fieldStructNamed tc n)
+  {
+    (let mut found 0)
+    (for s in (tcStructsVec tc)
+      (if (== found 0)
+        (if (strEq (fieldStructSpelling s) n)
+          (set found s))))
+    (if (== found 0)
+      (findStruct tc n)
+      found)
+  })
+
+(pub :: fieldStructSpelling (-> Int String))
+(pub fn (fieldStructSpelling s)
+  (if (== (memGetWord s 2) 0)
+    (memGetWordStr s 0)
+    (concat (concat (memGetWordStr s 2) "$") (memGetWordStr s 0))))
+
+; `(S a1 .. an)`: argument i enters S's i-th field. Asked in the
+; validation walk only, when every row is final.
+(pub :: fieldStoreCtorCheck (-> Int String Nodes Int ()))
+(pub fn (fieldStoreCtorCheck tc n args bound)
+  {
+    (let u (tcUState tc))
+    (let state (tcCheckState tc))
+    (if (&& state.validatingEffects (> (vecLen u.fieldDecls) 0))
+      {
+        (let sent (fieldStructNamed tc n))
+        (if (!= sent 0)
+          {
+            (let fields (readAstNodes sent 1))
+            (if (== (vecLen fields) (vecLen args))
+              {
+                (let mut i 0)
+                (while (< i (vecLen fields))
+                  {
+                    (match (fieldDeclFor u sent (nodeAName (vecGet fields i)))
+                      ((None) ())
+                      ((Some d) (fieldStoreCheck tc sent d (vecGet args i) bound)))
+                    (set i (+ i 1))
+                  })
+              })
+          })
+      })
+  })
+
+; `(set e.f v)`: the struct is the one the checker stamped on the node.
+(pub :: fieldStoreSetCheck (-> Int ASTNode Int ()))
+(pub fn (fieldStoreSetCheck tc e bound)
+  {
+    (let u (tcUState tc))
+    (let state (tcCheckState tc))
+    (if (&& state.validatingEffects (&& (> (vecLen u.fieldDecls) 0) (!= (nodeTy e) 0)))
+      {
+        (let sent (fieldStructNamed tc (nodeTyText e)))
+        (if (!= sent 0)
+          (match (fieldDeclFor u sent (nodeBName e))
+            ((None) ())
+            ((Some d) (fieldStoreCheck tc sent d (nodeCChild e) bound))))
+      })
+  })
+
+; One store, answered once: a value the walk meets twice - a lambda
+; handed to a restricted callee is walked for the restriction and for
+; the call - draws one diagnostic.
+(pub :: fieldStoreCheck (-> Int Int FieldDecl ASTNode Int ()))
+(pub fn (fieldStoreCheck tc sent d v bound)
+  {
+    (let u (tcUState tc))
+    (let span (spanOf v))
+    (if (&& (!= span 0) (== (intInVec u.fieldStoreSpans span 0) 0))
+      (match (fieldStoreVerdict tc v d.row bound)
+        ((FieldStoreOk) ())
+        ((FieldStoreExceeds what effs)
+          {
+            (vecPush u.fieldStoreSpans span)
+            (emitFieldStoreExceeds tc sent d span what effs)
+          }
+        )
+        ((FieldStoreUnknown why)
+          {
+            (vecPush u.fieldStoreSpans span)
+            (emitFieldStoreUnknown tc sent d span why)
+          }
+        )))
+  })
+
+; What the stored value is, and whether it keeps `row`. Its functions
+; are found by the walk's own reading of a value (`walkEffectsVal`),
+; with validation off so a store inside a stored lambda is answered
+; once, where the main walk meets it. A field read whose node the
+; checker stamped is resolved exactly, through the struct it names.
+(pub :: fieldStoreVerdict (-> Int ASTNode Strings Int FieldStoreVerdict))
+(pub fn (fieldStoreVerdict tc v row bound)
+  (match (fieldStoreSourceDecl tc v)
+    ((Some d)
+      (fieldRowVerdict d.row row
+        (concat (concat (concat "the field `" (bareOf (memGetWordStr d.owner 0))) ".")
+          (concat (nodeBName v) "`")))
+    )
+    ((None)
+      {
+        (let state (tcCheckState tc))
+        (let checking state.validatingEffects)
+        (let sink (readAstNodes (memGetWord tc 44) 0))
+        (set state.validatingEffects false)
+        (memSetWord (memGetWord tc 44) 0 0)
+        (let vals (walkEffectsVal tc v bound vecNew))
+        (memSetWord (memGetWord tc 44) 0 sink)
+        (set state.validatingEffects checking)
+        (match vals
+          ((None) (FieldStoreUnknown (fieldValueShape tc v bound)))
+          ((Some fv)
+            (if (!= fv.complete 1)
+              (FieldStoreUnknown
+                (if (== (nodeTag v) TAG_E_FIELD)
+                  (concat (concat "the field `" (fieldReadName tc v))
+                    "`, which declares no effects and may hold a value the compiler can't follow")
+                  "a value that may be one the compiler can't follow"))
+              (fieldMembersVerdict tc fv.members row bound 0))
+          ))
+      }
+    )))
+
+; A field read as `S.f` when the checker stamped its struct, else `f`.
+(pub :: fieldReadName (-> Int ASTNode String))
+(pub fn (fieldReadName tc v)
+  {
+    (let src
+      (if (== (nodeTy v) 0)
+        0
+        (fieldStructNamed tc (nodeTyText v))))
+    (if (== src 0)
+      (nodeBName v)
+      (concat (concat (bareOf (memGetWordStr src 0)) ".") (nodeBName v)))
+  })
+
+; A stored field read the checker stamped, when its field declares.
+(pub :: fieldStoreSourceDecl (-> Int ASTNode (Option FieldDecl)))
+(pub fn (fieldStoreSourceDecl tc v)
+  (if (|| (!= (nodeTag v) TAG_E_FIELD) (== (nodeTy v) 0))
+    None
+    {
+      (let src (fieldStructNamed tc (nodeTyText v)))
+      (if (== src 0)
+        None
+        (fieldDeclFor (tcUState tc) src (nodeBName v)))
+    }))
+
+(pub :: fieldMembersVerdict (-> Int (Vec FnVal) Strings Int Int FieldStoreVerdict))
+(pub fn (fieldMembersVerdict tc members row bound i)
+  (if (>= i (vecLen members))
+    FieldStoreOk
+    {
+      (let verdict
+        (match (vecGet members i)
+          ((NamedFn ent)
+            (if (> (vecLen ent.eparams) 0)
+              (FieldStoreUnknown
+                (concat (concat "`" (bareOf ent.name))
+                  "`, which calls a function it is given, and what that performs is chosen at each call"))
+              (fieldRowVerdict (fieldCallRowOf tc ent) row
+                (concat (concat "`" (bareOf ent.name)) "`")))
+          )
+          ((LambdaFn latent)
+            (if (> (vecLen latent.uses) 0)
+              (FieldStoreUnknown
+                (concat
+                  (concat "a lambda that calls the parameter `"
+                    (fieldUseName bound (vecGet latent.uses 0)))
+                  "`, which each caller chooses"))
+              (fieldRowVerdict latent.row row "the lambda"))
+          )))
+      (match verdict
+        ((FieldStoreOk) (fieldMembersVerdict tc members row bound (+ i 1)))
+        (_ verdict))
+    }))
+
+(pub :: fieldUseName (-> Int EpUse String))
+(pub fn (fieldUseName bound use)
+  (if (&& (>= use.pidx 0) (< use.pidx (vecLen (bsParamsVec bound))))
+    (vecGetStr (bsParamsVec bound) use.pidx)
+    "?"))
+
+; What a call to `ent` adds to its caller's row, as `walkCallEnt` adds
+; it: the row less a trusted callee's `Unsafe`, a raw primitive's own
+; `Unsafe`, and the box a pair function's answer needs when it is
+; called through a value.
+(pub :: fieldCallRowOf (-> Int FnEnt Strings))
+(pub fn (fieldCallRowOf tc ent)
+  {
+    (let r vecNew)
+    (if (== ent.unsafe 1)
+      (effUnionTrusted r ent.effects 0 0)
+      (effUnion r ent.effects 0))
+    (if (== (isUnsafePrim ent.name) 1)
+      (effAdd r (builtinEff "Unsafe")))
+    (if (== (tcIsPairName (memGetWordVec tc 18) ent.name) 1)
+      (effAdd r (builtinEff "Alloc")))
+    r
+  })
+
+; Within `row`, or what is outside it. A row the walk could not close
+; is no answer: its absences are the walk's, not the function's.
+(pub :: fieldRowVerdict (-> Strings Strings String FieldStoreVerdict))
+(pub fn (fieldRowVerdict have row what)
+  (if (== (effUnresolved have) 1)
+    (FieldStoreUnknown
+      (concat what
+        ", which calls a value the compiler could not resolve, so its effects are a lower bound"))
+    {
+      (let extra vecNew)
+      (for e in have
+        (if (== (effIsMarker e) 0)
+          (if (== (effIn row (effDefiniteOf e)) 0)
+            {
+              (effAdd extra (effDefiniteOf e))
+              ()
+            })))
+      (if (== (vecLen extra) 0)
+        FieldStoreOk
+        (FieldStoreExceeds what extra))
+    }))
+
+; Why a value the walk does not follow to a function is not one it can
+; check. A parameter is named, because the fix is at the caller.
+(pub :: fieldValueShape (-> Int ASTNode Int String))
+(pub fn (fieldValueShape tc v bound)
+  (if (== (nodeTag v) TAG_E_VAR)
+    {
+      (let p (bsParamAlias bound (nodeAName v)))
+      (if (&& (>= p 0) (< p (vecLen (bsParamsVec bound))))
+        (concat (concat "the parameter `" (vecGetStr (bsParamsVec bound) p))
+          "`, which each caller chooses")
+        "a value the compiler can't follow to a function, such as a pattern binder, a lambda's parameter or a mutable local")
+    }
+    (if (== (nodeTag v) TAG_E_APP)
+      "a call's result"
+      "a value the compiler can't follow to a function")))
+
+; AX3142: a stored function performs an effect the field does not declare.
+(pub :: emitFieldStoreExceeds (-> Int Int FieldDecl Int String Strings ()))
+(pub fn (emitFieldStoreExceeds tc sent d span what effs)
+  {
+    (let field (concat (concat (bareOf (memGetWordStr sent 0)) ".") d.name))
+    (let diag
+      (diagSetLabel
+        (mkDiagNote SEV_ERROR "AX3142" "field-effect-exceeded" span
+          (concat (concat (concat (concat what " performs ") (effJoin effs)) ", and the field `")
+            (concat (concat field "` declares ") d.said))
+          0 0
+          (concat
+            "store a function that keeps the declaration, or declare the effect on the field with `;@axiom:effect("
+            (concat (fieldEffectSpelling (fieldEffectToSuggest effs)) ")`"))
+          (concat (concat "a call through `" field)
+            "` is charged what the field declares and nothing else, so everything stored in it has to keep that"))
+        (concat "performs " (effJoin effs))))
+    ; A lambda of two or more parameters is curried: a call applies it
+    ; one argument at a time, and every step but the last builds the
+    ; closure for the next. That is the `Alloc`, and no body can avoid
+    ; it.
+    (if (&& (strEq what "the lambda")
+          (&& (== (effIn effs (builtinEff "Alloc")) 1)
+            (== (tyIsArrow (nodeBChild (structFieldTy sent d.name))) 1)))
+      (diagAddNote diag
+        "a lambda of two or more parameters allocates the closure for each argument but the last, so calling it performs `Alloc`; a field of two or more parameters declares `effect(alloc)` at least"))
+    (emitDiag tc diag)
+    ()
+  })
+
+; The effect the help suggests declaring: one a function must declare
+; when it has one, else the ambient pair's spelling.
+(pub :: fieldEffectToSuggest (-> Strings String))
+(pub fn (fieldEffectToSuggest effs)
+  {
+    (let mut pick "")
+    (for e in (effSorted effs)
+      (if (&& (strEq pick "")
+            (&& (! (strEq e (builtinEff "Alloc"))) (! (strEq e (builtinEff "Mut")))))
+        (set pick e)))
+    (if (strEq pick "")
+      (builtinEff "Alloc")
+      pick)
+  })
+
+; The tag spelling of an effect: a built-in's lower-case name, a
+; declared effect's own.
+(pub :: fieldEffectSpelling (-> String String))
+(pub fn (fieldEffectSpelling e)
+  (if (strEq (strSlice e 0 2) "b:")
+    (strLower (effRender e))
+    (effRender e)))
+
+; AX3143: a stored value whose effects the compiler cannot determine.
+(pub :: emitFieldStoreUnknown (-> Int Int FieldDecl Int String ()))
+(pub fn (emitFieldStoreUnknown tc sent d span why)
+  {
+    (let field (concat (concat (bareOf (memGetWordStr sent 0)) ".") d.name))
+    (emitDiag tc
+      (diagSetLabel
+        (mkDiagNote SEV_ERROR "AX3143" "field-effect-unknown" span
+          (concat
+            (concat
+              (concat (concat "the compiler can't show that the value stored in `" field)
+                "` keeps ")
+              d.said)
+            (concat ": it is " why))
+          0 0
+          "store a named function or a lambda whose body the compiler can see, or build the record where the function is known"
+          (concat (concat "a call through `" field)
+            "` is charged what the field declares and nothing else, so a value whose effects can't be determined is refused rather than trusted"))
+        "effects unknown here"))
+    ()
+  })
+
+; `#field-effects=` on a struct's AXSYM row: each declared field and
+; what a call through it is charged, `pure` for nothing. "" when the
+; struct declares none.
+(pub :: fieldEffectsMeta (-> Int Int String))
+(pub fn (fieldEffectsMeta tc s)
+  {
+    (let u (tcUState tc))
+    (let parts vecNew)
+    (for f in (readAstNodes s 1)
+      (match (fieldDeclFor u s (nodeAName f))
+        ((None) ())
+        ((Some d)
+          {
+            (vecPushStr parts
+              (concat (concat (nodeAName f) ":")
+                (if (== (vecLen d.row) 0)
+                  "pure"
+                  (fieldRowPlus (effSorted d.row) 0 ""))))
+            ()
+          }
+        )))
+    (if (== (vecLen parts) 0)
+      ""
+      (concat "field-effects=" (fieldJoinComma parts 0 "")))
+  })
+
+(pub :: fieldRowPlus (-> Strings Int String String))
+(pub fn (fieldRowPlus v i acc)
+  (if (>= i (vecLen v))
+    acc
+    (fieldRowPlus v (+ i 1)
+      (if (== i 0)
+        (effRender (vecGetStr v i))
+        (concat (concat acc "+") (effRender (vecGetStr v i)))))))
+
+(pub :: fieldJoinComma (-> Strings Int String String))
+(pub fn (fieldJoinComma v i acc)
+  (if (>= i (vecLen v))
+    acc
+    (fieldJoinComma v (+ i 1)
+      (if (== i 0)
+        (vecGetStr v i)
+        (concat (concat acc ",") (vecGetStr v i))))))
+
 (pub :: walkEffects (-> Int ASTNode Int Strings Int))
 (pub fn (walkEffects tc e bound acc)
   (if (nodeSame e nilNode)
@@ -18336,6 +19113,8 @@
               (effAdd acc (builtinEff "Mut"))
               (walkEffects tc (nodeAChild e) bound acc)
               (walkEffects tc (nodeCChild e) bound acc)
+              (fieldStoreSetCheck tc e bound)
+              0
             }
             (if (== tag TAG_E_HANDLE)
               (walkEffectsHandle tc e bound acc)
@@ -18586,15 +19365,26 @@
         ;
         ; A FIELD head is resolved through what the program stores in
         ; that field (`fieldValsOf`), and stays a hole only when the
-        ; stores include a value the walk cannot see.
+        ; stores include a value the walk cannot see. A field that
+        ; declares its effects is charged the declaration instead
+        ; (`fieldDeclaredCall`).
         (if (== (nodeTag head) TAG_E_LAM)
           (walkCalledLambda tc head bound acc)
           (if (== (nodeTag head) TAG_E_FIELD)
             {
               (walkEffects tc (nodeAChild head) bound acc)
-              (match (fieldValsOf tc (nodeBName head))
-                ((None) (effAdd acc effIncomplete))
-                ((Some fv) (fnValsCall tc fv args bound acc (tcSiteIn tc e))))
+              (match (fieldDeclRowAt tc head bound)
+                ((Some row)
+                  {
+                    (fieldDeclaredCall tc (nodeBName head) row bound acc (tcSiteIn tc e))
+                    0
+                  }
+                )
+                ((None)
+                  (match (fieldValsOf tc (nodeBName head))
+                    ((None) (effAdd acc effIncomplete))
+                    ((Some fv) (fnValsCall tc fv args bound acc (tcSiteIn tc e))))
+                ))
             }
             {
               (walkEffects tc head bound acc)
@@ -18615,7 +19405,9 @@
         (fnValsSoleEnt (bsValsOf bound (nodeAName head)))
         (findFnEnt tc (nodeAName head)))
       (if (== tag TAG_E_FIELD)
-        (fnValsSoleEnt (fieldValsOf tc (nodeBName head)))
+        (match (fieldDeclRowAt tc head bound)
+          ((Some _) 0)
+          ((None) (fnValsSoleEnt (fieldValsOf tc (nodeBName head)))))
         0))
   })
 
@@ -18804,6 +19596,9 @@
           {
             (if (&& (== unboxed 0) (> (ctorAllocArity tc n) 0))
               (effAdd acc (builtinEff "Alloc")))
+            ; A construction stores each argument into its field: one
+            ; that declares its effects checks the value it is given.
+            (fieldStoreCtorCheck tc n args bound)
             ; ...except that a name AX3001 refused does reach here:
             ; the effect walk runs after a body's type errors, not
             ; instead of them. Its call is unresolved (ERR-DIAG-3).
@@ -19358,7 +20153,7 @@
 ; an EFFECT to every renderer and is not skipped.
 (pub :: effIsMarker (-> String Int))
 (pub fn (effIsMarker e)
-  (if (|| (strEq e effIncomplete) (strEq e effPoison))
+  (if (|| (strEq e effIncomplete) (|| (strEq e effPoison) (strEq e effGraphOpen)))
     1
     0))
 
@@ -20478,6 +21273,9 @@
     ; What every function-typed field can hold depends on syntax alone,
     ; so it too is complete before any row is (`fieldStoresBuild`).
     (collectFnRestrictions tc decls 0)
+    ; What a declared function-typed field may perform comes from its
+    ; tags alone, so it too is read before any row is.
+    (fieldDeclsBuild tc)
     (fieldStoresBuild tc decls)
     ; Every function the passes below will walk starts pending: no
     ; record yet of where it calls its parameters (`fnPending`).
@@ -25799,9 +26597,11 @@
               (graphRender path))
             path))
       }
-      (if (== (effUnresolved eff) 1)
+      (if (== (effGraphUnresolved eff) 1)
         (emitRestrictUnverifiable tc d r
-          "the body calls a value the compiler could not resolve, and the call graph has no edge for it"
+          (if (effGraphOnly eff)
+            "the body calls through a field that declares its effects, and the compiler could not list the functions the field holds, so the call graph is incomplete there"
+            "the body calls a value the compiler could not resolve, and the call graph has no edge for it")
           (as 0 (Vec Int)))
         {
           (let mayPath (graphWitnessMay tc (restrictOwnEnt tc d) "extern"))
@@ -25847,9 +26647,11 @@
               (graphRender path))
             path))
       }
-      (if (== (effUnresolved eff) 1)
+      (if (== (effGraphUnresolved eff) 1)
         (emitRestrictUnverifiable tc d r
-          "the body calls a value the compiler could not resolve, and that call may close a cycle the graph does not show"
+          (if (effGraphOnly eff)
+            "the body calls through a field that declares its effects, and the compiler could not list the functions the field holds, so the call graph is incomplete there"
+            "the body calls a value the compiler could not resolve, and that call may close a cycle the graph does not show")
           (as 0 (Vec Int)))
         {
           (let mayPath (graphCycleMay tc (restrictOwnEnt tc d)))
@@ -26022,7 +26824,7 @@
       (if (== (graphSeeds tc last e 1) 1)
         (concat ": " (graphRender path))
         (if (== (vecLen path) 1)
-          " in its own body (a constructor or closure, an `alloc` form, or a `handle` installing a handler)"
+          " in its own body (a constructor or closure, an `alloc` form, a `handle` installing a handler, or a call through a field that declares the effect)"
           (concat (concat (concat ": " (graphRender path)) ", in ")
             (concat (concat "`" (bareOf (memGetWordStr last 0))) "`'s own body"))))
     }))
@@ -26443,9 +27245,11 @@
                       (graphRender path))
                     path))
               }
-              (if (&& (== (vecLen local) 0) (== (effUnresolved eff) 1))
+              (if (&& (== (vecLen local) 0) (== (effGraphUnresolved eff) 1))
                 (emitRestrictUnverifiable tc d r
-                  "the body calls a value the compiler could not resolve, so its closure cannot be enumerated"
+                  (if (effGraphOnly eff)
+                    "the body calls through a field that declares its effects, and the compiler could not list the functions the field holds, so the call graph is incomplete there"
+                    "the body calls a value the compiler could not resolve, so its closure cannot be enumerated")
                   (as 0 (Vec Int)))
                 (if (== (vecLen local) 0)
                   {
@@ -29044,19 +29848,21 @@
     "a `data` declaration"
     (if (== tag TAG_D_STRUCT)
       "a `struct`"
-      (if (== tag TAG_D_IMPORT)
-        "an import"
-        (if (== tag TAG_D_MACRO)
-          "a macro"
-          (if (== tag TAG_D_ALIAS)
-              "a type alias"
-            (== tag TAG_D_SUBTYPE)
-              "a `subtype`"
-            (if (== tag TAG_D_EFFECT)
-              "an `effect` declaration"
-              (if (== tag TAG_D_EXTERN)
-                "an `extern` block"
-                "a function"))))))))
+      (if (== tag TAG_FIELD)
+        "a struct field, which takes only `effect(...)`"
+        (if (== tag TAG_D_IMPORT)
+          "an import"
+          (if (== tag TAG_D_MACRO)
+            "a macro"
+            (if (== tag TAG_D_ALIAS)
+                "a type alias"
+              (== tag TAG_D_SUBTYPE)
+                "a `subtype`"
+              (if (== tag TAG_D_EFFECT)
+                "an `effect` declaration"
+                (if (== tag TAG_D_EXTERN)
+                  "an `extern` block"
+                  "a function")))))))))
 
 (pub :: emitAxtagStray (-> Int ASTNode String Int))
 (pub fn (emitAxtagStray tc d key)
@@ -29191,7 +29997,11 @@
                             ; body's erasing casts (`eraseSettle`).
                             (if (strEq key "erasures")
                               1
-                              (axtagReservedMir key))))))))))))))))
+                              ; `#field-effects=` is the row each declared
+                              ; field is charged (`fieldEffectsMeta`).
+                              (if (strEq key "field-effects")
+                                1
+                                (axtagReservedMir key)))))))))))))))))
 
 ; Split out rather than continued inline: the `#mir-*` set is one
 ; workstream's and moves with it, and a reader adding a seventh key

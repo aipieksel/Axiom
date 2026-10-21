@@ -1001,8 +1001,89 @@ handle: a `parallel` form lends it to its bindings, and it can't have a
 ```
 
 An interface is a parameterised struct of functions. Calling a member,
-such as `(s.render value)`, is ordinary function application. Each
-member declares its own effects. Records replace traits and `impl`.
+such as `(s.render value)`, is ordinary function application. Records
+replace traits and `impl`.
+
+By default a call through a member may reach any function the program
+stores in a field of that name, so its effects are the union of theirs.
+One record that prints makes every call through every `render` a
+possible print.
+
+### Declare what a member may do
+
+Write `;@axiom:effect(...)` above a function-typed field, as you would
+above a function. A call through the field is then charged what the
+field declares and nothing else:
+
+```scheme
+(import IO)
+(import Vec)
+
+(struct Eq (a)
+  ;@axiom:effect(alloc)
+  (eq : (-> a a Bool)))
+
+(:: member (-> (Eq a) a (Vec a) Bool))
+;@axiom:restrict(no-io,strict)
+(fn (member e x xs)
+  {
+    (let mut found false)
+    (for y in xs
+      (if (e.eq x y)
+        (set found true)))
+    found
+  })
+
+(:: intEq (Eq Int))
+(fn (intEq)
+  (Eq :eq (lambda (a b) (== a b))))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let xs vecNew)
+    (vecPush xs 3)
+    (vecPush xs 5)
+    (println (member intEq 5 xs))
+  })
+```
+
+This prints `true`, and `member`'s `no-io` claim is proven however many
+records elsewhere in the program print.
+
+`effect(pure)` says the stored functions perform nothing. Otherwise write
+one line per effect they may perform: `io`, `spawn`, `block`, `entropy`
+or a declared effect. Every declaration but `pure` also admits `Alloc`
+and `Mut`, which a function never declares, so `effect(alloc)` alone
+admits those two and nothing more. A lambda of two or more parameters allocates the
+closure for each argument but the last, so a field like `eq` above
+declares `effect(alloc)` at least.
+
+The compiler checks every value where it enters the field, in a
+construction or a `set`. A named function is checked by its effect row,
+and a lambda by what its body performs, including what it captures.
+Copying another field is accepted when that field declares no more:
+
+- A value that performs more than the field declares is refused with
+  `AX3142`.
+- A value whose effects the compiler can't see is refused with
+  `AX3143`: a parameter, a call's result, a container's element, a
+  function that calls a function it is given, or a lambda that calls a
+  parameter.
+- A declaration the compiler can't read, such as one on a field that
+  isn't a function, is `AX3144`.
+
+A function written into a record through a cast or a raw store is
+outside these checks, like any other claim, and needs `effect(unsafe)`.
+
+`symbols` lists each declared field and what a call through it is
+charged, as `#field-effects=eq:Alloc+Mut`. Not yet: a function that
+stores its own parameter in a declared field can't pass that
+requirement on to its callers ([roadmap](roadmap.md)).
+
+Tested by `tests/stdlib/994-field-effects.ax` and
+`tests/diagnostics/1501-field-effect-parameter.ax`.
 
 ## Effects
 

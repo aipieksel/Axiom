@@ -118,6 +118,9 @@
   [93mAX3138[0m  text after an AXTAG's closing parenthesis  (axtag-trailing-text)
   [93mAX3139[0m  a cast from or to unit  (unit-cast)
   [93mAX3140[0m  a trap the literals make certain  (certain-trap)
+  [93mAX3142[0m  a stored function performs an effect its field does not declare  (field-effect-exceeded)
+  [93mAX3143[0m  a value stored in a declared field whose effects cannot be determined  (field-effect-unknown)
+  [93mAX3144[0m  a field effect declaration the compiler cannot read  (field-effect-declaration)
   [93mAX4001[0m  no `main` function  (missing-main)
   [93mAX4002[0m  code generation failed  (codegen-failure)
   [93mAX4003[0m  external toolchain command failed  (toolchain-failure)
@@ -3118,6 +3121,62 @@ Some traps are visible from the literals alone: division or remainder by 0, a ne
 
 Compute the operand so it can be in range, or handle the trapping case first. A computed operand is checked at run time as before; only a literal the checker can judge is refused here.
 
+### explain AX3142
+AX3142 - a stored function performs an effect its field does not declare
+
+A function-typed field can declare what the functions it holds may perform, with the line a function uses to claim its effects:
+
+    (struct Show (a)
+      ;@axiom:effect(alloc)
+      (render : (-> a String)))
+
+A call through `s.render` is then charged what the field declares and nothing else. So every value stored in the field is checked where it enters, in a construction or a `set`: a named function by its effect row, and a lambda by what its body performs, including what it captures.
+
+This value performs an effect the declaration leaves out:
+
+    (Show :render (lambda (n) { (println "rendering") "n" }))
+
+Store a function that keeps the declaration, or declare the effect on the field, one `;@axiom:effect(...)` line per effect. Every declaration but `effect(pure)` admits `Alloc` and `Mut`, which a function never declares.
+
+A lambda of two or more parameters allocates the closure for each argument but the last, so a field of two or more parameters declares `effect(alloc)` at least.
+
+A value whose effects the compiler can't determine is AX3143. A declaration the compiler can't read is AX3144.
+
+### explain AX3143
+AX3143 - a value stored in a declared field whose effects cannot be determined
+
+A field that declares its effects is charged only what it declares, so the compiler must see what each stored value performs. These values can't be checked, and are refused:
+
+- a parameter, which each caller chooses;
+- a call's result, a container's element, a pattern binder, a lambda's parameter or a mutable local;
+- a named function that calls a function it is given, such as `apply`: what it performs is chosen at each call;
+- a lambda that calls a parameter of the function that builds it;
+- a field that declares no effects and may hold such a value.
+
+    (:: mkShow (-> (-> Int String) (Show Int)))
+    (fn (mkShow f)
+      (Show :render f))
+
+Store a named function or a lambda whose body the compiler can see, or build the record where the function is known. Copying another field is accepted when that field declares no more. A field that declares no effects accepts any of these values, and a call through it is charged whatever the program stores in fields of that name.
+
+### explain AX3144
+AX3144 - a field effect declaration the compiler cannot read
+
+A function-typed field declares its effects with `;@axiom:effect(pure)`, or with one line per effect its functions may perform: `io`, `alloc`, `mut`, `spawn`, `block`, `entropy` or an effect the program declares.
+
+These are refused:
+
+- a declaration on a field whose type is not a function arrow;
+- `effect(unsafe)`, which marks a trusted function, and `effect(div)`, which nothing infers;
+- an effect no declaration introduces;
+- `effect(pure)` beside another effect.
+
+    (struct Counter
+      ;@axiom:effect(pure)
+      (count : Int))
+
+Declare effects on a field such as `(render : (-> a String))`. A list inside one tag is AX3076, and another checked key on a field, such as `restrict(...)`, is AX3077.
+
 ### explain AX4001
 AX4001 - no `main` function
 
@@ -3619,6 +3678,9 @@ run `axiom explain --list` to see all known codes, or name a keyword, type, effe
   [93mAX3138[0m  text after an AXTAG's closing parenthesis  (axtag-trailing-text)
   [93mAX3139[0m  a cast from or to unit  (unit-cast)
   [93mAX3140[0m  a trap the literals make certain  (certain-trap)
+  [93mAX3142[0m  a stored function performs an effect its field does not declare  (field-effect-exceeded)
+  [93mAX3143[0m  a value stored in a declared field whose effects cannot be determined  (field-effect-unknown)
+  [93mAX3144[0m  a field effect declaration the compiler cannot read  (field-effect-declaration)
   [93mAX4001[0m  no `main` function  (missing-main)
   [93mAX4002[0m  code generation failed  (codegen-failure)
   [93mAX4003[0m  external toolchain command failed  (toolchain-failure)

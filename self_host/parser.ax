@@ -180,6 +180,13 @@
 (pub fn (nodeTyNames n)
   (as (nodeWord n 6) Names))
 
+; Word 6 as text: the struct name the checker stamps on a field read or
+; store (`stampFieldStruct`).
+(pub :: nodeTyText (-> ASTNode String))
+;@axiom:effect(unsafe)
+(pub fn (nodeTyText n)
+  (as (nodeWord n 6) String))
+
 (pub :: nodeAxtagsWord (-> ASTNode Int))
 (pub fn (nodeAxtagsWord n)
   (nodeWord n 7))
@@ -7514,6 +7521,13 @@
 ; An `impl`'s methods and a `trait`'s defaults were the other two
 ; nested positions, and were the ones this was written for. Traits
 ; went in 0.6.0 and the macro rules are what is left.
+;
+; A struct's FIELDS are the other nested position. A function-typed
+; field declares the effects of what it holds with the same
+; `;@axiom:effect(...)` line a function uses, written above the field
+; (`fieldDeclsBuild` in the checker reads it). Before fields took tags,
+; one written there went to the next top-level declaration, so a claim
+; about a field landed on whatever function followed the struct.
 (pub :: attachAxtagsNested (-> ASTNode Ints Int Int))
 (pub fn (attachAxtagsNested d axtags cur)
   ; A rule whose template is only an expression has an empty declaration
@@ -7522,7 +7536,28 @@
   ; at once).
   (if (== (nodeTag d) TAG_D_MACRO)
     (attachAxtagsRules (nodeFieldNamesWords d) 0 axtags cur)
-    cur))
+    (if (&& (== (nodeTag d) TAG_D_STRUCT) (!= (nodeB d) 0))
+      (attachAxtagsFields (nodeBChildren d) 0 axtags cur)
+      cur)))
+
+; Each field takes the tags that precede its name and follow the
+; previous field's, by the positional rule `attachAxtags` applies at the
+; top level. A field's span is its name's.
+(pub :: attachAxtagsFields (-> (Vec ASTNode) Int Ints Int Int))
+(pub fn (attachAxtagsFields fields i axtags cur)
+  (if (>= i (vecLen fields))
+    cur
+    {
+      (let f (vecGet fields i))
+      (if (== (nodeSpan f) 0)
+        (attachAxtagsFields fields (+ i 1) axtags cur)
+        {
+          (let upto (axtagsUpto axtags cur (spanStart (nodeSpan f))))
+          (if (> upto cur)
+            (writeNodeWords f 7 (axtagSlice axtags cur upto)))
+          (attachAxtagsFields fields (+ i 1) axtags upto)
+        })
+    }))
 
 ; A declaration macro's TEMPLATES, which are declarations the author
 ; wrote and can therefore tag.

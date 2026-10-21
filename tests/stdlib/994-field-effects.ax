@@ -1,0 +1,114 @@
+; A function-typed field can declare what the functions it holds may
+; perform. `Eq.eq` declares `effect(alloc)`: a lambda of two parameters
+; allocates the closure for its second step, and does nothing else
+; here. So `member`'s `restrict(no-io,strict)` is proven, though
+; `Cmp.eq`, a field of the same name that declares nothing, holds a
+; lambda that prints. Without the declaration a call through any `eq`
+; may reach that `println`, and the claim cannot be proven.
+;
+; `Pred.test` declares `effect(pure)`, so `countIf` keeps
+; `restrict(no-io,no-alloc,strict)`, and its `mut` field takes a new
+; function through `set` under the same check. `Log.emit` declares
+; `effect(io)`, so `say` performs IO and says so.
+(import IO)
+(import Str)
+(import Vec)
+
+(struct Eq (a)
+  ;@axiom:effect(alloc)
+  (eq : (-> a a Bool)))
+
+(struct Cmp (a)
+  (eq : (-> a a Bool)))
+
+(struct Pred
+  ;@axiom:effect(pure)
+  (mut test : (-> Int Bool)))
+
+(struct Log
+  ;@axiom:effect(io)
+  (emit : (-> String Int)))
+
+(:: member (-> (Eq a) a (Vec a) Bool))
+;@axiom:restrict(no-io,strict)
+(fn (member e x xs)
+  {
+    (let mut found false)
+    (for y in xs
+      (if (e.eq x y)
+        (set found true)))
+    found
+  })
+
+(:: intEq (Eq Int))
+(fn (intEq)
+  (Eq :eq (lambda (a b) (== a b))))
+
+(:: textEq (Eq String))
+(fn (textEq)
+  (Eq :eq (lambda (a b) (strEq a b))))
+
+(:: loudCmp (Cmp Int))
+;@axiom:effect(io)
+(fn (loudCmp)
+  (Cmp
+    :eq
+      (lambda (a b)
+        {
+          (println "compared")
+          (== a b)
+        }
+      )))
+
+(:: isPositive (-> Int Bool))
+(fn (isPositive n)
+  (> n 0))
+
+(:: countIf (-> Pred (Vec Int) Int))
+;@axiom:restrict(no-io,no-alloc,strict)
+(fn (countIf p xs)
+  {
+    (let mut n 0)
+    (let mut i 0)
+    (while (< i (vecLen xs))
+      {
+        (if (p.test (vecGet xs i))
+          (set n (+ n 1)))
+        (set i (+ i 1))
+      })
+    n
+  })
+
+(:: echo Log)
+;@axiom:effect(io)
+(fn (echo)
+  (Log :emit (lambda (s) (println (concat "log: " s)))))
+
+(:: say (-> Log String Int))
+;@axiom:effect(io)
+(fn (say l s)
+  (l.emit s))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let xs vecNew)
+    (vecPush xs 3)
+    (vecPush xs (- 0 1))
+    (vecPush xs 5)
+    (println (member intEq 5 xs))  ; true
+    (println (member intEq 4 xs))  ; false
+    (let names vecNew)
+    (vecPush names "ada")
+    (vecPush names "grace")
+    (println (member textEq "grace" names))  ; true
+    (let c loudCmp)
+    (println (c.eq 1 1))
+    (let p (Pred :test isPositive))
+    (println (countIf p xs))  ; 2
+    (set p.test (lambda (n) (< n 0)))
+    (println (countIf p xs))  ; 1
+    (say echo "ready")
+    ()
+  })

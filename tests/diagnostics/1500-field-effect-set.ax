@@ -1,0 +1,35 @@
+; `(set r.f v)` is checked as a construction is: a `mut` field that
+; declares `effect(pure)` refuses a lambda that prints (AX3142), and a
+; value the compiler cannot follow, here the parameter `g` (AX3143). The
+; last store keeps the declaration and is the control.
+(import IO)
+
+(struct Hook
+  ;@axiom:effect(pure)
+  (mut run : (-> Int Int)))
+
+(:: loud (-> Hook ()))
+;@axiom:effect(io)
+(fn (loud h)
+  (set h.run (lambda (x)
+    {
+      (println "ran")
+      x
+    }
+  )))
+
+(:: install (-> Hook (-> Int Int) ()))
+(fn (install h g)
+  (set h.run g))
+
+(:: double (-> Hook ()))
+(fn (double h)
+  (set h.run (lambda (x) (* x 2))))
+
+(:: main Int)
+(fn (main)
+  {
+    (let h (Hook :run (lambda (x) x)))
+    (double h)
+    (h.run 0)
+  })

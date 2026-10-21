@@ -1,0 +1,54 @@
+; A lambda stored into a field that declares its effects is checked
+; against the declaration by what its body performs. `loud` prints into
+; `Show.render`, which declares `effect(alloc)`, and is AX3142; so is
+; `loudLabelled`, whose labels are out of declaration order, so the
+; lambda reaches the field through a local. `quiet` renders without
+; printing and is the control.
+(import IO)
+(import Fmt)
+
+(struct Show (a)
+  ;@axiom:effect(alloc)
+  (render : (-> a String)))
+
+(struct Named (a)
+  (name : String)
+  ;@axiom:effect(alloc)
+  (render : (-> a String)))
+
+(:: loud (Show Int))
+;@axiom:effect(io)
+(fn (loud)
+  (Show
+    :render
+      (lambda (n)
+        {
+          (println "rendering")
+          (fmtInt n)
+        }
+      )))
+
+(:: loudLabelled (Named Int))
+;@axiom:effect(io)
+(fn (loudLabelled)
+  (Named
+    :render
+      (lambda (n)
+        {
+          (println "rendering")
+          (fmtInt n)
+        }
+      )
+    :name "count"))
+
+(:: quiet (Show Int))
+(fn (quiet)
+  (Show :render (lambda (n) (fmtInt n))))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let s quiet)
+    (println (s.render 1))
+  })

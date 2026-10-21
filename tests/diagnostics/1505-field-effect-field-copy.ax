@@ -1,0 +1,42 @@
+; A function copied out of another field is checked by what that field
+; can hold. `Loud.emit` declares `effect(io)`, more than `Quiet.emit`
+; allows, so `narrow` is AX3142. `Raw.emit` declares nothing and one of
+; its stores is a parameter, so what it holds can't be followed and
+; `fromRaw` is AX3143. `widen` copies the smaller row into the larger
+; and is the control.
+(import IO)
+
+(struct Quiet
+  ;@axiom:effect(alloc)
+  (emit : (-> String Int)))
+
+(struct Loud
+  ;@axiom:effect(io)
+  (emit : (-> String Int)))
+
+(struct Raw
+  (send : (-> String Int)))
+
+(:: narrow (-> Loud Quiet))
+(fn (narrow l)
+  (Quiet :emit l.emit))
+
+(:: widen (-> Quiet Loud))
+(fn (widen q)
+  (Loud :emit q.emit))
+
+(:: rawOf (-> (-> String Int) Raw))
+(fn (rawOf f)
+  (Raw :send f))
+
+(:: fromRaw (-> Raw Quiet))
+(fn (fromRaw r)
+  (Quiet :emit r.send))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let l (widen (Quiet :emit strLen)))
+    (println (l.emit "four"))
+  })

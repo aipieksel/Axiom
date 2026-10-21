@@ -582,6 +582,7 @@ The metadata keys:
 | `ctors` | `D` | Constructor names, comma-separated, e.g. `#ctors=Nothing,Just` |
 | `of` | `C` | The data type the constructor belongs to, e.g. `#of=Maybe` |
 | `fields` | `S` | Each field's name and type, `name:Type,name:Type,...`, e.g. `#fields=x:Int,y:Int` |
+| `field-effects` | `S` | Each field that declares its effects with `;@axiom:effect(...)`, and the row a call through it is charged: `#field-effects=eq:pure,emit:Alloc+IO+Mut`. Absent when no field declares one ([reference.md](reference.md#declare-what-a-member-may-do)) |
 | `repr` | `S` | A word struct's representation: `#repr=word`, or `#repr=word,shared` when a concurrent binding may capture it ([memory-model.md](memory-model.md) `MM-VAL-10a`). `#repr=sealed,shared` on a heap struct a `parallel` form lends (`MM-PAR-16`). Absent on any other heap struct |
 | `tyvars` | `A` | Type parameters, comma-separated, e.g. `#tyvars=a,b`. Absent when there are none |
 | `effects` | `F` | The effect row the checker derived by walking the function's calls, sorted and comma-separated, e.g. `#effects=IO`. Absent when the function performs none. An `extern` item carries `#effects=IO` |

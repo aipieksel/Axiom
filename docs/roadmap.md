@@ -81,6 +81,8 @@ integrator would still need.
 | Opaque callback aliases preserve incomplete effect rows through forwarding, captures and mutable bindings | Done | `tests/diagnostics/1482-callback-alias-effects.ax`, `tests/selfhost/1042-callback-alias-effects.ax` |
 | Stored lambdas contribute their resolved effects at field calls | Done | `tests/diagnostics/1462-lambda-field-effects.ax` |
 | Stored lambdas retain cast facts for deep restrictions | Done | `tests/diagnostics/1464-lambda-field-casts.ax` |
+| A function-typed field declares its effects, and every store into it is checked against the declaration | Done | `tests/stdlib/994-field-effects.ax`, `tests/diagnostics/1501-field-effect-parameter.ax` |
+| A function that stores its parameter in a declared field passes the requirement on to its callers | Planned | `AX3143` refuses the store |
 | Contracts are visible in hover, signature help, completion and generated documentation | Done | `tests/lsp/drive.py`, `scripts/check-stdlib-api.sh` |
 | Contracts diagnose certainly false calls and postconditions at compile time | Planned | |
 | A misspelt checked AXTAG key is an error | Done | `AX3039` |

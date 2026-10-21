@@ -16,6 +16,21 @@ its changelog too.
 
 ## Unreleased
 
+- A function-typed struct field can declare what the functions it holds
+  may perform, with the `;@axiom:effect(...)` lines a function uses,
+  written above the field. A call through the field is charged the
+  declaration instead of every function the program stores in fields of
+  that name, so a claim such as `restrict(no-io,strict)` over a call
+  through a capability record is proven even when an unrelated record
+  prints. Every store is checked where it enters the field, in a
+  construction or a `set`: a value that performs more is `AX3142`, a
+  value whose effects the compiler can't determine is `AX3143`, and a
+  declaration it can't read is `AX3144`. `symbols` prints the declared
+  rows as `#field-effects=`. Fields that declare nothing behave as
+  before. Tested by `tests/stdlib/994-field-effects.ax` and
+  `tests/diagnostics/1498-field-effect-lambda.ax` through
+  `tests/diagnostics/1508-field-effect-call.ax`.
+
 - `if` takes a pattern test. `(if (let (Some n) o) then else)` runs
   `then` with `n` bound when `o` matches, and `else` otherwise, at any
   test position of a chain and with or without an else. It means the
