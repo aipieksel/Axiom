@@ -45,6 +45,10 @@ function Zip-Package([string]$Folder) {
     $directory = Join-Path $testRoot ('archive-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($directory)
     $zip = Join-Path $directory ($name + '.zip')
+    # Windows PowerShell 5.1 keeps ZipArchiveMode in System.IO.Compression,
+    # which loading the FileSystem assembly does not load, so a type literal
+    # that names it fails until something else has opened an archive.
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     # Framework compatibility modes can make CreateFromDirectory write
     # backslashes. Use the same canonical member names as package-windows.py.
