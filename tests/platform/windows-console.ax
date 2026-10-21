@@ -212,15 +212,55 @@
       ((Ok n) (&& (== n 1) (== (readBufferByte buf 0) byte))))
   })
 
+(:: laterKeyRead (-> Poller File Bool))
+;@axiom:effect(io)
+(fn (laterKeyRead p f)
+  {
+    (let ready (waitCount p 2000))
+    (if (!= ready 1)
+      {
+        (eprintln
+          "later key read: poll={ready}; read-count=not-attempted; byte=not-attempted; error=not-attempted")
+        false
+      }
+      {
+        (let buf (readBufferNew 1))
+        (match (fileRead f buf 0 1)
+          ((Err e)
+            {
+              (let code e.code)
+              (let context e.context)
+              (let message e.message)
+              (eprintln
+                "later key read: poll={ready}; read-count=unavailable; byte=unavailable; error={code}; message={message}; context={context}")
+              false
+            }
+          )
+          ((Ok n)
+            {
+              (let good (&& (== n 1) (== (readBufferText buf 0 n) "q")))
+              (if good
+                true
+                {
+                  (let byte
+                    (if (> n 0)
+                      (readBufferByte buf 0)
+                      -1))
+                  (eprintln "later key read: poll={ready}; read-count={n}; byte={byte}; error=none")
+                  false
+                })
+            }
+          ))
+      })
+  })
+
 (:: rawStreamCases (-> Int File Poller TermGuard Int))
 ;@axiom:effect(io)
 (fn (rawStreamCases h f p guard)
   {
     (let mut bad 0)
     (set bad (+ bad (say (sendKey h 81 113 0) "a key is queued behind console noise")))
-    (set bad (+ bad
-               (say (&& (== (waitCount p 2000) 1) (readIs f 1 "q"))
-                 "a later key reaches the stream reader")))
+    (set bad (+ bad (say (laterKeyRead p f) "a later key reaches the stream reader")))
     (set bad (+ bad (say (sendKey h 32 0 8) "Ctrl-Space with zero Unicode is queued")))
     (set bad (+ bad
                (say (&& (== (waitCount p 2000) 1) (readByteIs f 0))
