@@ -234,7 +234,7 @@ ablate "named-pattern" typecheck.ax \
   "0"
 
 ablate "nid-fn-wins" symbols.ax \
-  "            (saPutIfAbsent (memGetWordVec sm 12) (memGetWordVec sm 13) name \"DSig:\")" \
+  "            (saPutIfAbsent sm.nidN sm.nidV name \"DSig:\")" \
   "            (smNid sm name \"DSig:\")" \
   sigmove
 
