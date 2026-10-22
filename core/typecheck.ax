@@ -434,13 +434,16 @@
       1
       0)))
 
-(pub :: mkPartialRec (-> Ints Int Int ASTNode))
+(pub :: mkPartialRec (-> (Vec SEnt) Int Int ASTNode))
 (pub fn (mkPartialRec ents own sp)
   (nodeBuildPartial ents own sp))
 
-(pub :: partialEnts (-> ASTNode Ints))
+; Only a partial-record stamp owns this payload: its retained vector
+; contains scope entries, while the sealed node arena erases that type.
+(pub :: partialEnts (-> ASTNode (Vec SEnt)))
+;@axiom:effect(unsafe)
 (pub fn (partialEnts s)
-  (nodeAWords s))
+  (as (nodeAWords s) (Vec SEnt)))
 
 ; The node's OWN position: where its parameters start in the
 ; record (captures below, witnessed parameters above). It rides
@@ -700,7 +703,7 @@
 ; records whose `b` words differ (the node's own position, and the
 ; rest's, one deeper), so outer levels keep witnessing what they
 ; witnessed.
-(pub :: groundLamOuter (-> Int ASTNode ASTNode Int Ints ASTNode))
+(pub :: groundLamOuter (-> Int ASTNode ASTNode Int (Vec SEnt) ASTNode))
 (pub fn (groundLamOuter tc node argTy span prefix)
   {
     (let rest (nodeBChild node))
@@ -729,18 +732,18 @@
     }
   })
 
-(pub :: prefixClonePlus (-> Ints String ASTNode Ints))
+(pub :: prefixClonePlus (-> (Vec SEnt) String ASTNode (Vec SEnt)))
 (pub fn (prefixClonePlus prefix name ty)
   {
     (let ents vecNew)
     {
       (prefixCloneInto prefix ents 0)
-      (vecPush ents (as (SEnt :name name :mutable 0 :bsp 0 :ty ty :used 0) Int))
+      (vecPush ents (SEnt :name name :mutable 0 :bsp 0 :ty ty :used 0))
       ents
     }
   })
 
-(pub :: prefixCloneInto (-> Ints Ints Int Int))
+(pub :: prefixCloneInto (-> (Vec SEnt) (Vec SEnt) Int Int))
 (pub fn (prefixCloneInto prefix ents i)
   (if (>= i (vecLen prefix))
     0
@@ -758,7 +761,7 @@
 ; arrow, recursing through nothing - this shape's body is not a
 ; lambda - so its fallback (a flat multi-parameter spelling, or an
 ; arrow run out) is unreachable here.
-(pub :: groundLamSelf (-> Int ASTNode ASTNode Int Ints ASTNode))
+(pub :: groundLamSelf (-> Int ASTNode ASTNode Int (Vec SEnt) ASTNode))
 (pub fn (groundLamSelf tc node argTy span prefix)
   {
     (let mark (vecLen (tcScopeVec tc)))
@@ -803,7 +806,7 @@
     }
   })
 
-(pub :: groundPushPrefix (-> Int Ints Int Int))
+(pub :: groundPushPrefix (-> Int (Vec SEnt) Int Int))
 (pub fn (groundPushPrefix tc prefix i)
   (if (>= i (vecLen prefix))
     0
@@ -867,7 +870,7 @@
 ; miss still answers audibly, through the in-progress marker,
 ; never silently. Forms `capScanInto` does not walk (a `cast` over
 ; the call, and the like) miss by construction.
-(pub :: groundSelfMention (-> Int ASTNode ASTNode Ints Int))
+(pub :: groundSelfMention (-> Int ASTNode ASTNode (Vec SEnt) Int))
 (pub fn (groundSelfMention tc node body prefix)
   {
     (let bound vecNew)
@@ -880,7 +883,7 @@
     }
   })
 
-(pub :: groundAccMentions (-> Int (Vec ASTNode) ASTNode Ints Int Int))
+(pub :: groundAccMentions (-> Int (Vec ASTNode) ASTNode (Vec SEnt) Int Int))
 (pub fn (groundAccMentions tc acc node prefix i)
   (if (>= i (vecLen acc))
     0
@@ -898,11 +901,11 @@
 ; 1 when `name` is bound anywhere in `prefix` (captures and outer
 ; parameters alike): the defer (or an earlier level) resolved it,
 ; so it is not forward.
-(pub :: groundNameInPrefix (-> Ints String Int Int))
+(pub :: groundNameInPrefix (-> (Vec SEnt) String Int Int))
 (pub fn (groundNameInPrefix prefix name i)
   (if (>= i (vecLen prefix))
     0
-    (if (strEq (memGetWordStr (vecGet prefix i) 0) name)
+    (if (strEq (sEntName (vecGet prefix i)) name)
       1
       (groundNameInPrefix prefix name (+ i 1)))))
 
@@ -987,7 +990,7 @@
         }))
   })
 
-(pub :: deferResolveCaps (-> Int (Vec ASTNode) Ints Int Int))
+(pub :: deferResolveCaps (-> Int (Vec ASTNode) (Vec SEnt) Int Int))
 (pub fn (deferResolveCaps tc acc ents i)
   (if (>= i (vecLen acc))
     0
@@ -996,12 +999,7 @@
       {
         (if (let (Some ent) found)
           (vecPush ents
-            (as (SEnt
-                  :name ent.name
-                  :mutable ent.mutable
-                  :bsp ent.bsp
-                  :ty ent.ty
-                  :used ent.used) Int)))
+            (SEnt :name ent.name :mutable ent.mutable :bsp ent.bsp :ty ent.ty :used ent.used)))
         (deferResolveCaps tc acc ents (+ i 1))
       }
     }))
@@ -1020,7 +1018,7 @@
     (flushScopeVec tc (tcScopeVec tc) mark seen)
   })
 
-(pub :: flushScopeVec (-> Int Ints Int (Vec ASTNode) Int))
+(pub :: flushScopeVec (-> Int (Vec SEnt) Int (Vec ASTNode) Int))
 (pub fn (flushScopeVec tc scope i seen)
   (if (>= i (vecLen scope))
     0
@@ -3495,7 +3493,7 @@
   (fns : (Vec Int))
   (datas : (Vec Int))
   (structs : (Vec Int))
-  (scope : (Vec Int))
+  (scope : (Vec SEnt))
   (mut out : Diags)
   (mut counter : Int)
   (mut frameBase : Int)
@@ -3885,7 +3883,7 @@
     t.structs
   })
 
-(pub :: tcScopeVec (-> Int Ints))
+(pub :: tcScopeVec (-> Int (Vec SEnt)))
 ;@axiom:effect(unsafe)
 (pub fn (tcScopeVec tc)
   {
@@ -10820,42 +10818,26 @@
   (ty : ASTNode)
   (mut used : Int))
 
-(pub :: sEntName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: sEntName (-> SEnt String))
 (pub fn (sEntName ent)
-  {
-    (let e (as ent SEnt))
-    e.name
-  })
+  ent.name)
 
-(pub :: sEntMutable (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: sEntMutable (-> SEnt Int))
 (pub fn (sEntMutable ent)
-  {
-    (let e (as ent SEnt))
-    e.mutable
-  })
+  ent.mutable)
 
-(pub :: sEntBsp (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: sEntBsp (-> SEnt Int))
 (pub fn (sEntBsp ent)
-  {
-    (let e (as ent SEnt))
-    e.bsp
-  })
+  ent.bsp)
 
-(pub :: sEntUsed (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: sEntUsed (-> SEnt Int))
 (pub fn (sEntUsed ent)
-  {
-    (let e (as ent SEnt))
-    e.used
-  })
+  ent.used)
 
-(pub :: pushScope (-> Ints String Int Int ASTNode Int))
+(pub :: pushScope (-> (Vec SEnt) String Int Int ASTNode Int))
 (pub fn (pushScope scope name mutFlag bsp ty)
   {
-    (vecPush scope (as (SEnt :name name :mutable mutFlag :bsp bsp :ty ty :used 0) Int))
+    (vecPush scope (SEnt :name name :mutable mutFlag :bsp bsp :ty ty :used 0))
     0
   })
 
@@ -10906,22 +10888,18 @@
       (refuseReservedParams tc params span (+ i 1))
     }))
 
-(pub :: sEntTy (-> Int ASTNode))
-;@axiom:effect(unsafe)
+(pub :: sEntTy (-> SEnt ASTNode))
 (pub fn (sEntTy ent)
-  {
-    (let e (as ent SEnt))
-    e.ty
-  })
+  ent.ty)
 
 ; The innermost entry's index, when present. `checkSet` needs the position,
 ; not just the entry: whether the target sits below the innermost
 ; lambda's boundary is what decides the capture refusal (MM-MUT-1a).
-(pub :: scopeFindIdx (-> Ints String (Option Int)))
+(pub :: scopeFindIdx (-> (Vec SEnt) String (Option Int)))
 (pub fn (scopeFindIdx scope name)
   (scopeFindIdxFrom scope name (- (vecLen scope) 1)))
 
-(pub :: scopeFindIdxFrom (-> Ints String Int (Option Int)))
+(pub :: scopeFindIdxFrom (-> (Vec SEnt) String Int (Option Int)))
 (pub fn (scopeFindIdxFrom scope name i)
   (if (< i 0)
     None
@@ -10936,19 +10914,12 @@
 (pub fn (scopeFindFrame tc name)
   (scopeFindFrameFrom (tcScopeVec tc) name (- (vecLen (tcScopeVec tc)) 1) (tcFrameBase tc)))
 
-; Scope storage is still word-backed; only this read crosses into a
-; typed entry. Every successful lookup and its callers retain that type.
-(:: scopeEntryAt (-> Ints Int SEnt))
-;@axiom:effect(unsafe)
-(fn (scopeEntryAt scope i)
-  (as (vecGet scope i) SEnt))
-
-(pub :: scopeFindFrameFrom (-> Ints String Int Int (Option SEnt)))
+(pub :: scopeFindFrameFrom (-> (Vec SEnt) String Int Int (Option SEnt)))
 (pub fn (scopeFindFrameFrom scope name i base)
   (if (< i base)
     None
     {
-      (let entry (scopeEntryAt scope i))
+      (let entry (vecGet scope i))
       (if (strEq entry.name name)
         (Some entry)
         (scopeFindFrameFrom scope name (- i 1) base))
@@ -12110,7 +12081,7 @@
                                 (if (&& (== tag TAG_E_LET)
                                       (&& (== (isDiscardedResultTy initTy) 1)
                                         (&& (!= (strByte (nodeAName e) 0) 95)
-                                          (== (memGetWord (vecGet (tcScopeVec tc) mark) 4) 0))))
+                                          (== (sEntUsed (vecGet (tcScopeVec tc) mark)) 0))))
                                   (emitDiag tc
                                     (diagSetLabel
                                       (mkDiag SEV_ERROR "AX3046" "discarded-result" (nodeSpan e)
@@ -23400,12 +23371,12 @@
       })
   })
 
-(pub :: seedFrameBinders (-> Int Ints Int Int))
+(pub :: seedFrameBinders (-> Int (Vec SEnt) Int Int))
 (pub fn (seedFrameBinders b scope i)
   (if (>= i (vecLen scope))
     b
     {
-      (let n (memGetWordStr (vecGet scope i) 0))
+      (let n (sEntName (vecGet scope i)))
       (seedFrameBinders
         (if (>= (nameIndexIn (bsParamsVec b) n 0) 0)
           b
@@ -26685,7 +26656,7 @@
         0)
     }))
 
-(pub :: offerScope (-> Suggest String Ints Int Int))
+(pub :: offerScope (-> Suggest String (Vec SEnt) Int Int))
 (pub fn (offerScope best name scope i)
   ; MAC-HYG-3a: a scope entry introduced by a macro template is
   ; gensym-renamed (`tmpvar.0`), which no source can spell. Offering
@@ -35261,7 +35232,7 @@
             {
               (let index (+ (tcFrameBase tc) pos))
               (&& (< index (vecLen (tcScopeVec tc)))
-                (&& (== (as frame Int) (vecGet (tcScopeVec tc) index))
+                (&& (== (as frame Int) (as (vecGet (tcScopeVec tc) index) Int))
                   (== (intInVec (fnEntCompute ent) pos 0) 1)))
             }
             false))
