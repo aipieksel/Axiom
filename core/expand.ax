@@ -165,35 +165,35 @@
 (pub struct MEnv
   (macros : Nodes)
   (out : (Vec Int))
-  (fresh : Int)
-  (depth : Int)
+  (mut fresh : Int)
+  (mut depth : Int)
   (decls : (Vec ASTNode))
-  (macmod : Int)
-  (walk : Int)
-  (nodes : Int)
-  (blown : Int)
-  (site : Int)
+  (mut macmod : Int)
+  (mut walk : Int)
+  (mut nodes : Int)
+  (mut blown : Int)
+  (mut site : Int)
   (frames : (Vec Int))
-  (declmod : Int)
+  (mut declmod : Int)
   (units : (Vec Int))
-  (forstack : (Vec Int))
+  (mut forstack : (Vec Int))
   (bares : (Vec String))
   (fulls : (Vec String))
   (mods : (Vec Int))
-  (qsite : Int)
+  (mut qsite : Int)
   (gens : (Vec Int))
   (callbs : Int)
-  (seqbinds : (Vec Int))
-  (tplbinds : (Vec Int))
-  (declnodes : Int)
+  (mut seqbinds : (Vec Int))
+  (mut tplbinds : Strings)
+  (mut declnodes : Int)
   (midx : Int)
-  (scNext : Int)
-  (scChain : (Vec Int))
-  (scTpl : (Vec Int))
-  (scSeq : Int)
+  (mut scNext : Int)
+  (mut scChain : (Vec Int))
+  (mut scTpl : (Vec Int))
+  (mut scSeq : Int)
   (retired28 : Int)
-  (defer : Int)
-  (deferHits : Int)
+  (mut defer : Int)
+  (mut deferHits : Int)
   (structNames : Int)
   (structBuckets : NodesRows))
 
@@ -303,93 +303,60 @@
 ; level" and resolve to nothing. Measured:
 ; `372-decl-macro.ax` was `AX3001 undefined variable
 ; x` for `(fn (nm x) (+ (target x) extra))`.
-(pub :: expMacros (-> Int Int))
-(pub fn (expMacros env)
-  (memGetWord env 0))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expMacrosVec (-> Int Nodes))
-;@axiom:effect(unsafe)
+(pub :: expMacrosVec (-> MEnv Nodes))
 (pub fn (expMacrosVec env)
-  (as (expMacros env) Nodes))
+  env.macros)
 
-(pub :: expOut (-> Int Int))
-(pub fn (expOut env)
-  (memGetWord env 1))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expOutVec (-> Int (Vec a)))
-;@axiom:effect(unsafe)
+(pub :: expOutVec (-> MEnv Diags))
 (pub fn (expOutVec env)
-  (as (expOut env) (Vec a)))
+  env.out)
 
-(pub :: expDepth (-> Int Int))
+(pub :: expDepth (-> MEnv Int))
 (pub fn (expDepth env)
-  (memGetWord env 3))
+  env.depth)
 
-(pub :: expDecls (-> Int Int))
-(pub fn (expDecls env)
-  (memGetWord env 4))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expDeclsVec (-> Int Nodes))
-;@axiom:effect(unsafe)
+(pub :: expDeclsVec (-> MEnv Nodes))
 (pub fn (expDeclsVec env)
-  (as (expDecls env) Nodes))
+  env.decls)
 
 ; The macro's module, as a word: a String when there is one and 0 when
 ; there is not. `expMacModName` is the String view; see `nodeCName` in
 ; parser.ax for why the cast lives in the accessor.
-(pub :: expMacMod (-> Int Int))
+(pub :: expMacMod (-> MEnv Int))
 (pub fn (expMacMod env)
-  (memGetWord env 5))
+  env.macmod)
 
-(pub :: expMacModName (-> Int String))
+(pub :: expMacModName (-> MEnv String))
 ;@axiom:effect(unsafe)
 (pub fn (expMacModName env)
   (as (expMacMod env) String))
 
+; The invocation site's module, as a String; 0 for the entry file.
+(:: expSiteName (-> MEnv String))
+;@axiom:effect(unsafe)
+(fn (expSiteName env)
+  (as env.site String))
+
 ; The quoting site, as a word: a String when there is one and 0 when
 ; there is not.
-(pub :: expQSite (-> Int Int))
+(pub :: expQSite (-> MEnv Int))
 (pub fn (expQSite env)
-  (memGetWord env 17))
+  env.qsite)
 
-(pub :: expBares (-> Int Int))
-(pub fn (expBares env)
-  (memGetWord env 14))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expBaresVec (-> Int Names))
-;@axiom:effect(unsafe)
+(pub :: expBaresVec (-> MEnv Names))
 (pub fn (expBaresVec env)
-  (as (expBares env) Names))
+  env.bares)
 
-(pub :: expFulls (-> Int Int))
-(pub fn (expFulls env)
-  (memGetWord env 15))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expFullsVec (-> Int Names))
-;@axiom:effect(unsafe)
+(pub :: expFullsVec (-> MEnv Names))
 (pub fn (expFullsVec env)
-  (as (expFulls env) Names))
+  env.fulls)
 
-(pub :: expMods (-> Int Int))
-(pub fn (expMods env)
-  (memGetWord env 16))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expModsVec (-> Int (Vec a)))
+; The module filter table, which namespace.ax reads as rows and as a
+; flat vector by turns.
+(pub :: expModsVec (-> MEnv (Vec a)))
 ;@axiom:effect(unsafe)
 (pub fn (expModsVec env)
-  (as (expMods env) (Vec a)))
+  (as env.mods (Vec a)))
 
 ; The index over `bares` (namespace.ax's `MangleIdx`), created fresh
 ; for this expansion and catching up from whatever `bares` holds on
@@ -397,9 +364,9 @@
 ; did rather than a scan of `bares` per generated declaration. Unused
 ; when `bares` is 0 - both sites that would ask it are guarded on
 ; that already.
-(pub :: expMidx (-> Int Int))
+(pub :: expMidx (-> MEnv Int))
 (pub fn (expMidx env)
-  (memGetWord env 23))
+  env.midx)
 
 ; The output limits, and why these numbers.
 ;
@@ -469,18 +436,18 @@
 (pub fn (expMaxDecls)
   10000)
 
-(pub :: expBlown (-> Int Int))
+(pub :: expBlown (-> MEnv Int))
 (pub fn (expBlown env)
-  (memGetWord env 8))
+  env.blown)
 
 ; Report once, then stay reported: every node after the first refusal
 ; would otherwise emit its own copy.
-(pub :: expBlow (-> Int Int String Int))
+(pub :: expBlow (-> MEnv Int String Int))
 (pub fn (expBlow env sp msg)
   {
-    (if (== (memGetWord env 8) 0)
+    (if (== env.blown 0)
       {
-        (memSetWord env 8 1)
+        (set env.blown 1)
         (expEmit env
           (mkDiagNote SEV_ERROR "AX3024" "macro-expansion-limit" sp msg 0 0
             "expansion is a rewrite, so the program the compiler sees is the expanded one; make the macro produce less, or write the repeated part as a function and let the macro expand to a call"
@@ -489,17 +456,17 @@
     0
   })
 
-(pub :: expSetDepth (-> Int Int Int))
+(pub :: expSetDepth (-> MEnv Int MEnv))
 (pub fn (expSetDepth env d)
   {
-    (memSetWord env 3 d)
+    (set env.depth d)
     env
   })
 
-(pub :: expSetMacMod (-> Int Int Int))
+(pub :: expSetMacMod (-> MEnv Int MEnv))
 (pub fn (expSetMacMod env m)
   {
-    (memSetWord env 5 m)
+    (set env.macmod m)
     env
   })
 
@@ -530,7 +497,7 @@
 ; are not mangled) or to a name the entry file owns finds no
 ; `Mod$name` and stays bare.
 ; ------------------------------------------------------------------
-(pub :: expQualify (-> Int String String))
+(pub :: expQualify (-> MEnv String String))
 (pub fn (expQualify env name)
   ; `m` is the module WORD, so the guard reads it directly - the
   ; `(cast Int m)` this replaced existed only because `expMacMod`
@@ -648,12 +615,12 @@
     }))
 
 ; A fresh identifier. See the header for why `.` is the marker.
-(pub :: expFresh (-> Int String String))
+(pub :: expFresh (-> MEnv String String))
 (pub fn (expFresh env base)
   {
-    (let n (memGetWord env 2))
+    (let n env.fresh)
     {
-      (memSetWord env 2 (+ n 1))
+      (set env.fresh (+ n 1))
       (concat (concat base ".") (expFmtInt n))
     }
   })
@@ -696,7 +663,7 @@
 ; `Diag` can carry a per-span unit these say the macro's NAME in the
 ; message and anchor only where they can be trusted.
 ; ------------------------------------------------------------------
-(pub :: expEmit (-> Int Int Int))
+(pub :: expEmit (-> MEnv Int Int))
 (pub fn (expEmit env d)
   {
     (vecPush (expOutVec env) d)
@@ -777,10 +744,10 @@
         1
         0))))
 
-(pub :: expFindMacro (-> Int String ASTNode))
+(pub :: expFindMacro (-> MEnv String ASTNode))
 (pub fn (expFindMacro env name)
   {
-    (let site (memGetWordStr env 9))
+    (let site (expSiteName env))
     (let qm (expModOf name))
     (if (!= (as qm Int) 0)
       (expFindMacroQual (expMacrosVec env) (bareOf name) qm site (- (vecLen (expMacrosVec env)) 1))
@@ -905,42 +872,40 @@
 ; template record's scopes are a prefix of the live chain, because a
 ; chain pop always truncates the records pushed under it.
 ; ------------------------------------------------------------------
-(pub :: expScChainVec (-> Int Ints))
-;@axiom:effect(unsafe)
+(pub :: expScChainVec (-> MEnv Ints))
 (pub fn (expScChainVec env)
-  (as (memGetWord env 25) (Vec Int)))
+  env.scChain)
 
-(pub :: expScTplVec (-> Int Ints))
-;@axiom:effect(unsafe)
+(pub :: expScTplVec (-> MEnv Ints))
 (pub fn (expScTplVec env)
-  (as (memGetWord env 26) (Vec Int)))
+  env.scTpl)
 
 ; A fresh scope id.
-(pub :: expScNextId (-> Int Int))
+(pub :: expScNextId (-> MEnv Int))
 (pub fn (expScNextId env)
   {
-    (let n (+ (memGetWord env 24) 1))
+    (let n (+ env.scNext 1))
     {
-      (memSetWord env 24 n)
+      (set env.scNext n)
       n
     }
   })
 
 ; The next push-order stamp. It orders the template stack against the
 ; for-stack, which is what the innermost rule compares.
-(pub :: expScNextSeq (-> Int Int))
+(pub :: expScNextSeq (-> MEnv Int))
 (pub fn (expScNextSeq env)
   {
-    (let n (+ (memGetWord env 27) 1))
+    (let n (+ env.scSeq 1))
     {
-      (memSetWord env 27 n)
+      (set env.scSeq n)
       n
     }
   })
 
 ; A copy of the current chain. Snapshots are taken at binder pushes;
 ; the live chain keeps moving, so sharing it would rewrite history.
-(pub :: expScChainCopy (-> Int Ints))
+(pub :: expScChainCopy (-> MEnv Ints))
 (pub fn (expScChainCopy env)
   (expScChainCopyIn (expScChainVec env) vecNew 0))
 
@@ -975,22 +940,22 @@
 ; Generations never nest mid-substitution - `substTpl` instantiates
 ; nothing, nested invocations expand in the output walk afterwards -
 ; so the save/restore is belt and braces, house style.
-(pub :: expScEnterInst (-> Int Int))
+(pub :: expScEnterInst (-> MEnv Ints))
 (pub fn (expScEnterInst env)
   {
-    (let prev (memGetWord env 25))
+    (let prev env.scChain)
     {
-      (memSetWord env 25 vecNew)
+      (set env.scChain vecNew)
       (vecPush (expScChainVec env) (expScNextId env))
-      (memSetWord env 26 vecNew)
+      (set env.scTpl vecNew)
       prev
     }
   })
 
-(pub :: expScExitInst (-> Int Int Int))
+(pub :: expScExitInst (-> MEnv Ints Int))
 (pub fn (expScExitInst env prev)
   {
-    (memSetWord env 25 prev)
+    (set env.scChain prev)
     0
   })
 
@@ -999,12 +964,12 @@
 ; each generated body resets it at its own build site
 ; (`expScResetTpl`), while the declaration's for-bindings stay live
 ; across it.
-(pub :: expScEnterDeclInst (-> Int Int))
+(pub :: expScEnterDeclInst (-> MEnv Ints))
 (pub fn (expScEnterDeclInst env)
   {
-    (let prev (memGetWord env 25))
+    (let prev env.scChain)
     {
-      (memSetWord env 25 vecNew)
+      (set env.scChain vecNew)
       (vecPush (expScChainVec env) (expScNextId env))
       prev
     }
@@ -1013,10 +978,10 @@
 ; A generated body starts with no template-binder records. The chain
 ; is NOT touched: the body substitutes under the declaration's
 ; generation, whose for-bindings are live here.
-(pub :: expScResetTpl (-> Int Int))
+(pub :: expScResetTpl (-> MEnv Int))
 (pub fn (expScResetTpl env)
   {
-    (memSetWord env 26 vecNew)
+    (set env.scTpl vecNew)
     0
   })
 
@@ -1024,7 +989,7 @@
 ; the fresh one at the four sites that rename a template binder (let,
 ; region, lambda parameter, pattern binder); the fresh spelling is
 ; what references to this binder answer.
-(pub :: expScPushTpl (-> Int String String Int))
+(pub :: expScPushTpl (-> MEnv String String Int))
 (pub fn (expScPushTpl env name spelling)
   {
     (vecPush (expScTplVec env)
@@ -1038,7 +1003,7 @@
 
 ; Truncate the records pushed under a binder's body. The mark is taken
 ; before the binder is pushed, at the same four sites.
-(pub :: expScTruncTpl (-> Int Int Int))
+(pub :: expScTruncTpl (-> MEnv Int Int))
 (pub fn (expScTruncTpl env mark)
   (expTrunc (expScTplVec env) mark))
 
@@ -1046,14 +1011,14 @@
 ; per element walk rather than per loop: records never outlive their
 ; element (the for-stack truncates beside us), so the two are
 ; observationally identical, and nesting falls out of the pairing.
-(pub :: expScPushLoop (-> Int Int))
+(pub :: expScPushLoop (-> MEnv Int))
 (pub fn (expScPushLoop env)
   {
     (vecPush (expScChainVec env) (expScNextId env))
     0
   })
 
-(pub :: expScTruncLoop (-> Int Int Int))
+(pub :: expScTruncLoop (-> MEnv Int Int))
 (pub fn (expScTruncLoop env mark)
   (expTrunc (expScChainVec env) mark))
 
@@ -1061,7 +1026,7 @@
 ; spelling `name` whose scopes are a subset of the live chain, or -1.
 ; A position rather than the record, because callers read both its
 ; push-order stamp (the innermost rule) and its spelling.
-(pub :: expScResolveTpl (-> Int String Int))
+(pub :: expScResolveTpl (-> MEnv String Int))
 (pub fn (expScResolveTpl env name)
   {
     (let tpl (expScTplVec env))
@@ -1139,7 +1104,7 @@
 ; pins the refusal; `tests/stdlib/371-err-module.ax` is the first
 ; program that depends on the rule and does not compile without it.
 ; ------------------------------------------------------------------
-(pub :: expBinderParam (-> String Names (Vec ASTNode) Int Int String))
+(pub :: expBinderParam (-> String Names (Vec ASTNode) MEnv Int String))
 ;@axiom:effect(unsafe)
 (pub fn (expBinderParam name params args env isp)
   {
@@ -1180,7 +1145,7 @@
 ; TAG_P_CONNAMED holds its sub-patterns in word c and its field NAMES
 ; in word b; the field names are the struct's, not binders.
 ; ------------------------------------------------------------------
-(pub :: expRenamePat (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expRenamePat (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (expRenamePat p params args env isp)
   (if (nodeSame p nilNode)
     nilNode
@@ -1242,19 +1207,19 @@
 
 ; The head of a constructor spine is the constructor's NAME and must
 ; survive; every argument is a sub-pattern.
-(pub :: expRenamePatSpine (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expRenamePatSpine (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (expRenamePatSpine p params args env isp)
   (if (== (nodeTag p) TAG_E_APP)
     (mkEApp (expRenamePatSpine (nodeAChild p) params args env isp)
       (expRenamePat (nodeBChild p) params args env isp))
     p))
 
-(pub :: expRenamePatVec (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expRenamePatVec (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (expRenamePatVec ps params args env isp)
   (expRenamePatVecIn ps params args env isp vecNew 0))
 
 (pub :: expRenamePatVecIn
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expRenamePatVecIn ps params args env isp acc i)
   (if (>= i (vecLen ps))
     acc
@@ -1331,7 +1296,7 @@
   (key : String)
   (module : Int))
 
-(pub :: expPushLocal (-> Ints Int String Int))
+(pub :: expPushLocal (-> Ints MEnv String Int))
 (pub fn (expPushLocal bs env name)
   {
     (let scopes
@@ -1374,7 +1339,7 @@
         site)
       (nodeAName e))))
 
-(pub :: expCaptureVar (-> ASTNode Int Ints ASTNode))
+(pub :: expCaptureVar (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expCaptureVar e env bs)
   {
     (let local
@@ -1386,7 +1351,7 @@
       (if (== (nodeDefScope e) 1)
         (nodeModule e)
         (if (== prior 0)
-          (memGetWord env 9)
+          env.site
           (memGetWord prior 3))))
     (let key
       (if (!= local 0)
@@ -1412,7 +1377,7 @@
 ; Snapshot syntax without invoking macros or running queries. Nested
 ; lexical forms get their own scopes, so a name inside an argument has
 ; the same binding whether a rule inspects it now or forwards it later.
-(pub :: expCaptureSyntax (-> ASTNode Int Ints ASTNode))
+(pub :: expCaptureSyntax (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expCaptureSyntax e env bs)
   (if (nodeSame e nilNode)
     nilNode
@@ -1498,7 +1463,7 @@
                             e)))))))))))
     }))
 
-(pub :: expCaptureVec (-> Nodes Int Ints Nodes))
+(pub :: expCaptureVec (-> Nodes MEnv Ints Nodes))
 (pub fn (expCaptureVec xs env bs)
   {
     (let acc vecNew)
@@ -1511,7 +1476,7 @@
 ; one lambda therefore name one parameter binding; two separately
 ; written lambdas introduce different bindings. Caller-supplied names
 ; can still bind free caller syntax when the output is walked.
-(pub :: expEnterSyntaxBindings (-> ASTNode Int Ints Int))
+(pub :: expEnterSyntaxBindings (-> ASTNode MEnv Ints Int))
 (pub fn (expEnterSyntaxBindings e env bs)
   (if (!= (nodeSyntaxIdentity e) 0)
     {
@@ -1540,18 +1505,11 @@
     e
   })
 
-(pub :: expForStack (-> Int Int))
-(pub fn (expForStack env)
-  (memGetWord env 13))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expForStackVec (-> Int (Vec a)))
-;@axiom:effect(unsafe)
+(pub :: expForStackVec (-> MEnv Ints))
 (pub fn (expForStackVec env)
-  (as (expForStack env) (Vec a)))
+  env.forstack)
 
-(pub :: expForLookup (-> Int String String))
+(pub :: expForLookup (-> MEnv String String))
 (pub fn (expForLookup env name)
   {
     (let fs (expForStackVec env))
@@ -1662,11 +1620,11 @@
 ; the next round. Only when a round generates nothing is the last round
 ; run with `defer` off, so a name nothing declares is still this
 ; refusal, with the same words.
-(pub :: expQueryMissing (-> Int Int String String a Int))
+(pub :: expQueryMissing (-> MEnv Int String String a Int))
 (pub fn (expQueryMissing env sp msg help m)
-  (if (== (memGetWord env 29) 1)
+  (if (== env.defer 1)
     {
-      (memSetWord env 30 1)
+      (set env.deferHits 1)
       0
     }
     (expQueryErr env sp msg help m)))
@@ -1674,7 +1632,7 @@
 ; The family's one diagnostic. `m` is the module whose file the span
 ; indexes (0 = the entry file), resolved to a unit exactly as the
 ; other expander diagnostics resolve theirs.
-(pub :: expQueryErr (-> Int Int String String a Int))
+(pub :: expQueryErr (-> MEnv Int String String a Int))
 (pub fn (expQueryErr env sp msg help m)
   {
     (expEmit env
@@ -1689,7 +1647,7 @@
 ; (innermost wins), then a macro parameter - whose argument must be a
 ; bare identifier, the same rule a name position enforces - then the
 ; identifier itself.
-(pub :: expResolveQueryName (-> Int String Names (Vec ASTNode) Int String))
+(pub :: expResolveQueryName (-> MEnv String Names (Vec ASTNode) Int String))
 ;@axiom:effect(unsafe)
 (pub fn (expResolveQueryName env s params args isp)
   {
@@ -1724,7 +1682,7 @@
 ; Answering 0 means a refusal has already been emitted (the String
 ; cast of a 0 handle is the family's existing poison convention -
 ; every caller compares against 0 before spending the answer).
-(pub :: expQueryArgName (-> Int ASTNode Names (Vec ASTNode) Int String))
+(pub :: expQueryArgName (-> MEnv ASTNode Names (Vec ASTNode) Int String))
 ;@axiom:effect(unsafe)
 (pub fn (expQueryArgName env a params args isp)
   (if (== (nodeTag a) TAG_E_VAR)
@@ -1764,7 +1722,7 @@
 
 ; `(syntax/fields S)`: the field names of struct S, in declaration
 ; order - any visible module's, the same rule as expConstructorsOf.
-(pub :: expFieldsOf (-> Int String Int Ints))
+(pub :: expFieldsOf (-> MEnv String Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (expFieldsOf env s isp)
   {
@@ -1810,7 +1768,7 @@
 ; `data` type T, in declaration order. Two passes over the
 ; declaration list - entry-only for the ANSWER, any-module for the
 ; refusal's wording - mirroring the declaration-macro v1 limit.
-(pub :: expConstructorsOf (-> Int String Int Ints))
+(pub :: expConstructorsOf (-> MEnv String Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (expConstructorsOf env t isp)
   {
@@ -1866,11 +1824,11 @@
 ; it, the moment an importer's name list did not mention it - the
 ; filter is a fact about the importer, and the query is asked on the
 ; other side of it.
-(pub :: expFindDeclNamed (-> Int String Int ASTNode))
+(pub :: expFindDeclNamed (-> MEnv String Int ASTNode))
 (pub fn (expFindDeclNamed env t visibleOnly)
   (expFindDeclNamedFrom (expDeclsVec env) t visibleOnly
     (if (== (as (expQSite env) Int) 0)
-      (memGetWord env 9)
+      env.site
       (expQSite env))
     0))
 
@@ -1895,7 +1853,7 @@
 ; message, because two of them count the same thing for different
 ; reasons and a diagnostic that always says `syntax/binders` sends a
 ; reader of `(syntax/arity Ghost)` to the wrong row of the table.
-(pub :: expCtorArity (-> Int String Int (Option Int)))
+(pub :: expCtorArity (-> MEnv String Int (Option Int)))
 (pub fn (expCtorArity env c isp)
   {
     (let n (expCtorArityFor env c isp "syntax/binders" "count"))
@@ -1915,7 +1873,7 @@
     (concat w "'")
     (concat w "'s")))
 
-(pub :: expCtorArityFor (-> Int String Int String String Int))
+(pub :: expCtorArityFor (-> MEnv String Int String String Int))
 (pub fn (expCtorArityFor env c isp who verb)
   {
     (let k (expFindCtorNamed env c 1))
@@ -1940,7 +1898,7 @@
         }))
   })
 
-(pub :: expFindCtorNamed (-> Int String Int ASTNode))
+(pub :: expFindCtorNamed (-> MEnv String Int ASTNode))
 (pub fn (expFindCtorNamed env c visibleOnly)
   (expFindCtorFrom (expDeclsVec env) c visibleOnly 0))
 
@@ -1977,7 +1935,7 @@
 ; by MAC-HYG-2 like any template binder), and the fold's mention
 ; resolves to the same spellings, which scope resolution then answers
 ; with the renamed binders - hygiene falls out of the existing order.
-(pub :: expBindersOf (-> Int String String Int Ints))
+(pub :: expBindersOf (-> MEnv String String Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (expBindersOf env c p isp)
   (match (expCtorArity env c isp)
@@ -2010,7 +1968,7 @@
 ; T)`, `(syntax/fields S)`, or `(syntax/binders C p)`. The answer is
 ; a two-slot record - the identity key, then the name vector - or 0
 ; with the refusal already emitted.
-(pub :: expEvalSeq (-> Int ASTNode Names (Vec ASTNode) Int Ints))
+(pub :: expEvalSeq (-> MEnv ASTNode Names (Vec ASTNode) Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (expEvalSeq env seq params args isp)
   {
@@ -2075,7 +2033,7 @@
 ; stays what a bare variable in pattern position is, a binder, which
 ; then shadows the iteration variable in its arm - the same rule a
 ; template binder follows.
-(pub :: expSubstPatFor (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expSubstPatFor (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (expSubstPatFor p params args env isp)
   ; No empty-stack fast path: `(syntax/binders C x)` is legal with a
   ; LITERAL constructor name and no enclosing syntax/for at all, so
@@ -2106,7 +2064,7 @@
             p)))
     }))
 
-(pub :: expSubstPatForSpine (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expSubstPatForSpine (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (expSubstPatForSpine p params args env isp)
   {
     (let head (spineHead p))
@@ -2170,7 +2128,7 @@
       (expPushBinderVars out names isp (+ i 1))
     }))
 
-(pub :: expSubstPatForVec (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expSubstPatForVec (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (expSubstPatForVec ps params args env isp)
   {
     (let acc vecNew)
@@ -2183,7 +2141,7 @@
 
 ; The FULL binding record for an active for-variable - `syntax/same`
 ; needs the sequence key and the element index, not just the element.
-(pub :: expForBindOf (-> Int String Int))
+(pub :: expForBindOf (-> MEnv String Int))
 (pub fn (expForBindOf env name)
   {
     (let fs (expForStackVec env))
@@ -2209,7 +2167,7 @@
 ; wrong-answer generator, and spelling alone never suffices
 ; (MAC-CAP-5's own rule). Answers the node to splice - `true`,
 ; `false`, or a refusal's poison 0-literal.
-(pub :: expEvalSame (-> Int Nodes Int ASTNode))
+(pub :: expEvalSame (-> MEnv Nodes Int ASTNode))
 (pub fn (expEvalSame env qargs isp)
   (if (!= (vecLen qargs) 2)
     {
@@ -2281,7 +2239,7 @@
 ; constructor's own name, which is what a generated `show` prints.
 ; The answer carries the invocation's span like every other node
 ; substitution builds (MAC-EXP-14).
-(pub :: expEvalName (-> Int Nodes Names (Vec ASTNode) Int ASTNode))
+(pub :: expEvalName (-> MEnv Nodes Names (Vec ASTNode) Int ASTNode))
 (pub fn (expEvalName env qargs params args isp)
   (if (!= (vecLen qargs) 1)
     {
@@ -2311,7 +2269,7 @@
 ; counts, and refuses identically on a missing or private one - the
 ; two queries differ in what they DO with the number, not in what
 ; they can see.
-(pub :: expEvalArity (-> Int Nodes Names (Vec ASTNode) Int ASTNode))
+(pub :: expEvalArity (-> MEnv Nodes Names (Vec ASTNode) Int ASTNode))
 (pub fn (expEvalArity env qargs params args isp)
   (if (!= (vecLen qargs) 1)
     {
@@ -2341,7 +2299,7 @@
 ; (MAC-HYG-6), and the reason `(syntax/defined println)` is true
 ; inside a macro whose file imports `IO` and false in one that does
 ; not.
-(pub :: expIsDefinedName (-> Int String Int))
+(pub :: expIsDefinedName (-> MEnv String Int))
 (pub fn (expIsDefinedName env n)
   (if (== (expDeclNamed (expDeclsVec env) n 0) 1)
     1
@@ -2362,7 +2320,7 @@
 ; arm), so the branch that survives is the only one the checker ever
 ; sees - which is what makes conditional derivation *conditional*
 ; rather than "both branches must type".
-(pub :: expEvalDefined (-> Int Nodes Names (Vec ASTNode) Int ASTNode))
+(pub :: expEvalDefined (-> MEnv Nodes Names (Vec ASTNode) Int ASTNode))
 (pub fn (expEvalDefined env qargs params args isp)
   (if (!= (vecLen qargs) 1)
     {
@@ -2595,7 +2553,7 @@
 ; rendering head is `format#` (`expFmtShow`, below) and does not come
 ; through here at all. tests/selfhost/383-format-capture.ax measures
 ; both halves, so neither can go back to being a paragraph.
-(pub :: expFmtCall (-> Int String ASTNode Int ASTNode))
+(pub :: expFmtCall (-> MEnv String ASTNode Int ASTNode))
 (pub fn (expFmtCall env f x sp)
   (mkEApp (mkEVarAt (expQualify env f) sp) x))
 
@@ -2636,14 +2594,14 @@
 ; `(f x n)` - the shape every width and precision specifier lowers
 ; to, since each of them is a `Fmt` function of a rendered String (or
 ; a Float) and a count.
-(pub :: expFmtCall2 (-> Int String ASTNode ASTNode Int ASTNode))
+(pub :: expFmtCall2 (-> MEnv String ASTNode ASTNode Int ASTNode))
 (pub fn (expFmtCall2 env f x y sp)
   (mkEApp (mkEApp (mkEVarAt (expQualify env f) sp) x) y))
 
 ; Append `node` to the concatenation built so far. 0 means "nothing
 ; yet", so a one-part format string produces that part and no call:
 ; `(println "hi")` emits exactly the literal it was given.
-(pub :: expFmtCat (-> Int ASTNode ASTNode Int ASTNode))
+(pub :: expFmtCat (-> MEnv ASTNode ASTNode Int ASTNode))
 (pub fn (expFmtCat env acc node sp)
   (if (nodeSame acc nilNode)
     node
@@ -2654,7 +2612,7 @@
 ; empty, and concatenating them cost three `concat` calls per line
 ; printed, at run time, to append nothing. An empty run contributes
 ; nothing to the answer and is dropped instead.
-(pub :: expFmtCatRun (-> Int ASTNode String Int ASTNode))
+(pub :: expFmtCatRun (-> MEnv ASTNode String Int ASTNode))
 (pub fn (expFmtCatRun env acc run sp)
   (if (== (strLen run) 0)
     acc
@@ -2718,14 +2676,14 @@
 ; checked against real source: `IO.ax:3:17` for a mistake four lines
 ; into the user's own file. Word 11 exists for exactly this and is
 ; the reason it is not overwritten by the template walk.
-(pub :: expFmtErr (-> Int Int Int String String Int))
+(pub :: expFmtErr (-> MEnv Int Int String String Int))
 (pub fn (expFmtErr env from to msg help)
   {
     (expEmit env
       (expMarkUnit env
         (mkDiagNote SEV_ERROR "AX3031" "malformed-format-string" (mkSpan from to) msg 0 0 help
           "a format string is parsed at expansion time, so every hole in it is checked before the program runs; `{{` and `}}` write a literal brace")
-        (memGetWord env 11)))
+        env.declmod))
     0
   })
 
@@ -2751,7 +2709,7 @@
 ; anything left over at the end is a refusal rather than a silent
 ; ignore - a format specifier that is quietly dropped is the exact
 ; failure this whole design exists to make impossible.
-(pub :: expFmtParseSpec (-> Int String Int Int Int Int))
+(pub :: expFmtParseSpec (-> MEnv String Int Int Int Int))
 (pub fn (expFmtParseSpec env body from to base)
   {
     (let mut p from)
@@ -2866,7 +2824,7 @@
 ; Both layers are chosen HERE, at expansion time, so the generated
 ; code contains no test of a format flag - `{n:>8x}` becomes exactly
 ; `(fmtPadLeft (fmtHex n) 8)` and carries no specifier with it.
-(pub :: expFmtHole (-> Int ASTNode Int Int ASTNode))
+(pub :: expFmtHole (-> MEnv ASTNode Int Int ASTNode))
 (pub fn (expFmtHole env v spec vsp)
   {
     (let align (fmtSpecAlign spec))
@@ -2895,7 +2853,7 @@
     }
   })
 
-(pub :: expEvalFormat (-> Int Nodes Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expEvalFormat (-> MEnv Nodes Names (Vec ASTNode) Int Int ASTNode))
 (pub fn (expEvalFormat env qargs params args isp nl)
   (if (!= (vecLen qargs) 1)
     {
@@ -2956,7 +2914,7 @@
       i
       (expFmtCloseAt body (+ i 1) n))))
 
-(pub :: expFmtParse (-> Int ASTNode Int Int ASTNode))
+(pub :: expFmtParse (-> MEnv ASTNode Int Int ASTNode))
 (pub fn (expFmtParse env lit isp nl)
   ; The body's first byte, in source: past the opening quote.
   ; A literal whose span the expander lost falls back to the
@@ -3130,7 +3088,7 @@
 ; which is a no-op for the usual case - the declaration the join
 ; names was generated in the entry file and is not mangled - and the
 ; right answer when a module generated it.
-(pub :: expEvalJoinRef (-> Int Nodes Names (Vec ASTNode) Int ASTNode))
+(pub :: expEvalJoinRef (-> MEnv Nodes Names (Vec ASTNode) Int ASTNode))
 (pub fn (expEvalJoinRef env qargs params args isp)
   (if (< (vecLen qargs) 2)
     {
@@ -3199,7 +3157,7 @@
   (values : Names)
   (key : String))
 
-(pub :: expIterPairs (-> Int ASTNode Int String (Vec ExpIterBinding)))
+(pub :: expIterPairs (-> MEnv ASTNode Int String (Vec ExpIterBinding)))
 ;@axiom:effect(unsafe)
 (pub fn (expIterPairs env binds isp who)
   {
@@ -3224,7 +3182,7 @@
       })
   })
 
-(pub :: expIterPairsRest (-> Int Nodes Int (Vec ExpIterBinding) Int String (Vec ExpIterBinding)))
+(pub :: expIterPairsRest (-> MEnv Nodes Int (Vec ExpIterBinding) Int String (Vec ExpIterBinding)))
 ;@axiom:effect(unsafe)
 (pub fn (expIterPairsRest env bargs isp pairs i who)
   (if (>= i (vecLen bargs))
@@ -3265,7 +3223,7 @@
 ; so it anchors at the invocation and carries the frame naming the
 ; macro. `syntax/fold` has always reported its skew at the invocation;
 ; this is the same rule stated rather than inherited.
-(pub :: expIterSeqsOf (-> Int ASTNode Names (Vec ASTNode) Int Int (Vec ExpIterSequence)))
+(pub :: expIterSeqsOf (-> MEnv ASTNode Names (Vec ASTNode) Int Int (Vec ExpIterSequence)))
 ;@axiom:effect(unsafe)
 (pub fn (expIterSeqsOf env binds params args shapeSp isp)
   {
@@ -3295,7 +3253,7 @@
     (vecLen first.values)
   })
 
-(pub :: expEvalFold (-> Int Nodes Names (Vec ASTNode) Int ASTNode))
+(pub :: expEvalFold (-> MEnv Nodes Names (Vec ASTNode) Int ASTNode))
 (pub fn (expEvalFold env qargs params args isp)
   (if (!= (vecLen qargs) 4)
     {
@@ -3333,7 +3291,7 @@
 ; Evaluate each pair's sequence; answers a vec of (var, names, key)
 ; triples, or 0.
 (pub :: expIterSeqs
-  (-> Int (Vec ExpIterBinding) Names (Vec ASTNode) Int (Vec ExpIterSequence) Int
+  (-> MEnv (Vec ExpIterBinding) Names (Vec ASTNode) Int (Vec ExpIterSequence) Int
     (Vec ExpIterSequence)))
 ;@axiom:effect(unsafe)
 (pub fn (expIterSeqs env pairs params args isp acc i)
@@ -3371,7 +3329,7 @@
 ; Build `(f tpl_i acc)` from the right: acc starts as z, and index i
 ; walks N-1 down to 0 so tpl_1 ends up outermost.
 (pub :: expFoldBuild
-  (-> Int (Vec ExpIterBinding) (Vec ExpIterSequence) Names (Vec ASTNode) Int ASTNode ASTNode
+  (-> MEnv (Vec ExpIterBinding) (Vec ExpIterSequence) Names (Vec ASTNode) Int ASTNode ASTNode
     ASTNode Int ASTNode))
 (pub fn (expFoldBuild env pairs seqs params args isp fh tpl acc i)
   (if (< i 0)
@@ -3397,7 +3355,7 @@
 ; Push every parallel binding for element `idx` - all of them, so the
 ; template sees the whole zipped tuple while it is instantiated, and
 ; one mark/truncate around the group pops them together.
-(pub :: expIterPush (-> Int (Vec ExpIterSequence) Int Int Int))
+(pub :: expIterPush (-> MEnv (Vec ExpIterSequence) Int Int Int))
 (pub fn (expIterPush env seqs idx j)
   (if (>= j (vecLen seqs))
     0
@@ -3422,7 +3380,7 @@
 ; The spine shape is APP(APP(syntax/for, BINDS), tpl): argument 0
 ; is the binding form - `expIterPairs`' grammar, one pair or several
 ; zipped - and argument 1 the template. Anything else refuses.
-(pub :: expSpliceForArg (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode) Int))
+(pub :: expSpliceForArg (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int))
 (pub fn (expSpliceForArg f params args env isp out)
   ; The form's OWN span where it has one, as the arm- and
   ; declaration-position splices already do: a skewed zip is a
@@ -3456,7 +3414,7 @@
   })
 
 (pub :: expSpliceForArgElems
-  (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
+  (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
 (pub fn (expSpliceForArgElems tpl params args env isp out seqs n j)
   (if (>= j n)
     0
@@ -3483,7 +3441,7 @@
 ; Rebuilt left-nested, the shape every consumer reads; inner
 ; applications reach this same function through their own walk, so
 ; nothing is processed twice.
-(pub :: substTplApp (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: substTplApp (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (substTplApp tpl params args env isp)
   {
     (let head (spineHead tpl))
@@ -3590,16 +3548,16 @@
   })
 
 ; Does the TEMPLATE bind this name around the substitution in flight?
-(pub :: expTplBound (-> Int String Int))
+(pub :: expTplBound (-> MEnv String Int))
 (pub fn (expTplBound env name)
   {
-    (let tb (memGetWordVec env 21))
+    (let tb env.tplbinds)
     (if (== (as tb Int) 0)
       0
       (expTplBoundIn tb name 0))
   })
 
-(pub :: expTplBoundIn (-> Ints String Int Int))
+(pub :: expTplBoundIn (-> Strings String Int Int))
 (pub fn (expTplBoundIn tb name i)
   (if (>= i (vecLen tb))
     0
@@ -3607,19 +3565,12 @@
       1
       (expTplBoundIn tb name (+ i 1)))))
 
-(pub :: expSeqBinds (-> Int Int))
-(pub fn (expSeqBinds env)
-  (memGetWord env 20))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: expSeqBindsVec (-> Int Ints))
-;@axiom:effect(unsafe)
+(pub :: expSeqBindsVec (-> MEnv Ints))
 (pub fn (expSeqBindsVec env)
-  (as (expSeqBinds env) Ints))
+  env.seqbinds)
 
 ; Is `qargs[i]` a sequence-bound name whose next neighbour is `...`?
-(pub :: expEllipsisAt (-> Int Nodes Int Int))
+(pub :: expEllipsisAt (-> MEnv Nodes Int Int))
 (pub fn (expEllipsisAt env qargs i)
   (if (>= (+ i 1) (vecLen qargs))
     0
@@ -3635,7 +3586,7 @@
     }))
 
 ; Each absorbed form, substituted and pushed where the pair stood.
-(pub :: expSpliceSeq (-> Int (Vec ASTNode) Names (Vec ASTNode) Int (Vec ASTNode) Int Int))
+(pub :: expSpliceSeq (-> MEnv (Vec ASTNode) Names (Vec ASTNode) Int (Vec ASTNode) Int Int))
 (pub fn (expSpliceSeq env forms params args isp out i)
   (if (>= i (vecLen forms))
     0
@@ -3649,7 +3600,7 @@
 ; name? Shape only: whether anything inside repeats is the splice's
 ; own diagnostic, so a misuse still names itself rather than
 ; falling through to a silent rebuild.
-(pub :: expNestedEllipsisAt (-> Int Nodes Int Int))
+(pub :: expNestedEllipsisAt (-> MEnv Nodes Int Int))
 (pub fn (expNestedEllipsisAt env qargs i)
   (if (>= (+ i 1) (vecLen qargs))
     0
@@ -3665,7 +3616,7 @@
 ; Every sequence-bound name inside a template form, in first-seen
 ; order. Duplicates are harmless downstream (one index's value
 ; twice), so this collects rather than dedupes.
-(pub :: expNestedSeqNames (-> ASTNode Ints Int Ints))
+(pub :: expNestedSeqNames (-> ASTNode Ints MEnv Ints))
 (pub fn (expNestedSeqNames form acc env)
   {
     (let tg (nodeTag form))
@@ -3698,7 +3649,7 @@
 ; just one application level: a marker nested inside a `match`,
 ; an `if` or any other form would otherwise re-splice the whole
 ; sequence inside every element.
-(pub :: expSpliceNested (-> Int ASTNode Names (Vec ASTNode) Int (Vec ASTNode) Int))
+(pub :: expSpliceNested (-> MEnv ASTNode Names (Vec ASTNode) Int (Vec ASTNode) Int))
 (pub fn (expSpliceNested env app params args isp out)
   {
     (let names (expNestedSeqNames app vecNew env))
@@ -3768,7 +3719,7 @@
 ; getters), so that case stays quiet; the effect list consults no such
 ; binding, and anything naming a parameter is refused.
 ; ------------------------------------------------------------------
-(pub :: expWarnNamePos (-> Names String Int Int Int String String Int))
+(pub :: expWarnNamePos (-> Names String Int MEnv Int String String Int))
 (pub fn (expWarnNamePos params name forShielded env isp position help)
   (if (< (expParamIndex params name) 0)
     0
@@ -3819,7 +3770,7 @@
           (nodeBuildEChar (nodeA tpl) 0 0 isp))))
   })
 
-(pub :: substTpl (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: substTpl (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (substTpl tpl params args env isp)
   (if (nodeSame tpl nilNode)
     nilNode
@@ -4118,11 +4069,11 @@
 ; in which case the caller named it and it keeps that name
 ; (`expBinderParam`), which is what lets a template take the binder of
 ; the lambda it builds from its own caller.
-(pub :: substLamParams (-> Names Names (Vec ASTNode) Int Int Strings))
+(pub :: substLamParams (-> Names Names (Vec ASTNode) MEnv Int Strings))
 (pub fn (substLamParams ps params args env isp)
   (substLamParamsIn ps params args env isp vecNew 0))
 
-(pub :: substLamParamsIn (-> Names Names (Vec ASTNode) Int Int Strings Int Strings))
+(pub :: substLamParamsIn (-> Names Names (Vec ASTNode) MEnv Int Strings Int Strings))
 (pub fn (substLamParamsIn ps params args env isp acc i)
   (if (>= i (vecLen ps))
     acc
@@ -4146,7 +4097,7 @@
 ; parser would not have produced it, but a PARAMETER standing in that
 ; position can be handed any expression at all, so the case is real
 ; and is refused rather than dropped.
-(pub :: substName (-> String Names (Vec ASTNode) Int Int String))
+(pub :: substName (-> String Names (Vec ASTNode) MEnv Int String))
 ;@axiom:effect(unsafe)
 (pub fn (substName name params args env isp)
   {
@@ -4179,11 +4130,11 @@
       })
   })
 
-(pub :: substVec (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: substVec (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (substVec xs params args env isp)
   (substVecIn xs params args env isp vecNew 0))
 
-(pub :: substVecIn (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: substVecIn (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (substVecIn xs params args env isp acc i)
   (if (>= i (vecLen xs))
     acc
@@ -4193,7 +4144,7 @@
 ; A match arm: the pattern's binders are renamed and the body is
 ; substituted UNDER those renames, so a template binder and a
 ; substituted argument that happen to share a name stay distinct.
-(pub :: substArms (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: substArms (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (substArms arms params args env isp)
   ; An arm followed by the marker diverts to the splice loop;
   ; otherwise this is the ordinary arm walk, byte for byte what it
@@ -4232,7 +4183,7 @@
 ; expression-side walk below, so splicing it would leave them
 ; unbound - refused plainly rather than miscompiled).
 (pub :: substArmsSplice
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (substArmsSplice arms params args env isp acc i)
   (if (>= i (vecLen arms))
     acc
@@ -4283,7 +4234,7 @@
 ; sequence-bound field tests its element (`expSubstPatSeq`) - with
 ; a parameter standing in binder position for a non-name still
 ; refused downstream as `AX3035`.
-(pub :: expSpliceOneArm (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expSpliceOneArm (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expSpliceOneArm arm params args env isp)
   {
@@ -4488,7 +4439,7 @@
     }
   })
 
-(pub :: substArmsIn (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: substArmsIn (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (substArmsIn arms params args env isp acc i)
   (if (>= i (vecLen arms))
     acc
@@ -4532,7 +4483,7 @@
 ; one poison arm - `_` answering 0 - because the REPL runs the
 ; checker even after expansion refused, and the tree it walks must be
 ; well-formed.
-(pub :: expSpliceForArms (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode) Int))
+(pub :: expSpliceForArms (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int))
 (pub fn (expSpliceForArms farm params args env isp acc)
   {
     (let seqs
@@ -4550,7 +4501,7 @@
   })
 
 (pub :: expSpliceForElems
-  (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
+  (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
 (pub fn (expSpliceForElems farm params args env isp acc seqs n j)
   (if (>= j n)
     0
@@ -4584,7 +4535,7 @@
 ; invocations and to know which names are locally bound at each point,
 ; because a local outranks a macro of the same name.
 ; ------------------------------------------------------------------
-(pub :: expandExpr (-> ASTNode Int Ints ASTNode))
+(pub :: expandExpr (-> ASTNode MEnv Ints ASTNode))
 ; The budgeted wrapper. `expandExprInner` is the walk itself; this
 ; counts the node, tracks the walk's depth on the way in and out, and
 ; stops the recursion at the limits rather than at the guard page.
@@ -4597,16 +4548,16 @@
 (pub fn (expandExpr e env bs)
   (if (nodeSame e nilNode)
     nilNode
-    (if (== (memGetWord env 8) 1)
+    (if (== env.blown 1)
       e
       (if (== (expDepth env) 0)
         (expandExprInner e env bs)
         {
-          (let d (+ (memGetWord env 6) 1))
-          (let n (+ (memGetWord env 7) 1))
+          (let d (+ env.walk 1))
+          (let n (+ env.nodes 1))
           {
-            (memSetWord env 6 d)
-            (memSetWord env 7 n)
+            (set env.walk d)
+            (set env.nodes n)
             {
               (let r
                 (if (> d expMaxWalk)
@@ -4629,14 +4580,14 @@
                     }
                     (expandExprInner e env bs))))
               {
-                (memSetWord env 6 (- d 1))
+                (set env.walk (- d 1))
                 r
               }
             }
           }
         }))))
 
-(pub :: expandExprInner (-> ASTNode Int Ints ASTNode))
+(pub :: expandExprInner (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandExprInner e env bs)
   (if (nodeSame e nilNode)
     nilNode
@@ -4714,7 +4665,7 @@
                                   e))))))))))))))
     }))
 
-(pub :: expPushNames (-> Names Ints Int Int Int))
+(pub :: expPushNames (-> Names Ints MEnv Int Int))
 (pub fn (expPushNames ns bs env i)
   (if (>= i (vecLen ns))
     0
@@ -4723,11 +4674,11 @@
       (expPushNames ns bs env (+ i 1))
     }))
 
-(pub :: expandVec (-> (Vec ASTNode) Int Ints (Vec ASTNode)))
+(pub :: expandVec (-> (Vec ASTNode) MEnv Ints (Vec ASTNode)))
 (pub fn (expandVec xs env bs)
   (expandVecIn xs env bs vecNew 0))
 
-(pub :: expandVecIn (-> (Vec ASTNode) Int Ints (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: expandVecIn (-> (Vec ASTNode) MEnv Ints (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expandVecIn xs env bs acc i)
   (if (>= i (vecLen xs))
     acc
@@ -4737,11 +4688,11 @@
 ; here - this is the user's own code, not a template - but they must
 ; enter the bound set, or a macro sharing a name with an arm binder
 ; would rewrite the binder's uses.
-(pub :: expandArms (-> (Vec ASTNode) Int Ints (Vec ASTNode)))
+(pub :: expandArms (-> (Vec ASTNode) MEnv Ints (Vec ASTNode)))
 (pub fn (expandArms arms env bs)
   (expandArmsIn arms env bs vecNew 0))
 
-(pub :: expandArmsIn (-> (Vec ASTNode) Int Ints (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: expandArmsIn (-> (Vec ASTNode) MEnv Ints (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expandArmsIn arms env bs acc i)
   (if (>= i (vecLen arms))
     acc
@@ -4756,7 +4707,7 @@
           (expQueryErr env (nodeSpan arm)
             "`...` splices a repeated template arm, and stands in no ordinary match"
             "repetition lives in a rule-form macro's template: move the match there, or write the arms by hand"
-            (memGetWord env 11))
+            env.declmod)
           (expandArmsIn arms env bs
             (vecPush acc (nodeBuildMArm (mkEVarAt "_" (nodeSpan arm)) (mkEInt 0) 0 (nodeSpan arm)))
             (+ i 1))
@@ -4771,7 +4722,7 @@
             (expQueryErr env (nodeSpan arm)
               "syntax/for stands in a macro template's match, not in ordinary code"
               "iteration is an expansion-time facility: move the match into a declaration macro's template, or write the arms by hand"
-              (memGetWord env 11))
+              env.declmod)
             (expandArmsIn arms env bs
               (vecPush acc
                 (nodeBuildMArm (mkEVarAt "_" (nodeSpan arm)) (mkEInt 0) 0 (nodeSpan arm)))
@@ -4796,7 +4747,7 @@
           }))
     }))
 
-(pub :: expPatBinders (-> ASTNode Ints Int Int))
+(pub :: expPatBinders (-> ASTNode Ints MEnv Int))
 (pub fn (expPatBinders p bs env)
   (if (nodeSame p nilNode)
     0
@@ -4816,7 +4767,7 @@
             0)))
     }))
 
-(pub :: expPatBindersSpine (-> ASTNode Ints Int Int))
+(pub :: expPatBindersSpine (-> ASTNode Ints MEnv Int))
 (pub fn (expPatBindersSpine p bs env)
   (if (== (nodeTag p) TAG_E_APP)
     {
@@ -4826,7 +4777,7 @@
     }
     0))
 
-(pub :: expPatBindersVec (-> (Vec ASTNode) Ints Int Int Int))
+(pub :: expPatBindersVec (-> (Vec ASTNode) Ints MEnv Int Int))
 (pub fn (expPatBindersVec ps bs env i)
   (if (>= i (vecLen ps))
     0
@@ -4851,7 +4802,7 @@
 ; defined. `checkVar` and `emitVar` already skip locals for a stamped
 ; reference; this walk is the third resolver and asks the same bit.
 ; ------------------------------------------------------------------
-(pub :: expandVarRef (-> ASTNode Int Ints ASTNode))
+(pub :: expandVarRef (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandVarRef e env bs)
   (if (strEq (nodeAName e) "|>")
     (expPipeBad env (nodeSpan e) "a pipeline needs a value and at least one stage")
@@ -4883,7 +4834,7 @@
                         0 0
                         "every rule of this macro generates declarations; invoke it at top level"
                         "an expression position needs a value, and each rule's template here is declarations (macro-system.md MAC-CAP-8)")
-                      (memGetWord env 11)))
+                      env.declmod))
                   (mkEInt 0)
                 })
               (if (> (vecLen (nodeBNames mac)) 0)
@@ -4898,13 +4849,13 @@
 ; ------------------------------------------------------------------
 ; An application whose head names a macro.
 ; ------------------------------------------------------------------
-(pub :: expandApp (-> ASTNode Int Ints ASTNode))
+(pub :: expandApp (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandApp e env bs)
   (if (expHasTypeOperand e)
     (expExpandTypedApp e env bs)
     (expandValueApp e env bs)))
 
-(pub :: expandValueApp (-> ASTNode Int Ints ASTNode))
+(pub :: expandValueApp (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandValueApp e env bs)
   (if (!= (nodeFieldNames e) 0)
     (expandNamedStruct e env bs)
@@ -4920,7 +4871,7 @@
           "struct construction requires a label for every field; positional struct construction is not supported"))
       (expandAppUnlabelled e env bs))))
 
-(pub :: expandAppUnlabelled (-> ASTNode Int Ints ASTNode))
+(pub :: expandAppUnlabelled (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandAppUnlabelled e env bs)
   (if (&& (== (nodeTag (spineHead e)) TAG_E_VAR) (strEq (nodeAName (spineHead e)) "|>"))
     (expandPipe e env bs)
@@ -5017,7 +4968,7 @@
 (pub fn (expAsmMaxValues)
   16)
 
-(pub :: expandAsm (-> ASTNode Int Ints ASTNode))
+(pub :: expandAsm (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandAsm e env bs)
   {
     (let arms (spineArgVec e vecNew))
@@ -5067,32 +5018,32 @@
 ; One refusal of an `asm` form, stamped with the unit of the
 ; declaration being expanded (word 11), as `expandVarRef`'s refusals
 ; are. Answers 1, so a caller can record the refusal as it reports it.
-(pub :: expAsmDiag (-> Int Int String String String String Int))
+(pub :: expAsmDiag (-> MEnv Int String String String String Int))
 (pub fn (expAsmDiag env sp code slug msg help)
   {
     (expEmit env
       (expMarkUnit env
         (mkDiagNote SEV_ERROR code slug sp msg 0 0 help
           (concat (concat "run `axiom explain " code) "` for the full form"))
-        (memGetWord env 11)))
+        env.declmod))
     1
   })
 
 ; AX3091: a form the compiler can't lower.
-(pub :: expAsmBad (-> Int Int String Int))
+(pub :: expAsmBad (-> MEnv Int String Int))
 (pub fn (expAsmBad env sp msg)
   (expAsmDiag env sp "AX3091" "inline-asm" msg
     "an `asm` form is `(asm (ARCH \"template\" item...) ...)`, with ARCH `aarch64` or `x86_64`; an item is an operand, `(in name value)`, `(out name)`, `(lateout name)`, `(inout name value)`, `(inlateout name value)`, `(const name n)` or `(sym name f)`, or a `(clobber \"reg\"...)`, `(clobber_abi \"C\")` or `(options ...)`"))
 
 ; AX3119: options that contradict each other or the arm.
-(pub :: expAsmOptsBad (-> Int Int String Int))
+(pub :: expAsmOptsBad (-> MEnv Int String Int))
 (pub fn (expAsmOptsBad env sp msg)
   (expAsmDiag env sp "AX3119" "asm-options" msg
     "`pure` lets the optimiser drop a block whose outputs go unused, so it needs an output and `nomem` or `readonly`; `noreturn` takes no outputs; `att_syntax` and `intel_syntax` are x86_64's; with `clobber_abi` each output names its register"))
 
 ; One arm: its description, or "" once it has reported what is wrong.
 ; `vals` gains the arm's arguments and `seen` its architecture.
-(pub :: expAsmArm (-> ASTNode Int Ints (Vec ASTNode) Strings String))
+(pub :: expAsmArm (-> ASTNode MEnv Ints (Vec ASTNode) Strings String))
 (pub fn (expAsmArm arm env bs vals seen)
   {
     (let head (spineHead arm))
@@ -5196,7 +5147,7 @@
 
 ; The arm's template and items. A refusal ends the arm: "" comes back
 ; and nothing is added to `vals`.
-(pub :: expAsmArmBody (-> String Nodes ASTNode Int Ints (Vec ASTNode) String))
+(pub :: expAsmArmBody (-> String Nodes ASTNode MEnv Ints (Vec ASTNode) String))
 (pub fn (expAsmArmBody arch parts arm env bs vals)
   (if (|| (== (vecLen parts) 0) (!= (nodeTag (vecGet parts 0)) TAG_E_STR))
     {
@@ -5231,7 +5182,7 @@
 ; `clobber_abi` or an option list, recorded into the arm's vectors.
 ; Answers 1 once it has reported a refusal, else 0.
 (pub :: expAsmItem
-  (-> String ASTNode Int Ints (Vec AsmOp) Strings Strings Strings (Vec ASTNode) (Vec ASTNode) Int))
+  (-> String ASTNode MEnv Ints (Vec AsmOp) Strings Strings Strings (Vec ASTNode) (Vec ASTNode) Int))
 (pub fn (expAsmItem arch it env bs ops regs clobs opts optNodes abis)
   {
     (let kh (spineHead it))
@@ -5263,7 +5214,7 @@
 ; `(clobber_abi "C")`: every register the platform's C calling
 ; convention lets a callee overwrite, which codegen lists per target
 ; (`asmAbiClobbers`), so a block may call a C or Axiom function.
-(pub :: expAsmAbi (-> ASTNode Nodes Int (Vec ASTNode) Int))
+(pub :: expAsmAbi (-> ASTNode Nodes MEnv (Vec ASTNode) Int))
 (pub fn (expAsmAbi it args env abis)
   (if (> (vecLen abis) 0)
     (expAsmBad env (nodeSpan it) "a second `clobber_abi`; an arm names its calling convention once")
@@ -5284,7 +5235,7 @@
 
 ; `(options pure nomem ...)`: each a bare word, each once. An arm may
 ; hold more than one list.
-(pub :: expAsmOptions (-> Nodes Int Int Strings (Vec ASTNode) Int))
+(pub :: expAsmOptions (-> Nodes Int MEnv Strings (Vec ASTNode) Int))
 (pub fn (expAsmOptions args i env opts optNodes)
   (if (>= i (vecLen args))
     0
@@ -5357,7 +5308,7 @@
 ; before they have read every input. `lateout` and `inlateout` (`=r`)
 ; let the register allocator share it with an input, which is right
 ; only when every input has been read before the output is written.
-(pub :: expAsmOperand (-> String String ASTNode Nodes Int Ints (Vec AsmOp) Strings Int))
+(pub :: expAsmOperand (-> String String ASTNode Nodes MEnv Ints (Vec AsmOp) Strings Int))
 (pub fn (expAsmOperand arch kind op args env bs ops regs)
   (if (|| (== (vecLen args) 0) (!= (nodeTag (vecGet args 0)) TAG_E_VAR))
     (expAsmBad env (nodeSpan op)
@@ -5422,7 +5373,7 @@
 ; The rest of an operand once its name and register are good: the
 ; value a `const` folds to, the function a `sym` names, and the record.
 (pub :: expAsmOperandValue
-  (-> String ASTNode Nodes Int Ints (Vec AsmOp) Strings String Bool Int Int))
+  (-> String ASTNode Nodes MEnv Ints (Vec AsmOp) Strings String Bool Int Int))
 (pub fn (expAsmOperandValue kind op args env bs ops regs reg hasInto body)
   {
     (let nm (nodeAName (vecGet args 0)))
@@ -5555,7 +5506,7 @@
 ; option says otherwise, so naming one adds nothing - and contradicts
 ; `nomem` or `preserves_flags`, which `expAsmCheckArm` refuses. They
 ; are kept in `clobs` for that, and out of `regs`.
-(pub :: expAsmClobbers (-> String Nodes Int Int Strings Strings Int))
+(pub :: expAsmClobbers (-> String Nodes Int MEnv Strings Strings Int))
 (pub fn (expAsmClobbers arch args i env regs clobs)
   (if (>= i (vecLen args))
     0
@@ -5642,7 +5593,7 @@
 ; What the arm's items say together, once each is well formed: one
 ; answered output at most, and options that agree with each other and
 ; with the operands (AX3119). Answers 1 once it has refused.
-(pub :: expAsmCheckArm (-> String Int (Vec AsmOp) Strings Strings (Vec ASTNode) (Vec ASTNode) Int))
+(pub :: expAsmCheckArm (-> String MEnv (Vec AsmOp) Strings Strings (Vec ASTNode) (Vec ASTNode) Int))
 (pub fn (expAsmCheckArm arch env ops clobs opts optNodes abis)
   {
     (let nOut (expAsmCountOuts ops 0 0))
@@ -5791,7 +5742,7 @@
 ; The arm's description once its items agree, or "" once it has
 ; refused the template.
 (pub :: expAsmArmDesc
-  (-> String ASTNode Int Ints (Vec ASTNode) (Vec AsmOp) Strings Strings (Vec ASTNode) String))
+  (-> String ASTNode MEnv Ints (Vec ASTNode) (Vec AsmOp) Strings Strings (Vec ASTNode) String))
 (pub fn (expAsmArmDesc arch tnode env bs vals ops clobs opts abis)
   {
     (let nOut (expAsmCountOuts ops 0 0))
@@ -5846,7 +5797,7 @@
 ; AX3118: an operand the template never names, so no instruction can
 ; reach it - an input nothing reads, an output nothing writes, which
 ; then answers whatever its register held.
-(pub :: expAsmUnused (-> Int AsmOp Int))
+(pub :: expAsmUnused (-> MEnv AsmOp Int))
 (pub fn (expAsmUnused env p)
   (expAsmDiag env (nodeSpan p.node) "AX3118" "asm-operand-unused"
     (concat (concat "the template never writes `{" p.name)
@@ -5862,7 +5813,7 @@
 ; are. Inputs are expanded here, in the order written, which is the
 ; order codegen evaluates them in.
 (pub :: expAsmArmText
-  (-> String ASTNode Int Ints (Vec ASTNode) (Vec AsmOp) Ints Strings Strings (Vec ASTNode) String
+  (-> String ASTNode MEnv Ints (Vec ASTNode) (Vec AsmOp) Ints Strings Strings (Vec ASTNode) String
     Int String))
 (pub fn (expAsmArmText arch tnode env bs vals ops slots clobs opts abis tmpl nOut)
   {
@@ -6006,14 +5957,14 @@
 ; The file the form is written in, from the unit table (word 12) and
 ; the module of the declaration being expanded (word 11), or "" for a
 ; caller with no table.
-(pub :: expAsmFileOf (-> Int String))
+(pub :: expAsmFileOf (-> MEnv String))
 (pub fn (expAsmFileOf env)
-  (if (== (memGetWord env 12) 0)
+  (if (vecIsNull env.units)
     ""
     {
-      (let units (memGetWordVec env 12))
+      (let units env.units)
       {
-        (let u (expUnitOfMod units (memGetWord env 11)))
+        (let u (expUnitOfMod units env.declmod))
         (if (>= u (vecLen units))
           ""
           (memGetWordStr (vecGet units u) 0))
@@ -6422,7 +6373,7 @@
       true
       (|| (strEq m "k") (strEq m "q")))))
 
-(pub :: expandAppPlain (-> ASTNode Int Ints ASTNode))
+(pub :: expandAppPlain (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandAppPlain e env bs)
   (nodeBuildEApp (expandExpr (nodeAChild e) env bs) (expandExpr (nodeBChild e) env bs) nilWords
     (nodeSpan e)))
@@ -6465,7 +6416,7 @@
 ; would need a name outside this scan (an application's own callee
 ; position) still gets exactly that diagnostic today.
 ; ------------------------------------------------------------------
-(pub :: expandAppOrHole (-> ASTNode Int Ints ASTNode))
+(pub :: expandAppOrHole (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandAppOrHole e env bs)
   {
     (let argv (spineArgVec e vecNew))
@@ -6523,7 +6474,7 @@
 ; `undefined variable `_h.0`` on the reference this same pass had just
 ; built - a node's word-1 name string compared against the node's own
 ; handle, which can never `strEq`.
-(pub :: expHoleArgs (-> Nodes Int Int Ints Strings (Vec ASTNode) Int))
+(pub :: expHoleArgs (-> Nodes Int MEnv Ints Strings (Vec ASTNode) Int))
 (pub fn (expHoleArgs argv i env bs params newArgv)
   (if (>= i (vecLen argv))
     0
@@ -6590,14 +6541,14 @@
 ; first rule whose pattern matches is instantiated, and it must have an
 ; expression template. A macro with none at all keeps the refusal it
 ; has always drawn, before any rule is tried.
-(pub :: expandRuleApp (-> ASTNode String Nodes Int Ints Int ASTNode))
+(pub :: expandRuleApp (-> ASTNode String Nodes MEnv Ints Int ASTNode))
 ;@axiom:effect(unsafe)
 (pub fn (expandRuleApp mac name args env bs isp)
   (if (expMacHasExprRule mac)
     {
       (let m
         (expRuleForForms (nodeFieldNamesRows mac) (expCaptureVec args env bs) 0
-          (expMatchCtx (expDeclsVec env) (memGetWord env 9) (nodeModule mac))))
+          (expMatchCtx (expDeclsVec env) env.site (nodeModule mac))))
       (if (== m 0)
         {
           (expNoRuleDiag env name (expRuleShapes (nodeFieldNamesRows mac) name 0 "") isp)
@@ -6613,7 +6564,7 @@
                   0 0
                   "invoke it at top level, or give the macro an earlier rule for this shape whose template is one expression"
                   "each rule's template is declarations or one expression, and where the macro is invoked picks which it needs (macro-system.md MAC-LANG-14)")
-                (memGetWord env 11)))
+                env.declmod))
             (mkEInt 0)
           }
           (expandExprRuleInstantiate mac (as m (Vec Int)) env bs isp)))
@@ -6625,11 +6576,11 @@
             (concat (concat "declaration macro `" name) "` invoked in expression position") 0 0
             "every rule of this macro generates declarations; invoke it at top level"
             "an expression position needs a value, and each rule's template here is declarations (macro-system.md MAC-CAP-8)")
-          (memGetWord env 11)))
+          env.declmod))
       (mkEInt 0)
     }))
 
-(pub :: expandMacroApp (-> ASTNode ASTNode ASTNode Int Ints ASTNode))
+(pub :: expandMacroApp (-> ASTNode ASTNode ASTNode MEnv Ints ASTNode))
 (pub fn (expandMacroApp e head mac env bs)
   ; A rule-form macro (word 9) selects its rule by match, and the rule
   ; it selects must have an expression template to stand here; arity is
@@ -6657,14 +6608,14 @@
         }))
   })
 
-(pub :: takeArgs (-> Nodes Int Int Ints (Vec ASTNode)))
+(pub :: takeArgs (-> Nodes Int MEnv Ints (Vec ASTNode)))
 (pub fn (takeArgs args n env bs)
   (takeArgsIn args n env bs vecNew 0))
 
 ; Bare identifiers remain syntax until their substituted use is walked.
 ; A template may place one in a field label, type query or call head.
 ; Value uses still pass through expandVarRef in the output walk.
-(pub :: takeArgsIn (-> Nodes Int Int Ints (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: takeArgsIn (-> Nodes Int MEnv Ints (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (takeArgsIn args n env bs acc i)
   (if (>= i n)
     acc
@@ -6675,7 +6626,7 @@
           (expandExpr (expCaptureSyntax (vecGet args i) env bs) env bs)))
       (+ i 1))))
 
-(pub :: applyRest (-> ASTNode Nodes Int Int Ints ASTNode))
+(pub :: applyRest (-> ASTNode Nodes Int MEnv Ints ASTNode))
 (pub fn (applyRest f args n env bs)
   (if (>= n (vecLen args))
     f
@@ -6686,7 +6637,7 @@
 ; invokes another macro expands too. The depth counter is what turns
 ; `(macro (loopy x) (loopy x))` from a segfault into a diagnostic.
 ; ------------------------------------------------------------------
-(pub :: expandInstantiate (-> ASTNode (Vec ASTNode) Int Ints Int ASTNode))
+(pub :: expandInstantiate (-> ASTNode (Vec ASTNode) MEnv Ints Int ASTNode))
 (pub fn (expandInstantiate mac args env bs isp)
   {
     (let d (+ (expDepth env) 1))
@@ -6719,31 +6670,31 @@
       ; and it is written by nothing and read by nothing.
       {
         (let prevMod (expMacMod env))
-        (let prevSite (memGetWord env 9))
-        (let prevFors (memGetWord env 13))
+        (let prevSite env.site)
+        (let prevFors env.forstack)
         (let prevSc (expScEnterInst env))
         (let _frame
-          (vecPush (memGetWordVec env 10)
+          (vecPush env.frames
             (as (ExpFrame
-                  :site (memGetWord env 11)
+                  :site env.declmod
                   :span isp
                   :name (nodeAName mac)
                   :defSpan (nodeSpan mac)
                   :defMod (nodeModule mac)) Int)))
         (let _setmod (expSetMacMod env (nodeModule mac)))
-        (let _setsite (memSetWord env 9 (nodeModule mac)))
-        (let _setfors (memSetWord env 13 vecNew))
+        (let _setsite (set env.site (nodeModule mac)))
+        (let _setfors (set env.forstack vecNew))
         {
           (let body (substTpl (nodeCChild mac) (nodeBNames mac) args env isp))
           {
             (expSetMacMod env prevMod)
-            (memSetWord env 13 prevFors)
+            (set env.forstack prevFors)
             (expScExitInst env prevSc)
             (expSetDepth env d)
             {
               (let out (expandExpr body env bs))
               {
-                (memSetWord env 9 prevSite)
+                (set env.site prevSite)
                 (expSetDepth env (- d 1))
                 out
               }
@@ -6761,7 +6712,7 @@
 ; so a template invoking another macro expands too. Sequences ride
 ; on env word 20, exactly as declaration instantiation does, and the
 ; iteration stack starts empty for the same reason.
-(pub :: expandExprRuleInstantiate (-> ASTNode Ints Int Ints Int ASTNode))
+(pub :: expandExprRuleInstantiate (-> ASTNode Ints MEnv Ints Int ASTNode))
 (pub fn (expandExprRuleInstantiate mac m env bs isp)
   {
     (let d (+ (expDepth env) 1))
@@ -6778,35 +6729,35 @@
       }
       {
         (let prevMod (expMacMod env))
-        (let prevSite (memGetWord env 9))
-        (let prevFors (memGetWord env 13))
-        (let prevSeqs (memGetWord env 20))
+        (let prevSite env.site)
+        (let prevFors env.forstack)
+        (let prevSeqs env.seqbinds)
         (let prevSc (expScEnterInst env))
         (let _frame
-          (vecPush (memGetWordVec env 10)
+          (vecPush env.frames
             (as (ExpFrame
-                  :site (memGetWord env 11)
+                  :site env.declmod
                   :span isp
                   :name (nodeAName mac)
                   :defSpan (nodeSpan mac)
                   :defMod (nodeModule mac)) Int)))
         (let _setmod (expSetMacMod env (nodeModule mac)))
-        (let _setsite (memSetWord env 9 (nodeModule mac)))
-        (let _setfors (memSetWord env 13 vecNew))
-        (let _setseqs (memSetWord env 20 (expMatchSeqs m)))
+        (let _setsite (set env.site (nodeModule mac)))
+        (let _setfors (set env.forstack vecNew))
+        (let _setseqs (set env.seqbinds (expMatchSeqs m)))
         {
           (let body
             (substTpl (expRuleExpr (expMatchOf m)) (expMatchNames m) (expMatchVals m) env isp))
           {
             (expSetMacMod env prevMod)
-            (memSetWord env 13 prevFors)
-            (memSetWord env 20 prevSeqs)
+            (set env.forstack prevFors)
+            (set env.seqbinds prevSeqs)
             (expScExitInst env prevSc)
             (expSetDepth env d)
             {
               (let out (expandExpr body env bs))
               {
-                (memSetWord env 9 prevSite)
+                (set env.site prevSite)
                 (expSetDepth env (- d 1))
                 out
               }
@@ -6857,7 +6808,7 @@
 ; rules of one arity differ by shape. The shapes are the rules'
 ; patterns as the author wrote them, so the reader compares their
 ; invocation against the thing they would have to change.
-(pub :: expNoRuleDiag (-> Int String String Int Int))
+(pub :: expNoRuleDiag (-> MEnv String String Int Int))
 (pub fn (expNoRuleDiag env name shapes isp)
   (expEmit env
     (mkDiagNote SEV_ERROR "AX3018" "macro-arity" isp
@@ -6866,7 +6817,7 @@
       0 0 "write the invocation in one of the shapes above"
       "rules are tried IN ORDER and the first whose pattern matches wins (macro-system.md MAC-LANG-18): an invocation matching none is this refusal rather than a fall-through. A plain identifier in a shape matches any argument; a literal matches its own VALUE, and a parenthesised shape matches a form of that many elements - but not a form headed by a keyword (`if`, `let`, `lambda`, `match`), which the parser gives a shape of its own")))
 
-(pub :: expArityDiag (-> Int String Int Int Int Int))
+(pub :: expArityDiag (-> MEnv String Int Int Int Int))
 (pub fn (expArityDiag env name want got isp)
   (expEmit env
     (mkDiagNote SEV_ERROR "AX3018" "macro-arity" isp
@@ -7081,7 +7032,7 @@
     }))
 
 ;; Rewrite every `?` in a body; a body with none comes back unchanged.
-(pub :: qmBody (-> Int ASTNode ASTNode))
+(pub :: qmBody (-> MEnv ASTNode ASTNode))
 (pub fn (qmBody env e)
   {
     (let r
@@ -7096,7 +7047,7 @@
   })
 
 ; `e` is in tail position.
-(pub :: qmRw (-> Int ASTNode ASTNode))
+(pub :: qmRw (-> MEnv ASTNode ASTNode))
 (pub fn (qmRw env e)
   (if (! (qmHas e))
     e
@@ -7114,7 +7065,7 @@
         (qmLift env e))
     }))
 
-(pub :: qmRwArms (-> Int (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: qmRwArms (-> MEnv (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (qmRwArms env arms acc i)
   (if (>= i (vecLen arms))
     acc
@@ -7143,7 +7094,7 @@
       })
   })
 
-(pub :: qmRwLast (-> Int (Vec ASTNode) (Vec ASTNode)))
+(pub :: qmRwLast (-> MEnv (Vec ASTNode) (Vec ASTNode)))
 (pub fn (qmRwLast env xs)
   {
     (let out vecNew)
@@ -7161,7 +7112,7 @@
 ; Lift the first `?` in evaluation order out of `e`, which is in tail
 ; position: the bindings of what ran before it, then a `match` on its
 ; operand whose `Ok` arm continues the rewritten rest.
-(pub :: qmLift (-> Int ASTNode ASTNode))
+(pub :: qmLift (-> MEnv ASTNode ASTNode))
 (pub fn (qmLift env e)
   {
     (let st (QmSt :names vecNew :vals vecNew :scrut nilNode :tname "" :tsp 0 :failed false))
@@ -7215,7 +7166,7 @@
 
 ; A value evaluated before the `?`: a literal stays where it is, and
 ; anything else is bound to a fresh name so it still runs first.
-(pub :: qmBindBefore (-> Int QmSt ASTNode ASTNode))
+(pub :: qmBindBefore (-> MEnv QmSt ASTNode ASTNode))
 (pub fn (qmBindBefore env st x)
   {
     (let tag (nodeTag x))
@@ -7308,7 +7259,7 @@
   })
 
 ; AX3123: a `?` with no tail to propagate to.
-(pub :: qmRefuse (-> Int QmSt ASTNode String ASTNode))
+(pub :: qmRefuse (-> MEnv QmSt ASTNode String ASTNode))
 (pub fn (qmRefuse env st e place)
   {
     (set st.failed true)
@@ -7325,7 +7276,7 @@
 ; Find the first `?` under `e` in evaluation order, record it and what
 ; ran before it in `st`, and answer `e` with that `?` replaced by the
 ; name its `Ok` payload will be bound to. `e` holds a `?`.
-(pub :: qmExtract (-> Int QmSt ASTNode ASTNode))
+(pub :: qmExtract (-> MEnv QmSt ASTNode ASTNode))
 (pub fn (qmExtract env st e)
   {
     (let tag (nodeTag e))
@@ -7382,7 +7333,7 @@
 ; the order they run. Everything before the child that holds the `?`
 ; is bound first; a head that is a plain name is never bound, since
 ; naming a function evaluates nothing.
-(pub :: qmExtractApp (-> Int QmSt ASTNode ASTNode))
+(pub :: qmExtractApp (-> MEnv QmSt ASTNode ASTNode))
 (pub fn (qmExtractApp env st e)
   {
     (let args vecNew)
@@ -7441,7 +7392,7 @@
 
 ; A block: the statements before the one that holds the `?` run first,
 ; and the rest stays a block in the `Ok` arm.
-(pub :: qmExtractBlock (-> Int QmSt ASTNode ASTNode))
+(pub :: qmExtractBlock (-> MEnv QmSt ASTNode ASTNode))
 (pub fn (qmExtractBlock env st e)
   {
     (let xs (nodeAChildren e))
@@ -7463,7 +7414,7 @@
     }
   })
 
-(pub :: expandDecl (-> ASTNode Int Int))
+(pub :: expandDecl (-> ASTNode MEnv Int))
 (pub fn (expandDecl d env)
   (if (nodeSame d nilNode)
     0
@@ -7485,7 +7436,7 @@
       ; symbol nothing defined (MAC-EXP-3a).
       0)))
 
-(pub :: expandDeclsIn (-> (Vec ASTNode) Int Int Int))
+(pub :: expandDeclsIn (-> (Vec ASTNode) MEnv Int Int))
 (pub fn (expandDeclsIn decls env i)
   (if (>= i (vecLen decls))
     0
@@ -7493,11 +7444,11 @@
     ; declaration's module for the frame table, which word 9's
     ; template-walk overwrites must not touch.
     {
-      (memSetWord env 9 (nodeModule (vecGet decls i)))
-      (memSetWord env 11 (nodeModule (vecGet decls i)))
+      (set env.site (nodeModule (vecGet decls i)))
+      (set env.declmod (nodeModule (vecGet decls i)))
       (expandDecl (vecGet decls i) env)
-      (memSetWord env 9 0)
-      (memSetWord env 11 0)
+      (set env.site 0)
+      (set env.declmod 0)
       (expandDeclsIn decls env (+ i 1))
     }))
 
@@ -7512,14 +7463,14 @@
 ; answering the diagnostic so the call wraps a `mkDiagNote` in place.
 ; Module 0 (the entry file) resolves to unit 0, so stamping is safe
 ; on every path.
-(pub :: expMarkUnit (-> Int Int a Int))
+(pub :: expMarkUnit (-> MEnv Int a Int))
 (pub fn (expMarkUnit env dg m)
   {
-    (diagSetUnit dg (expUnitOfMod (memGetWordVec env 12) m))
+    (diagSetUnit dg (expUnitOfMod env.units m))
     dg
   })
 
-(pub :: expCheckMacros (-> Int Int Int))
+(pub :: expCheckMacros (-> MEnv Int Int))
 (pub fn (expCheckMacros env i)
   (if (>= i (vecLen (expMacrosVec env)))
     0
@@ -7538,7 +7489,7 @@
 ; A binder may constrain several forms at one repetition depth. A name
 ; shared between the fixed prefix and the repeating pattern would mean
 ; both one form and a sequence, so it remains AX3020.
-(pub :: expCheckRuleParams (-> ASTNode Int Int Int))
+(pub :: expCheckRuleParams (-> ASTNode MEnv Int Int))
 (pub fn (expCheckRuleParams mac env i)
   {
     (let rules (nodeFieldNamesRows mac))
@@ -7599,7 +7550,7 @@
 ; "the arguments left over" stops having an answer - `(m a ... b ...)`
 ; can split its arguments anywhere - and a macro system that picks for
 ; you is one whose expansion nobody can predict.
-(pub :: expCheckRuleEllipsis (-> ASTNode Int Int Int))
+(pub :: expCheckRuleEllipsis (-> ASTNode MEnv Int Int))
 (pub fn (expCheckRuleEllipsis mac env i)
   {
     (let rules (nodeFieldNamesRows mac))
@@ -7643,7 +7594,7 @@
 ; macro's own line (`AX3066`), beside the other definition-time
 ; rule checks. Literals are list-scoped, so the used set is the
 ; UNION across rules: a literal spelled in any rule is live.
-(pub :: expCheckRuleLiterals (-> ASTNode Int Int))
+(pub :: expCheckRuleLiterals (-> ASTNode MEnv Int))
 (pub fn (expCheckRuleLiterals mac env)
   {
     (let rules (nodeFieldNamesRows mac))
@@ -7684,7 +7635,7 @@
       (expCollectUsedVec used union (+ i 1))
     }))
 
-(pub :: expCheckLiteralsUsed (-> ASTNode IntRows Ints Int Int))
+(pub :: expCheckLiteralsUsed (-> ASTNode IntRows Ints MEnv Int))
 ;@axiom:effect(unsafe)
 (pub fn (expCheckLiteralsUsed mac rules union env)
   {
@@ -7695,7 +7646,7 @@
         0))
   })
 
-(pub :: expCheckLiteralsUsedIn (-> ASTNode Ints Ints Int Int Int))
+(pub :: expCheckLiteralsUsedIn (-> ASTNode Ints Ints MEnv Int Int))
 (pub fn (expCheckLiteralsUsedIn mac lits union env i)
   (if (>= i (vecLen lits))
     0
@@ -7718,16 +7669,16 @@
     n
     (expRepCount reps (+ i 1) (+ n (vecGet reps i)))))
 
-(pub :: expEllipsisDiag (-> Int String String String Int Int))
+(pub :: expEllipsisDiag (-> MEnv String String String Int Int))
 (pub fn (expEllipsisDiag env name msg help isp)
   (expEmit env
     (expMarkUnit env
       (mkDiagNote SEV_ERROR "AX3034" "macro-ellipsis" isp
         (concat (concat (concat "`" name) "` ") msg) 0 0 help
         "a template MUST use a repeated binding under an ellipsis of the same depth (macro-system.md MAC-LANG-16): a name bound to a SEQUENCE is many forms, and every position that takes one form needs to be told which")
-      (memGetWord env 11))))
+      env.declmod)))
 
-(pub :: expCheckRuleArities (-> ASTNode Int Int Int))
+(pub :: expCheckRuleArities (-> ASTNode MEnv Int Int))
 (pub fn (expCheckRuleArities mac env i)
   {
     (let rules (nodeFieldNamesRows mac))
@@ -7818,7 +7769,7 @@
 ; Every rule's template, not just the first: a kind refusal is a
 ; property of the macro, and a macro is now a list of rules
 ; (MAC-LANG-14).
-(pub :: expCheckTplKinds (-> ASTNode Int Int Int))
+(pub :: expCheckTplKinds (-> ASTNode MEnv Int Int))
 (pub fn (expCheckTplKinds mac env i)
   {
     (let rules (nodeFieldNamesRows mac))
@@ -8595,9 +8546,9 @@
   (name : String)
   (forms : Nodes))
 
-(pub :: expMatchSeqs (-> Ints Int))
+(pub :: expMatchSeqs (-> Ints Ints))
 (pub fn (expMatchSeqs m)
-  (vecGet m 3))
+  (vecGetVec m 3))
 
 ; The forms `name` is bound to, or 0.
 (pub :: expSeqLookup (-> Ints String Nodes))
@@ -8725,7 +8676,7 @@
 ; One template declaration's KIND, recursively: a syntax/for is
 ; accepted and its interior checked with the same rule, so a `data`
 ; hiding inside an iteration still refuses at the macro's own line.
-(pub :: expCheckTplKind (-> ASTNode ASTNode Int Int))
+(pub :: expCheckTplKind (-> ASTNode ASTNode MEnv Int))
 (pub fn (expCheckTplKind mac t env)
   (if (|| (== (nodeTag t) TAG_D_FN)
         (|| (== (nodeTag t) TAG_D_SIG)
@@ -8748,7 +8699,7 @@
             "trait, import and nested macro templates refuse here, at the macro's own line, rather than passing through silently (MAC-CAP-2). An import inside a template would reopen resolution ordering and a nested macro the phase-D fixpoint, which is why those two are refusals by decision rather than by schedule")
           (nodeModule mac))))))
 
-(pub :: expCheckTplKindVec (-> ASTNode (Vec ASTNode) Int Int Int))
+(pub :: expCheckTplKindVec (-> ASTNode (Vec ASTNode) MEnv Int Int))
 (pub fn (expCheckTplKindVec mac ts env i)
   (if (>= i (vecLen ts))
     0
@@ -8766,7 +8717,7 @@
 ; declarations never enter this list (they live in the macro's word
 ; 9), so a marker name arriving here is one written OUTSIDE a macro.
 ; Corpus population when the reservation landed: zero.
-(pub :: expCheckDeclNames (-> (Vec ASTNode) Int Int Int))
+(pub :: expCheckDeclNames (-> (Vec ASTNode) MEnv Int Int))
 (pub fn (expCheckDeclNames decls env i)
   (if (>= i (vecLen decls))
     0
@@ -8816,7 +8767,7 @@
 ; A `data`'s constructor names go through the same reserved-prefix
 ; test its type name does - `((syntax/join Mk N) Int)` is a legal
 ; constructor spelling inside a template and nowhere else.
-(pub :: expCheckCtorNames (-> (Vec ASTNode) ASTNode Int Int Int))
+(pub :: expCheckCtorNames (-> (Vec ASTNode) ASTNode MEnv Int Int))
 (pub fn (expCheckCtorNames cs d env i)
   (if (>= i (vecLen cs))
     0
@@ -8838,7 +8789,7 @@
       (expCheckCtorNames cs d env (+ i 1))
     }))
 
-(pub :: expCheckDupParams (-> ASTNode Int Int Int))
+(pub :: expCheckDupParams (-> ASTNode MEnv Int Int))
 (pub fn (expCheckDupParams mac env i)
   ; A RULE-FORM macro's node B is rule zero's slot 0, which since
   ; MAC-LANG-15 holds a `syntax/pat` MARKER wherever an element is not
@@ -8850,7 +8801,7 @@
     0
     (expCheckDupParamsIn mac (nodeBNames mac) env i)))
 
-(pub :: expCheckDupParamsIn (-> ASTNode Names Int Int Int))
+(pub :: expCheckDupParamsIn (-> ASTNode Names MEnv Int Int))
 (pub fn (expCheckDupParamsIn mac ps env i)
   {
     (let ps ps)
@@ -8886,40 +8837,40 @@
 (pub fn (expandProgram entryDecls decls out frames units bares fulls mods)
   {
     (let env
-      (as (MEnv
-            :macros (expCollectMacros decls vecNew 0)
-            :out out
-            :fresh 0
-            :depth 0
-            :decls decls
-            :macmod 0
-            :walk 0
-            :nodes 0
-            :blown 0
-            :site 0
-            :frames frames
-            :declmod 0
-            :units units
-            :forstack vecNew
-            :bares bares
-            :fulls fulls
-            :mods mods
-            :qsite 0
-            :gens vecNew
-            :callbs 0
-            :seqbinds vecNew
-            :tplbinds vecNew
-            :declnodes 0
-            :midx mangleIdxNew
-            :scNext 0
-            :scChain vecNew
-            :scTpl vecNew
-            :scSeq 0
-            :retired28 0
-            :defer 0
-            :deferHits 0
-            :structNames internNew
-            :structBuckets vecNew) Int))
+      (MEnv
+        :macros (expCollectMacros decls vecNew 0)
+        :out out
+        :fresh 0
+        :depth 0
+        :decls decls
+        :macmod 0
+        :walk 0
+        :nodes 0
+        :blown 0
+        :site 0
+        :frames frames
+        :declmod 0
+        :units units
+        :forstack vecNew
+        :bares bares
+        :fulls fulls
+        :mods mods
+        :qsite 0
+        :gens vecNew
+        :callbs 0
+        :seqbinds vecNew
+        :tplbinds vecNew
+        :declnodes 0
+        :midx mangleIdxNew
+        :scNext 0
+        :scChain vecNew
+        :scTpl vecNew
+        :scSeq 0
+        :retired28 0
+        :defer 0
+        :deferHits 0
+        :structNames internNew
+        :structBuckets vecNew))
     {
       (expCheckMacros env 0)
       (expCheckDeclNames decls env 0)
@@ -8939,7 +8890,7 @@
       ; expression comes from a comment, which no expansion round
       ; reads.
       (expLowerContracts decls (contractSigIndex decls) 0)
-      (memGetWordVec env 18)
+      env.gens
     }
   })
 
@@ -8981,14 +8932,14 @@
 (pub fn (expDeclMacroRounds)
   128)
 
-(pub :: expandDeclPhase (-> (Vec ASTNode) (Vec ASTNode) Int Int))
+(pub :: expandDeclPhase (-> (Vec ASTNode) (Vec ASTNode) MEnv Int))
 (pub fn (expandDeclPhase entryDecls decls env)
   {
     ; Rounds run with queries deferring (`expQueryMissing`) while
     ; a round can still generate the declaration they name.
-    (memSetWord env 29 1)
+    (set env.defer 1)
     (expandDeclRounds entryDecls decls env 0)
-    (memSetWord env 29 0)
+    (set env.defer 0)
     0
   })
 
@@ -9015,7 +8966,7 @@
         (expAnyWaiting decls (+ i 1)))
     }))
 
-(pub :: expandDeclRounds (-> (Vec ASTNode) (Vec ASTNode) Int Int Int))
+(pub :: expandDeclRounds (-> (Vec ASTNode) (Vec ASTNode) MEnv Int Int))
 (pub fn (expandDeclRounds entryDecls decls env round)
   (if (>= round expDeclMacroRounds)
     {
@@ -9038,9 +8989,9 @@
         ; Nothing generated. A deferred invocation's subject can no
         ; longer appear, so one more round with deferring off reports
         ; it (AX3028), exactly as a single pass always did.
-        (if (&& (== (memGetWord env 29) 1) (== (expAnyWaiting decls 0) 1))
+        (if (&& (== env.defer 1) (== (expAnyWaiting decls 0) 1))
           {
-            (memSetWord env 29 0)
+            (set env.defer 0)
             (expandDeclRounds entryDecls decls env (+ round 1))
           }
           0)
@@ -9057,7 +9008,7 @@
 ; One round; answers 1 when any invocation instantiated. A REFUSED
 ; invocation is marked (word 3 = 1) and reported once - it stays in
 ; the list, the driver's error gate keeps it from the checker.
-(pub :: expandDeclRound (-> (Vec ASTNode) (Vec ASTNode) Int Int Int Int))
+(pub :: expandDeclRound (-> (Vec ASTNode) (Vec ASTNode) MEnv Int Int Int))
 (pub fn (expandDeclRound entryDecls decls env i progress)
   (if (>= i (vecLen decls))
     progress
@@ -9070,7 +9021,7 @@
         (expandDeclRound entryDecls decls env (+ i 1) progress))
     }))
 
-(pub :: expDeclCallErr (-> Int ASTNode String String String Int))
+(pub :: expDeclCallErr (-> MEnv ASTNode String String String Int))
 (pub fn (expDeclCallErr env d msg help note)
   {
     (expEmit env
@@ -9081,7 +9032,7 @@
     0
   })
 
-(pub :: expandDeclCall (-> (Vec ASTNode) (Vec ASTNode) Int ASTNode Int))
+(pub :: expandDeclCall (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode Int))
 ;@axiom:effect(unsafe)
 (pub fn (expandDeclCall entryDecls decls env d)
   ; A MODULE-SIDE invocation is expanded like an entry-file one and
@@ -9093,7 +9044,7 @@
   ; an imported module's declaration in front of it, and the refusal
   ; below says so rather than generating a declaration nothing can
   ; name.
-  (if (&& (!= (nodeModule d) 0) (== (expBares env) 0))
+  (if (&& (!= (nodeModule d) 0) (vecIsNull env.bares))
     (expDeclCallErr env d
       "a declaration-macro invocation inside an imported module needs the module's mangling records, and this pipeline has none"
       "invoke the macro from the entry file"
@@ -9111,8 +9062,8 @@
     ; (MAC-LANG-14). An invocation matching none names
     ; every arity the macro offers.
     {
-      (let prevSite (memGetWord env 9))
-      (let _s (memSetWord env 9 (nodeModule d)))
+      (let prevSite env.site)
+      (let _s (set env.site (nodeModule d)))
       {
         (let r
           {
@@ -9152,7 +9103,7 @@
                 }))
           })
         {
-          (memSetWord env 9 prevSite)
+          (set env.site prevSite)
           r
         }
       }
@@ -9163,7 +9114,7 @@
 ; and the invocation's own arguments. For an all-binder pattern those
 ; are the same contents in the same order, which is why the 49
 ; rule-form macros already in the tree emit identical IR.
-(pub :: expInstantiateDecl (-> (Vec ASTNode) (Vec ASTNode) Int ASTNode ASTNode Ints Int))
+(pub :: expInstantiateDecl (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode ASTNode Ints Int))
 (pub fn (expInstantiateDecl entryDecls decls env d mac m)
   ; What a deferred build (`expQueryMissing`) must leave as it found
   ; it: the diagnostics it emitted, the frame pushed below, and the
@@ -9172,22 +9123,22 @@
     (let isp (nodeSpan d))
     (let tags (nodeAxtagsWords d))
     (let prevMod (expMacMod env))
-    (let prevSite (memGetWord env 9))
-    (let prevDecl (memGetWord env 11))
-    (let prevFors (memGetWord env 13))
-    (let prevSeqs (memGetWord env 20))
+    (let prevSite env.site)
+    (let prevDecl env.declmod)
+    (let prevFors env.forstack)
+    (let prevSeqs env.seqbinds)
     (let prevSc (expScEnterDeclInst env))
     (let outLen0 (vecLen (expOutVec env)))
-    (let framesLen0 (vecLen (memGetWordVec env 10)))
-    (let fresh0 (memGetWord env 2))
-    (let _h (memSetWord env 30 0))
+    (let framesLen0 (vecLen env.frames))
+    (let fresh0 env.fresh)
+    (let _h (set env.deferHits 0))
     {
-      (memSetWord env 20 (expMatchSeqs m))
+      (set env.seqbinds (expMatchSeqs m))
       (expSetMacMod env (nodeModule mac))
-      (memSetWord env 9 (nodeModule mac))
-      (memSetWord env 17 (nodeModule d))
-      (memSetWord env 11 0)
-      (memSetWord env 13 vecNew)
+      (set env.site (nodeModule mac))
+      (set env.qsite (nodeModule d))
+      (set env.declmod 0)
+      (set env.forstack vecNew)
       ; The frame's SITE is the module the invocation was written in,
       ; not the literal 0 this carried while phase D was entry-file
       ; only: `expAttachTo` joins a frame to a diagnostic by span AND
@@ -9197,7 +9148,7 @@
       ; suppression, silently absent for exactly the invocations this
       ; slice made legal. The expression path (`expandDecl`) has always
       ; read its site from the declaration being expanded.
-      (vecPush (memGetWordVec env 10)
+      (vecPush env.frames
         (as (ExpFrame
               :site (nodeModule d)
               :span isp
@@ -9209,13 +9160,13 @@
           (expBuildDecls (expRuleTpl (expMatchOf m)) (expMatchNames m) (expMatchVals m) env isp
             vecNew 0))
         {
-          (memSetWord env 20 prevSeqs)
+          (set env.seqbinds prevSeqs)
           (expSetMacMod env prevMod)
           (expScExitInst env prevSc)
-          (memSetWord env 9 prevSite)
-          (memSetWord env 17 0)
-          (memSetWord env 11 prevDecl)
-          (memSetWord env 13 prevFors)
+          (set env.site prevSite)
+          (set env.qsite 0)
+          (set env.declmod prevDecl)
+          (set env.forstack prevFors)
           ; The width budget is NOT counted here any more, and the
           ; reason is that counting it here could only ever refuse an
           ; instantiation that had ALREADY been built in full. The
@@ -9249,15 +9200,15 @@
           ; set, so the `expBlown` test just below and the one that
           ; stops the round fixpoint carry the refusal out with no new
           ; control flow here.
-          (if (== (memGetWord env 30) 1)
+          (if (== env.deferHits 1)
             ; A query named a declaration that doesn't exist yet:
             ; nothing of this build is kept, and the invocation stays
             ; unrefused for the next round.
             {
               (expTruncate (expOutVec env) outLen0)
-              (expTruncate (memGetWordVec env 10) framesLen0)
-              (memSetWord env 2 fresh0)
-              (memSetWord env 30 0)
+              (expTruncate env.frames framesLen0)
+              (set env.fresh fresh0)
+              (set env.deferHits 0)
               0
             }
             (if (|| (== (as made Int) 0) (== (expBlown env) 1))
@@ -9316,7 +9267,7 @@
 ; AXTAGs written above it would attach to nothing. `expGiveTags`
 ; re-homes them onto the first generated declaration, and there is
 ; none, so they are refused here rather than dropped.
-(pub :: expInstantiateNothing (-> (Vec ASTNode) (Vec ASTNode) Int ASTNode Int))
+(pub :: expInstantiateNothing (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode Int))
 (pub fn (expInstantiateNothing entryDecls decls env d)
   (if (&& (!= (nodeAxtagsWord d) 0) (> (vecLen (nodeAxtagsWords d)) 0))
     (expDeclCallErr env d
@@ -9388,7 +9339,7 @@
 ; declaration (a spine, arm, constructor or declaration `...` of its
 ; own - using one sequence at two depths, refused rather than
 ; rebuilt n-squared).
-(pub :: expSpliceOneDecl (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expSpliceOneDecl (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expSpliceOneDecl t params args env isp)
   {
@@ -9592,7 +9543,7 @@
 ; against the width budget as it exists, and the walk continues two
 ; past the marker.
 (pub :: expDrainBuilt
-  (-> (Vec ASTNode) ASTNode (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int Int
+  (-> (Vec ASTNode) ASTNode (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int Int
     (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expDrainBuilt built tmpl tpl params args env isp acc i j)
@@ -9604,9 +9555,9 @@
         (nodeCopyWord g tmpl 7)
         (vecPush acc g)
         {
-          (let tot (+ (memGetWord env 22) 1))
+          (let tot (+ env.declnodes 1))
           {
-            (memSetWord env 22 tot)
+            (set env.declnodes tot)
             (if (> tot expMaxDecls)
               {
                 (expBlow env isp
@@ -9623,7 +9574,7 @@
     }))
 
 (pub :: expBuildDecls
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expBuildDecls tpl params args env isp acc i)
   (if (>= i (vecLen tpl))
@@ -9690,9 +9641,9 @@
                   ; `401-decl-macro-size-limit`'s golden is unchanged by
                   ; the move.
                   {
-                    (let tot (+ (memGetWord env 22) 1))
+                    (let tot (+ env.declnodes 1))
                     {
-                      (memSetWord env 22 tot)
+                      (set env.declnodes tot)
                       (if (> tot expMaxDecls)
                         {
                           (expBlow env isp
@@ -9709,7 +9660,7 @@
             })))
     }))
 
-(pub :: expBuildForDecls (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode) Int))
+(pub :: expBuildForDecls (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int))
 (pub fn (expBuildForDecls f params args env isp acc)
   {
     (let seqs
@@ -9724,7 +9675,7 @@
   })
 
 (pub :: expBuildForElems
-  (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
+  (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
 (pub fn (expBuildForElems f params args env isp acc seqs n j)
   (if (>= j n)
     1
@@ -9762,7 +9713,7 @@
 ; A name position: a macro parameter substitutes its argument, which
 ; MUST be a bare identifier. Answers 0 - refusal already emitted -
 ; when it is not.
-(pub :: expSubstName (-> String Names (Vec ASTNode) Int Int String))
+(pub :: expSubstName (-> String Names (Vec ASTNode) MEnv Int String))
 ;@axiom:effect(unsafe)
 (pub fn (expSubstName s params args env isp)
   ; The join marker resolves each of its two names through this same
@@ -9807,11 +9758,11 @@
         })
     }))
 
-(pub :: expSubstNames (-> Names Names (Vec ASTNode) Int Int Strings))
+(pub :: expSubstNames (-> Names Names (Vec ASTNode) MEnv Int Strings))
 (pub fn (expSubstNames ss params args env isp)
   (expSubstNamesIn ss params args env isp vecNew 0))
 
-(pub :: expSubstNamesIn (-> Names Names (Vec ASTNode) Int Int Strings Int Strings))
+(pub :: expSubstNamesIn (-> Names Names (Vec ASTNode) MEnv Int Strings Int Strings))
 ;@axiom:effect(unsafe)
 (pub fn (expSubstNamesIn ss params args env isp acc i)
   (if (>= i (vecLen ss))
@@ -9830,7 +9781,7 @@
 ; is a macro parameter becomes the argument identifier - lowercase a
 ; variable, uppercase a constructor, the grammar's own rule. Rebuilt,
 ; never mutated (MAC-HYG-4).
-(pub :: expSubstTy (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expSubstTy (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (expSubstTy t params args env isp)
   (if (nodeSame t nilNode)
     nilNode
@@ -9897,7 +9848,7 @@
 ; a name position resolves. A nested join is a type node of its own,
 ; so it recurses through `expSubstTy` and reads its answer back off
 ; the constructor it built.
-(pub :: expSubstTyName (-> ASTNode Names (Vec ASTNode) Int Int String))
+(pub :: expSubstTyName (-> ASTNode Names (Vec ASTNode) MEnv Int String))
 ;@axiom:effect(unsafe)
 (pub fn (expSubstTyName t params args env isp)
   (if (|| (== (nodeTag t) TAG_T_CON) (== (nodeTag t) TAG_T_VAR))
@@ -9915,13 +9866,13 @@
           "write `(syntax/join a b)` with a name on each side, or a join of two on either"
           (expMacMod env)) String)))
 
-(pub :: expSubstTyVec (-> (Vec ASTNode) Names (Vec ASTNode) Int Int Nodes))
+(pub :: expSubstTyVec (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int Nodes))
 (pub fn (expSubstTyVec v params args env isp)
   (if (== (as v Int) 0)
     vecNew
     (expSubstTyVecIn v params args env isp vecNew 0)))
 
-(pub :: expSubstTyVecIn (-> Nodes Names Nodes Int Int Nodes Int Nodes))
+(pub :: expSubstTyVecIn (-> Nodes Names Nodes MEnv Int Nodes Int Nodes))
 (pub fn (expSubstTyVecIn v params args env isp acc i)
   (if (>= i (vecLen v))
     acc
@@ -9994,7 +9945,7 @@
 ; passthrough) - though `expCheckMacros` already refused the template
 ; at the macro's own line, so reaching this arm is the belt after the
 ; braces.
-(pub :: expBuildOneDecl (-> ASTNode Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expBuildOneDecl (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
 
 ; What `pub` a generated declaration is born with. The entry file's
 ; own declarations are all visible - nothing imports them, and import
@@ -10016,7 +9967,7 @@
 ; but no definition` - a program the compiler that predates this slice
 ; compiles. The mirror leaked: a module invoking an ENTRY-FILE macro
 ; exported every product whatever its template said.
-(pub :: expGenVis (-> Int ASTNode Int))
+(pub :: expGenVis (-> MEnv ASTNode Int))
 (pub fn (expGenVis env t)
   (if (== (as (expQSite env) Int) 0)
     1
@@ -10036,11 +9987,11 @@
             (if (== (as ps Int) 0)
               nilNode
               {
-                (let prevTb (memGetWord env 21))
-                (let _pushTb (memSetWord env 21 ps))
+                (let prevTb env.tplbinds)
+                (let _pushTb (set env.tplbinds ps))
                 (let _scReset (expScResetTpl env))
                 (let body (substTpl (nodeCChild t) params args env isp))
-                (let _popTb (memSetWord env 21 prevTb))
+                (let _popTb (set env.tplbinds prevTb))
                 {
                   (let g (nodeBuildDFn nm ps body nsp))
                   {
@@ -10212,7 +10163,7 @@
 ; An `effect` template's operations, both vectors at once. Answers 1,
 ; or 0 with the refusal already emitted.
 (pub :: expBuildEffectOps
-  (-> Names (Vec ASTNode) Names (Vec ASTNode) Int Int Names (Vec ASTNode) Int Int))
+  (-> Names (Vec ASTNode) Names (Vec ASTNode) MEnv Int Names (Vec ASTNode) Int Int))
 (pub fn (expBuildEffectOps ops ofs params args env isp outOps outFs i)
   (if (>= i (vecLen ops))
     1
@@ -10245,7 +10196,7 @@
 ; out. A struct-variant's field names (word 9) ride along unchanged -
 ; they are already identifiers, and nothing in the substitution can
 ; reach them.
-(pub :: expBuildCtors (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expBuildCtors (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (expBuildCtors cs params args env isp)
   ; A `...` marker after a form diverts to the splice loop;
   ; otherwise this is the ordinary one-form-per-constructor walk,
@@ -10297,7 +10248,7 @@
     }))
 
 (pub :: expBuildCtorsIn
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expBuildCtorsIn cs params args env isp acc i)
   (if (>= i (vecLen cs))
@@ -10351,7 +10302,7 @@
 ; never triggers the loop: `csHasSpliceMarker` only fires beside a
 ; marker, and the marker beside nothing repeatable diagnoses.
 (pub :: expBuildCtorsSplice
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expBuildCtorsSplice cs params args env isp acc i)
   (if (>= i (vecLen cs))
@@ -10398,7 +10349,7 @@
 ; onto the shared params/args (last wins) and pops them after:
 ; nothing appends to those vecs during substitution, so the
 ; truncation restores exactly what was there.
-(pub :: expSpliceOneCtor (-> ASTNode Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expSpliceOneCtor (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expSpliceOneCtor c params args env isp)
   {
@@ -10489,7 +10440,7 @@
 ; which substitutes the ordinary way. Duplicates are harmless
 ; downstream (one index's value twice), so this collects rather
 ; than dedupes.
-(pub :: expCtorSeqNames (-> ASTNode Ints Int Ints))
+(pub :: expCtorSeqNames (-> ASTNode Ints MEnv Ints))
 (pub fn (expCtorSeqNames c acc env)
   (if (! (vecIsNull (expSeqLookup (expSeqBindsVec env) (nodeAName c))))
     {
@@ -10510,7 +10461,7 @@
 ; the name; the containers recurse structurally; anything else is
 ; skipped here and refused by the splice above, which owns the
 ; diagnostic.
-(pub :: expTySeqNames (-> ASTNode Ints Int Ints))
+(pub :: expTySeqNames (-> ASTNode Ints MEnv Ints))
 (pub fn (expTySeqNames t acc env)
   {
     (let tg (nodeTag t))
@@ -10536,7 +10487,7 @@
               acc)))))
   })
 
-(pub :: expTySeqNamesVec (-> (Vec ASTNode) Ints Int Int Ints))
+(pub :: expTySeqNamesVec (-> (Vec ASTNode) Ints MEnv Int Ints))
 (pub fn (expTySeqNamesVec tys acc env i)
   (if (>= i (vecLen tys))
     acc
@@ -10597,12 +10548,12 @@
     }
   })
 
-(pub :: expBuildStructFields (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expBuildStructFields (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (expBuildStructFields fs params args env isp)
   (expBuildStructFieldsIn fs params args env isp vecNew 0))
 
 (pub :: expBuildStructFieldsIn
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 ;@axiom:effect(unsafe)
 (pub fn (expBuildStructFieldsIn fs params args env isp acc i)
   (if (>= i (vecLen fs))
@@ -10652,12 +10603,12 @@
       }
     }))
 
-(pub :: expSubstArgs (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode)))
+(pub :: expSubstArgs (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
 (pub fn (expSubstArgs v params args env isp)
   (expSubstArgsIn v params args env isp vecNew 0))
 
 (pub :: expSubstArgsIn
-  (-> (Vec ASTNode) Names (Vec ASTNode) Int Int (Vec ASTNode) Int (Vec ASTNode)))
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expSubstArgsIn v params args env isp acc i)
   (if (>= i (vecLen v))
     acc
@@ -10744,7 +10695,7 @@
 ; import filter that brought the module in - which phase D has to
 ; apply itself, since the generated NAME did not exist when import
 ; resolution applied it to everything else.
-(pub :: expModuleize (-> Nodes Int Int Int))
+(pub :: expModuleize (-> Nodes MEnv Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (expModuleize made env mod)
   {
@@ -10752,7 +10703,7 @@
     (expModuleizeIn made env mod filter 0 0)
   })
 
-(pub :: expModuleizeIn (-> (Vec ASTNode) Int Int Strings Int Int Int))
+(pub :: expModuleizeIn (-> (Vec ASTNode) MEnv Int Strings Int Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (expModuleizeIn made env mod filter i vis0)
   (if (>= i (vecLen made))
@@ -10779,9 +10730,9 @@
 ; each generated declaration ended up with, and the macro that made it.
 ; Recorded after the names are final, so a mangled module-side product
 ; is recorded under the name a reader will see.
-(pub :: expRecordGens (-> Int (Vec ASTNode) String Int Int))
+(pub :: expRecordGens (-> MEnv (Vec ASTNode) String Int Int))
 (pub fn (expRecordGens env made macName i)
-  (if (== (memGetWord env 18) 0)
+  (if (vecIsNull env.gens)
     0
     (if (>= i (vecLen made))
       0
@@ -10792,7 +10743,7 @@
           {
             (vecPush pair (as (nodeAText g) Int))
             (vecPush pair (as macName Int))
-            (vecPush (memGetWordVec env 18) (as pair Int))
+            (vecPush env.gens (as pair Int))
           }
         }
         (expRecordGens env made macName (+ i 1))
@@ -10822,9 +10773,9 @@
 ; import's claim exactly as an entry-file declaration written by hand
 ; does by being recorded first. Signatures are not recorded, mirroring
 ; `recordEntryFns`, which indexes definitions.
-(pub :: expClaimEntryNames (-> (Vec ASTNode) Int Int Int))
+(pub :: expClaimEntryNames (-> (Vec ASTNode) MEnv Int Int))
 (pub fn (expClaimEntryNames made env i)
-  (if (== (expBares env) 0)
+  (if (vecIsNull env.bares)
     0
     (if (>= i (vecLen made))
       0
@@ -11267,7 +11218,7 @@
 
 ; Pipelines are hygienic lets and ordinary calls. Every intermediate
 ; result is evaluated once, before the following stage's operands.
-(pub :: expandPipe (-> ASTNode Int Ints ASTNode))
+(pub :: expandPipe (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandPipe e env bs)
   {
     (let args (spineArgVec e vecNew))
@@ -11276,7 +11227,7 @@
       (expandExpr (expPipeChain args 1 (vecGet args 0) env (nodeSpan e)) env bs))
   })
 
-(pub :: expPipeChain (-> Nodes Int ASTNode Int Int ASTNode))
+(pub :: expPipeChain (-> Nodes Int ASTNode MEnv Int ASTNode))
 (pub fn (expPipeChain args i value env sp)
   (if (>= i (vecLen args))
     value
@@ -11288,7 +11239,7 @@
         sp)
     }))
 
-(pub :: expPipeStage (-> ASTNode ASTNode Int ASTNode))
+(pub :: expPipeStage (-> ASTNode ASTNode MEnv ASTNode))
 (pub fn (expPipeStage stage value env)
   (if (!= (nodeTag stage) TAG_E_APP)
     (mkEApp stage value)
@@ -11333,21 +11284,21 @@
       (expPipeArgs args out value (+ i 1))
     }))
 
-(pub :: expPipeBad (-> Int Int String ASTNode))
+(pub :: expPipeBad (-> MEnv Int String ASTNode))
 (pub fn (expPipeBad env sp message)
   {
     (expEmit env
       (expMarkUnit env
         (mkDiag SEV_ERROR "AX3127" "pipeline-stage" sp message 0 0
           "write `(|> value (f args...) (g args...))`; each stage receives the preceding value first, or at its single direct `_` argument")
-        (memGetWord env 11)))
+        env.declmod))
     (mkEInt 0)
   })
 
 ; Named struct construction lowers to the same checked application as
 ; positional construction. Reordered fields first bind their values in
 ; written order; the final call follows declaration order.
-(pub :: expandNamedStruct (-> ASTNode Int Ints ASTNode))
+(pub :: expandNamedStruct (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expandNamedStruct e env bs)
   {
     (let head (spineHead e))
@@ -11393,7 +11344,7 @@
 
 ; Values are already expanded, including fresh parameters for direct
 ; holes. Reordering occurs inside the lambda when construction has holes.
-(pub :: expLowerNamedStruct (-> ASTNode (Vec ASTNode) Strings Strings Int ASTNode))
+(pub :: expLowerNamedStruct (-> ASTNode (Vec ASTNode) Strings Strings MEnv ASTNode))
 (pub fn (expLowerNamedStruct callee values labels names env)
   (if (expNamedSameOrder labels names 0)
     (setCtorFieldNames (expBuildSpine callee values 0) names)
@@ -11430,7 +11381,7 @@
     true
     (&& (strEq (vecGetStr labels i) (vecGetStr names i)) (expNamedSameOrder labels names (+ i 1)))))
 
-(pub :: expCheckNamedLabels (-> Int ASTNode Strings Strings Int))
+(pub :: expCheckNamedLabels (-> MEnv ASTNode Strings Strings Int))
 (pub fn (expCheckNamedLabels env e labels names)
   {
     (let seen vecNew)
@@ -11476,18 +11427,16 @@
       (nodeSpan e)
       (vecGet (nodeCWords e) i))))
 
-; The raw environment word contains the typed field declared by MEnv.
-(pub :: expStructBuckets (-> Int NodesRows))
-;@axiom:effect(unsafe)
+(pub :: expStructBuckets (-> MEnv NodesRows))
 (pub fn (expStructBuckets env)
-  (as (memGetWord env 32) NodesRows))
+  env.structBuckets)
 
 ; Declaration macros have finished before this index is built. Each
 ; name keeps its candidates in declaration order, including duplicates.
-(pub :: expIndexStructDecls (-> Int ()))
+(pub :: expIndexStructDecls (-> MEnv ()))
 (pub fn (expIndexStructDecls env)
   {
-    (let names (memGetWord env 31))
+    (let names env.structNames)
     (let buckets (expStructBuckets env))
     (for d in (expDeclsVec env)
       (if (== (nodeTag d) TAG_D_STRUCT)
@@ -11512,18 +11461,18 @@
   (ExpStructAmbiguous)
   (ExpStructFound ASTNode))
 
-(pub :: expNamedStructDecl (-> Int ASTNode ExpStructResolution))
+(pub :: expNamedStructDecl (-> MEnv ASTNode ExpStructResolution))
 (pub fn (expNamedStructDecl env head)
   {
     (let name (nodeAName head))
     (let bare (bareOf name))
-    (match (internFind (memGetWord env 31) bare)
+    (match (internFind env.structNames bare)
       ((None) (ExpStructMissing))
       ((Some index)
         (expChooseStructDecl (vecGet (expStructBuckets env) index) name bare
           (if (== (nodeDefScope head) 1)
             (nodeModule head)
-            (memGetWord env 11)))
+            env.declmod))
       ))
   })
 
@@ -11562,21 +11511,21 @@
     }
   })
 
-(pub :: expNamedBad (-> Int Int String ASTNode))
+(pub :: expNamedBad (-> MEnv Int String ASTNode))
 (pub fn (expNamedBad env sp message)
   {
     (expEmit env
       (expMarkUnit env
         (mkDiag SEV_ERROR "AX3132" "named-construction" sp message 0 0
           "construct a visible struct with each declared field exactly once: `(Point :x 10 :y 20)`")
-        (memGetWord env 11)))
+        env.declmod))
     (mkEInt 0)
   })
 
 ; A struct head in a source value position cannot escape its labelled
 ; construction through an alias or a higher-order call. A zero-field
 ; type needs no labels and keeps its existing checking path.
-(pub :: expStructNeedsLabels (-> ASTNode Int Ints Bool))
+(pub :: expStructNeedsLabels (-> ASTNode MEnv Ints Bool))
 (pub fn (expStructNeedsLabels head env bs)
   (if (!= (nodeTag head) TAG_E_VAR)
     false
@@ -11590,7 +11539,7 @@
 ; Only a template head supplied by substitution can generate a
 ; declaration-order construction. An explicit constructor name written
 ; in a template is source and needs its labels there.
-(pub :: expDynamicTemplateHead (-> ASTNode Names Int Bool))
+(pub :: expDynamicTemplateHead (-> ASTNode Names MEnv Bool))
 (pub fn (expDynamicTemplateHead head params env)
   (if (!= (nodeTag head) TAG_E_VAR)
     false
@@ -11605,7 +11554,7 @@
       (&& (! localWins) (|| (!= forBinding 0) (>= (expParamIndex params name) 0)))
     }))
 
-(pub :: expSubstCall (-> ASTNode ASTNode (Vec ASTNode) Names (Vec ASTNode) Int Int ASTNode))
+(pub :: expSubstCall (-> ASTNode ASTNode (Vec ASTNode) Names (Vec ASTNode) MEnv Int ASTNode))
 (pub fn (expSubstCall tpl templateHead values params args env isp)
   {
     (let head (substTpl templateHead params args env isp))
@@ -11631,7 +11580,7 @@
           (|| (strEq (nodeAName head) "sizeof") (strEq (nodeAName head) "alignof")))))
   })
 
-(pub :: expExpandTypedApp (-> ASTNode Int Ints ASTNode))
+(pub :: expExpandTypedApp (-> ASTNode MEnv Ints ASTNode))
 (pub fn (expExpandTypedApp e env bs)
   {
     (let args (spineArgVec e vecNew))
