@@ -489,8 +489,8 @@
                       (if (let (Some src) srcOpt)
                         {
                           (let pr (parseModuleWith (lex src) (scanAxtags src)))
-                          (if (! (== (memGetWord pr 0) 0))
-                            (set missing (lspPreflight (readAstNodes pr 1) tcode entryDir seen)))
+                          (if (pResOk pr)
+                            (set missing (lspPreflight (pResNodes pr) tcode entryDir seen)))
                         }
                         (set missing name))
                     }
@@ -712,7 +712,7 @@
                                     (if (isNone lexD)
                                       (parseModuleWith toks (scanAxtags src))
                                       (pErr 0)))
-                                  (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
+                                  (if (|| (isSome lexD) (pResFailed pr))
                                     {
                                       (let d
                                         (if (let (Some ld) lexD)
@@ -723,8 +723,8 @@
                                         (set failure (Some d))
                                       }
                                     }
-                                    (set failure (lspWorkspacePreflight workspace
-                                                   (readAstNodes pr 1) tcode entryDir units unit)))
+                                    (set failure (lspWorkspacePreflight workspace (pResNodes pr)
+                                                   tcode entryDir units unit)))
                                 }
                               }
                             }
@@ -768,7 +768,7 @@
           (if (isNone lexD)
             (parseModuleWith toks (scanAxtags src))
             (pErr 0)))
-        (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
+        (if (|| (isSome lexD) (pResFailed pr))
           ; A parse failure now carries a code and a span, so the editor
           ; gets a squiggle ON the offending token instead of one
           ; spanless note at the top of the file. That was this port's
@@ -781,7 +781,7 @@
                 (parseErrDiag toks pr src))
               src (lspLineIndex src) (lspPathToUri path)))
           {
-            (let decls (readAstNodes pr 1))
+            (let decls (pResNodes pr))
             (let tcode (checkedTargetCode hostTarget))
             (let entryDir (pathDir path))
             (let units
@@ -2331,7 +2331,7 @@
     (let tags (scanAxtags src))
     {
       (let pr (parseModuleWith toks tags))
-      (if (== (memGetWord pr 0) 0)
+      (if (pResFailed pr)
         (lspRecover src toks tags)
         pr)
     }
@@ -2340,7 +2340,7 @@
 ;; Whether `lspParse` had to drop tokens to answer.
 (pub :: lspParseLossy (-> Int Bool))
 (pub fn (lspParseLossy pr)
-  (== (memGetWord pr 2) (- 0 2)))
+  (== (pResPos pr) (- 0 2)))
 
 ;; The recovered parse of a document whose own parse failed.
 (pub :: lspRecover (-> String Ints (Vec AxtagEnt) Int))
@@ -2364,12 +2364,12 @@
           {
             (let r (lspRepairForm (lspRecSlice flat (vecGet bounds i) (vecGet bounds (+ i 1)))))
             {
-              (if (== (memGetWord r 0) 0)
+              (if (pResFailed r)
                 (set drop 1)
                 {
-                  (if (== (memGetWord r 2) (- 0 2))
+                  (if (== (pResPos r) (- 0 2))
                     (set drop 1))
-                  (lspRecAppend decls (readAstNodes r 1))
+                  (lspRecAppend decls (pResNodes r))
                 })
               (set i (+ i 2))
             }
@@ -2633,7 +2633,7 @@
 (pub fn (lspRepairForm toks)
   {
     (let pr (parseModuleWith toks vecNew))
-    (if (!= (memGetWord pr 0) 0)
+    (if (pResOk pr)
       pr
       (lspRepairStep toks pr vecNew 32 (lspRecRealCount toks)))
   })
@@ -2643,13 +2643,13 @@
   (if (<= left 0)
     pr
     {
-      (let next (lspRepairEdit toks (lspRecErrAt toks (memGetWord pr 2)) tried))
+      (let next (lspRepairEdit toks (lspRecErrAt toks (pResPos pr)) tried))
       (if (== (vecLen next) 0)
         pr
         {
           (let pr2 (parseModuleWith next vecNew))
-          (if (!= (memGetWord pr2 0) 0)
-            (pOk (memGetWordVec pr2 1)
+          (if (pResOk pr2)
+            (pOk (pResNodes pr2)
               (if (== (lspRecRealCount next) want)
                 (- 0 1)
                 (- 0 2)))
@@ -3396,10 +3396,10 @@
 (pub fn (lspDefinition workspace src uri params gen)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonNull
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         {
           (let off (lspOffsetOf src ix (jsonGet params "position")))
@@ -3979,10 +3979,10 @@
 (pub fn (lspHover workspace src uri params gen)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonNull
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         {
           (let off (lspOffsetOf src ix (jsonGet params "position")))
@@ -4520,10 +4520,10 @@
 (pub fn (lspDocumentSymbols src)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonArr
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let out jsonArr)
         (let ix (lspLineIndex src))
         {
@@ -4816,9 +4816,9 @@
             (let pr (lspParse src))
             {
               (lspComplKeywords out seen prefix)
-              (if (! (== (memGetWord pr 0) 0))
+              (if (pResOk pr)
                 {
-                  (let decls (readAstNodes pr 1))
+                  (let decls (pResNodes pr))
                   {
                     (lspComplContract out seen src decls
                       (lspOffsetOf src ix (jsonGet params "position")) prefix)
@@ -5801,9 +5801,9 @@
         {
           {
             (let pr (parseModuleWith (lex (vecGet todo at)) (scanAxtags (vecGet todo at))))
-            (if (!= (memGetWord pr 0) 0)
+            (if (pResOk pr)
               {
-                (let decls (readAstNodes pr 1))
+                (let decls (pResNodes pr))
                 (let mut i 0)
                 (while (&& (! found) (< i (vecLen decls)))
                   {
@@ -7786,7 +7786,7 @@
     (let pr (lspParse src))
     (if (lspParseLossy pr)
       (as 0 Nodes)
-      (readAstNodes pr 1))
+      (pResNodes pr))
   })
 
 ; ------------------------------------------------------------------
@@ -10435,10 +10435,10 @@
 (pub fn (lspSignatureHelp workspace src uri params)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonNull
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         {
           (let o (lspViewCallAt src (lspOffsetOf src ix (jsonGet params "position"))))
@@ -10944,14 +10944,14 @@
 (pub fn (lspInlayHints workspace src uri params)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonArr
       ; The heads that are locals - a parameter or a `let`
       ; spelled like a declared `fn` - over the same
       ; declarations the range meets, so `(fn (apply k v) (k
       ; v))` beside a top-level `k` labels nothing.
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         (let n (strLen src))
         (let range (jsonGet params "range"))
@@ -11709,10 +11709,10 @@
 (pub fn (lspDocumentLinks workspace src uri)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonArr
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         (let n (strLen src))
         (let tcode (checkedTargetCode hostTarget))
@@ -11779,9 +11779,9 @@
             (if (> (strLen src) 0)
               {
                 (let pr (lspParse src))
-                (if (! (== (memGetWord pr 0) 0))
+                (if (pResOk pr)
                   {
-                    (let decls (readAstNodes pr 1))
+                    (let decls (pResNodes pr))
                     {
                       (lspViewSymsLocal out seen query uri src decls)
                       (lspViewSymsImported workspace out seen query (lspUriToPath uri) src decls)
@@ -12283,10 +12283,10 @@
     (let tokens (lex src))
     (let tags (scanAxtags src))
     (let pr (parseModuleWith tokens tags))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       0
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let edit (lspOrganizeEdit src uri decls tokens tags))
         (if (== edit 0)
           0
@@ -12511,10 +12511,10 @@
 (pub fn (lspCodeActionLocal workspace src uri params)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonArr
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         {
           (let want (lspRangeSpan src ix (jsonGet params "range")))
@@ -13458,9 +13458,9 @@
             (vecPush seen mod)
             {
               (let pr (parseModuleWith (lex text) (scanAxtags text)))
-              (if (== (memGetWord pr 0) 0)
+              (if (pResFailed pr)
                 0
-                (if (lspFixDeclaresPub (readAstNodes pr 1) name)
+                (if (lspFixDeclaresPub (pResNodes pr) name)
                   {
                     (vecPush found mod)
                     0
@@ -14180,10 +14180,10 @@
 (pub fn (lspTypeDefinition workspace src uri params)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonNull
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         {
           (let off (lspOffsetOf src ix (jsonGet params "position")))
@@ -14627,13 +14627,13 @@
 (pub fn (lspCodeLens src uri)
   {
     (let pr (lspParse src))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonArr
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let out jsonArr)
         (let ix (lspLineIndex src))
-        (let n (vecLen (memGetWordVec pr 1)))
+        (let n (vecLen (pResNodes pr)))
         {
           (for i in 0..n
             {
@@ -14705,13 +14705,13 @@
 (pub fn (lspGenFill workspace path src)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       "[]"
       {
-        (let calls (lspGenCallSites (readAstNodes pr 1)))
+        (let calls (lspGenCallSites (pResNodes pr)))
         (if (== (vecLen calls) 0)
           "[]"
-          (jsonWrite (lspGenEntries workspace path src (readAstNodes pr 1) calls)))
+          (jsonWrite (lspGenEntries workspace path src (pResNodes pr) calls)))
       })
   })
 
@@ -14775,10 +14775,10 @@
 (pub fn (lspGenOneCall workspace path src decls idx out)
   {
     (let pr2 (parseModuleWith (lex src) (scanAxtags src)))
-    (if (== (memGetWord pr2 0) 0)
+    (if (pResFailed pr2)
       0
       {
-        (let decls2 (lspKeepOneCall (readAstNodes pr2 1) idx))
+        (let decls2 (lspKeepOneCall (pResNodes pr2) idx))
         {
           (let before (lspDeclHandles decls2))
           (let wasCall (lspDeclIsCall decls2))
@@ -15072,10 +15072,10 @@
 (pub fn (lspExpandMacro workspace src uri params)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       jsonNull
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let ix (lspLineIndex src))
         {
           (let site (lspMacroSiteAt src decls (lspOffsetOf src ix (jsonGet params "position"))))
@@ -15143,13 +15143,13 @@
     {
       (let byCall (== (nodeTag site) TAG_D_MACROCALL))
       (let macName (nodeAName site))
-      (if (== (memGetWord pr2 0) 0)
+      (if (pResFailed pr2)
         jsonNull
         {
           (let decls2
             (if byCall
-              (lspKeepOneCall (readAstNodes pr2 1) idx)
-              (readAstNodes pr2 1)))
+              (lspKeepOneCall (pResNodes pr2) idx)
+              (pResNodes pr2)))
           {
             (let before (lspDeclHandles decls2))
             (let wasCall (lspDeclIsCall decls2))

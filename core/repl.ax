@@ -934,7 +934,7 @@
     (let toks (lex exprLine))
     {
       (let er (parseExpr toks 0))
-      (if (== (memGetWord er 0) 0)
+      (if (pResFailed er)
         {
           (replStyled REPL_ERROR "Parse error: the line does not parse as an expression\n")
           (pErr 0)
@@ -943,7 +943,7 @@
           (let dtoks (lex declsSrc))
           {
             (let dr (parseDecls dtoks 0 vecNew))
-            (if (== (memGetWord dr 0) 0)
+            (if (pResFailed dr)
               {
                 (replStyled REPL_ERROR "Error: the accumulated declarations no longer parse\n")
                 (pErr 0)
@@ -988,7 +988,7 @@
               ; and only then failed in the eval half, which
               ; reads as the prompt contradicting itself.
               {
-                (let decls (readAstNodes dr 1))
+                (let decls (pResNodes dr))
                 (let units
                   {
                     (let v vecNew)
@@ -1190,7 +1190,7 @@
 (pub fn (replTryCompile wrapper)
   {
     (let pr (parseModuleWith (lex wrapper) (scanAxtags wrapper)))
-    (if (== (memGetWord pr 0) 0)
+    (if (pResFailed pr)
       ; NOT `pErr`: `pErr`'s own argument is a PARSER POSITION (its
       ; `value` field is hardcoded 0, `parser.ax:771`), not a payload
       ; slot - `(pErr vecNew)` compiled clean (both are `Int`) and put
@@ -1213,7 +1213,7 @@
       ; goldens pin those bytes, and the prompt IS the invocation
       ; site the frame would point back at.
       {
-        (let decls (readAstNodes pr 1))
+        (let decls (pResNodes pr))
         (let tcode (checkedTargetCode hostTarget))
         (let bares vecNew)
         (let fulls vecNew)
@@ -1262,10 +1262,10 @@
 (pub fn (replCompile wrapper)
   {
     (let tr (replTryCompile wrapper))
-    (if (== (memGetWord tr 0) 1)
+    (if (pResOk tr)
       tr
       {
-        (let ds (memGetWordVec tr 1))
+        (let ds (pResVec tr))
         {
           (if (== (vecLen ds) 0)
             (replStyled REPL_ERROR "Error: parsing failed\n")
@@ -1309,12 +1309,12 @@
 (pub fn (replCompileExpr declsSrc exprLine tyStr)
   {
     (let tr (replTryCompile (replWrapper declsSrc exprLine tyStr 0)))
-    (if (== (memGetWord tr 0) 1)
+    (if (pResOk tr)
       tr
-      (if (replIoRetryNeeded (memGetWordVec tr 1))
+      (if (replIoRetryNeeded (pResVec tr))
         (replCompile (replWrapper declsSrc exprLine tyStr 1))
         {
-          (let ds (memGetWordVec tr 1))
+          (let ds (pResVec tr))
           {
             (if (== (vecLen ds) 0)
               (replStyled REPL_ERROR "Error: parsing failed\n")
@@ -1543,17 +1543,17 @@
 (pub fn (replExpr declsSrc line)
   {
     (let tr (typeExprAgainst declsSrc line))
-    (if (== (memGetWord tr 0) 0)
+    (if (pResFailed tr)
       0
       {
-        (let tyStr (memGetWordStr tr 1))
+        (let tyStr (pResText tr))
         {
           (replStyled REPL_MUTED (concat (concat "type : " tyStr) "\n"))
           {
             (let cr (replCompileExpr declsSrc line tyStr))
-            (if (== (memGetWord cr 0) 0)
+            (if (pResFailed cr)
               0
-              (replEval (memGetWordStr cr 1)))
+              (replEval (pResText cr)))
           }
         }
       })
@@ -1647,10 +1647,10 @@
 (pub fn (replDropMatching src tag name)
   {
     (let dr (parseDecls (lex src) 0 vecNew))
-    (if (== (memGetWord dr 0) 0)
+    (if (pResFailed dr)
       src
       {
-        (let decls (readAstNodes dr 1))
+        (let decls (pResNodes dr))
         (let spans (replTopLevelSpans src))
         (let mut out "")
         (let mut cursor 0)
@@ -1756,10 +1756,10 @@
     ; wrapper leaves it.
     (let program (concat replPrelude (replStripTrailingTags src)))
     (let dr (parseModuleWith (lex program) (scanAxtags program)))
-    (if (== (memGetWord dr 0) 0)
+    (if (pResFailed dr)
       0
       {
-        (let decls (readAstNodes dr 1))
+        (let decls (pResNodes dr))
         (let units
           {
             (let v vecNew)
@@ -1815,16 +1815,16 @@
 (pub fn (replDecl declsSrc line)
   {
     (let dr (parseDecls (lex line) 0 vecNew))
-    (if (== (memGetWord dr 0) 0)
+    (if (pResFailed dr)
       {
         (replStyled REPL_ERROR "Parse error: the declaration does not parse\n")
         declsSrc
       }
       {
-        (let decls (readAstNodes dr 1))
+        (let decls (pResNodes dr))
         {
           (let candidate (concat (concat (replDeclsSrcDropping declsSrc decls) line) "\n"))
-          (if (== (memGetWord (parseDecls (lex candidate) 0 vecNew) 0) 0)
+          (if (pResFailed (parseDecls (lex candidate) 0 vecNew))
             {
               (replStyled REPL_ERROR
                 "Parse error: imports must precede all definitions; use :reset before starting a new import header\n")
@@ -1953,7 +1953,7 @@
     }
     {
       (let tr (typeExprAgainst declsSrc arg))
-      (if (== (memGetWord tr 0) 0)
+      (if (pResFailed tr)
         0
         {
           (replStyled REPL_TEXT
@@ -1963,7 +1963,7 @@
                 {
                   (vecPush v arg)
                   (vecPush v " : ")
-                  (vecPush v (memGetWordStr tr 1))
+                  (vecPush v (pResText tr))
                   (vecPush v "\n")
                   v
                 }
@@ -1992,13 +1992,12 @@
         }
         {
           (let pr (parseModuleWith (lex src) (scanAxtags src)))
-          (if (== (memGetWord pr 0) 0)
+          (if (pResFailed pr)
             {
               (replStyled REPL_ERROR "Parse error: the file does not parse\n")
               declsSrc
             }
-            (if (== (memGetWord (parseDecls (lex (concat (concat declsSrc src) "\n")) 0 vecNew) 0)
-                  0)
+            (if (pResFailed (parseDecls (lex (concat (concat declsSrc src) "\n")) 0 vecNew))
               {
                 (replStyled REPL_ERROR
                   "Parse error: loaded imports must precede session definitions; use :reset before loading this module\n")
@@ -2024,7 +2023,7 @@
               ; unexpanded list reports an implementation's body
               ; as undefined names.
               {
-                (let decls (readAstNodes pr 1))
+                (let decls (pResNodes pr))
                 (let tcode (checkedTargetCode hostTarget))
                 (let bares vecNew)
                 (let fulls vecNew)
@@ -2084,15 +2083,15 @@
     }
     {
       (let tr (typeExprAgainst declsSrc arg))
-      (if (== (memGetWord tr 0) 0)
+      (if (pResFailed tr)
         0
         {
-          (let cr (replCompileExpr declsSrc arg (memGetWordStr tr 1)))
-          (if (== (memGetWord cr 0) 0)
+          (let cr (replCompileExpr declsSrc arg (pResText tr)))
+          (if (pResFailed cr)
             0
             {
               (replOut "Generated LLVM IR:\n")
-              (replOut (memGetWordStr cr 1))
+              (replOut (pResText cr))
               0
             })
         })
@@ -2593,9 +2592,9 @@
     (replOut "Definitions in scope:\n")
     {
       (let dr (parseDecls (lex declsSrc) 0 vecNew))
-      (if (! (== (memGetWord dr 0) 0))
+      (if (pResOk dr)
         {
-          (let decls (readAstNodes dr 1))
+          (let decls (pResNodes dr))
           (for d in decls
             (if (|| (== (nodeTag d) TAG_D_FN)
                   (|| (== (nodeTag d) TAG_D_SIG)
