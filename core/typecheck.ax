@@ -3496,7 +3496,7 @@
   (walkCtx : (Vec BCtx))
   (mut discard : Int)
   (unknownCallees : (Vec Int))
-  (mut regionWalkCtx : Int)
+  (mut regionWalkCtx : (Option RgnCtx))
   (fieldDecls : (Vec FieldDecl))
   (fieldDeclNames : (Vec FieldDeclName))
   (fieldStoreSpans : (Vec Int)))
@@ -4380,7 +4380,7 @@
     t.unsafe.eraseCounts
   })
 
-(:: tcRegionWalkCtx (-> Int Int))
+(:: tcRegionWalkCtx (-> Int (Option RgnCtx)))
 ;@axiom:effect(unsafe)
 (fn (tcRegionWalkCtx tc)
   {
@@ -4388,7 +4388,7 @@
     t.unsafe.regionWalkCtx
   })
 
-(:: tcSetRegionWalkCtx (-> Int Int Int))
+(:: tcSetRegionWalkCtx (-> Int (Option RgnCtx) Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetRegionWalkCtx tc v)
   {
@@ -5382,7 +5382,7 @@
                     :walkCtx (bsCtxOf vecNew vecNew 0 vecNew)
                     :discard 0
                     :unknownCallees vecNew
-                    :regionWalkCtx 0
+                    :regionWalkCtx None
                     :fieldDecls vecNew
                     :fieldDeclNames vecNew
                     :fieldStoreSpans vecNew)
@@ -31779,20 +31779,20 @@
 
 ; A parameter carrying the same contract may be forwarded. Shadowed
 ; names and ordinary local closures do not inherit the assertion.
-(pub :: rgnScopedParam (-> Int ASTNode Int))
+(pub :: rgnScopedParam (-> RgnCtx ASTNode Int))
 (pub fn (rgnScopedParam rc e)
   (if (!= (nodeTag e) TAG_E_VAR)
     0
     {
       (let pos (rgnEnvFind rc (nodeAName e)))
-      (if (|| (< pos 0) (>= pos (memGetWord rc 3)))
+      (if (|| (< pos 0) (>= pos rc.nparams))
         0
-        (if (== (intInVec (memGetWordVec (memGetWord rc 2) 13) pos 0) 1)
+        (if (== (intInVec (memGetWordVec rc.ent 13) pos 0) 1)
           1
           0))
     }))
 
-(pub :: rgnCheckScopedArgs (-> Int Int Nodes Int Int))
+(pub :: rgnCheckScopedArgs (-> RgnCtx Int Nodes Int Int))
 (pub fn (rgnCheckScopedArgs rc ent args span)
   {
     (let indices (fnEntScoped ent))
@@ -31818,7 +31818,7 @@
 
 ; Only a real non-nullary declaration is a static callback. A bare
 ; nullary factory executes and can return a closure with mutable captures.
-(pub :: rgnScopedStatic (-> Int ASTNode Int))
+(pub :: rgnScopedStatic (-> RgnCtx ASTNode Int))
 (pub fn (rgnScopedStatic rc e)
   (if (|| (!= (nodeTag e) TAG_E_VAR) (>= (rgnEnvFind rc (nodeAName e)) 0))
     0
@@ -31845,7 +31845,7 @@
         ty))
   })
 
-(pub :: rgnCheckScopedValue (-> Int ASTNode Int Int))
+(pub :: rgnCheckScopedValue (-> RgnCtx ASTNode Int Int))
 (pub fn (rgnCheckScopedValue rc e span)
   (if (== (nodeTag e) TAG_E_LAM)
     (rgnFormWalk rc e "#scoped callback" span)
@@ -31869,102 +31869,139 @@
             0))))))
 
 ; ---- the per-function walk context ----
-;   0 tc   1 decl   2 ent   3 nparams   4 env names (Vec String)
-;   5 env origins (Vec Int)   6 env binding regions (Vec Int)
-;   7 curBit   8 curRid   9 form parents (Vec Int)
-;   10 form names (Vec String)   11 report   12 facts   13 changed
-;   14 lambda base (env index; -1 outside every lambda)
-;   15 capture mask of the lambda being walked
-;   16 capture names (Vec String)   17 lexical extent bodies (Vec ASTNode)
-;   18 capture origin masks (Vec Int), for AX3062 to name the capture
-;   19 extent boundary spans (Vec Int), for diagnostics and the LSP
-;   20 a reclaimed extent may be entered by the expression being walked
 ; A checker walks one function at a time. Reuse this frame and its
 ; vectors across worklist rounds; per-function facts live in FnEnt.
-(pub :: rgnCtxNew (-> Int ASTNode Int Int Int))
-;@axiom:effect(unsafe)
+(pub struct RgnCtx
+  (mut tc : Int)
+  (mut decl : ASTNode)
+  (mut ent : Int)
+  (mut nparams : Int)
+  (names : Strings)
+  (origs : Ints)
+  (binds : Ints)
+  (mut curBit : Int)
+  (mut curRid : Int)
+  (formParents : Ints)
+  (formNames : Strings)
+  (mut report : Int)
+  (mut facts : Int)
+  (mut changed : Int)
+  (mut lamBase : Int)
+  (mut capMask : Int)
+  (mut capNames : Strings)
+  (extents : Nodes)
+  (mut capOrigins : Ints)
+  (extentSpans : Ints)
+  (mut reclaim : Int))
+
+; the environment: names, origins and binding regions
+; the enclosing forms, parents and names
+; the env index the lambda being walked starts at; -1 outside every lambda
+; the capture mask of the lambda being walked, and its captures' names
+; and origin masks, for AX3062 to name the capture
+; the lexical extent bodies, and their boundary spans for diagnostics
+; and the LSP
+; whether a reclaimed extent may be entered by the expression walked
+(pub :: rgnCtxNew (-> Int ASTNode Int Int RgnCtx))
 (pub fn (rgnCtxNew tc d ent report)
   {
-    (let mut rc (tcRegionWalkCtx tc))
-    (if (== rc 0)
-      {
-        (set rc (memAlloc 168))
-        (tcSetRegionWalkCtx tc rc)
-        (memSetWord rc 4 (as (rgnStrVec) Int))
-        (memSetWord rc 5 (as (rgnIntVec) Int))
-        (memSetWord rc 6 (as (rgnIntVec) Int))
-        (memSetWord rc 9 (as (rgnIntVec) Int))
-        (memSetWord rc 10 (as (rgnStrVec) Int))
-        (memSetWord rc 16 (as (rgnStrVec) Int))
-        (memSetWord rc 17 (as nodesNew Int))
-        (memSetWord rc 18 (as (rgnIntVec) Int))
-        (memSetWord rc 19 (as (rgnIntVec) Int))
-      }
-      {
-        (vecClear (rgnNames rc))
-        (vecClear (rgnOrigs rc))
-        (vecClear (rgnBinds rc))
-        (vecClear (rgnFormParents rc))
-        (vecClear (rgnFormNames rc))
-        (vecClear (as (memGetWord rc 16) Strings))
-        (vecClear (readAstNodes rc 17))
-        (vecClear (as (memGetWord rc 18) Ints))
-        (vecClear (as (memGetWord rc 19) Ints))
-      })
-    (let previous (memGetWord rc 1))
-    (memSetWord rc 0 tc)
-    (memSetWord rc 1 d)
-    (__release previous)
-    (memSetWord rc 2 ent)
-    (memSetWord rc 3 (vecLen (nodeBNames d)))
-    (memSetWord rc 7 1)
-    (memSetWord rc 8 0)
-    (memSetWord rc 11 report)
-    (memSetWord rc 12 (rgnFactsOf ent (vecLen (nodeBNames d))))
-    (memSetWord rc 13 0)
-    (memSetWord rc 14 -1)
-    (memSetWord rc 15 0)
-    (memSetWord rc 20 0)
+    (let rc
+      (match (tcRegionWalkCtx tc)
+        ((Some old)
+          {
+            (vecClear old.names)
+            (vecClear old.origs)
+            (vecClear old.binds)
+            (vecClear old.formParents)
+            (vecClear old.formNames)
+            (vecClear old.capNames)
+            (vecClear old.extents)
+            (vecClear old.capOrigins)
+            (vecClear old.extentSpans)
+            old
+          }
+        )
+        ((None)
+          {
+            (let fresh
+              (RgnCtx
+                :tc 0
+                :decl nilNode
+                :ent 0
+                :nparams 0
+                :names (rgnStrVec)
+                :origs (rgnIntVec)
+                :binds (rgnIntVec)
+                :curBit 1
+                :curRid 0
+                :formParents (rgnIntVec)
+                :formNames (rgnStrVec)
+                :report 0
+                :facts 0
+                :changed 0
+                :lamBase -1
+                :capMask 0
+                :capNames (rgnStrVec)
+                :extents nodesNew
+                :capOrigins (rgnIntVec)
+                :extentSpans (rgnIntVec)
+                :reclaim 0))
+            (tcSetRegionWalkCtx tc (Some fresh))
+            fresh
+          }
+        )))
+    (set rc.tc tc)
+    (set rc.decl d)
+    (set rc.ent ent)
+    (set rc.nparams (vecLen (nodeBNames d)))
+    (set rc.curBit 1)
+    (set rc.curRid 0)
+    (set rc.report report)
+    (set rc.facts (rgnFactsOf ent (vecLen (nodeBNames d))))
+    (set rc.changed 0)
+    (set rc.lamBase -1)
+    (set rc.capMask 0)
+    (set rc.reclaim 0)
     rc
   })
 
-(pub :: rgnTc (-> Int Int))
+(pub :: rgnTc (-> RgnCtx Int))
 (pub fn (rgnTc rc)
-  (memGetWord rc 0))
+  rc.tc)
 
-(pub :: rgnNames (-> Int Strings))
+(pub :: rgnNames (-> RgnCtx Strings))
 (pub fn (rgnNames rc)
-  (memGetWordVec rc 4))
+  rc.names)
 
-(pub :: rgnOrigs (-> Int Ints))
+(pub :: rgnOrigs (-> RgnCtx Ints))
 (pub fn (rgnOrigs rc)
-  (memGetWordVec rc 5))
+  rc.origs)
 
-(pub :: rgnBinds (-> Int Ints))
+(pub :: rgnBinds (-> RgnCtx Ints))
 (pub fn (rgnBinds rc)
-  (memGetWordVec rc 6))
+  rc.binds)
 
-(pub :: rgnFormParents (-> Int Ints))
+(pub :: rgnFormParents (-> RgnCtx Ints))
 (pub fn (rgnFormParents rc)
-  (memGetWordVec rc 9))
+  rc.formParents)
 
-(pub :: rgnFormNames (-> Int Strings))
+(pub :: rgnFormNames (-> RgnCtx Strings))
 (pub fn (rgnFormNames rc)
-  (memGetWordVec rc 10))
+  rc.formNames)
 
-(pub :: rgnReport (-> Int Int))
+(pub :: rgnReport (-> RgnCtx Int))
 (pub fn (rgnReport rc)
-  (memGetWord rc 11))
+  rc.report)
 
-(pub :: rgnFacts (-> Int Int))
+(pub :: rgnFacts (-> RgnCtx Int))
 (pub fn (rgnFacts rc)
-  (memGetWord rc 12))
+  rc.facts)
 
 ; All parameter bits of this function, as a mask.
-(pub :: rgnParamMask (-> Int Int))
+(pub :: rgnParamMask (-> RgnCtx Int))
 (pub fn (rgnParamMask rc)
   {
-    (let n (memGetWord rc 3))
+    (let n rc.nparams)
     (if (>= n 62)
       0
       (- (<< 1 (+ n 1)) 2))
@@ -31972,10 +32009,10 @@
 
 ; The bits that mean "fresh in some region of this body": CUR0 and
 ; every form. For the facts a caller reads, both are "fresh".
-(pub :: rgnFreshMask (-> Int Int))
+(pub :: rgnFreshMask (-> RgnCtx Int))
 (pub fn (rgnFreshMask rc)
   {
-    (let n (memGetWord rc 3))
+    (let n rc.nparams)
     (let k (vecLen (rgnFormParents rc)))
     (if (>= (+ n k) 62)
       1
@@ -31983,17 +32020,17 @@
   })
 
 ; The region identity of one origin bit.
-(pub :: rgnOriginRid (-> Int Int Int))
+(pub :: rgnOriginRid (-> RgnCtx Int Int))
 (pub fn (rgnOriginRid rc bit)
   {
-    (let n (memGetWord rc 3))
+    (let n rc.nparams)
     (if (<= bit n)
       0
       (- bit n))
   })
 
 ; Does region `a` outlive (or equal) region `b`? The order of §2.2.
-(pub :: rgnOutlives (-> Int Int Int Int))
+(pub :: rgnOutlives (-> RgnCtx Int Int Int))
 (pub fn (rgnOutlives rc a b)
   (if (== a b)
     1
@@ -32004,7 +32041,7 @@
         0))))
 
 ; Is form `b` nested (strictly) inside form `a`? Walk b's parents.
-(pub :: rgnFormNestedIn (-> Int Int Int Int))
+(pub :: rgnFormNestedIn (-> RgnCtx Int Int Int))
 (pub fn (rgnFormNestedIn rc a b)
   {
     (let parent (vecGet (rgnFormParents rc) (- b 1)))
@@ -32016,7 +32053,7 @@
   })
 
 ; ---- rendering, for the messages ----
-(pub :: rgnRidText (-> Int Int String))
+(pub :: rgnRidText (-> RgnCtx Int String))
 (pub fn (rgnRidText rc rid)
   (if (== rid 0)
     "this function's own region (its caller's current region)"
@@ -32031,33 +32068,33 @@
         (concat (concat "region `" nm) "`"))
     }))
 
-(pub :: rgnOriginText (-> Int Int String))
+(pub :: rgnOriginText (-> RgnCtx Int String))
 (pub fn (rgnOriginText rc bit)
   {
-    (let n (memGetWord rc 3))
+    (let n rc.nparams)
     (if (< bit 0)
       "a static value"
       (if (== bit 0)
         "a value allocated in this function's own region"
         (if (<= bit n)
           (concat
-            (concat (concat "parameter `" (vecGetStr (nodeBNames (readAstNode rc 1)) (- bit 1)))
+            (concat (concat "parameter `" (vecGetStr (nodeBNames rc.decl) (- bit 1)))
               "`, which lives in ")
             (rgnRidText rc (rgnOriginRid rc bit)))
           (concat "a value allocated in " (rgnRidText rc (rgnOriginRid rc bit))))))
   })
 
 ; The same, followed by the comma a relative clause closes with.
-(pub :: rgnOriginTextComma (-> Int Int String))
+(pub :: rgnOriginTextComma (-> RgnCtx Int String))
 (pub fn (rgnOriginTextComma rc bit)
-  (if (&& (> bit 0) (<= bit (memGetWord rc 3)))
+  (if (&& (> bit 0) (<= bit rc.nparams))
     (concat (rgnOriginText rc bit) ",")
     (rgnOriginText rc bit)))
 
 ; ---- the escape rule ----
 ; The first (value origin, target region) pair that violates the
 ; order, answered as `v * 64 + rid + 1`, or 0 when every pair holds.
-(pub :: rgnStoreBad (-> Int Int Int Int))
+(pub :: rgnStoreBad (-> RgnCtx Int Int Int))
 (pub fn (rgnStoreBad rc valMask tgtRid)
   {
     (let mut i 0)
@@ -32076,7 +32113,7 @@
 
 ; The same over a TARGET given as an origin mask: every origin of the
 ; target is a region the value must outlive.
-(pub :: rgnStoreBadMask (-> Int Int Int Int))
+(pub :: rgnStoreBadMask (-> RgnCtx Int Int Int))
 (pub fn (rgnStoreBadMask rc valMask tgtMask)
   {
     (let mut i 0)
@@ -32095,17 +32132,17 @@
 ; The source boundary for a lexical origin. Parameter and CUR0 origins
 ; carry no local reclamation boundary. Each extent body belongs to the
 ; function currently being reported, so related spans remain same-file.
-(pub :: rgnOriginSpan (-> Int Int Int))
+(pub :: rgnOriginSpan (-> RgnCtx Int Int))
 (pub fn (rgnOriginSpan rc bit)
   {
-    (let k (- bit (+ (memGetWord rc 3) 1)))
-    (let boundaries (memGetWordVec rc 19))
+    (let k (- bit (+ rc.nparams 1)))
+    (let boundaries rc.extentSpans)
     (if (|| (< k 0) (>= k (vecLen boundaries)))
       0
       (vecGet boundaries k))
   })
 
-(pub :: rgnEmitEscape (-> Int Int Int String String ASTNode Int))
+(pub :: rgnEmitEscape (-> RgnCtx Int Int String String ASTNode Int))
 (pub fn (rgnEmitEscape rc bad span into how valNode)
   (if (== (rgnReport rc) 0)
     0
@@ -32166,7 +32203,7 @@
       })))
 
 ; ---- the environment ----
-(pub :: rgnBind (-> Int String Int Int Int))
+(pub :: rgnBind (-> RgnCtx String Int Int Int))
 (pub fn (rgnBind rc name mask rid)
   {
     (vecPushStr (rgnNames rc) name)
@@ -32175,11 +32212,11 @@
     0
   })
 
-(pub :: rgnEnvLen (-> Int Int))
+(pub :: rgnEnvLen (-> RgnCtx Int))
 (pub fn (rgnEnvLen rc)
   (vecLen (rgnNames rc)))
 
-(pub :: rgnEnvTrunc (-> Int Int Int))
+(pub :: rgnEnvTrunc (-> RgnCtx Int Int))
 (pub fn (rgnEnvTrunc rc n)
   (if (<= (vecLen (rgnNames rc)) n)
     0
@@ -32191,11 +32228,11 @@
     }))
 
 ; The innermost binding of `name`, or -1.
-(pub :: rgnEnvFind (-> Int String Int))
+(pub :: rgnEnvFind (-> RgnCtx String Int))
 (pub fn (rgnEnvFind rc name)
   (rgnEnvFindFrom rc name (- (vecLen (rgnNames rc)) 1)))
 
-(pub :: rgnEnvFindFrom (-> Int String Int Int))
+(pub :: rgnEnvFindFrom (-> RgnCtx String Int Int))
 (pub fn (rgnEnvFindFrom rc name i)
   (if (< i 0)
     (- 0 1)
@@ -32204,7 +32241,7 @@
       (rgnEnvFindFrom rc name (- i 1)))))
 
 ; ---- facts recording ----
-(pub :: rgnFactsOr (-> Int Int Int Int))
+(pub :: rgnFactsOr (-> RgnCtx Int Int Int))
 (pub fn (rgnFactsOr rc word mask)
   {
     (let f (rgnFacts rc))
@@ -32212,7 +32249,7 @@
       0
       {
         (memSetWord f word (| (memGetWord f word) mask))
-        (memSetWord rc 13 1)
+        (set rc.changed 1)
         0
       })
   })
@@ -32220,19 +32257,19 @@
 ; Reclamation is a monotone function fact, and a local expression fact.
 ; A handle brackets the latter to distinguish its body from other
 ; scopes in the same function. Unknown calls may reclaim too.
-(pub :: rgnNoteReclaim (-> Int Int Int))
+(pub :: rgnNoteReclaim (-> RgnCtx Int Int))
 (pub fn (rgnNoteReclaim rc possible)
   (if (== possible 0)
     0
     {
-      (memSetWord rc 20 1)
+      (set rc.reclaim 1)
       (rgnFactsOr rc 8 1)
     }))
 
 ; A value with origins `valMask` flows into a place with origins
 ; `tgtMask`: every parameter among the targets learns what flowed in.
 ; `via` names the callee the flow went through, "" for this body.
-(pub :: rgnNoteFlow (-> Int Int Int String Int))
+(pub :: rgnNoteFlow (-> RgnCtx Int Int String Int))
 ;@axiom:effect(unsafe)
 (pub fn (rgnNoteFlow rc valMask tgtMask via)
   {
@@ -32242,7 +32279,7 @@
     (let fromP (>> (& valMask (rgnParamMask rc)) 1))
     (let mut i 0)
     {
-      (while (< i (memGetWord rc 3))
+      (while (< i rc.nparams)
         {
           (if (!= (& params (<< 1 (+ i 1))) 0)
             {
@@ -32258,7 +32295,7 @@
                 (if (! (== (| (vecGet ff i) fromP) (vecGet ff i)))
                   {
                     (vecSet ff i (| (vecGet ff i) fromP))
-                    (memSetWord rc 13 1)
+                    (set rc.changed 1)
                   })
               }
             })
@@ -32269,7 +32306,7 @@
   })
 
 ; ---- the walk ----
-(pub :: rgnExpr (-> Int ASTNode Int))
+(pub :: rgnExpr (-> RgnCtx ASTNode Int))
 (pub fn (rgnExpr rc e)
   (if (nodeSame e nilNode)
     0
@@ -32287,7 +32324,7 @@
                 {
                   (let mark (rgnEnvLen rc))
                   {
-                    (rgnBind rc (nodeAName e) v (memGetWord rc 8))
+                    (rgnBind rc (nodeAName e) v rc.curRid)
                     {
                       (let r (rgnExpr rc (nodeCChild e)))
                       {
@@ -32354,7 +32391,7 @@
                                 0)))))))))))))
     }))
 
-(pub :: rgnVar (-> Int ASTNode Int))
+(pub :: rgnVar (-> RgnCtx ASTNode Int))
 (pub fn (rgnVar rc e)
   {
     (let idx (rgnEnvFind rc (nodeAName e)))
@@ -32384,21 +32421,21 @@
       {
         ; A read below the innermost lambda's base is a CAPTURE, and
         ; the closure's origins grow by it.
-        (if (&& (>= (memGetWord rc 14) 0) (< idx (memGetWord rc 14)))
+        (if (&& (>= rc.lamBase 0) (< idx rc.lamBase))
           (if (!= (vecGet (rgnOrigs rc) idx) 0)
             {
-              (memSetWord rc 15 (| (memGetWord rc 15) (vecGet (rgnOrigs rc) idx)))
-              (if (< (strVecIdx (memGetWordVec rc 16) (nodeAName e)) 0)
+              (set rc.capMask (| rc.capMask (vecGet (rgnOrigs rc) idx)))
+              (if (< (strVecIdx rc.capNames (nodeAName e)) 0)
                 {
-                  (vecPushStr (memGetWordVec rc 16) (nodeAName e))
-                  (vecPush (memGetWordVec rc 18) (vecGet (rgnOrigs rc) idx))
+                  (vecPushStr rc.capNames (nodeAName e))
+                  (vecPush rc.capOrigins (vecGet (rgnOrigs rc) idx))
                 })
             }))
         (vecGet (rgnOrigs rc) idx)
       })
   })
 
-(pub :: rgnSeq (-> Int (Vec ASTNode) Int Int Int))
+(pub :: rgnSeq (-> RgnCtx (Vec ASTNode) Int Int Int))
 (pub fn (rgnSeq rc v i last)
   (if (== (as v Int) 0)
     last
@@ -32406,7 +32443,7 @@
       last
       (rgnSeq rc v (+ i 1) (rgnExpr rc (vecGet v i))))))
 
-(pub :: rgnArgsUnion (-> Int Nodes Int Int Int))
+(pub :: rgnArgsUnion (-> RgnCtx Nodes Int Int Int))
 (pub fn (rgnArgsUnion rc v i acc)
   (if (== (as v Int) 0)
     acc
@@ -32420,10 +32457,10 @@
 ; one of 63 possible bits to an outer binding, so the bound follows
 ; from the environment's size. Extent identities stay fixed across
 ; these walks (`rgnFormWalk`).
-(pub :: rgnWhile (-> Int ASTNode Int))
+(pub :: rgnWhile (-> RgnCtx ASTNode Int))
 (pub fn (rgnWhile rc e)
   {
-    (let rep (memGetWord rc 11))
+    (let rep rc.report)
     (let mark (rgnEnvLen rc))
     (let before (rgnIntVec))
     (let limit (+ (* 63 (+ mark 1)) 1))
@@ -32432,7 +32469,7 @@
     (let mut i 0)
     {
       (rgnFillInts before mark 0)
-      (memSetWord rc 11 0)
+      (set rc.report 0)
       (while (&& (== changed 1) (< round limit))
         {
           (set i 0)
@@ -32449,12 +32486,12 @@
               (set changed 1)))
           (set round (+ round 1))
         })
-      (memSetWord rc 11 rep)
+      (set rc.report rep)
       (if (== changed 1)
         {
           (memSetWord (rgnTc rc) 28 2)
           (memSetWord (rgnFacts rc) 5 1)
-          (memSetWord rc 13 1)
+          (set rc.changed 1)
           (if (== rep 1)
             (emitDiag (rgnTc rc)
               (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan e)
@@ -32469,14 +32506,14 @@
     }
   })
 
-(pub :: rgnMatch (-> Int ASTNode Int))
+(pub :: rgnMatch (-> RgnCtx ASTNode Int))
 (pub fn (rgnMatch rc e)
   {
     (let s (rgnExpr rc (nodeAChild e)))
     (rgnArms rc (nodeBChildren e) 0 s 0 e 1)
   })
 
-(pub :: rgnArms (-> Int (Vec ASTNode) Int Int Int ASTNode Int Int))
+(pub :: rgnArms (-> RgnCtx (Vec ASTNode) Int Int Int ASTNode Int Int))
 (pub fn (rgnArms rc arms i s acc mnode allok)
   (if (>= i (vecLen arms))
     ; Every arm walked: stamp the match iff every arm body carries
@@ -32514,7 +32551,7 @@
 
 ; A pattern's binders take the scrutinee's origins: a field of a
 ; value lives where the value does.
-(pub :: rgnBindPat (-> Int ASTNode Int Int))
+(pub :: rgnBindPat (-> RgnCtx ASTNode Int Int))
 (pub fn (rgnBindPat rc pat s)
   (if (nodeSame pat nilNode)
     0
@@ -32524,7 +32561,7 @@
         (if (|| (strEq (nodeAName pat) "_")
               (|| (strEq (nodeAName pat) "true") (strEq (nodeAName pat) "false")))
           0
-          (rgnBind rc (nodeAName pat) s (memGetWord rc 8)))
+          (rgnBind rc (nodeAName pat) s rc.curRid))
         (if (== tag TAG_E_APP)
           (rgnBindPats rc (spineArgVec pat vecNew) 0 s)
           (if (== tag TAG_P_CONNAMED)
@@ -32532,7 +32569,7 @@
             0)))
     }))
 
-(pub :: rgnBindPats (-> Int Nodes Int Int Int))
+(pub :: rgnBindPats (-> RgnCtx Nodes Int Int Int))
 (pub fn (rgnBindPats rc pats i s)
   (if (== (as pats Int) 0)
     0
@@ -32545,7 +32582,7 @@
 
 ; `(set x v)`: the cell was made in the region current at its `let`,
 ; and the value must outlive that. Then the binding's origins widen.
-(pub :: rgnSet (-> Int ASTNode Int))
+(pub :: rgnSet (-> RgnCtx ASTNode Int))
 (pub fn (rgnSet rc e)
   {
     (let v (rgnExpr rc (nodeBChild e)))
@@ -32564,7 +32601,7 @@
 ; when its checked type is scalar: evaluating it can store elsewhere.
 ; A scalar result itself carries no reference origin, including a
 ; length read through the raw implementation of `strLen`.
-(pub :: rgnSetField (-> Int ASTNode Int))
+(pub :: rgnSetField (-> RgnCtx ASTNode Int))
 (pub fn (rgnSetField rc e)
   {
     (let b (rgnExpr rc (nodeAChild e)))
@@ -32587,44 +32624,42 @@
 ; conservative reading. Nested lambdas propagate captures outward: a
 ; capture of the inner lambda that is below the OUTER lambda's base is
 ; the outer's capture too.
-(pub :: rgnLam (-> Int ASTNode Int))
-;@axiom:effect(unsafe)
+(pub :: rgnLam (-> RgnCtx ASTNode Int))
 (pub fn (rgnLam rc e)
   {
     (let mark (rgnEnvLen rc))
-    (let savedBase (memGetWord rc 14))
-    (let savedCap (memGetWord rc 15))
-    (let savedNames (memGetWord rc 16))
-    (let savedMasks (memGetWord rc 18))
+    (let savedBase rc.lamBase)
+    (let savedCap rc.capMask)
+    (let savedNames rc.capNames)
+    (let savedMasks rc.capOrigins)
     (let params (nodeANames e))
     {
-      (memSetWord rc 14 mark)
-      (memSetWord rc 15 0)
-      (memSetWord rc 16 (as (rgnStrVec) Int))
-      (memSetWord rc 18 (as (rgnIntVec) Int))
-      (rgnBindTypedParams rc params 0 (memGetWord rc 7)
-        (if (if (> (memGetWord rc 8) 0)
-          (strEq (vecGetStr (rgnFormNames rc) (- (memGetWord rc 8) 1)) "#scoped callback")
+      (set rc.lamBase mark)
+      (set rc.capMask 0)
+      (set rc.capNames (rgnStrVec))
+      (set rc.capOrigins (rgnIntVec))
+      (rgnBindTypedParams rc params 0 rc.curBit
+        (if (if (> rc.curRid 0)
+          (strEq (vecGetStr (rgnFormNames rc) (- rc.curRid 1)) "#scoped callback")
           false)
           (rgnCheckedTy e)
           nilNode))
       (rgnExpr rc (nodeBChild e))
       (rgnEnvTrunc rc mark)
       {
-        (let cap (memGetWord rc 15))
+        (let cap rc.capMask)
         {
-          (memSetWord rc 14 savedBase)
+          (set rc.lamBase savedBase)
           ; what the inner captured below the outer's base, the outer
           ; captured too - and the outer's capture list grows by the
           ; inner's, so a store of the outer names the right capture
-          (memSetWord rc 15 (| savedCap (rgnCapBelow rc cap savedBase)))
+          (set rc.capMask (| savedCap (rgnCapBelow rc cap savedBase)))
           (if (! (< savedBase 0))
-            (rgnMergeCaps (memGetWordVec rc 16) (memGetWordVec rc 18) (as savedNames (Vec String))
-              (as savedMasks (Vec Int)) 0))
+            (rgnMergeCaps rc.capNames rc.capOrigins savedNames savedMasks 0))
           ; The closure's own origins: where it was made, and what it
           ; holds. Its capture lists stay in words 18/20 for the store
           ; or return that follows this expression to name a capture.
-          (| (memGetWord rc 7) cap)
+          (| rc.curBit cap)
         }
       }
     }
@@ -32649,28 +32684,28 @@
 
 ; The name of the last lambda's capture that carries origin `bit`,
 ; when the value at `node` IS that lambda; "" otherwise.
-(pub :: rgnCaptureFor (-> Int ASTNode Int String))
+(pub :: rgnCaptureFor (-> RgnCtx ASTNode Int String))
 (pub fn (rgnCaptureFor rc node bit)
   (if (nodeSame node nilNode)
     ""
     (if (!= (nodeTag node) TAG_E_LAM)
       ""
-      (rgnCaptureFrom (memGetWordVec rc 16) (memGetWordVec rc 18) bit 0))))
+      (rgnCaptureFrom rc.capNames rc.capOrigins bit 0))))
 
 ; When the value at `node` is the last lambda walked: the first
 ; (capture origin, target) pair that violates the order against
 ; `tgtRid`, in `rgnStoreBad`'s encoding, or 0. Asked BEFORE the
 ; closure's own record is blamed, because "the closure captures `s`"
 ; is the fix's address and "a value allocated here" is not.
-(pub :: rgnCaptureBad (-> Int ASTNode Int Int))
+(pub :: rgnCaptureBad (-> RgnCtx ASTNode Int Int))
 (pub fn (rgnCaptureBad rc node tgtRid)
   (if (nodeSame node nilNode)
     0
     (if (!= (nodeTag node) TAG_E_LAM)
       0
-      (rgnCaptureBadFrom rc (memGetWordVec rc 18) tgtRid 0))))
+      (rgnCaptureBadFrom rc rc.capOrigins tgtRid 0))))
 
-(pub :: rgnCaptureBadFrom (-> Int Ints Int Int Int))
+(pub :: rgnCaptureBadFrom (-> RgnCtx Ints Int Int Int))
 (pub fn (rgnCaptureBadFrom rc masks tgtRid i)
   (if (>= i (vecLen masks))
     0
@@ -32689,13 +32724,13 @@
       (vecGetStr names i)
       (rgnCaptureFrom names masks bit (+ i 1)))))
 
-(pub :: rgnCapBelow (-> Int Int Int Int))
+(pub :: rgnCapBelow (-> RgnCtx Int Int Int))
 (pub fn (rgnCapBelow rc cap base)
   (if (< base 0)
     0
     cap))
 
-(pub :: rgnBindTypedParams (-> Int Strings Int Int ASTNode Int))
+(pub :: rgnBindTypedParams (-> RgnCtx Strings Int Int ASTNode Int))
 (pub fn (rgnBindTypedParams rc params i mask ty)
   (if (== (as params Int) 0)
     0
@@ -32706,14 +32741,14 @@
           (if (== (rgTyScalar (rgnTc rc) (nthParamTy ty i nilNode)) 1)
             0
             mask)
-          (memGetWord rc 8))
+          rc.curRid)
         (rgnBindTypedParams rc params (+ i 1) mask ty)
       })))
 
 ; `(region r E)` - S2's node, walked against its contract: `r` in the
 ; name slot, `E` in word 2. Fresh values inside are the form's; the
 ; only scalar results may cross the lexical reset, checked by checkRegion.
-(pub :: rgnRegionForm (-> Int ASTNode Int))
+(pub :: rgnRegionForm (-> RgnCtx ASTNode Int))
 (pub fn (rgnRegionForm rc e)
   (rgnFormWalk rc (nodeBChild e) (nodeAName e) (nodeC e)))
 
@@ -32722,16 +32757,16 @@
 ; of it anywhere older is MM-RGN-3's refusal. A `(region r ...)` form
 ; a recovery point's thunk (`rgnRecoverForm`) and a handler invocation
 ; (`rgnHandlerValue`) all come here.
-(pub :: rgnFormWalk (-> Int ASTNode String Int Int))
+(pub :: rgnFormWalk (-> RgnCtx ASTNode String Int Int))
 (pub fn (rgnFormWalk rc body name boundary)
   {
     (if (! (strEq name "#handler"))
       (rgnNoteReclaim rc 1))
-    (let n (memGetWord rc 3))
-    (let forms (readAstNodes rc 17))
+    (let n rc.nparams)
+    (let forms rc.extents)
     (let mut k 0)
-    (let savedBit (memGetWord rc 7))
-    (let savedRid (memGetWord rc 8))
+    (let savedBit rc.curBit)
+    (let savedRid rc.curRid)
     {
       (while (&& (< k (vecLen forms)) (! (nodeSame (vecGet forms k) body)))
         (set k (+ k 1)))
@@ -32757,15 +32792,15 @@
                 (vecPush forms body)
                 (vecPush (rgnFormParents rc) savedRid)
                 (vecPushStr (rgnFormNames rc) name)
-                (vecPush (memGetWordVec rc 19) boundary)
+                (vecPush rc.extentSpans boundary)
               })
-            (memSetWord rc 7 bit)
-            (memSetWord rc 8 (+ k 1))
+            (set rc.curBit bit)
+            (set rc.curRid (+ k 1))
             {
               (let v (rgnExpr rc body))
               {
-                (memSetWord rc 7 savedBit)
-                (memSetWord rc 8 savedRid)
+                (set rc.curBit savedBit)
+                (set rc.curRid savedRid)
                 (if (!= (& v bit) 0)
                   (| (& v (^ v bit)) savedBit)
                   v)
@@ -32780,18 +32815,18 @@
 ; of its operation arguments. The function fact propagates through
 ; resolved callees, while an unknown invocation may enter one. Other
 ; regions elsewhere in this function do not shorten these arguments.
-(pub :: rgnHandle (-> Int ASTNode Int))
+(pub :: rgnHandle (-> RgnCtx ASTNode Int))
 (pub fn (rgnHandle rc e)
   {
-    (let saved (memGetWord rc 20))
-    (memSetWord rc 20 0)
+    (let saved rc.reclaim)
+    (set rc.reclaim 0)
     (let b (rgnExpr rc (nodeAChild e)))
-    (let shorter (memGetWord rc 20))
+    (let shorter rc.reclaim)
     (if (! (nodeSame (handleOpDecl (rgnTc rc) (nodeBChildren e) 0 nilNode) nilNode))
       (if (== shorter 1)
         (rgnHandlerValue rc (nodeCChild e))
         (rgnHandlerLocal rc (nodeCChild e))))
-    (memSetWord rc 20 (| saved (memGetWord rc 20)))
+    (set rc.reclaim (| saved rc.reclaim))
     b
   })
 
@@ -32800,7 +32835,7 @@
 ; capture, including references derived from this function's parameters.
 ; Record those flows so a caller cannot install it in a shorter scope.
 ; Its invocation may reclaim and therefore constrains an outer handler.
-(pub :: rgnHandlerLocal (-> Int ASTNode Int))
+(pub :: rgnHandlerLocal (-> RgnCtx ASTNode Int))
 (pub fn (rgnHandlerLocal rc h)
   (if (== (tyIsErr (rgnCheckedTy h)) 1)
     0
@@ -32825,7 +32860,7 @@
 ; anything else - a `let`-bound closure, a parameter - is a thunk this
 ; check can't see, and is AX3090. The answer is the status or the
 ; thunk's word, so it carries no origin.
-(pub :: rgnRecoverForm (-> Int Nodes Int Int))
+(pub :: rgnRecoverForm (-> RgnCtx Nodes Int Int))
 (pub fn (rgnRecoverForm rc args span)
   {
     (let thunk (vecGet args 1))
@@ -32867,7 +32902,7 @@
 ; Refuse it rather than certifying its installation's lifetime for
 ; calls made in a shorter extent. Built-in-only handle lists never
 ; evaluate their handler, so the caller skips this walk for them.
-(pub :: rgnHandlerValue (-> Int ASTNode Int))
+(pub :: rgnHandlerValue (-> RgnCtx ASTNode Int))
 (pub fn (rgnHandlerValue rc h)
   (if (== (tyIsErr (rgnCheckedTy h)) 1)
     0
@@ -32920,7 +32955,7 @@
       (rgnAnyFlow v (+ i 1)))))
 
 ; ---- calls ----
-(pub :: rgnApp (-> Int ASTNode Int))
+(pub :: rgnApp (-> RgnCtx ASTNode Int))
 ; The source tree stays owned by the checker. Both helpers return an
 ; owned scratch share, and the walk answers only an Int. Raw span metadata
 ; makes escape analysis conservatively keep these owners, so balance the
@@ -32950,9 +32985,9 @@
               (if (== (isCastLike n) 1)
                 (rgnLastArg rc args)
                 (if (! (== (findCtor tc n) 0))
-                  (| (memGetWord rc 7) (rgnArgsUnion rc args 0 0))
+                  (| rc.curBit (rgnArgsUnion rc args 0 0))
                   (if (! (== (findStructIfConstruct tc n) 0))
-                    (| (memGetWord rc 7) (rgnArgsUnion rc args 0 0))
+                    (| rc.curBit (rgnArgsUnion rc args 0 0))
                     {
                       (let ent (findFnEnt tc n))
                       (if (== ent 0)
@@ -32967,7 +33002,7 @@
                             (if (== (fnEntIsEffectOp ent) 2)
                               {
                                 (rgnArgsUnion rc args 0 0)
-                                (memGetWord rc 7)
+                                rc.curBit
                               }
                               (rgnKnownCall rc ent n args (spanOf e) e)))))
                     })))))
@@ -32977,7 +33012,7 @@
     result
   })
 
-(pub :: rgnLastArg (-> Int Nodes Int))
+(pub :: rgnLastArg (-> RgnCtx Nodes Int))
 (pub fn (rgnLastArg rc args)
   (if (== (vecLen args) 0)
     0
@@ -32994,11 +33029,11 @@
 ; every argument and allocates its result. A closure may also read
 ; and write its captures, so those origins participate in both sides
 ; of the lifetime relation, including calls with no reference arguments.
-(pub :: rgnUnknownCall (-> Int Nodes Int Int Int))
+(pub :: rgnUnknownCall (-> RgnCtx Nodes Int Int Int))
 (pub fn (rgnUnknownCall rc args span captures)
   (rgnOpaqueCall rc args span captures 1))
 
-(pub :: rgnOpaqueCall (-> Int Nodes Int Int Int Int))
+(pub :: rgnOpaqueCall (-> RgnCtx Nodes Int Int Int Int))
 (pub fn (rgnOpaqueCall rc args span captures reclaims)
   {
     (rgnNoteReclaim rc reclaims)
@@ -33014,34 +33049,34 @@
         })
       (if (!= captures 0)
         {
-          (rgnEmitEscape rc (rgnStoreBadMask rc (| u (memGetWord rc 7)) captures) span
+          (rgnEmitEscape rc (rgnStoreBadMask rc (| u rc.curBit) captures) span
             "the captures of a call the compiler cannot resolve"
             " - the call may store its arguments or fresh values into a capture" nilNode)
-          (rgnNoteFlow rc (| u (memGetWord rc 7)) captures "<unresolved call>")
+          (rgnNoteFlow rc (| u rc.curBit) captures "<unresolved call>")
         })
       (for i in 0..(vecLen args)
         (if (!= (vecGet masks i) 0)
           {
-            (rgnEmitEscape rc (rgnStoreBadMask rc (| u (memGetWord rc 7)) (vecGet masks i)) span
+            (rgnEmitEscape rc (rgnStoreBadMask rc (| u rc.curBit) (vecGet masks i)) span
               (concat (concat "argument " (fmtInt (+ i 1)))
                 " of a call the compiler cannot resolve")
               " - a call through a parameter, a closure or a field is assumed to store every argument into every argument"
               nilNode)
-            (rgnNoteFlow rc (| u (memGetWord rc 7)) (vecGet masks i) "<unresolved call>")
+            (rgnNoteFlow rc (| u rc.curBit) (vecGet masks i) "<unresolved call>")
           }))
       (if (== (memGetWord (rgnFacts rc) 5) 0)
         {
           (memSetWord (rgnFacts rc) 5 1)
-          (memSetWord rc 13 1)
+          (set rc.changed 1)
         })
-      (| (memGetWord rc 7) u)
+      (| rc.curBit u)
     }
   })
 
 ; A primitive with no body, classified by name. Stores and reads
 ; through a handle are the two shapes that matter; everything else
 ; answers a word.
-(pub :: rgnBuiltinCall (-> Int String Nodes Int Int))
+(pub :: rgnBuiltinCall (-> RgnCtx String Nodes Int Int))
 (pub fn (rgnBuiltinCall rc n args span)
   {
     (let masks (rgnIntVec))
@@ -33066,7 +33101,7 @@
             (vecGet masks 0)
             0)
           (if (strEq n "__alloc")
-            (memGetWord rc 7)
+            rc.curBit
             (if (strEq n "__axiom_arena_reset_keeping")
               (if (>= (vecLen masks) 2)
                 (vecGet masks 1)
@@ -33084,7 +33119,7 @@
 ; stamp walks can record a proven-fresh result on it (`nodeResWord`
 ; 0 to 2; never touching 1). Only `rgnApp` calls this, so the extra
 ; word moves one site.
-(pub :: rgnKnownCall (-> Int Int String Nodes Int ASTNode Int))
+(pub :: rgnKnownCall (-> RgnCtx Int String Nodes Int ASTNode Int))
 (pub fn (rgnKnownCall rc ent spelled args span e)
   {
     (rgnCheckScopedArgs rc ent args span)
@@ -33130,14 +33165,14 @@
                       {
                         (if (== (rgnReport rc) 1)
                           {
-                            (let bad (rgnStoreBadMask rc (memGetWord rc 7) (vecGet masks i)))
+                            (let bad (rgnStoreBadMask rc rc.curBit (vecGet masks i)))
                             (if (!= bad 0)
                               (rgnEmitEscape rc bad span into
                                 (concat (concat " - `" (bareOf callee))
                                   "` stores a value it allocates into that parameter")
                                 nilNode))
                           })
-                        (rgnNoteFlow rc (memGetWord rc 7) (vecGet masks i) callee)
+                        (rgnNoteFlow rc rc.curBit (vecGet masks i) callee)
                       })
                     {
                       (let mut j 0)
@@ -33169,15 +33204,15 @@
               (if (== (memGetWord (rgnFacts rc) 5) 0)
                 {
                   (memSetWord (rgnFacts rc) 5 1)
-                  (memSetWord rc 13 1)
+                  (set rc.changed 1)
                 }))
           })
         ; The result derives from fresh allocation and/or parameters.
         (if (== f 0)
-          (memGetWord rc 7)
+          rc.curBit
           {
             (if (!= (memGetWord f 4) 0)
-              (set res (memGetWord rc 7)))
+              (set res rc.curBit))
             ; The facts carry one bit per declared parameter, so a
             ; surplus argument of an over-applied call has none.
             (set i 0)
@@ -33296,9 +33331,9 @@
               (if (== (memGetWord (rgnFacts rc) 4) 0)
                 {
                   (memSetWord (rgnFacts rc) 4 1)
-                  (memSetWord rc 13 1)
+                  (set rc.changed 1)
                 }))
-            (memGetWord rc 13)
+            rc.changed
           }
         }
       })
