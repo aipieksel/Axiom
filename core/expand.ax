@@ -176,7 +176,7 @@
   (frames : Frames)
   (mut declmod : Int)
   (units : Units)
-  (mut forstack : (Vec Int))
+  (mut forstack : ForBinds)
   (bares : (Vec String))
   (fulls : (Vec String))
   (mods : ModuleImports)
@@ -189,7 +189,7 @@
   (midx : MangleIdx)
   (mut scNext : Int)
   (mut scChain : (Vec Int))
-  (mut scTpl : (Vec Int))
+  (mut scTpl : ScopeBinds)
   (mut scSeq : Int)
   (retired28 : Int)
   (mut defer : Int)
@@ -820,17 +820,20 @@
 ; keeping local names ahead of macros, the records give literal matching
 ; and repeated pattern binders stable binding identities.
 ; ------------------------------------------------------------------
-(pub :: expBound (-> Ints String Int))
+(pub :: expBound (-> ScopeBinds String Int))
 (pub fn (expBound bs name)
   (expBoundFrom bs name (- (vecLen bs) 1)))
 
-(pub :: expBoundFrom (-> Ints String Int Int))
+(pub :: expBoundFrom (-> ScopeBinds String Int Int))
 (pub fn (expBoundFrom bs name i)
   (if (< i 0)
     0
-    (if (strEq (memGetWordStr (vecGet bs i) 0) name)
-      1
-      (expBoundFrom bs name (- i 1)))))
+    {
+      (let binding (vecGet bs i))
+      (if (strEq binding.name name)
+        1
+        (expBoundFrom bs name (- i 1)))
+    }))
 
 (pub :: expTrunc (-> (Vec a) Int Int))
 (pub fn (expTrunc bs n)
@@ -872,7 +875,7 @@
 (pub fn (expScChainVec env)
   env.scChain)
 
-(pub :: expScTplVec (-> MEnv Ints))
+(pub :: expScTplVec (-> MEnv ScopeBinds))
 (pub fn (expScTplVec env)
   env.scTpl)
 
@@ -989,11 +992,11 @@
 (pub fn (expScPushTpl env name spelling)
   {
     (vecPush (expScTplVec env)
-      (as (ScopeBind
-            :name name
-            :scopes (expScChainCopy env)
-            :seq (expScNextSeq env)
-            :spelling spelling) Int))
+      (ScopeBind
+        :name name
+        :scopes (expScChainCopy env)
+        :seq (expScNextSeq env)
+        :spelling spelling))
     0
   })
 
@@ -1018,29 +1021,37 @@
 (pub fn (expScTruncLoop env mark)
   (expTrunc (expScChainVec env) mark))
 
-; Template-tier resolution: the POSITION of the innermost record
-; spelling `name` whose scopes are a subset of the live chain, or -1.
-; A position rather than the record, because callers read both its
-; push-order stamp (the innermost rule) and its spelling.
-(pub :: expScResolveTpl (-> MEnv String Int))
+; The innermost template binder whose scopes are visible in the live
+; chain. A miss carries no record or vector position.
+(pub :: expScResolveTpl (-> MEnv String (Option ScopeBind)))
 (pub fn (expScResolveTpl env name)
   {
     (let tpl (expScTplVec env))
     (expScResolveTplFrom tpl name (expScChainVec env) (- (vecLen tpl) 1))
   })
 
-(pub :: expScResolveTplFrom (-> Ints String Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: expScResolveTplFrom (-> ScopeBinds String Ints Int (Option ScopeBind)))
 (pub fn (expScResolveTplFrom tpl name chain i)
   (if (< i 0)
-    (- 0 1)
+    None
     {
-      (let b (vecGet tpl i))
-      (if (&& (strEq (memGetWordStr b 0) name)
-            (== (expScPrefix (as (memGetWord b 1) (Vec Int)) chain) 1))
-        i
+      (let binding (vecGet tpl i))
+      (if (&& (strEq binding.name name) (== (expScPrefix binding.scopes chain) 1))
+        (Some binding)
         (expScResolveTplFrom tpl name chain (- i 1)))
     }))
+
+; Template and iteration binders share a push-order counter. An inner
+; iteration shadows the template binder; a miss allows other lookup tiers.
+(:: expTemplateWinner (-> (Option ScopeBind) (Option ForBind) (Option ScopeBind)))
+(fn (expTemplateWinner template iteration)
+  (if (let (Some binding) template)
+    (if (let (Some element) iteration)
+      (if (<= element.seq binding.seq)
+        template
+        None)
+      template)
+    None))
 
 ; ------------------------------------------------------------------
 ; Parameter lookup. The LAST occurrence wins, matching the emit-time
@@ -1274,14 +1285,17 @@
 ; reference to it consults. `spelling` is the `name.N` the binder
 ; answers downstream, assigned from `fresh` at the push site, so a
 ; binder's output spelling is fixed by push order.
-; `scopes` is a (Vec Int) snapshot of the chain at the push, held as
-; a word with the cast at the accessor, house style. `seq` is the
+; `scopes` snapshots the chain at the push. `seq` is the
 ; push-order stamp from the same counter for-bindings draw from.
+(pub type ForBinds (Vec ForBind))
+
 (pub struct ScopeBind
   (name : String)
   (scopes : (Vec Int))
   (seq : Int)
   (spelling : String))
+
+(pub type ScopeBinds (Vec ScopeBind))
 
 ; An identifier keeps its original binding across substitution. Scopes
 ; describe lexical visibility; key identifies the selected binding, or
@@ -1292,26 +1306,31 @@
   (key : String)
   (module : Int))
 
-(pub :: expPushLocal (-> Ints MEnv String Int))
+(pub :: expPushLocal (-> ScopeBinds MEnv String Int))
 (pub fn (expPushLocal bs env name)
   {
     (let scopes
       (if (== (vecLen bs) 0)
         vecNew
-        (expScChainCopyIn (memGetWordVec (vecGet bs (- (vecLen bs) 1)) 1) vecNew 0)))
+        {
+          (let previous (vecGet bs (- (vecLen bs) 1)))
+          (expScChainCopyIn previous.scopes vecNew 0)
+        }))
     (vecPush scopes (expScNextId env))
-    (vecPush bs
-      (as (ScopeBind :name name :scopes scopes :seq (expScNextSeq env) :spelling name) Int))
+    (vecPush bs (ScopeBind :name name :scopes scopes :seq (expScNextSeq env) :spelling name))
     0
   })
 
-(pub :: expLocalBinding (-> Ints String Int Int))
+(pub :: expLocalBinding (-> ScopeBinds String Int (Option ScopeBind)))
 (pub fn (expLocalBinding bs name i)
   (if (< i 0)
-    0
-    (if (strEq (memGetWordStr (vecGet bs i) 0) name)
-      (vecGet bs i)
-      (expLocalBinding bs name (- i 1)))))
+    None
+    {
+      (let binding (vecGet bs i))
+      (if (strEq binding.name name)
+        (Some binding)
+        (expLocalBinding bs name (- i 1)))
+    }))
 
 ; Copy metadata as well as children. Argument syntax may carry field
 ; labels, integer widths and definition-site stamps already.
@@ -1335,12 +1354,12 @@
         site)
       (nodeAName e))))
 
-(pub :: expCaptureVar (-> ASTNode MEnv Ints ASTNode))
+(pub :: expCaptureVar (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expCaptureVar e env bs)
   {
     (let local
       (if (== (nodeDefScope e) 1)
-        0
+        None
         (expLocalBinding bs (nodeAName e) (- (vecLen bs) 1))))
     (let prior (nodeSyntaxIdentity e))
     (let origin
@@ -1350,8 +1369,8 @@
           env.site
           (memGetWord prior 3))))
     (let key
-      (if (!= local 0)
-        (concat "L:" (expFmtInt (memGetWord local 2)))
+      (if (let (Some binding) local)
+        (concat "L:" (expFmtInt binding.seq))
         (if (&& (!= prior 0) (strStartsWith (memGetWordStr prior 2) "L:"))
           (memGetWordStr prior 2)
           (expCanonKey (expDeclsVec env) origin (nodeAName e)))))
@@ -1360,11 +1379,11 @@
       (as (SyntaxIdentity
             :name (nodeAName e)
             :scopes
-              (if (== local 0)
+              (if (let (Some binding) local)
+                binding.scopes
                 (if (== prior 0)
                   vecNew
-                  (memGetWordVec prior 1))
-                (memGetWordVec local 1))
+                  (memGetWordVec prior 1)))
             :key key
             :module origin) Int))
     n
@@ -1373,7 +1392,7 @@
 ; Snapshot syntax without invoking macros or running queries. Nested
 ; lexical forms get their own scopes, so a name inside an argument has
 ; the same binding whether a rule inspects it now or forwards it later.
-(pub :: expCaptureSyntax (-> ASTNode MEnv Ints ASTNode))
+(pub :: expCaptureSyntax (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expCaptureSyntax e env bs)
   (if (nodeSame e nilNode)
     nilNode
@@ -1459,7 +1478,7 @@
                             e)))))))))))
     }))
 
-(pub :: expCaptureVec (-> Nodes MEnv Ints Nodes))
+(pub :: expCaptureVec (-> Nodes MEnv ScopeBinds Nodes))
 (pub fn (expCaptureVec xs env bs)
   {
     (let acc vecNew)
@@ -1472,11 +1491,18 @@
 ; one lambda therefore name one parameter binding; two separately
 ; written lambdas introduce different bindings. Caller-supplied names
 ; can still bind free caller syntax when the output is walked.
-(pub :: expEnterSyntaxBindings (-> ASTNode MEnv Ints Int))
+; Captured binder nodes store an owning ScopeBinds vector in arena slot 12.
+; Other syntax-node shapes use that slot for a SyntaxIdentity record.
+(:: expSavedSyntaxBindings (-> ASTNode ScopeBinds))
+;@axiom:effect(unsafe)
+(fn (expSavedSyntaxBindings node)
+  (as (nodeSyntaxIdentityWords node) ScopeBinds))
+
+(pub :: expEnterSyntaxBindings (-> ASTNode MEnv ScopeBinds Int))
 (pub fn (expEnterSyntaxBindings e env bs)
   (if (!= (nodeSyntaxIdentity e) 0)
     {
-      (let saved (nodeSyntaxIdentityWords e))
+      (let saved (expSavedSyntaxBindings e))
       (let mut i 0)
       (while (< i (vecLen saved))
         {
@@ -1491,38 +1517,28 @@
         (expPatBinders (nodeAChild e) bs env)
         (expPushLocal bs env (nodeAName e))))))
 
-(pub :: expSaveSyntaxBindings (-> ASTNode Ints Int ASTNode))
+(pub :: expSaveSyntaxBindings (-> ASTNode ScopeBinds Int ASTNode))
+; Slot 12 keeps the vector's owning header and element refmap. Its word
+; accessor is the arena boundary; binder-node readers restore ScopeBinds.
+;@axiom:effect(unsafe)
 (pub fn (expSaveSyntaxBindings e bs mark)
   {
     (let saved vecNew)
     (for i in mark..(vecLen bs)
       (vecPush saved (vecGet bs i)))
-    (writeNodeWords e 12 saved)
+    (writeNodeWords e 12 (as saved Ints))
     e
   })
 
-(pub :: expForStackVec (-> MEnv Ints))
+(pub :: expForStackVec (-> MEnv ForBinds))
 (pub fn (expForStackVec env)
   env.forstack)
 
-(pub :: expForLookup (-> MEnv String String))
+(pub :: expForLookup (-> MEnv String (Option String)))
 (pub fn (expForLookup env name)
-  {
-    (let fs (expForStackVec env))
-    (expForLookupFrom fs name (- (vecLen fs) 1))
-  })
-
-(pub :: expForLookupFrom (-> Ints String Int String))
-;@axiom:effect(unsafe)
-(pub fn (expForLookupFrom fs name i)
-  (if (< i 0)
-    (as 0 String)
-    {
-      (let b (vecGet fs i))
-      (if (strEq (memGetWordStr b 0) name)
-        (memGetWordStr b 1)
-        (expForLookupFrom fs name (- i 1)))
-    }))
+  (if (let (Some binding) (expForBindOf env name))
+    (Some binding.elem)
+    None))
 
 (pub :: expUpperFirst (-> String String))
 (pub fn (expUpperFirst s)
@@ -1647,8 +1663,8 @@
 ;@axiom:effect(unsafe)
 (pub fn (expResolveQueryName env s params args isp)
   {
-    (let fe (expForLookup env s))
-    (if (!= (as fe Int) 0)
+    (let foundFor (expForLookup env s))
+    (if (let (Some fe) foundFor)
       fe
       {
         (let idx (expParamIndex params s))
@@ -2038,21 +2054,15 @@
     {
       (let tag (nodeTag p))
       (if (== tag TAG_P_CON0)
-        {
-          (let e (expForLookup env (nodeAName p)))
-          (if (== (as e Int) 0)
-            p
-            (nodeBuildPCon0 e 0 0 isp))
-        }
+        (if (let (Some element) (expForLookup env (nodeAName p)))
+          (nodeBuildPCon0 element 0 0 isp)
+          p)
         (if (== tag TAG_P_CONNAMED)
-          {
-            (let e (expForLookup env (nodeAName p)))
-            (nodeBuildPConnamed
-              (if (== (as e Int) 0)
-                (nodeAName p)
-                e)
-              (nodeBChildren p) (expSubstPatForVec (nodeCChildren p) params args env isp) isp)
-          }
+          (nodeBuildPConnamed
+            (if (let (Some element) (expForLookup env (nodeAName p)))
+              element
+              (nodeAName p))
+            (nodeBChildren p) (expSubstPatForVec (nodeCChildren p) params args env isp) isp)
           (if (== tag TAG_E_APP)
             (expSubstPatForSpine p params args env isp)
             p)))
@@ -2066,12 +2076,9 @@
     {
       (let newHead
         (if (== (nodeTag head) TAG_E_VAR)
-          {
-            (let e (expForLookup env (nodeAName head)))
-            (if (== (as e Int) 0)
-              head
-              (mkEVarAt e isp))
-          }
+          (if (let (Some element) (expForLookup env (nodeAName head)))
+            (mkEVarAt element isp)
+            head)
           head))
       (let out vecNew)
       {
@@ -2135,23 +2142,32 @@
 
 ; The FULL binding record for an active for-variable - `syntax/same`
 ; needs the sequence key and the element index, not just the element.
-(pub :: expForBindOf (-> MEnv String Int))
+(pub :: expForBindOf (-> MEnv String (Option ForBind)))
 (pub fn (expForBindOf env name)
   {
-    (let fs (expForStackVec env))
-    (expForBindOfFrom fs name (- (vecLen fs) 1))
+    (let bindings (expForStackVec env))
+    (expForBindOfFrom bindings name (- (vecLen bindings) 1))
   })
 
-(pub :: expForBindOfFrom (-> Ints String Int Int))
-(pub fn (expForBindOfFrom fs name i)
+(pub :: expForBindOfFrom (-> ForBinds String Int (Option ForBind)))
+(pub fn (expForBindOfFrom bindings name i)
   (if (< i 0)
-    0
+    None
     {
-      (let b (vecGet fs i))
-      (if (strEq (memGetWordStr b 0) name)
-        b
-        (expForBindOfFrom fs name (- i 1)))
+      (let binding (vecGet bindings i))
+      (if (strEq binding.name name)
+        (Some binding)
+        (expForBindOfFrom bindings name (- i 1)))
     }))
+
+(:: expSameMissing (-> MEnv ASTNode Int ASTNode))
+(fn (expSameMissing env argument isp)
+  {
+    (expQueryErr env isp
+      (concat (concat "`" (nodeAName argument)) "` is not bound by an enclosing syntax/for")
+      "syntax/same compares iteration variables; bind both with syntax/for first" (expMacMod env))
+    (mkEInt 0)
+  })
 
 ; `(syntax/same f g)`: whether two iteration variables currently
 ; denote the same element - the same declaration SLOT, so both sides
@@ -2180,38 +2196,24 @@
             (expMacMod env))
           (mkEInt 0)
         }
-        {
-          (let ba (expForBindOf env (nodeAName an)))
-          (let bb (expForBindOf env (nodeAName bn)))
-          (if (|| (== ba 0) (== bb 0))
-            {
-              (expQueryErr env isp
-                (concat
-                  (concat "`"
-                    (nodeAName
-                      (if (== ba 0)
-                        an
-                        bn)))
-                  "` is not bound by an enclosing syntax/for")
-                "syntax/same compares iteration variables; bind both with syntax/for first"
-                (expMacMod env))
-              (mkEInt 0)
-            }
-            (if (strEq (memGetWordStr ba 2) (memGetWordStr bb 2))
-              (if (== (memGetWord ba 3) (memGetWord bb 3))
+        (if (let (Some ba) (expForBindOf env (nodeAName an)))
+          (if (let (Some bb) (expForBindOf env (nodeAName bn)))
+            (if (strEq ba.key bb.key)
+              (if (== ba.idx bb.idx)
                 (mkEVarAt "true" isp)
                 (mkEVarAt "false" isp))
               {
                 (expQueryErr env isp
                   (concat
                     (concat (concat (concat "`" (nodeAName an)) "` ranges over `")
-                      (concat (concat (memGetWordStr ba 2) "` and `") (nodeAName bn)))
-                    (concat (concat "` over `" (memGetWordStr bb 2)) "`"))
+                      (concat (concat ba.key "` and `") (nodeAName bn)))
+                    (concat (concat "` over `" bb.key) "`"))
                   "syntax/same compares positions within ONE sequence; iterate both variables over the same query"
                   (expMacMod env))
                 (mkEInt 0)
-              }))
-        })
+              })
+            (expSameMissing env bn isp))
+          (expSameMissing env an isp)))
     }))
 
 ; ------------------------------------------------------------------
@@ -3318,12 +3320,12 @@
       (let t (vecGet seqs j))
       {
         (vecPush (expForStackVec env)
-          (as (ForBind
-                :name t.name
-                :elem (vecGet t.values idx)
-                :key t.key
-                :idx idx
-                :seq (expScNextSeq env)) Int))
+          (ForBind
+            :name t.name
+            :elem (vecGet t.values idx)
+            :key t.key
+            :idx idx
+            :seq (expScNextSeq env)))
         (expIterPush env seqs idx (+ j 1))
       }
     }))
@@ -3678,7 +3680,10 @@
 (pub fn (expWarnNamePos params name forShielded env isp position help)
   (if (< (expParamIndex params name) 0)
     0
-    (if (&& (== forShielded 1) (!= (as (expForLookup env name) Int) 0))
+    (if (&& (== forShielded 1)
+          (if (let (Some _) (expForLookup env name))
+            true
+            false))
       0
       (expEmit env
         (mkDiagNote SEV_ERROR "AX3074" "macro-parameter-name-position" isp
@@ -3744,31 +3749,24 @@
           ; in which case the reference falls through to the
           ; for-branch below, where it always went on a miss.
           {
-            (let sbpos (expScResolveTpl env (nodeAName tpl)))
-            (let forb (expForBindOf env (nodeAName tpl)))
-            (let tplWins
-              (&& (!= sbpos (- 0 1))
-                (|| (== forb 0)
-                  (<= (memGetWord forb 4) (memGetWord (vecGet (expScTplVec env) sbpos) 2)))))
-            (if tplWins
-              (mkEVarAt (memGetWordStr (vecGet (expScTplVec env) sbpos) 3) isp)
+            (let template (expScResolveTpl env (nodeAName tpl)))
+            (let iteration (expForBindOf env (nodeAName tpl)))
+            (if (let (Some winner) (expTemplateWinner template iteration))
+              (mkEVarAt winner.spelling isp)
               {
-                (let fe (expForLookup env (nodeAName tpl)))
-                (if (!= (as fe Int) 0)
+                (let foundFor (expForLookup env (nodeAName tpl)))
+                (if (let (Some fe) foundFor)
                   ; The element itself may be a renamed binder:
                   ; a fold variable over `(syntax/binders C x)`
                   ; resolves to `x#i`, whose pattern mention the
                   ; renamer has already renamed - the template
                   ; tier is consulted for the ELEMENT so the
                   ; body reference lands on the renamed binder.
-                  {
-                    (let sb2 (expScResolveTpl env fe))
-                    (mkEVarAt
-                      (if (!= sb2 (- 0 1))
-                        (memGetWordStr (vecGet (expScTplVec env) sb2) 3)
-                        fe)
-                      isp)
-                  }
+                  (mkEVarAt
+                    (if (let (Some binding) (expScResolveTpl env fe))
+                      binding.spelling
+                      fe)
+                    isp)
                   {
                     (let idx (expParamIndex params (nodeAName tpl)))
                     (if (< idx 0)
@@ -3964,12 +3962,9 @@
                               (expWarnNamePos params (nodeBName tpl) 1 env isp "a field name"
                                 "rename the parameter to mean the literal field, or bind the field name with an enclosing `syntax/for`")
                               (nodeBuildEField (substTpl (nodeAChild tpl) params args env isp)
-                                {
-                                  (let fe (expForLookup env (nodeBName tpl)))
-                                  (if (== (as fe Int) 0)
-                                    (nodeBName tpl)
-                                    fe)
-                                }
+                                (if (let (Some element) (expForLookup env (nodeBName tpl)))
+                                  element
+                                  (nodeBName tpl))
                                 0 isp)
                             }
                             (if (== tag TAG_E_SETF)
@@ -3977,12 +3972,9 @@
                                 (expWarnNamePos params (nodeBName tpl) 1 env isp "a field name"
                                   "rename the parameter to mean the literal field, or bind the field name with an enclosing `syntax/for`")
                                 (nodeBuildESetf (substTpl (nodeAChild tpl) params args env isp)
-                                  {
-                                    (let fe (expForLookup env (nodeBName tpl)))
-                                    (if (== (as fe Int) 0)
-                                      (nodeBName tpl)
-                                      fe)
-                                  }
+                                  (if (let (Some element) (expForLookup env (nodeBName tpl)))
+                                    element
+                                    (nodeBName tpl))
                                   (substTpl (nodeCChild tpl) params args env isp) isp)
                               }
                               (if (== tag TAG_E_HANDLE)
@@ -4056,9 +4048,9 @@
 ;@axiom:effect(unsafe)
 (pub fn (substName name params args env isp)
   {
-    (let sbpos (expScResolveTpl env name))
-    (if (!= sbpos (- 0 1))
-      (memGetWordStr (vecGet (expScTplVec env) sbpos) 3)
+    (let template (expScResolveTpl env name))
+    (if (let (Some binding) template)
+      binding.spelling
       {
         (let idx (expParamIndex params name))
         (if (< idx 0)
@@ -4490,7 +4482,7 @@
 ; invocations and to know which names are locally bound at each point,
 ; because a local outranks a macro of the same name.
 ; ------------------------------------------------------------------
-(pub :: expandExpr (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandExpr (-> ASTNode MEnv ScopeBinds ASTNode))
 ; The budgeted wrapper. `expandExprInner` is the walk itself; this
 ; counts the node, tracks the walk's depth on the way in and out, and
 ; stops the recursion at the limits rather than at the guard page.
@@ -4542,7 +4534,7 @@
           }
         }))))
 
-(pub :: expandExprInner (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandExprInner (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandExprInner e env bs)
   (if (nodeSame e nilNode)
     nilNode
@@ -4620,7 +4612,7 @@
                                   e))))))))))))))
     }))
 
-(pub :: expPushNames (-> Names Ints MEnv Int Int))
+(pub :: expPushNames (-> Names ScopeBinds MEnv Int Int))
 (pub fn (expPushNames ns bs env i)
   (if (>= i (vecLen ns))
     0
@@ -4629,11 +4621,11 @@
       (expPushNames ns bs env (+ i 1))
     }))
 
-(pub :: expandVec (-> (Vec ASTNode) MEnv Ints (Vec ASTNode)))
+(pub :: expandVec (-> (Vec ASTNode) MEnv ScopeBinds (Vec ASTNode)))
 (pub fn (expandVec xs env bs)
   (expandVecIn xs env bs vecNew 0))
 
-(pub :: expandVecIn (-> (Vec ASTNode) MEnv Ints (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: expandVecIn (-> (Vec ASTNode) MEnv ScopeBinds (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expandVecIn xs env bs acc i)
   (if (>= i (vecLen xs))
     acc
@@ -4643,11 +4635,11 @@
 ; here - this is the user's own code, not a template - but they must
 ; enter the bound set, or a macro sharing a name with an arm binder
 ; would rewrite the binder's uses.
-(pub :: expandArms (-> (Vec ASTNode) MEnv Ints (Vec ASTNode)))
+(pub :: expandArms (-> (Vec ASTNode) MEnv ScopeBinds (Vec ASTNode)))
 (pub fn (expandArms arms env bs)
   (expandArmsIn arms env bs vecNew 0))
 
-(pub :: expandArmsIn (-> (Vec ASTNode) MEnv Ints (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: expandArmsIn (-> (Vec ASTNode) MEnv ScopeBinds (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expandArmsIn arms env bs acc i)
   (if (>= i (vecLen arms))
     acc
@@ -4702,7 +4694,7 @@
           }))
     }))
 
-(pub :: expPatBinders (-> ASTNode Ints MEnv Int))
+(pub :: expPatBinders (-> ASTNode ScopeBinds MEnv Int))
 (pub fn (expPatBinders p bs env)
   (if (nodeSame p nilNode)
     0
@@ -4722,7 +4714,7 @@
             0)))
     }))
 
-(pub :: expPatBindersSpine (-> ASTNode Ints MEnv Int))
+(pub :: expPatBindersSpine (-> ASTNode ScopeBinds MEnv Int))
 (pub fn (expPatBindersSpine p bs env)
   (if (== (nodeTag p) TAG_E_APP)
     {
@@ -4732,7 +4724,7 @@
     }
     0))
 
-(pub :: expPatBindersVec (-> (Vec ASTNode) Ints MEnv Int Int))
+(pub :: expPatBindersVec (-> (Vec ASTNode) ScopeBinds MEnv Int Int))
 (pub fn (expPatBindersVec ps bs env i)
   (if (>= i (vecLen ps))
     0
@@ -4757,7 +4749,7 @@
 ; defined. `checkVar` and `emitVar` already skip locals for a stamped
 ; reference; this walk is the third resolver and asks the same bit.
 ; ------------------------------------------------------------------
-(pub :: expandVarRef (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandVarRef (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandVarRef e env bs)
   (if (strEq (nodeAName e) "|>")
     (expPipeBad env (nodeSpan e) "a pipeline needs a value and at least one stage")
@@ -4804,13 +4796,13 @@
 ; ------------------------------------------------------------------
 ; An application whose head names a macro.
 ; ------------------------------------------------------------------
-(pub :: expandApp (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandApp (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandApp e env bs)
   (if (expHasTypeOperand e)
     (expExpandTypedApp e env bs)
     (expandValueApp e env bs)))
 
-(pub :: expandValueApp (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandValueApp (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandValueApp e env bs)
   (if (!= (nodeFieldNames e) 0)
     (expandNamedStruct e env bs)
@@ -4826,7 +4818,7 @@
           "struct construction requires a label for every field; positional struct construction is not supported"))
       (expandAppUnlabelled e env bs))))
 
-(pub :: expandAppUnlabelled (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandAppUnlabelled (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandAppUnlabelled e env bs)
   (if (&& (== (nodeTag (spineHead e)) TAG_E_VAR) (strEq (nodeAName (spineHead e)) "|>"))
     (expandPipe e env bs)
@@ -4923,7 +4915,7 @@
 (pub fn (expAsmMaxValues)
   16)
 
-(pub :: expandAsm (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandAsm (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandAsm e env bs)
   {
     (let arms (spineArgVec e vecNew))
@@ -4998,7 +4990,7 @@
 
 ; One arm: its description, or "" once it has reported what is wrong.
 ; `vals` gains the arm's arguments and `seen` its architecture.
-(pub :: expAsmArm (-> ASTNode MEnv Ints (Vec ASTNode) Strings String))
+(pub :: expAsmArm (-> ASTNode MEnv ScopeBinds (Vec ASTNode) Strings String))
 (pub fn (expAsmArm arm env bs vals seen)
   {
     (let head (spineHead arm))
@@ -5102,7 +5094,7 @@
 
 ; The arm's template and items. A refusal ends the arm: "" comes back
 ; and nothing is added to `vals`.
-(pub :: expAsmArmBody (-> String Nodes ASTNode MEnv Ints (Vec ASTNode) String))
+(pub :: expAsmArmBody (-> String Nodes ASTNode MEnv ScopeBinds (Vec ASTNode) String))
 (pub fn (expAsmArmBody arch parts arm env bs vals)
   (if (|| (== (vecLen parts) 0) (!= (nodeTag (vecGet parts 0)) TAG_E_STR))
     {
@@ -5137,7 +5129,8 @@
 ; `clobber_abi` or an option list, recorded into the arm's vectors.
 ; Answers 1 once it has reported a refusal, else 0.
 (pub :: expAsmItem
-  (-> String ASTNode MEnv Ints (Vec AsmOp) Strings Strings Strings (Vec ASTNode) (Vec ASTNode) Int))
+  (-> String ASTNode MEnv ScopeBinds (Vec AsmOp) Strings Strings Strings (Vec ASTNode)
+    (Vec ASTNode) Int))
 (pub fn (expAsmItem arch it env bs ops regs clobs opts optNodes abis)
   {
     (let kh (spineHead it))
@@ -5263,7 +5256,7 @@
 ; before they have read every input. `lateout` and `inlateout` (`=r`)
 ; let the register allocator share it with an input, which is right
 ; only when every input has been read before the output is written.
-(pub :: expAsmOperand (-> String String ASTNode Nodes MEnv Ints (Vec AsmOp) Strings Int))
+(pub :: expAsmOperand (-> String String ASTNode Nodes MEnv ScopeBinds (Vec AsmOp) Strings Int))
 (pub fn (expAsmOperand arch kind op args env bs ops regs)
   (if (|| (== (vecLen args) 0) (!= (nodeTag (vecGet args 0)) TAG_E_VAR))
     (expAsmBad env (nodeSpan op)
@@ -5328,7 +5321,7 @@
 ; The rest of an operand once its name and register are good: the
 ; value a `const` folds to, the function a `sym` names, and the record.
 (pub :: expAsmOperandValue
-  (-> String ASTNode Nodes MEnv Ints (Vec AsmOp) Strings String Bool Int Int))
+  (-> String ASTNode Nodes MEnv ScopeBinds (Vec AsmOp) Strings String Bool Int Int))
 (pub fn (expAsmOperandValue kind op args env bs ops regs reg hasInto body)
   {
     (let nm (nodeAName (vecGet args 0)))
@@ -5697,7 +5690,8 @@
 ; The arm's description once its items agree, or "" once it has
 ; refused the template.
 (pub :: expAsmArmDesc
-  (-> String ASTNode MEnv Ints (Vec ASTNode) (Vec AsmOp) Strings Strings (Vec ASTNode) String))
+  (-> String ASTNode MEnv ScopeBinds (Vec ASTNode) (Vec AsmOp) Strings Strings (Vec ASTNode)
+    String))
 (pub fn (expAsmArmDesc arch tnode env bs vals ops clobs opts abis)
   {
     (let nOut (expAsmCountOuts ops 0 0))
@@ -5768,8 +5762,8 @@
 ; are. Inputs are expanded here, in the order written, which is the
 ; order codegen evaluates them in.
 (pub :: expAsmArmText
-  (-> String ASTNode MEnv Ints (Vec ASTNode) (Vec AsmOp) Ints Strings Strings (Vec ASTNode) String
-    Int String))
+  (-> String ASTNode MEnv ScopeBinds (Vec ASTNode) (Vec AsmOp) Ints Strings Strings (Vec ASTNode)
+    String Int String))
 (pub fn (expAsmArmText arch tnode env bs vals ops slots clobs opts abis tmpl nOut)
   {
     (let mut outc "")
@@ -6328,7 +6322,7 @@
       true
       (|| (strEq m "k") (strEq m "q")))))
 
-(pub :: expandAppPlain (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandAppPlain (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandAppPlain e env bs)
   (nodeBuildEApp (expandExpr (nodeAChild e) env bs) (expandExpr (nodeBChild e) env bs) nilWords
     (nodeSpan e)))
@@ -6371,7 +6365,7 @@
 ; would need a name outside this scan (an application's own callee
 ; position) still gets exactly that diagnostic today.
 ; ------------------------------------------------------------------
-(pub :: expandAppOrHole (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandAppOrHole (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandAppOrHole e env bs)
   {
     (let argv (spineArgVec e vecNew))
@@ -6429,7 +6423,7 @@
 ; `undefined variable `_h.0`` on the reference this same pass had just
 ; built - a node's word-1 name string compared against the node's own
 ; handle, which can never `strEq`.
-(pub :: expHoleArgs (-> Nodes Int MEnv Ints Strings (Vec ASTNode) Int))
+(pub :: expHoleArgs (-> Nodes Int MEnv ScopeBinds Strings (Vec ASTNode) Int))
 (pub fn (expHoleArgs argv i env bs params newArgv)
   (if (>= i (vecLen argv))
     0
@@ -6496,7 +6490,7 @@
 ; first rule whose pattern matches is instantiated, and it must have an
 ; expression template. A macro with none at all keeps the refusal it
 ; has always drawn, before any rule is tried.
-(pub :: expandRuleApp (-> ASTNode String Nodes MEnv Ints Int ASTNode))
+(pub :: expandRuleApp (-> ASTNode String Nodes MEnv ScopeBinds Int ASTNode))
 ;@axiom:effect(unsafe)
 (pub fn (expandRuleApp mac name args env bs isp)
   (if (expMacHasExprRule mac)
@@ -6535,7 +6529,7 @@
       (mkEInt 0)
     }))
 
-(pub :: expandMacroApp (-> ASTNode ASTNode ASTNode MEnv Ints ASTNode))
+(pub :: expandMacroApp (-> ASTNode ASTNode ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandMacroApp e head mac env bs)
   ; A rule-form macro (word 9) selects its rule by match, and the rule
   ; it selects must have an expression template to stand here; arity is
@@ -6563,14 +6557,14 @@
         }))
   })
 
-(pub :: takeArgs (-> Nodes Int MEnv Ints (Vec ASTNode)))
+(pub :: takeArgs (-> Nodes Int MEnv ScopeBinds (Vec ASTNode)))
 (pub fn (takeArgs args n env bs)
   (takeArgsIn args n env bs vecNew 0))
 
 ; Bare identifiers remain syntax until their substituted use is walked.
 ; A template may place one in a field label, type query or call head.
 ; Value uses still pass through expandVarRef in the output walk.
-(pub :: takeArgsIn (-> Nodes Int MEnv Ints (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: takeArgsIn (-> Nodes Int MEnv ScopeBinds (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (takeArgsIn args n env bs acc i)
   (if (>= i n)
     acc
@@ -6581,7 +6575,7 @@
           (expandExpr (expCaptureSyntax (vecGet args i) env bs) env bs)))
       (+ i 1))))
 
-(pub :: applyRest (-> ASTNode Nodes Int MEnv Ints ASTNode))
+(pub :: applyRest (-> ASTNode Nodes Int MEnv ScopeBinds ASTNode))
 (pub fn (applyRest f args n env bs)
   (if (>= n (vecLen args))
     f
@@ -6592,7 +6586,7 @@
 ; invokes another macro expands too. The depth counter is what turns
 ; `(macro (loopy x) (loopy x))` from a segfault into a diagnostic.
 ; ------------------------------------------------------------------
-(pub :: expandInstantiate (-> ASTNode (Vec ASTNode) MEnv Ints Int ASTNode))
+(pub :: expandInstantiate (-> ASTNode (Vec ASTNode) MEnv ScopeBinds Int ASTNode))
 (pub fn (expandInstantiate mac args env bs isp)
   {
     (let d (+ (expDepth env) 1))
@@ -6667,7 +6661,7 @@
 ; so a template invoking another macro expands too. Sequences ride
 ; on env word 20, exactly as declaration instantiation does, and the
 ; iteration stack starts empty for the same reason.
-(pub :: expandExprRuleInstantiate (-> ASTNode Ints MEnv Ints Int ASTNode))
+(pub :: expandExprRuleInstantiate (-> ASTNode Ints MEnv ScopeBinds Int ASTNode))
 (pub fn (expandExprRuleInstantiate mac m env bs isp)
   {
     (let d (+ (expDepth env) 1))
@@ -9689,8 +9683,8 @@
         })
     }
     {
-      (let fe (expForLookup env s))
-      (if (!= (as fe Int) 0)
+      (let foundFor (expForLookup env s))
+      (if (let (Some fe) foundFor)
         fe
         {
           (let idx (expParamIndex params s))
@@ -11163,7 +11157,7 @@
 
 ; Pipelines are hygienic lets and ordinary calls. Every intermediate
 ; result is evaluated once, before the following stage's operands.
-(pub :: expandPipe (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandPipe (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandPipe e env bs)
   {
     (let args (spineArgVec e vecNew))
@@ -11243,7 +11237,7 @@
 ; Named struct construction lowers to the same checked application as
 ; positional construction. Reordered fields first bind their values in
 ; written order; the final call follows declaration order.
-(pub :: expandNamedStruct (-> ASTNode MEnv Ints ASTNode))
+(pub :: expandNamedStruct (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandNamedStruct e env bs)
   {
     (let head (spineHead e))
@@ -11468,7 +11462,7 @@
 ; A struct head in a source value position cannot escape its labelled
 ; construction through an alias or a higher-order call. A zero-field
 ; type needs no labels and keeps its existing checking path.
-(pub :: expStructNeedsLabels (-> ASTNode MEnv Ints Bool))
+(pub :: expStructNeedsLabels (-> ASTNode MEnv ScopeBinds Bool))
 (pub fn (expStructNeedsLabels head env bs)
   (if (!= (nodeTag head) TAG_E_VAR)
     false
@@ -11488,13 +11482,13 @@
     false
     {
       (let name (nodeAName head))
-      (let local (expScResolveTpl env name))
-      (let forBinding (expForBindOf env name))
-      (let localWins
-        (&& (!= local (- 0 1))
-          (|| (== forBinding 0)
-            (<= (memGetWord forBinding 4) (memGetWord (vecGet (expScTplVec env) local) 2)))))
-      (&& (! localWins) (|| (!= forBinding 0) (>= (expParamIndex params name) 0)))
+      (let template (expScResolveTpl env name))
+      (let iteration (expForBindOf env name))
+      (if (let (Some _) (expTemplateWinner template iteration))
+        false
+        (if (let (Some _) iteration)
+          true
+          (>= (expParamIndex params name) 0)))
     }))
 
 (pub :: expSubstCall (-> ASTNode ASTNode (Vec ASTNode) Names (Vec ASTNode) MEnv Int ASTNode))
@@ -11523,7 +11517,7 @@
           (|| (strEq (nodeAName head) "sizeof") (strEq (nodeAName head) "alignof")))))
   })
 
-(pub :: expExpandTypedApp (-> ASTNode MEnv Ints ASTNode))
+(pub :: expExpandTypedApp (-> ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expExpandTypedApp e env bs)
   {
     (let args (spineArgVec e vecNew))
