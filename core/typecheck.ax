@@ -2112,7 +2112,7 @@
                           (- 0 1))))
                     (writeNodeChild e 6
                       (setNodeTyNames
-                        (nodeBuildEvstampCallPlain (tcCurDeclNode tc) w
+                        (nodeBuildEvstampCallOptional (tcCurDeclNode tc) w
                           (if (== poisoned 1)
                             vecNew
                             env))
@@ -3372,7 +3372,7 @@
   (mut ambIdx : (Option AmbIndex))
   (mut lamBase : Int)
   (mut curSigVars : Names)
-  (mut curDeclNode : ASTNode)
+  (mut curDeclNode : (Option ASTNode))
   (mut sigTags : (Option Nodes))
   (mut fnSufIdx : (Option FnIndex))
   (mut privIdx : (Option StringRows))
@@ -3389,13 +3389,14 @@
   (subtypes : Nodes)
   (mut rgnHasForm : Int)
   (mut rgnStamping : Int)
-  (rgnRefused : (Vec Int))  ; packed parser spans, compared as scalar locations
+  (rgnRefused : (Vec Int))
   (wordLower : (Vec ASTNode))
   (wordStructs : Int)
   (unsafe : UState)
   (parLends : (Vec ASTNode))
   (exprChecks : ExprChecks))
 
+; packed parser spans, compared as scalar locations
 ; Word 46, `exprChecks`: formatting-cache pairs, compute requests and
 ; the compute activation flag. The formatting cache is a stack of (expression, checked type)
 ; pairs, scoped to a formatting rewrite. The argument is checked once
@@ -3897,11 +3898,11 @@
     tc
   })
 
-(:: tcCurDeclNode (-> TC ASTNode))
+(:: tcCurDeclNode (-> TC (Option ASTNode)))
 (fn (tcCurDeclNode tc)
   tc.curDeclNode)
 
-(:: tcSetCurDeclNode (-> TC ASTNode TC))
+(:: tcSetCurDeclNode (-> TC (Option ASTNode) TC))
 (fn (tcSetCurDeclNode tc v)
   {
     (set tc.curDeclNode v)
@@ -5126,7 +5127,7 @@
             :ambIdx None
             :lamBase 0
             :curSigVars vecNew
-            :curDeclNode nilNode
+            :curDeclNode None
             :sigTags None
             :fnSufIdx None
             :privIdx None
@@ -10698,8 +10699,7 @@
     (let params state.unsignedParams)
     (if (|| (== (vecLen params) 0) (== (tyIsErr (vecGet params 0)) 0))
       0
-      {
-        (let d (tcCurDeclNode tc))
+      (if (let (Some d) (tcCurDeclNode tc))
         (if (== (nodeSpan d) 0)
           0
           (emitDiag tc
@@ -10711,7 +10711,7 @@
                 0 0 "write a `(:: ...)` signature above this definition"
                 "parameters of a function without a signature default to Int; this body needs a different parameter type")
               "declare this function's parameter types")))
-      })
+        0))
   })
 
 (pub :: emitMismatch (-> TC String String Int Int))
@@ -15937,17 +15937,11 @@
 ; body is checked. Word 24 is the declaration, as `curFnSigTy` reads it.
 (pub :: curDeclTrusted (-> TC Int))
 (pub fn (curDeclTrusted tc)
-  {
-    (let d (tcCurDeclNode tc))
-    (if (nodeSame d nilNode)
-      0
-      {
-        (let entFound (findFnEnt tc (nodeAName d)))
-        (if (let (Some ent) entFound)
-          (fnEntUnsafe ent)
-          0)
-      })
-  })
+  (if (let (Some d) (tcCurDeclNode tc))
+    (if (let (Some ent) (findFnEnt tc (nodeAName d)))
+      (fnEntUnsafe ent)
+      0)
+    0))
 
 ; 1 when `(cast tgt x)`, with `x` of type `src`, forges a reference.
 ; The target decides whether the cast can forge at all
@@ -16783,7 +16777,7 @@
                 })
               {
                 (let stamp
-                  (setNodeTyNames (nodeBuildEvstampCallPlain (tcCurDeclNode tc) w env) vars))
+                  (setNodeTyNames (nodeBuildEvstampCallOptional (tcCurDeclNode tc) w env) vars))
                 {
                   (setNodeTyChild head stamp)
                   (for i in 0..(vecLen vars)
@@ -30864,7 +30858,7 @@
             nilNode))
         (let ptys vecNew)
         {
-          (tcSetCurDeclNode tc d)
+          (tcSetCurDeclNode tc (Some d))
           (if (== (tyHasSrcVar sigTy) 1)
             {
               (let sv vecNew)
@@ -30980,7 +30974,7 @@
                 (evSettle tc)
                 (tcSetCurModule tc None)
                 (tcSetCurSigVars tc vecNew)
-                (tcSetCurDeclNode tc nilNode)
+                (tcSetCurDeclNode tc None)
               }
             }
           }
@@ -34163,7 +34157,7 @@
           (&& (== (isPendingNode ty) 0) (|| (== (nodeTag e) TAG_E_LAM) (== (nodeTag e) TAG_E_APP))))
           (setNodeBinderTyChild e
             (if (== (nodeTag e) TAG_E_APP)
-              (nodeBuildEvstampResultPlain (tyResolve ty) (evClassOf tc (tyResolve ty))
+              (nodeBuildEvstampResultOptional (tyResolve ty) (evClassOf tc (tyResolve ty))
                 (tcCurDeclNode tc))
               (tyResolve ty)))
           e)
@@ -34271,9 +34265,8 @@
 ; declaration's parameter entry, so a shadowing let/lambda cannot inherit it.
 (:: computeForwarded (-> TC ASTNode Bool))
 (fn (computeForwarded tc e)
-  {
-    (let d (tcCurDeclNode tc))
-    (if (|| (nodeSame d nilNode) (!= (nodeTag e) TAG_E_VAR))
+  (if (let (Some d) (tcCurDeclNode tc))
+    (if (!= (nodeTag e) TAG_E_VAR)
       false
       {
         (let pos (strVecIdx (nodeBNames d) (nodeAName e)))
@@ -34291,7 +34284,7 @@
               false))
           false)
       })
-  })
+    false))
 
 (:: computeCaptureNames (-> TC ASTNode Names Bool))
 (fn (computeCaptureNames tc lam names)

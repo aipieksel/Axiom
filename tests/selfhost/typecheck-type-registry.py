@@ -95,6 +95,38 @@ def collector_negative_control(compiler, repo, env, work):
     print("cache negative control rejected the built-empty rescan mutation (status 2)")
 
 
+def current_decl_negative_control(compiler, repo, env, work):
+    """Prove that dropping a present declaration fails the stamp layout probe."""
+    overlay = work / "negative-current-decl-core"
+    overlay.mkdir()
+    for source in (repo / "core").iterdir():
+        if source.is_file() and source.name != "parser.ax":
+            (overlay / source.name).symlink_to(source)
+    source = (repo / "core/parser.ax").read_text()
+    old = """(pub fn (nodeBuildEvstampCallOptional declaration words env)
+  (nodeBuildEvstampCallPlain
+    (match declaration
+      ((None) nilNode)
+      ((Some node) node))
+    words env))"""
+    if source.count(old) != 1:
+        raise SystemExit("current declaration control no longer matches its single boundary site")
+    (overlay / "parser.ax").write_text(source.replace(old, old.replace("((Some node) node)", "((Some node) nilNode)")))
+    executable = work / "current-decl-negative"
+    built = subprocess.run(
+        [str(compiler), "--diagnostic-format=ai", "build",
+         str(repo / "tests/selfhost/typecheck-current-decl-options.ax"),
+         "--opt", "0", "--output", str(executable)],
+        env=dict(env, AXIOM_PATH=str(overlay)), capture_output=True, text=True,
+    )
+    if built.returncode:
+        raise SystemExit(built.stdout + built.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    if ran.returncode != 2 or ran.stdout or ran.stderr:
+        raise SystemExit(f"declaration stamp control: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+    print("declaration stamp negative control rejected the discarded Some payload (status 2)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
@@ -107,7 +139,7 @@ def main():
         "typecheck-type-registry.ax", "typecheck-module-options.ax",
         "typecheck-function-registry.ax", "typecheck-private-state.ax",
         "typecheck-witness-options.ax", "typecheck-field-options.ax",
-        "typecheck-collector-options.ax",
+        "typecheck-collector-options.ax", "typecheck-current-decl-options.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
@@ -117,6 +149,7 @@ def main():
         ("typecheck-witness-exhaustive.axp", "AX3005", ("None",)),
         ("typecheck-field-exhaustive.axp", "AX3005", ("None",)),
         ("typecheck-collector-refusal.axp", "AX3004", ("Option", "Int")),
+        ("typecheck-current-decl-refusal.axp", "AX3004", ("Option", "Int")),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -146,6 +179,7 @@ def main():
             witness_negative_control(compiler, repo, env, Path(work))
             field_negative_control(compiler, repo, env, Path(work))
             collector_negative_control(compiler, repo, env, Path(work))
+            current_decl_negative_control(compiler, repo, env, Path(work))
     print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 
