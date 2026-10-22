@@ -273,12 +273,12 @@ start = s.index("(pub fn (rgnWhile rc e)")
 end = s.index("\n(pub :: rgnMatch ", start)
 s = s[:start] + """(pub fn (rgnWhile rc e)
   {
-    (let rep (memGetWord rc 11))
+    (let rep rc.report)
     {
-      (memSetWord rc 11 0)
+      (set rc.report 0)
       (rgnExpr rc (nodeAChild e))
       (rgnSeq rc (nodeBChildren e) 0 0)
-      (memSetWord rc 11 rep)
+      (set rc.report rep)
       (rgnExpr rc (nodeAChild e))
       (rgnSeq rc (nodeBChildren e) 0 0)
       0

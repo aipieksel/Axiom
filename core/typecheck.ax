@@ -1006,11 +1006,11 @@
         (if (!= ent 0)
           (vecPush ents
             (as (SEnt
-                  :name (memGetWordStr ent 0)
-                  :mutable (memGetWord ent 1)
-                  :bsp (memGetWord ent 2)
+                  :name (sEntName ent)
+                  :mutable (sEntMutable ent)
+                  :bsp (sEntBsp ent)
                   :ty (sEntTy ent)
-                  :used (memGetWord ent 4)) Int)))
+                  :used (sEntUsed ent)) Int)))
         (deferResolveCaps tc acc ents (+ i 1))
       }
     }))
@@ -3097,15 +3097,15 @@
 
 (pub struct FnEnt
   (name : String)
-  (ty : ASTNode)
-  (paramCount : Int)
+  (mut ty : ASTNode)
+  (mut paramCount : Int)
   (isBuiltin : Int)
   (isEffectOp : Int)
   (effects : Strings)
   (eparams : (Vec Int))
   (calls : (Vec Int))
-  (rgn : Int)
-  (unsafe : Int)
+  (mut rgn : Int)
+  (mut unsafe : Int)
   (uses : (Vec EpUse))
   (mayCalls : (Vec Int))
   (mut pending : Int)
@@ -3150,6 +3150,89 @@
   (module : Int)
   (tyvars : Names)
   (repr : Int))
+
+; Typed reads of the other entries the checker's tables hold as words.
+(pub :: fnEntMayCalls (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(pub fn (fnEntMayCalls ent)
+  {
+    (let e (as ent FnEnt))
+    e.mayCalls
+  })
+
+(pub :: structEntName (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (structEntName ent)
+  {
+    (let e (as ent StructEnt))
+    e.name
+  })
+
+(pub :: structEntFields (-> Int Nodes))
+;@axiom:effect(unsafe)
+(pub fn (structEntFields ent)
+  {
+    (let e (as ent StructEnt))
+    e.fields
+  })
+
+(pub :: structEntModule (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (structEntModule ent)
+  {
+    (let e (as ent StructEnt))
+    e.module
+  })
+
+; The declaring module's name. Only ask it when `structEntModule` is
+; not 0, which is the entry file.
+(pub :: structEntModuleName (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (structEntModuleName ent)
+  {
+    (let e (as ent StructEnt))
+    (as e.module String)
+  })
+
+(pub :: structEntTyvars (-> Int Names))
+;@axiom:effect(unsafe)
+(pub fn (structEntTyvars ent)
+  {
+    (let e (as ent StructEnt))
+    e.tyvars
+  })
+
+(pub :: structEntRepr (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (structEntRepr ent)
+  {
+    (let e (as ent StructEnt))
+    e.repr
+  })
+
+(pub :: dataEntName (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (dataEntName ent)
+  {
+    (let e (as ent DataEnt))
+    e.name
+  })
+
+(pub :: dataEntModule (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (dataEntModule ent)
+  {
+    (let e (as ent DataEnt))
+    e.module
+  })
+
+(pub :: dataEntCtors (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(pub fn (dataEntCtors ent)
+  {
+    (let e (as ent DataEnt))
+    e.ctors
+  })
 
 ; Typed reads of a function entry. The function tables hold each
 ; `FnEnt` as a word; a reader views it through the struct's declaration
@@ -3268,24 +3351,49 @@
   })
 
 (:: fnEntSetTy (-> Int ASTNode Int))
+;@axiom:effect(unsafe)
 (fn (fnEntSetTy ent v)
-  (memSetWord ent 1 v))
+  {
+    (let e (as ent FnEnt))
+    (set e.ty v)
+    0
+  })
 
 (:: fnEntSetParamCount (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (fnEntSetParamCount ent v)
-  (memSetWord ent 2 v))
+  {
+    (let e (as ent FnEnt))
+    (set e.paramCount v)
+    0
+  })
 
 (:: fnEntSetRgn (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (fnEntSetRgn ent v)
-  (memSetWord ent 8 v))
+  {
+    (let e (as ent FnEnt))
+    (set e.rgn v)
+    0
+  })
 
 (:: fnEntSetUnsafe (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (fnEntSetUnsafe ent v)
-  (memSetWord ent 9 v))
+  {
+    (let e (as ent FnEnt))
+    (set e.unsafe v)
+    0
+  })
 
 (:: fnEntSetPending (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (fnEntSetPending ent v)
-  (memSetWord ent 12 v))
+  {
+    (let e (as ent FnEnt))
+    (set e.pending v)
+    0
+  })
 
 ; A struct's representation, from its markers (`parser.ax`'s
 ; `structIsWord` and `structIsShared`): 0 a heap block, 1 a word
@@ -3309,7 +3417,7 @@
 (pub fn (structEntIsWord ent)
   (if (== ent 0)
     0
-    (if (== (% (memGetWord ent 4) 2) 1)
+    (if (== (% (structEntRepr ent) 2) 1)
       1
       0)))
 
@@ -3319,7 +3427,7 @@
 (pub fn (structEntIsSharedHeap ent)
   (if (== ent 0)
     0
-    (if (== (& (memGetWord ent 4) 7) 6)
+    (if (== (& (structEntRepr ent) 7) 6)
       1
       0)))
 
@@ -3327,7 +3435,7 @@
 (pub fn (structEntIsShared ent)
   (if (== (structEntIsWord ent) 0)
     0
-    (if (!= (& (memGetWord ent 4) 2) 0)
+    (if (!= (& (structEntRepr ent) 2) 0)
       1
       0)))
 
@@ -7176,8 +7284,8 @@
 (pub :: tyIdxAddData (-> Int Int Int))
 (pub fn (tyIdxAddData tc ent)
   {
-    (tyIdxPut tc (memGetWordStr ent 0) TY_DATA (memGetWord ent 2) ent 0)
-    (tyIdxAddCtors tc ent (memGetWordVec ent 1) 0)
+    (tyIdxPut tc (dataEntName ent) TY_DATA (dataEntModule ent) ent 0)
+    (tyIdxAddCtors tc ent (dataEntCtors ent) 0)
   })
 
 (pub :: tyIdxAddCtors (-> Int Int Ints Int Int))
@@ -7758,9 +7866,9 @@
 (pub fn (wordSealedHere tc ent)
   (if (if (== ent 0)
     true
-    (== (& (memGetWord ent 4) 5) 0))
+    (== (& (structEntRepr ent) 5) 0))
     0
-    (if (== (tcSameModule (memGetWord ent 2) (tcCurModule tc)) 1)
+    (if (== (tcSameModule (structEntModule ent) (tcCurModule tc)) 1)
       0
       1)))
 
@@ -7911,14 +8019,14 @@
           (mkDiagNote SEV_ERROR "AX3085" "word-struct-sealed" span
             (concat
               (concat (concat (concat "only module `" (wordEntModuleName ent)) "` can make a `")
-                (memGetWordStr ent 0))
+                (structEntName ent))
               "`")
             0 0
             (concat (concat "get one from a function module `" (wordEntModuleName ent))
-              (if (!= (& (memGetWord ent 4) 1) 0)
+              (if (!= (& (structEntRepr ent) 1) 0)
                 "` provides: a word struct's constructor stays in its module, `pub` or not"
                 "` provides: a sealed struct's constructor stays in its module, `pub` or not"))
-            (if (!= (& (memGetWord ent 4) 1) 0)
+            (if (!= (& (structEntRepr ent) 1) 0)
               "a word struct is sealed, so every value of its type is one its module made and no other code can forge one (docs/memory-model.md MM-VAL-10a)"
               "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
           "built outside its module"))
@@ -7945,14 +8053,14 @@
                       (concat "` can " (concat operation " field `")))
                     field)
                   "` of `")
-                (memGetWordStr ent 0))
+                (structEntName ent))
               "`")
             0 0
             (concat (concat "use the functions module `" (wordEntModuleName ent))
-              (if (!= (& (memGetWord ent 4) 1) 0)
+              (if (!= (& (structEntRepr ent) 1) 0)
                 "` provides: a word struct's field stays in its module, `pub` or not"
                 "` provides: a sealed struct's field stays in its module, `pub` or not"))
-            (if (!= (& (memGetWord ent 4) 1) 0)
+            (if (!= (& (structEntRepr ent) 1) 0)
               "a word struct is sealed: what its word means is its module's business, and code that read it could hand the same word to something else (docs/memory-model.md MM-VAL-10a)"
               "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
           (concat operation " outside its module")))
@@ -7963,9 +8071,9 @@
 ; `main` for the entry file.
 (pub :: wordEntModuleName (-> Int String))
 (pub fn (wordEntModuleName ent)
-  (if (== (memGetWord ent 2) 0)
+  (if (== (structEntModule ent) 0)
     "the entry file"
-    (memGetWordStr ent 2)))
+    (structEntModuleName ent)))
 
 ; ------------------------------------------------------------------
 ; The lowering. A word struct's constructor and field read are the
@@ -10209,7 +10317,7 @@
 ; parser's TAG_FIELD nodes: name in a, parsed type in ty.
 (pub :: structFieldTy (-> Int String ASTNode))
 (pub fn (structFieldTy ent fname)
-  (structFieldTyFrom (memGetWordVec ent 1) fname 0))
+  (structFieldTyFrom (structEntFields ent) fname 0))
 
 (pub :: structFieldTyFrom (-> (Vec ASTNode) String Int ASTNode))
 (pub fn (structFieldTyFrom fields fname i)
@@ -10230,7 +10338,7 @@
 ; parser's TAG_FIELD node (`parseOneField`).
 (pub :: structFieldMut (-> Int String Int))
 (pub fn (structFieldMut ent fname)
-  (structFieldMutFrom (memGetWordVec ent 1) fname 0))
+  (structFieldMutFrom (structEntFields ent) fname 0))
 
 (pub :: structFieldMutFrom (-> (Vec ASTNode) String Int Int))
 (pub fn (structFieldMutFrom fields fname i)
@@ -10251,10 +10359,10 @@
 ; wrongly flag legal code).
 (pub :: repArity (-> Int Int))
 (pub fn (repArity ent)
-  (if (>= (memGetWord ent 2) 0)
-    (memGetWord ent 2)
-    (if (== (memGetWord ent 3) 1)
-      (arrowArity (readAstNode ent 1))
+  (if (>= (fnEntParamCount ent) 0)
+    (fnEntParamCount ent)
+    (if (== (fnEntIsBuiltin ent) 1)
+      (arrowArity (fnEntTy ent))
       (- 0 1))))
 
 ; ------------------------------------------------------------------
@@ -10269,6 +10377,38 @@
   (bsp : Int)
   (ty : ASTNode)
   (used : Int))
+
+(pub :: sEntName (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (sEntName ent)
+  {
+    (let e (as ent SEnt))
+    e.name
+  })
+
+(pub :: sEntMutable (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (sEntMutable ent)
+  {
+    (let e (as ent SEnt))
+    e.mutable
+  })
+
+(pub :: sEntBsp (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (sEntBsp ent)
+  {
+    (let e (as ent SEnt))
+    e.bsp
+  })
+
+(pub :: sEntUsed (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (sEntUsed ent)
+  {
+    (let e (as ent SEnt))
+    e.used
+  })
 
 (pub :: pushScope (-> Ints String Int Int ASTNode Int))
 (pub fn (pushScope scope name mutFlag bsp ty)
@@ -10325,8 +10465,12 @@
     }))
 
 (pub :: sEntTy (-> Int ASTNode))
+;@axiom:effect(unsafe)
 (pub fn (sEntTy ent)
-  (readAstNode ent 3))
+  {
+    (let e (as ent SEnt))
+    e.ty
+  })
 
 ; The innermost entry's INDEX, or -1. `checkSet` needs the position,
 ; not just the entry: whether the target sits below the innermost
@@ -16072,12 +16216,12 @@
       0
       {
         (let ent (findStructAnyVis tc (nodeAName s)))
-        (if (|| (== ent 0) (== (& (memGetWord ent 4) 1) 0))
+        (if (|| (== ent 0) (== (& (structEntRepr ent) 1) 0))
           0
           (if (|| (== (wordSealedHere tc ent) 0)
                 (|| (== (castSameTy tc tgt src) 1) (== (curDeclTrusted tc) 1)))
             0
-            (emitWordSealedRead tc ent (nodeAName (vecGet (memGetWordVec ent 1) 0)) span)))
+            (emitWordSealedRead tc ent (nodeAName (vecGet (structEntFields ent) 0)) span)))
       })
   })
 
@@ -16908,7 +17052,7 @@
       (let args (spineArgVec e vecNew))
       (let sourceName (nodeAName (spineHead e)))
       {
-        (writeNodeText (spineHead e) 1 (nominalName (memGetWordStr ent 0) (memGetWord ent 2)))
+        (writeNodeText (spineHead e) 1 (nominalName (structEntName ent) (structEntModule ent)))
         {
           (let result (checkStructConAt tc args (spanOf e) ent sourceName))
           {
@@ -16927,7 +17071,7 @@
   (if (== (nodeTag result) TAG_T_CON)
     {
       (let vars vecNew)
-      (let fields (memGetWordVec ent 1))
+      (let fields (structEntFields ent))
       {
         (for field in fields
           (sigTyVarsInto (nodeTyChild field) vars))
@@ -16991,7 +17135,7 @@
     ; inside the module that wrote 2, against a shape it never wrote.
     (nodeBuildTErrPlain 0 0 0)
     {
-      (let fields (memGetWordVec ent 1))
+      (let fields (structEntFields ent))
       (if (!= (vecLen args) (vecLen fields))
         {
           (if (!= span 0)
@@ -17001,7 +17145,7 @@
                   (concat
                     (concat
                       (concat
-                        (concat (concat "struct `" (bareOf (memGetWordStr ent 0))) "` expects ")
+                        (concat (concat "struct `" (bareOf (structEntName ent))) "` expects ")
                         (fmtInt (vecLen fields)))
                       " field(s), found ")
                     (fmtInt (vecLen args))))
@@ -17017,11 +17161,11 @@
         ; macro-generated struct in the tree (exit 139) until the
         ; `(== tvs 0)` was put in front of it.
         {
-          (let tvs (memGetWordVec ent 3))
+          (let tvs (structEntTyvars ent))
           (if (|| (== (as tvs Int) 0) (== (vecLen tvs) 0))
             {
               (checkStructFields tc args fields 0)
-              (mkTCon (nominalName (memGetWordStr ent 0) (memGetWord ent 2)) vecNew)
+              (mkTCon (nominalName (structEntName ent) (structEntModule ent)) vecNew)
             }
             ; PARAMETERISED. The declared field types mention the
             ; struct's variables, which are SOURCE variables and
@@ -17046,7 +17190,7 @@
                 (let insts (structInstFieldTys tc fields env vecNew 0))
                 {
                   (checkStructFieldsInst tc args insts 0)
-                  (mkTCon (nominalName (memGetWordStr ent 0) (memGetWord ent 2))
+                  (mkTCon (nominalName (structEntName ent) (structEntModule ent))
                     (structPinArgs tc args insts (structTvNodes env tvs vecNew 0) vecNew 0))
                 }
               }
@@ -18973,8 +19117,8 @@
             {
               (let ent (findFnEnt tc (nodeAName v)))
               (if (&& (!= ent 0)
-                    (&& (== (tyIsArrow (readAstNode ent 1)) 1)
-                      (&& (!= (memGetWord ent 2) 0) (== (isSyscallPrim (nodeAName v)) 0))))
+                    (&& (== (tyIsArrow (fnEntTy ent)) 1)
+                      (&& (!= (fnEntParamCount ent) 0) (== (isSyscallPrim (nodeAName v)) 0))))
                 (KnownFn (fnValNamed ent))
                 UnknownFn)
             })
@@ -21194,6 +21338,22 @@
   (name : String)
   (pidx : Int))
 
+(pub :: bEntName (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (bEntName ent)
+  {
+    (let e (as ent BEnt))
+    e.name
+  })
+
+(pub :: bEntPidx (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (bEntPidx ent)
+  {
+    (let e (as ent BEnt))
+    e.pidx
+  })
+
 ; `ctx` is where the walk stands, in a one-element vector every scope a
 ; binding derives shares, so a `let` copies one word for it.
 (pub struct BScope
@@ -21369,7 +21529,7 @@
     (if (== ent 0)
       None
       {
-        (let k (- (- 0 3) (memGetWord ent 1)))
+        (let k (- (- 0 3) (bEntPidx ent)))
         (if (< k 0)
           None
           (Some (vecGet (bsValsTable b) k)))
@@ -21461,7 +21621,7 @@
   {
     (let ent (bsFind b n))
     (if (!= ent 0)
-      (memGetWord ent 1)
+      (bEntPidx ent)
       (nameIndexIn (bsParamsVec b) n 0))
   })
 
@@ -22098,8 +22258,8 @@
         {
           (let sc (bodyScopeOf tc d))
           {
-            (let _c (memSetWord tc 29 (memGetWord ent 7)))
-            (let _y (memSetWord (memGetWord tc 44) 10 (memGetWord ent 11)))
+            (let _c (memSetWord tc 29 (fnEntCalls ent)))
+            (let _y (memSetWord (memGetWord tc 44) 10 (fnEntMayCalls ent)))
             (let _s (memSetWord tc 36 (tcPairSitesOf tc d)))
             (let got (collectEffects tc (nodeCChild d) sc))
             (let _s0 (memSetWord tc 36 0))
@@ -22107,15 +22267,15 @@
             (let _y0 (memSetWord (memGetWord tc 44) 10 0))
             (let _m0 (memSetWord tc 16 0))
             {
-              (let g1 (effUnion (memGetWordVec ent 5) got 0))
-              (let g2 (intUnion (memGetWordVec ent 6) (bsEparamsVec sc) 0))
-              (let g3 (effUnion (memGetWordVec ent 5) (syscallTagEffects tc d) 0))
-              (let g4 (epUsesMerge (memGetWordVec ent 10) (bsUsesVec sc) 0))
+              (let g1 (effUnion (fnEntEffects ent) got 0))
+              (let g2 (intUnion (fnEntEparams ent) (bsEparamsVec sc) 0))
+              (let g3 (effUnion (fnEntEffects ent) (syscallTagEffects tc d) 0))
+              (let g4 (epUsesMerge (fnEntUses ent) (bsUsesVec sc) 0))
               (let g6 (mergeFnLambdaCast ent (bsLambdaCast sc)))
               (let g5
-                (if (== (memGetWord ent 12) 1)
+                (if (== (fnEntPending ent) 1)
                   {
-                    (memSetWord ent 12 0)
+                    (fnEntSetPending ent 0)
                     1
                   }
                   0))
@@ -22312,8 +22472,8 @@
         (if (== ent 0)
           0
           {
-            (callersIdxAddEdges bs (memGetWordVec ent 7) 0 i)
-            (callersIdxAddEdges bs (memGetWordVec ent 11) 0 i)
+            (callersIdxAddEdges bs (fnEntCalls ent) 0 i)
+            (callersIdxAddEdges bs (fnEntMayCalls ent) 0 i)
           })
       })
   })
@@ -23067,7 +23227,7 @@
 (pub :: structSubstField (-> Int ASTNode (Vec ASTNode) ASTNode))
 (pub fn (structSubstField ent fty args)
   {
-    (let tvs (memGetWordVec ent 3))
+    (let tvs (structEntTyvars ent))
     (if (nodeSame fty nilNode)
       fty
       (if (== (as tvs Int) 0)
@@ -23083,12 +23243,12 @@
 
 ; Inserted arguments belong to the receiver's scope. Substituting them
 ; again would turn `(Pair b a)`'s first field from `b` into `a`.
-(pub :: structSubstEnv (-> Ints Nodes TypeEnv Int TypeEnv))
+(pub :: structSubstEnv (-> Names Nodes TypeEnv Int TypeEnv))
 (pub fn (structSubstEnv tvs args env i)
   (if (>= i (vecLen tvs))
     env
     {
-      (vecPush env (TypeBinding :name (vecGetStr tvs i) :ty (vecGet args i)))
+      (vecPush env (TypeBinding :name (vecGet tvs i) :ty (vecGet args i)))
       (structSubstEnv tvs args env (+ i 1))
     }))
 
@@ -23245,15 +23405,14 @@
 ; and the emitter rebuilds them (`lowerConds` answers the node it was
 ; given), so the stamp survives to `emitField`/`emitSetF`.
 (pub :: stampFieldStruct (-> ASTNode Int ASTNode))
-;@axiom:effect(unsafe)
 (pub fn (stampFieldStruct e ent)
   {
-    (let name (as (memGetWord ent 0) String))
-    (let m (memGetWord ent 2))
+    (let name (as (structEntName ent) String))
+    (let m (structEntModule ent))
     (setNodeTyText e
       (if (== m 0)
         name
-        (concat (concat (memGetWordStr ent 2) "$") name)))
+        (concat (concat (structEntModuleName ent) "$") name)))
   })
 
 ; Every constructor agrees on the field's slot and type here. Keeping
@@ -23586,20 +23745,20 @@
             (let ent (vecGet (tcScopeVec tc) idx))
             {
               (let suppressed
-                (if (== (memGetWord ent 1) 1)
+                (if (== (sEntMutable ent) 1)
                   (if (&& (!= (tcLamBase tc) 0) (< idx (tcLamBase tc)))
                     {
-                      (emitSetCaptured name (nodeSpan e) (memGetWord ent 2) (tcOutVec tc))
+                      (emitSetCaptured name (nodeSpan e) (sEntBsp ent) (tcOutVec tc))
                       1
                     }
                     0)
-                  (if (== (memGetWord ent 2) 0)
+                  (if (== (sEntBsp ent) 0)
                     {
                       (emitSetOnParam name (nodeSpan e) tc)
                       1
                     }
                     {
-                      (emitAX3012 name (nodeSpan e) (memGetWord ent 2) tc)
+                      (emitAX3012 name (nodeSpan e) (sEntBsp ent) tc)
                       0
                     })))
               {
@@ -23607,7 +23766,7 @@
                 ; carries it: a store into a slot of a reference type
                 ; may take a share of what it stores (`emitSet`,
                 ; `slotStoreCounts`, MM-LIFE-2c event 3).
-                (if (== (memGetWord ent 1) 1)
+                (if (== (sEntMutable ent) 1)
                   (setNodeBinderTyChild e (sEntTy ent))
                   e)
                 ; A pending lambda stored into a cell escapes the
@@ -27093,7 +27252,7 @@
       (if (== ent 0)
         0
         {
-          (let eps (memGetWordVec ent 6))
+          (let eps (fnEntEparams ent))
           (if (== (as eps Int) 0)
             0
             (if (== (vecLen eps) 0)
@@ -27395,15 +27554,15 @@
     {
       (let found
         {
-          (let certain (graphCycleEdges tc (memGetWordVec ent 7) 0 stack done withMay))
+          (let certain (graphCycleEdges tc (fnEntCalls ent) 0 stack done withMay))
           (if (|| (!= certain 0) (== withMay 0))
             certain
-            (graphCycleEdges tc (memGetWordVec ent 11) 0 stack done withMay))
+            (graphCycleEdges tc (fnEntMayCalls ent) 0 stack done withMay))
         })
       {
         (vecPop stack)
         (if (== found 0)
-          (vecPush done (memGetWordStr ent 0))
+          (vecPush done (fnEntName ent))
           (as 0 (Vec String)))
         found
       }
@@ -27631,10 +27790,10 @@
                 (if (== (graphOwnSource tc ent kind) 1)
                   (set hit qi)
                   {
-                    (graphEnqueue tc (memGetWordVec ent 7) 0 queue parent seen qi
+                    (graphEnqueue tc (fnEntCalls ent) 0 queue parent seen qi
                       (graphStopsAtTrusted kind))
                     (if (== withMay 1)
-                      (graphEnqueue tc (memGetWordVec ent 11) 0 queue parent seen qi
+                      (graphEnqueue tc (fnEntMayCalls ent) 0 queue parent seen qi
                         (graphStopsAtTrusted kind)))
                   }))
               (set qi (+ qi 1))
@@ -27670,15 +27829,15 @@
 (pub :: graphSeeds (-> Int Int String Int Int))
 (pub fn (graphSeeds tc ent kind depth)
   (if (strEq kind "extern")
-    (if (== (memGetWord ent 4) 2)
+    (if (== (fnEntIsEffectOp ent) 2)
       1
       0)
     ; The two operations that wait (`checkIsrWaits`): a system call, and
     ; `wfi`. Both are primitives reached by an edge of their own.
     (if (strEq kind "syscall")
-      (isSyscallPrim (memGetWordStr ent 0))
+      (isSyscallPrim (fnEntName ent))
       (if (strEq kind "wfi")
-        (if (strEq (memGetWordStr ent 0) "__arm_wfi")
+        (if (strEq (fnEntName ent) "__arm_wfi")
           1
           0)
         (if (isValueCastForm kind)
@@ -27686,19 +27845,19 @@
             (graphDeclCasts tc ent)
             0)
           (if (strEq kind "forge")
-            (if (&& (> depth 0) (== (memGetWord ent 9) 0))
+            (if (&& (> depth 0) (== (fnEntUnsafe ent) 0))
               (if (== (intInVec (memGetWordVec (memGetWord tc 44) 2) ent 0) 1)
                 1
                 0)
               0)
             (if (&& (strEq kind "IO")
-                  (|| (== (isSyscallPrim (memGetWordStr ent 0)) 1) (== (memGetWord ent 4) 2)))
+                  (|| (== (isSyscallPrim (fnEntName ent)) 1) (== (fnEntIsEffectOp ent) 2)))
               1
               (if (&& (strEq kind "Unsafe")
-                    (|| (== (memGetWord ent 4) 2) (== (isUnsafePrim (memGetWordStr ent 0)) 1)))
+                    (|| (== (fnEntIsEffectOp ent) 2) (== (isUnsafePrim (fnEntName ent)) 1)))
                 1
-                (if (&& (== (memGetWord ent 3) 1)
-                      (== (effIn (memGetWordVec ent 5) (graphEffKey kind)) 1))
+                (if (&& (== (fnEntIsBuiltin ent) 1)
+                      (== (effIn (fnEntEffects ent) (graphEffKey kind)) 1))
                   1
                   0)))))))))
 
@@ -27723,13 +27882,13 @@
         (|| (isValueCastForm kind)
           (|| (strEq kind "forge") (|| (strEq kind "syscall") (strEq kind "wfi")))))
     0
-    (if (!= (memGetWord ent 3) 0)
+    (if (!= (fnEntIsBuiltin ent) 0)
       0
-      (if (!= (memGetWord ent 4) 0)
+      (if (!= (fnEntIsEffectOp ent) 0)
         0
-        (if (== (effIn (memGetWordVec ent 5) (graphEffKey kind)) 0)
+        (if (== (effIn (fnEntEffects ent) (graphEffKey kind)) 0)
           0
-          (if (== (graphAnyCalleeCarries tc (memGetWordVec ent 7) 0 kind) 1)
+          (if (== (graphAnyCalleeCarries tc (fnEntCalls ent) 0 kind) 1)
             0
             1))))))
 
@@ -27835,12 +27994,12 @@
 ; extern has no declaration and casts nothing.
 (pub :: graphDeclCasts (-> Int Int Int))
 (pub fn (graphDeclCasts tc ent)
-  (if (!= (memGetWord ent 3) 0)
+  (if (!= (fnEntIsBuiltin ent) 0)
     0
-    (if (!= (memGetWord ent 4) 0)
+    (if (!= (fnEntIsEffectOp ent) 0)
       0
       {
-        (let dd (declByName (readAstNodes tc 10) (memGetWordStr ent 0) 0))
+        (let dd (declByName (readAstNodes tc 10) (fnEntName ent) 0))
         (if (nodeSame dd nilNode)
           0
           (if (> (vecLen (castScanInto (nodeCChild dd) vecNew)) 0)
@@ -28585,8 +28744,8 @@
   {
     (let dd (restrictHopDecl tc ent))
     (if (nodeSame dd nilNode)
-      (diagAddSecondaryIn dg 0 (graphShownName (memGetWordStr ent 0)) 0)
-      (diagAddSecondaryIn dg (nodeSpan dd) (graphShownName (memGetWordStr ent 0))
+      (diagAddSecondaryIn dg 0 (graphShownName (fnEntName ent)) 0)
+      (diagAddSecondaryIn dg (nodeSpan dd) (graphShownName (fnEntName ent))
         (unitIndexFor (memGetWordVec tc 13) (nodeModule dd))))
   })
 
@@ -28600,11 +28759,11 @@
 ; caller turns `nodeModule` into an index against.
 (pub :: restrictHopDecl (-> Int Int ASTNode))
 (pub fn (restrictHopDecl tc ent)
-  (if (!= (memGetWord ent 3) 0)
+  (if (!= (fnEntIsBuiltin ent) 0)
     nilNode
-    (if (!= (memGetWord ent 4) 0)
+    (if (!= (fnEntIsEffectOp ent) 0)
       nilNode
-      (declByName (readAstNodes tc 10) (memGetWordStr ent 0) 0))))
+      (declByName (readAstNodes tc 10) (fnEntName ent) 0))))
 
 ; AX3049 at the DECLARATION, for the transitive three: the violation
 ; may be anywhere below this body, and the declaration is where the
@@ -31730,12 +31889,12 @@
             (if (>= pos 0)
               {
                 {
-                  (let field
+                  (let marks
                     (if (strEq (axtagKeyOf tag) "compute")
-                      14
-                      13))
-                  (if (== (intInVec (memGetWordVec ent field) pos 0) 0)
-                    (vecPush (memGetWordVec ent field) pos))
+                      (fnEntCompute ent)
+                      (fnEntScoped ent)))
+                  (if (== (intInVec marks pos 0) 0)
+                    (vecPush marks pos))
                 }
                 (if (strEq (axtagKeyOf tag) "scoped")
                   (tcSetRgnHasForm tc 1)
@@ -33566,7 +33725,7 @@
       (if (== ent 0)
         0
         {
-          (let f (memGetWord ent 8))
+          (let f (fnEntRgn ent))
           (if (== f 0)
             0
             {
