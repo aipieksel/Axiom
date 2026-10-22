@@ -7514,7 +7514,7 @@
     }
   })
 
-(pub :: parseModuleWith (-> Ints Ints Int))
+(pub :: parseModuleWith (-> Ints (Vec AxtagEnt) Int))
 (pub fn (parseModuleWith tokens axtags)
   ; The depth check runs BEFORE `parseDecls`, because the failure it
   ; prevents is that call exhausting the stack.
@@ -7536,7 +7536,7 @@
       })
   })
 
-(pub :: attachAxtags (-> (Vec ASTNode) Int Ints Int Int))
+(pub :: attachAxtags (-> (Vec ASTNode) Int (Vec AxtagEnt) Int Int))
 (pub fn (attachAxtags decls i axtags next)
   (if (>= i (vecLen decls))
     next
@@ -7586,7 +7586,7 @@
 ; (`fieldDeclsBuild` in the checker reads it). Before fields took tags,
 ; one written there went to the next top-level declaration, so a claim
 ; about a field landed on whatever function followed the struct.
-(pub :: attachAxtagsNested (-> ASTNode Ints Int Int))
+(pub :: attachAxtagsNested (-> ASTNode (Vec AxtagEnt) Int Int))
 (pub fn (attachAxtagsNested d axtags cur)
   ; A rule whose template is only an expression has an empty declaration
   ; list, with nothing to thread tags through, and head-list
@@ -7601,7 +7601,7 @@
 ; Each field takes the tags that precede its name and follow the
 ; previous field's, by the positional rule `attachAxtags` applies at the
 ; top level. A field's span is its name's.
-(pub :: attachAxtagsFields (-> (Vec ASTNode) Int Ints Int Int))
+(pub :: attachAxtagsFields (-> (Vec ASTNode) Int (Vec AxtagEnt) Int Int))
 (pub fn (attachAxtagsFields fields i axtags cur)
   (if (>= i (vecLen fields))
     cur
@@ -7632,7 +7632,7 @@
 ; The rules are at word 9 and each rule's template vector at index 1 -
 ; `expRuleTpl`'s slot, and the wire format `parseMacroRules` documents
 ; as fixed at 0 and 1.
-(pub :: attachAxtagsRules (-> Ints Int Ints Int Int))
+(pub :: attachAxtagsRules (-> Ints Int (Vec AxtagEnt) Int Int))
 (pub fn (attachAxtagsRules rules i axtags cur)
   (if (== (as rules Int) 0)
     cur
@@ -7642,15 +7642,20 @@
         (attachAxtags (vecGet (vecGetVec rules i) 1) 0 axtags cur)))))
 
 ; The index one past the last tag whose offset precedes `limit`.
-(pub :: axtagsUpto (-> Ints Int Int Int))
+(pub :: axtagsUpto (-> (Vec AxtagEnt) Int Int Int))
 (pub fn (axtagsUpto axtags i limit)
   (if (>= i (vecLen axtags))
     i
-    (if (< (memGetWord (vecGet axtags i) 0) limit)
-      (axtagsUpto axtags (+ i 1) limit)
-      i)))
+    {
+      (let tag (vecGet axtags i))
+      (if (< tag.off limit)
+        (axtagsUpto axtags (+ i 1) limit)
+        i)
+    }))
 
-(pub :: axtagSlice (-> Ints Int Int Ints))
+; A declaration's tags as the node stores them: each entry as a word,
+; the representation every phase reads from the node's tag slot.
+(pub :: axtagSlice (-> (Vec AxtagEnt) Int Int Ints))
 (pub fn (axtagSlice axtags from upto)
   {
     (let v vecNew)
@@ -7660,12 +7665,12 @@
     }
   })
 
-(pub :: axtagSliceInto (-> Ints Ints Int Int Int))
+(pub :: axtagSliceInto (-> Ints (Vec AxtagEnt) Int Int Int))
 (pub fn (axtagSliceInto v axtags from upto)
   (if (>= from upto)
     0
     {
-      (vecPush v (vecGet axtags from))
+      (vecPush v (as (vecGet axtags from) Int))
       (axtagSliceInto v axtags (+ from 1) upto)
     }))
 
