@@ -1,0 +1,67 @@
+; expect 42
+; A parameter at index zero is present. Frame seeding leaves parameters
+; out of the shadow list and seeds only names absent from that list.
+(import core)
+(import parser)
+(import typecheck)
+(import Vec)
+
+(:: nameIndexIs (-> (Option Int) Int Bool))
+(fn (nameIndexIs result expected)
+  (match result
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: nameIndexLookupChecks Bool)
+(fn (nameIndexLookupChecks)
+  {
+    (let names (vecPush (vecPush (vecPush vecNew "zero") "one") "zero"))
+    (&& (isNone (nameIndexIn vecNew "missing" 0))
+      (&& (isNone (nameIndexIn names "missing" 0))
+        (&& (nameIndexIs (nameIndexIn names "zero" 0) 0)
+          (&& (nameIndexIs (nameIndexIn names "one" 0) 1)
+            (&& (nameIndexIs (nameIndexIn names "zero" 1) 2)
+              (isNone (nameIndexIn names "zero" 3)))))))
+  })
+
+(:: parameterAliasIs (-> BScope String Int Bool))
+(fn (parameterAliasIs scope name expected)
+  (match (bsParamAlias scope name)
+    ((BoundParam index) (== index expected))
+    ((BoundAttributed) false)
+    ((BoundOpaque) false)
+    ((BoundValues _) false)))
+
+(:: frameBinderChecks Bool)
+(fn (frameBinderChecks)
+  {
+    (let params (vecPush (vecPush vecNew "zero") "one"))
+    (let base (bsMake vecNew params vecNew vecNew None (bsCtxOf vecNew vecNew 0 vecNew)))
+    (let entries vecNew)
+    (vecPush entries (SEnt :name "ignored" :mutable 0 :bsp 0 :ty mkIntTy :used 0))
+    (vecPush entries (SEnt :name "zero" :mutable 0 :bsp 0 :ty mkIntTy :used 0))
+    (vecPush entries (SEnt :name "local" :mutable 0 :bsp 0 :ty mkIntTy :used 0))
+    (vecPush entries (SEnt :name "one" :mutable 0 :bsp 0 :ty mkIntTy :used 0))
+    (let seeded (seedFrameBinders base entries 1))
+    (if (let (Some local) (bsFind seeded "local"))
+      (&& (== (vecLen (bsNamesVec seeded)) 1)
+        (&& (isNone (bsFind seeded "ignored"))
+          (&& (isNone (bsFind seeded "zero"))
+            (&& (isNone (bsFind seeded "one"))
+              (&& (parameterAliasIs seeded "zero" 0)
+                (&& (parameterAliasIs seeded "one" 1)
+                  (match local.source
+                    ((BoundAttributed) true)
+                    ((BoundParam _) false)
+                    ((BoundOpaque) false)
+                    ((BoundValues _) false))))))))
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (nameIndexLookupChecks)
+    (if (frameBinderChecks)
+      42
+      2)
+    1))

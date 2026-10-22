@@ -15,6 +15,13 @@ CASES = [
         "new": "None",
         "negative_status": 1,
     },
+    {
+        "name": "name-index",
+        "function": "nameIndexIn",
+        "old": "(Some i)",
+        "new": "None",
+        "negative_status": 1,
+    },
 ]
 
 
@@ -72,13 +79,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
     parser.add_argument("--negative-controls", action="store_true")
+    parser.add_argument("--case", choices=[case["name"] for case in CASES])
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     env = dict(os.environ, AXIOM_PATH=str(repo / "core"), AXIOM_STDLIB=str(repo / "stdlib"))
+    cases = [case for case in CASES if args.case is None or args.case == case["name"]]
     with tempfile.TemporaryDirectory(prefix="axiom-optional-indices-") as work:
-        for case in CASES:
+        for case in cases:
             run_case(args.axiom.resolve(), repo, env, Path(work), case, args.negative_controls)
-    print(f"checker optional indices: {len(CASES)} native and exhaustive-refusal cases passed")
+    print(f"checker optional indices: {len(cases)} native and exhaustive-refusal cases passed")
 
 
 if __name__ == "__main__":
