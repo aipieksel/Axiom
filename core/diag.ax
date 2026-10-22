@@ -319,7 +319,7 @@
 ; the bare form", because in each of those cases there is no other
 ; file this renderer could name.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecCross (-> Diag Int Ints Ints Int))
+(pub :: diagSecCross (-> Diag Int Units Ints Int))
 (pub fn (diagSecCross d i units ixs)
   (if (== (diagSecOwn d i) 1)
     0
@@ -836,13 +836,13 @@
 ; below needs an arbitrary unit's index anyway - an expansion frame
 ; renders against a DIFFERENT source than the diagnostic's own.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: unitIndexes (-> Ints Ints))
+(pub :: unitIndexes (-> Units Ints))
 (pub fn (unitIndexes units)
   {
     (let out vecNew)
     {
       (for i in 0..(vecLen units)
-        (vecPush out (srcLineIndex (memGetWordStr (vecGet units i) 1))))
+        (vecPush out (srcLineIndex (unitSrc (vecGet units i)))))
       out
     }
   })
@@ -1094,7 +1094,7 @@
 ; O(file) the scans it replaces cost. The report loop below calls
 ; `renderDiagIx` and builds one index for the whole run instead.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiag (-> Diag String String Ints String))
+(pub :: renderDiag (-> Diag String String Units String))
 ;@axiom:effect(unsafe)
 (pub fn (renderDiag d src file units)
   (renderDiagIx d src file units (srcLineIndex src)
@@ -1106,7 +1106,7 @@
 ; built once per render - see THE LINE INDEX above. `ixs` is 0 exactly
 ; when `units` is, on the single-unit path.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiagIx (-> Diag String String Ints Int Ints String))
+(pub :: renderDiagIx (-> Diag String String Units Int Ints String))
 (pub fn (renderDiagIx d src file units ix ixs)
   {
     (let parts vecNew)
@@ -1166,11 +1166,10 @@
               {
                 (let u (vecGet units (diagSecUnit d i)))
                 {
-                  (vecPush parts (memGetWordStr u 0))
+                  (vecPush parts (unitFile u))
                   (vecPush parts ":")
                   (vecPush parts
-                    (fmtSpanIx (memGetWordStr u 1) (vecGet ixs (diagSecUnit d i))
-                      (diagSecSpan d i)))
+                    (fmtSpanIx (unitSrc u) (vecGet ixs (diagSecUnit d i)) (diagSecSpan d i)))
                 }
               }))
           (vecPush parts ":")
@@ -1209,12 +1208,12 @@
               {
                 (let u (vecGet units fu))
                 {
-                  (vecPush parts (memGetWordStr u 0))
+                  (vecPush parts (unitFile u))
                   (vecPush parts ":")
                   ; The frame's own unit's index, not the
                   ; diagnostic's: this is the one field on the line
                   ; whose span points into a different source.
-                  (vecPush parts (fmtSpanIx (memGetWordStr u 1) (vecGet ixs fu) fs))
+                  (vecPush parts (fmtSpanIx (unitSrc u) (vecGet ixs fu) fs))
                   (vecPush parts ":")
                 }
               })
@@ -1229,7 +1228,7 @@
 ; source file that contributed declarations - and each diagnostic
 ; names the one its spans index.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiagsUnits (-> Diags Ints String))
+(pub :: renderDiagsUnits (-> Diags Units String))
 (pub fn (renderDiagsUnits ds units)
   ; A linear join rather than the old recursive concat fold, whose
   ; peak was measured at 829 MiB RSS for a 2000-diagnostic file - the
@@ -1250,8 +1249,7 @@
                 0)))
           {
             (vecPush blocks
-              (renderDiagIx d (memGetWordStr u 1) (memGetWordStr u 0) units
-                (indexForUnit ixs (diagUnit d)) ixs))
+              (renderDiagIx d (unitSrc u) (unitFile u) units (indexForUnit ixs (diagUnit d)) ixs))
             (vecPush blocks "\n")
           }
         })

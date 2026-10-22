@@ -6127,12 +6127,7 @@
     {
       (vecPush ds d)
       (vecPush units
-        (as (CUnit2
-              :file "<codegen>"
-              :src ""
-              :name (as 0 String)
-              :imports vecNew
-              :library false) Int))
+        (CUnit2 :file "<codegen>" :src "" :name (as 0 String) :imports vecNew :library false))
       {
         (let out (as (renderDiagsFormat diagFormatFromArgv ds units) String))
         (writeStr stderr out)
@@ -9283,7 +9278,7 @@
 ; the module in the UNIT TABLE - the path a diagnostic about this module
 ; renders against, its text, and its name so the checker can find the
 ; index from a declaration's `module` stamp.
-(pub :: parseModuleOrDieUnit (-> String Int String Ints String ASTNode FrontCache (Vec ASTNode)))
+(pub :: parseModuleOrDieUnit (-> String Int String Units String ASTNode FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
 (pub fn (parseModuleOrDieUnit name tcode entryDir units parentName site cache)
   (match (frontCached cache name)
@@ -9295,12 +9290,12 @@
         {
           (let parsed module.parsed)
           (vecPush units
-            (as (CUnit2
-                  :file module.path
-                  :src parsed.source
-                  :name name
-                  :imports vecNew
-                  :library (pathInStdlib module.path)) Int))
+            (CUnit2
+              :file module.path
+              :src parsed.source
+              :name name
+              :imports vecNew
+              :library (pathInStdlib module.path)))
           parsed.decls
         })
     )))
@@ -9329,10 +9324,10 @@
 ; program named like a library module must not replace the library's
 ; own copy for the library itself. The entry file's imports keep the
 ; documented entry-first order.
-(pub :: unitInStdlib (-> Int Int))
+(pub :: unitInStdlib (-> core::CUnit2 Int))
 ;@axiom:effect(io)
 (pub fn (unitInStdlib unit)
-  (unitInDirs (memGetWordStr unit 0) stdlibSearchDirs 0))
+  (unitInDirs (unitFile unit) stdlibSearchDirs 0))
 
 ; Whether `path` names a file inside the standard library's own
 ; directories, which is what makes a unit part of the library for the
@@ -9392,7 +9387,7 @@
     }
   })
 
-(pub :: parseModuleOrDieUnitSerial (-> String Int String Ints String ASTNode (Vec ASTNode)))
+(pub :: parseModuleOrDieUnitSerial (-> String Int String Units String ASTNode (Vec ASTNode)))
 ;@axiom:effect(io)
 (pub fn (parseModuleOrDieUnitSerial name tcode entryDir units parentName site)
   {
@@ -9424,23 +9419,23 @@
                   :imports vecNew
                   :library (pathInStdlib path)))
               {
-                (vecPush units (as unit Int))
+                (vecPush units unit)
                 0
               }
             })
         })
       (parseModuleSourceOrDie name tcode entryDir parent (nodeSpan site)
-        (memGetWordStr (vecGet units (unitIndexOf units name 0)) 1))
+        (unitSrc (vecGet units (unitIndexOf units name 0))))
     }
   })
 
-(pub :: unitIndexOf (-> Ints String Int Int))
+(pub :: unitIndexOf (-> Units String Int Int))
 (pub fn (unitIndexOf units name i)
   (if (>= i (vecLen units))
     (- 0 1)
-    (if (== (memGetWord (vecGet units i) 2) 0)
+    (if (unitIsEntry (vecGet units i))
       (unitIndexOf units name (+ i 1))
-      (if (strEq (memGetWordStr (vecGet units i) 2) name)
+      (if (strEq (unitName (vecGet units i)) name)
         i
         (unitIndexOf units name (+ i 1))))))
 
@@ -9525,7 +9520,7 @@
     }
   })
 
-(pub :: dieImportDiag (-> String Int String Int Int Int))
+(pub :: dieImportDiag (-> String Int String core::CUnit2 Int Int))
 ;@axiom:effect(io)
 (pub fn (dieImportDiag name tcode entryDir parent span)
   {
@@ -9580,7 +9575,7 @@
       ; The unit carries the RESOLVED path, not the module name, so the
       ; `-->` line names a file the reader can open.
       (vecPush units
-        (as (CUnit2 :file path :src src :name (as 0 String) :imports vecNew :library false) Int))
+        (CUnit2 :file path :src src :name (as 0 String) :imports vecNew :library false))
       {
         (let out (as (renderDiagsFormat diagFormatFromArgv ds units) String))
         (writeStr stderr out)
@@ -9600,7 +9595,7 @@
 
 ; Parse the source already recorded in the unit table. Editor clients
 ; can seed that table with unsaved sources without changing resolution.
-(pub :: parseModuleSourceOrDie (-> String Int String Int Int String Nodes))
+(pub :: parseModuleSourceOrDie (-> String Int String core::CUnit2 Int String Nodes))
 ;@axiom:effect(io)
 (pub fn (parseModuleSourceOrDie name tcode entryDir parent span src)
   {
@@ -9943,7 +9938,7 @@
 ; traversal and siblings observe each other's additions.
 (pub :: resolveDecls
   (-> (Vec ASTNode) (Vec ASTNode) Strings Int String Int Strings Strings Ints Strings Int String
-    Ints FrontCache (Vec ASTNode)))
+    (Vec core::CUnit2) FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
 (pub fn (resolveDecls decls acc seen i modName idx bares fulls mods filter tcode entryDir units
           cache)
@@ -9966,7 +9961,7 @@
 ; the module's own declarations.
 (pub :: resolveDeclsPhase
   (-> (Vec ASTNode) (Vec ASTNode) Strings Int String Int Strings Strings Ints Strings Int String
-    Ints Int FrontCache (Vec ASTNode)))
+    (Vec core::CUnit2) Int FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (resolveDeclsPhase decls acc seen i modName idx bares fulls mods filter tcode entryDir

@@ -517,8 +517,8 @@
   })
 
 (struct LspWorkspace
-  (open : (Vec Int))
-  (files : (Vec Int))
+  (open : Units)
+  (files : Units)
   (searches : (Vec LspSearchInput)))
 
 (struct LspSearchInput
@@ -536,17 +536,17 @@
       (for i in 0..(vecLen uris)
         (if (lspDocIsOpen meta i)
           (vecPush out
-            (as (CUnit2
-                  :file (lspUriToPath (vecGet uris i))
-                  :src (vecGet texts i)
-                  :name (as 0 String)
-                  :imports vecNew
-                  :library false) Int))))
+            (CUnit2
+              :file (lspUriToPath (vecGet uris i))
+              :src (vecGet texts i)
+              :name (as 0 String)
+              :imports vecNew
+              :library false))))
       (LspWorkspace :open out :files vecNew :searches vecNew)
     }
   })
 
-(pub :: lspWorkspacePath (-> LspWorkspace String Int))
+(pub :: lspWorkspacePath (-> LspWorkspace String (Option CUnit2)))
 ;@axiom:effect(io)
 (pub fn (lspWorkspacePath workspace path)
   {
@@ -556,14 +556,14 @@
           path
           (pathJoin (unwrapOr cwd ".") path))))
     (let mut i 0)
-    (let mut found 0)
+    (let mut found (:: None (Option CUnit2)))
     {
-      (while (&& (== found 0) (< i (vecLen workspace.open)))
+      (while (&& (isNone found) (< i (vecLen workspace.open)))
         {
           {
             (let unit (vecGet workspace.open i))
-            (if (strEq absolute (pathClean (memGetWordStr unit 0)))
-              (set found unit))
+            (if (strEq absolute (pathClean (unitFile unit)))
+              (set found (Some unit)))
           }
           (set i (+ i 1))
         })
@@ -577,27 +577,29 @@
   {
     (let key (pathClean (lspNavAbs path)))
     (let mut i 0)
-    (let mut found 0)
+    (let mut found (:: None (Option CUnit2)))
     {
-      (while (&& (== found 0) (< i (vecLen workspace.files)))
+      (while (&& (isNone found) (< i (vecLen workspace.files)))
         {
           {
             (let unit (vecGet workspace.files i))
-            (if (strEq key (memGetWordStr unit 0))
-              (set found unit))
+            (if (strEq key (unitFile unit))
+              (set found (Some unit)))
           }
           (set i (+ i 1))
         })
-      (if (!= found 0)
-        (memGetWordStr found 1)
-        {
-          (let text (unwrapOr (readFile key) ""))
+      (match found
+        ((Some hit) (unitSrc hit))
+        ((None)
           {
-            (vecPush workspace.files
-              (as (CUnit2 :file key :src text :name "" :imports vecNew :library false) Int))
-            text
+            (let text (unwrapOr (readFile key) ""))
+            {
+              (vecPush workspace.files
+                (CUnit2 :file key :src text :name "" :imports vecNew :library false))
+              text
+            }
           }
-        })
+        ))
     }
   })
 
@@ -654,7 +656,7 @@
               {
                 {
                   (let candidate (concat (vecGetStr dirs di) base))
-                  (if (|| (!= (lspWorkspacePath workspace candidate) 0)
+                  (if (|| (isSome (lspWorkspacePath workspace candidate))
                         (!= (strLen (lspWorkspaceFile workspace candidate)) 0))
                     (set found candidate))
                 }
@@ -672,7 +674,7 @@
 ; The first failure carries its own unit; callers never index it using
 ; the entry document's bytes.
 (pub :: lspWorkspacePreflight
-  (-> LspWorkspace (Vec ASTNode) Int String Ints Int (Option diag::Diag)))
+  (-> LspWorkspace (Vec ASTNode) Int String (Vec core::CUnit2) Int (Option diag::Diag)))
 ;@axiom:effect(io)
 (pub fn (lspWorkspacePreflight workspace decls tcode entryDir units owner)
   {
@@ -704,18 +706,18 @@
                         (let overlay (lspWorkspacePath workspace path))
                         {
                           (let src
-                            (if (== overlay 0)
-                              (lspWorkspaceFile workspace path)
-                              (memGetWordStr overlay 1)))
+                            (match overlay
+                              ((Some o) (unitSrc o))
+                              ((None) (lspWorkspaceFile workspace path))))
                           (let unit (vecLen units))
                           {
                             (vecPush units
-                              (as (CUnit2
-                                    :file path
-                                    :src src
-                                    :name name
-                                    :imports vecNew
-                                    :library (pathInStdlib path)) Int))
+                              (CUnit2
+                                :file path
+                                :src src
+                                :name name
+                                :imports vecNew
+                                :library (pathInStdlib path)))
                             {
                               (let toks (lex src))
                               {
@@ -802,12 +804,12 @@
                 (let v vecNew)
                 {
                   (vecPush v
-                    (as (CUnit2
-                          :file path
-                          :src src
-                          :name (as 0 String)
-                          :imports vecNew
-                          :library (pathInStdlib path)) Int))
+                    (CUnit2
+                      :file path
+                      :src src
+                      :name (as 0 String)
+                      :imports vecNew
+                      :library (pathInStdlib path)))
                   v
                 }
               })
@@ -3230,7 +3232,7 @@
 ; taken for fifteen lines is a dependency the next reader has to
 ; explain. Answers -1 when no unit carries that name, which is what a
 ; declaration the resolver did not attribute looks like.
-(pub :: lspUnitOf (-> Ints Int Int))
+(pub :: lspUnitOf (-> Units Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (lspUnitOf units module)
   ; FROM 1, and that is not an optimisation. Unit 0 is the entry file
@@ -3247,7 +3249,7 @@
     {
       (while (< i n)
         {
-          (if (strEq (memGetWordStr (vecGet units i) 2) (as module String))
+          (if (strEq (unitName (vecGet units i)) (as module String))
             {
               (set at i)
               (set i n)
@@ -3365,12 +3367,12 @@
           (let v vecNew)
           {
             (vecPush v
-              (as (CUnit2
-                    :file path
-                    :src src
-                    :name (as 0 String)
-                    :imports vecNew
-                    :library (pathInStdlib path)) Int))
+              (CUnit2
+                :file path
+                :src src
+                :name (as 0 String)
+                :imports vecNew
+                :library (pathInStdlib path)))
             v
           }
         })
@@ -3504,9 +3506,8 @@
                 jsonNull
                 {
                   (let unit (vecGet units u))
-                  (jsonObjPut
-                    (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (memGetWordStr unit 0))))
-                    "range" (lspRange (memGetWordStr unit 1) (nodeSpan d)))
+                  (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (unitFile unit))))
+                    "range" (lspRange (unitSrc unit) (nodeSpan d)))
                 })
             })
         }
@@ -3951,7 +3952,7 @@
 ; The unit whose module is named `w`, or -1. `lspUnitOf` asks the
 ; same of a module handle; this asks it of the name a document spells,
 ; from unit 1 for `lspUnitOf`'s reason (unit 0 has no module name).
-(pub :: lspUnitNamed (-> Ints String Int))
+(pub :: lspUnitNamed (-> Units String Int))
 (pub fn (lspUnitNamed units w)
   {
     (let mut i 1)
@@ -3959,7 +3960,7 @@
     {
       (while (< i (vecLen units))
         {
-          (if (strEq (memGetWordStr (vecGet units i) 2) w)
+          (if (strEq (unitName (vecGet units i)) w)
             {
               (set at i)
               (set i (vecLen units))
@@ -3991,10 +3992,10 @@
               {
                 (let unit (vecGet units u))
                 {
-                  (let doc (docModuleDoc (memGetWordStr unit 1)))
+                  (let doc (docModuleDoc (unitSrc unit)))
                   (lspMarkdownHover
                     (concat (concat (concat "```axiom\n(import " w) ")\n```\n\n*module* `")
-                      (concat (concat (memGetWordStr unit 0) "`\n")
+                      (concat (concat (unitFile unit) "`\n")
                         (if (== (strLen doc) 0)
                           ""
                           (concat "\n" doc))))
@@ -4212,7 +4213,7 @@
                 jsonNull
                 {
                   (let unit (vecGet units u))
-                  (lspHoverAt (memGetWordStr unit 1) allDecls d range (memGetWordStr unit 2))
+                  (lspHoverAt (unitSrc unit) allDecls d range (unitName unit))
                 })
             })
         }
@@ -5328,8 +5329,8 @@
     {
       (for unit in workspace.files
         (jsonArrPush files
-          (jsonObjPut (jsonObjPut jsonObj "path" (jsonStr (memGetWordStr unit 0))) "text"
-            (jsonStr (memGetWordStr unit 1)))))
+          (jsonObjPut (jsonObjPut jsonObj "path" (jsonStr (unitFile unit))) "text"
+            (jsonStr (unitSrc unit)))))
       (for item in workspace.searches
         {
           (let paths jsonArr)
@@ -5870,9 +5871,9 @@
                                     {
                                       (let overlay (lspWorkspacePath workspace dependency))
                                       (vecPush todo
-                                        (if (== overlay 0)
-                                          (lspWorkspaceFile workspace dependency)
-                                          (memGetWordStr overlay 1)))
+                                        (match overlay
+                                          ((Some o) (unitSrc o))
+                                          ((None) (lspWorkspaceFile workspace dependency))))
                                     }))
                               }
                             })
@@ -7983,7 +7984,7 @@
               (if (< u 0)
                 ""
                 {
-                  (let huri (lspPathToUri (memGetWordStr (vecGet units u) 0)))
+                  (let huri (lspPathToUri (unitFile (vecGet units u))))
                   (if (< (docFind uris huri) 0)
                     ""
                     huri)
@@ -9201,7 +9202,7 @@
 ; bytes rather than this document's. 0 for "no declaration", and a
 ; declaration the resolver did not attribute to a unit, which is what
 ; `lspUnitOf`'s -1 means.
-(pub :: lspUnitLocation (-> Ints ASTNode Int))
+(pub :: lspUnitLocation (-> Units ASTNode Int))
 ;@axiom:effect(io)
 (pub fn (lspUnitLocation units d)
   (if (nodeSame d nilNode)
@@ -9212,7 +9213,7 @@
         jsonNull
         {
           (let unit (vecGet units u))
-          (lspNavLocOf (lspPathToUri (memGetWordStr unit 0)) (memGetWordStr unit 1) (nodeSpan d))
+          (lspNavLocOf (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan d))
         })
     }))
 
@@ -9709,8 +9710,8 @@
             0
             {
               (let unit (vecGet units u))
-              (lspChItem (memGetWordStr unit 1) (lspLineIndex (memGetWordStr unit 1))
-                (lspPathToUri (memGetWordStr unit 0)) d)
+              (lspChItem (unitSrc unit) (lspLineIndex (unitSrc unit))
+                (lspPathToUri (unitFile unit)) d)
             })
         })
     }
@@ -9943,8 +9944,8 @@
             0
             {
               (let unit (vecGet units u))
-              (lspThItem (memGetWordStr unit 1) (lspLineIndex (memGetWordStr unit 1))
-                (lspPathToUri (memGetWordStr unit 0)) d)
+              (lspThItem (unitSrc unit) (lspLineIndex (unitSrc unit))
+                (lspPathToUri (unitFile unit)) d)
             })
         })
     }
@@ -10683,7 +10684,7 @@
                 0
                 {
                   (let unit (vecGet units u))
-                  (lspViewSigFn (memGetWordStr unit 1) allDecls d (memGetWordStr unit 2))
+                  (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
                 })
             }
             {
@@ -11953,13 +11954,12 @@
                             (let unit (vecGet units u))
                             {
                               (lspViewUnitPrep uuris uixs unit u)
-                              (lspViewSymOffer out seen query (vecGet uuris u)
-                                (memGetWordStr unit 1) (vecGetVec uixs u) bare
-                                (lspSymKind (nodeTag d)) (nodeSpan d) (memGetWordStr unit 2))
+                              (lspViewSymOffer out seen query (vecGet uuris u) (unitSrc unit)
+                                (vecGetVec uixs u) bare (lspSymKind (nodeTag d)) (nodeSpan d)
+                                (unitName unit))
                               (if (== (nodeTag d) TAG_D_DATA)
-                                (lspViewSymCtors out seen query (vecGet uuris u)
-                                  (memGetWordStr unit 1) (vecGetVec uixs u) (nodeBChildren d)
-                                  (memGetWordStr unit 2)))
+                                (lspViewSymCtors out seen query (vecGet uuris u) (unitSrc unit)
+                                  (vecGetVec uixs u) (nodeBChildren d) (unitName unit)))
                             }
                           })
                       })
@@ -12001,13 +12001,13 @@
   })
 
 ; The URI and line index of unit `u`, made on first use.
-(pub :: lspViewUnitPrep (-> Strings Ints Int Int Int))
+(pub :: lspViewUnitPrep (-> Strings Ints core::CUnit2 Int Int))
 ;@axiom:effect(io)
 (pub fn (lspViewUnitPrep uuris uixs unit u)
   (if (== (vecGet uixs u) 0)
     {
-      (vecSet uuris u (lspPathToUri (memGetWordStr unit 0)))
-      (vecSet uixs u (as (lspLineIndex (memGetWordStr unit 1)) Int))
+      (vecSet uuris u (lspPathToUri (unitFile unit)))
+      (vecSet uixs u (as (lspLineIndex (unitSrc unit)) Int))
       0
     }
     0))
@@ -13281,7 +13281,8 @@
 ; item now runs before whatever the statement evaluated ahead of it.
 ; ------------------------------------------------------------------
 (pub :: lspNameAssists
-  (-> Int (Vec diag::Diag) String String Ints Int (Vec ASTNode) String (Vec ASTNode) Ints Int))
+  (-> Int (Vec diag::Diag) String String Ints Int (Vec ASTNode) String (Vec ASTNode)
+    (Vec core::CUnit2) Int))
 ;@axiom:effect(io)
 (pub fn (lspNameAssists out ds src uri ix want decls path allDecls units)
   {
@@ -13675,7 +13676,7 @@
 ; `pub` for an AX3023 name.
 ; ------------------------------------------------------------------
 (pub :: lspPublicAssist
-  (-> Int diag::Diag String String Ints (Vec ASTNode) (Vec ASTNode) Ints Strings Int))
+  (-> Int diag::Diag String String Ints (Vec ASTNode) (Vec ASTNode) (Vec core::CUnit2) Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspPublicAssist out d src uri ix decls allDecls units seen)
   {
@@ -13772,8 +13773,8 @@
     }))
 
 (pub :: lspPublicOffer
-  (-> Int diag::Diag String String Ints (Vec ASTNode) (Vec ASTNode) Ints String String ASTNode
-    Strings Int))
+  (-> Int diag::Diag String String Ints (Vec ASTNode) (Vec ASTNode) (Vec core::CUnit2) String
+    String ASTNode Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspPublicOffer out d src uri ix decls allDecls units mod name decl seen)
   {
@@ -13785,8 +13786,8 @@
         (if (< u 0)
           0
           {
-            (let hsrc (memGetWordStr (vecGet units u) 1))
-            (let hpath (memGetWordStr (vecGet units u) 0))
+            (let hsrc (unitSrc (vecGet units u)))
+            (let hpath (unitFile (vecGet units u)))
             {
               (let o (lspFormStart hsrc (spanStart (nodeSpan decl))))
               (if (strEq (lspViewHeadAt hsrc o) "pub")
@@ -14513,7 +14514,7 @@
 ; in - `lspViewSymCtors` publishes constructors through exactly this
 ; pair. `jsonNull` on a miss, and on a `data` the resolver did not
 ; attribute to a unit, because this is the end of the chain.
-(pub :: lspCtorDefinitionImported (-> (Vec ASTNode) Ints String Int))
+(pub :: lspCtorDefinitionImported (-> (Vec ASTNode) Units String Int))
 ;@axiom:effect(io)
 (pub fn (lspCtorDefinitionImported allDecls units name)
   {
@@ -14528,8 +14529,7 @@
             jsonNull
             {
               (let unit (vecGet units u))
-              (lspNavLocOf (lspPathToUri (memGetWordStr unit 0)) (memGetWordStr unit 1)
-                (nodeSpan c))
+              (lspNavLocOf (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan c))
             })
         })
     }
@@ -14546,7 +14546,7 @@
 ; of the DECLARING file, the module named, and the note saying which
 ; constructor. `range` is still the word in the document being edited,
 ; which is a different file - the same split `lspHoverImported` makes.
-(pub :: lspHoverCtorImported (-> (Vec ASTNode) Ints String Int Int))
+(pub :: lspHoverCtorImported (-> (Vec ASTNode) Units String Int Int))
 (pub fn (lspHoverCtorImported allDecls units name range)
   {
     (let dat (lspFindCtorDataImported allDecls name (- (vecLen allDecls) 1)))
@@ -14558,7 +14558,7 @@
           jsonNull
           {
             (let unit (vecGet units u))
-            (lspHoverAtNote (memGetWordStr unit 1) allDecls dat range (memGetWordStr unit 2)
+            (lspHoverAtNote (unitSrc unit) allDecls dat range (unitName unit)
               (lspCtorNote dat name))
           })
       })
@@ -14568,7 +14568,7 @@
 ; span, in the file that declares it. This is the ONE request whose
 ; answer is the declaration rather than the constructor, because the
 ; type of `Circle` is `Shape`.
-(pub :: lspTypeCtorImported (-> (Vec ASTNode) Ints String Int))
+(pub :: lspTypeCtorImported (-> (Vec ASTNode) Units String Int))
 ;@axiom:effect(io)
 (pub fn (lspTypeCtorImported allDecls units name)
   {
@@ -14581,8 +14581,7 @@
           jsonNull
           {
             (let unit (vecGet units u))
-            (lspLocationJson (lspPathToUri (memGetWordStr unit 0)) (memGetWordStr unit 1)
-              (nodeSpan dat))
+            (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan dat))
           })
       })
   })
@@ -14706,8 +14705,8 @@
                           jsonNull
                           {
                             (let unit (vecGet units u))
-                            (lspLocationJson (lspPathToUri (memGetWordStr unit 0))
-                              (memGetWordStr unit 1) (nodeSpan d))
+                            (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
+                              (nodeSpan d))
                           })
                       })
                   })

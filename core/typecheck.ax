@@ -2921,7 +2921,6 @@
 (pub :: checkImportedImportNames (-> Units Decls (Vec diag::Diag) Int Int))
 ; Units is a packed ABI registry of live CUnit2 owners. Retain their typed
 ; import vectors while the checker reads the consumed import forms.
-;@axiom:effect(unsafe)
 (pub fn (checkImportedImportNames units allDecls out i)
   (if (>= i (vecLen units))
     0
@@ -3454,7 +3453,7 @@
   (allDecls : (Vec ASTNode))
   (curParams : Strings)
   (curCallable : (Vec Int))
-  (units : (Vec Int))
+  (units : Units)
   (mut curUnit : Int)
   (ambTbl : (Vec Int))
   (mut curModule : Int)
@@ -3941,7 +3940,7 @@
 (fn (tcSetCurCallable tc v)
   (memSetWord tc 12 v))
 
-(pub :: tcUnits (-> Int Ints))
+(pub :: tcUnits (-> Int (Vec core::CUnit2)))
 ;@axiom:effect(unsafe)
 (pub fn (tcUnits tc)
   {
@@ -4765,7 +4764,6 @@
   (&& unit.library (&& (!= (as unit.name Int) 0) (strStartsWith unit.name "Internal."))))
 
 (pub :: internalUnitNames (-> Units Int Strings Strings))
-;@axiom:effect(unsafe)
 (pub fn (internalUnitNames units i out)
   (if (>= i (vecLen units))
     out
@@ -4796,7 +4794,6 @@
     }))
 
 (pub :: libraryMarksInto (-> Units Strings Int Int))
-;@axiom:effect(unsafe)
 (pub fn (libraryMarksInto units out i)
   (if (>= i (vecLen units))
     0
@@ -4815,7 +4812,6 @@
 ; its own declarations; every other unit's were recorded on it as the
 ; resolver read them.
 (pub :: checkInternalImports (-> Units (Vec ASTNode) (Vec diag::Diag) Int))
-;@axiom:effect(unsafe)
 (pub fn (checkInternalImports units entryDecls out)
   (if (== (vecLen (internalUnitNames units 0 vecNew)) 0)
     0
@@ -4855,7 +4851,6 @@
     }))
 
 (pub :: unitNamedInternal (-> Units String Int Bool))
-;@axiom:effect(unsafe)
 (pub fn (unitNamedInternal units name i)
   (if (>= i (vecLen units))
     false
@@ -5089,7 +5084,7 @@
       (tcRegIntegerWords fns names (+ i 1))
     }))
 
-(pub :: tcNew (-> (Vec ASTNode) (Vec ASTNode) Ints Int))
+(pub :: tcNew (-> (Vec ASTNode) (Vec ASTNode) Units Int))
 (pub fn (tcNew entryDecls allDecls units)
   {
     (let fns vecNew)
@@ -12540,20 +12535,20 @@
 ; cannot forget to do it.
 ; The unit a declaration's spans index: 0 (the entry file) when it
 ; carries no module stamp, else that module's entry.
-(pub :: unitIndexFor (-> Ints a Int))
+(pub :: unitIndexFor (-> Units a Int))
 ;@axiom:effect(unsafe)
 (pub fn (unitIndexFor units m)
   (if (== (as m Int) 0)
     0
     (unitIndexForFrom units (as m String) 0)))
 
-(pub :: unitIndexForFrom (-> Ints String Int Int))
+(pub :: unitIndexForFrom (-> Units String Int Int))
 (pub fn (unitIndexForFrom units m i)
   (if (>= i (vecLen units))
     0
-    (if (== (memGetWord (vecGet units i) 2) 0)
+    (if (unitIsEntry (vecGet units i))
       (unitIndexForFrom units m (+ i 1))
-      (if (strEq (memGetWordStr (vecGet units i) 2) m)
+      (if (strEq (unitName (vecGet units i)) m)
         i
         (unitIndexForFrom units m (+ i 1))))))
 
@@ -25090,9 +25085,9 @@
           ""
           {
             (let u (vecGet units 0))
-            (if (== (memGetWord u 1) 0)
+            (if (unitSrcMissing u)
               ""
-              (memGetWordStr u 1))
+              (unitSrc u))
           }))
     }))
 
