@@ -2424,7 +2424,7 @@
 
 ; ------------------------------------------------------------------
 ; Index of the first declaration before `i` that defines the same name
-; in the same namespace, or -1.
+; in the same namespace, or None.
 ;
 ; The FIRST one, not the nearest: stage0 records a name's first span
 ; and never overwrites it, so three definitions of `main` produce two
@@ -2480,20 +2480,20 @@
       idx.types
       idx.sigs)))
 
-(pub :: firstDefiner (-> DupIdx Int Int String Int))
+(pub :: firstDefiner (-> DupIdx Int Int String (Option Int)))
 (pub fn (firstDefiner idx i ns name)
   (firstDefinerScan idx (vecGet (dupTable idx ns) (% (fnIdxHash name) (vecLen (dupTable idx ns))))
     i name 0))
 
-(pub :: firstDefinerScan (-> DupIdx (Vec DupRef) Int String Int Int))
+(pub :: firstDefinerScan (-> DupIdx (Vec DupRef) Int String Int (Option Int)))
 (pub fn (firstDefinerScan idx bucket i name k)
   (if (>= k (vecLen bucket))
-    (- 0 1)
+    None
     {
       (let e (vecGet bucket k))
       (let at (as e.idx Int))
       (if (&& (< at i) (strEq (linkGet idx.names e.name) name))
-        at
+        (Some at)
         (firstDefinerScan idx bucket i name (+ k 1)))
     }))
 
@@ -2612,13 +2612,10 @@
               (if (! (== ns NS_NONE))
                 {
                   (let name (nodeAName d))
-                  {
-                    (let j (firstDefiner bs i ns name))
-                    (if (! (< j 0))
-                      (if (== ns NS_SIG)
-                        (dupSigDiag decls out j name (nodeSpan d))
-                        (dupDiag decls out j name (nodeSpan d))))
-                  }
+                  (if (let (Some j) (firstDefiner bs i ns name))
+                    (if (== ns NS_SIG)
+                      (dupSigDiag decls out j name (nodeSpan d))
+                      (dupDiag decls out j name (nodeSpan d))))
                 })
             })
         }
@@ -2686,11 +2683,8 @@
     {
       (let m (vecGet fields k))
       {
-        {
-          (let j (firstDefiner bs i NS_VALUE (nodeAName m)))
-          (if (! (< j 0))
-            (dupDiag decls out j (nodeAName m) (nodeSpan m)))
-        }
+        (if (let (Some j) (firstDefiner bs i NS_VALUE (nodeAName m)))
+          (dupDiag decls out j (nodeAName m) (nodeSpan m)))
         (checkFieldDupes bs decls out i fields (+ k 1))
       }
     }))

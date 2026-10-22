@@ -1,0 +1,86 @@
+; expect 42
+; Earlier declaration index zero is present; missing names are None.
+; Duplicates keep the earliest diagnostic witness and namespace order.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: definitionIndexIs (-> (Option Int) Int Bool))
+(fn (definitionIndexIs result expected)
+  (match result
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: firstDefinerLookupChecks Bool)
+(fn (firstDefinerLookupChecks)
+  {
+    (let function (nodeBuildDFn "same" vecNew (mkEInt 0) (mkSpan 1 3)))
+    (let signature (nodeBuildDSig "same" nilWords 0 (mkSpan 5 7)))
+    (let record (nodeBuildDStruct "same" vecNew vecNew (mkSpan 9 11)))
+    (let later (nodeBuildDFn "same" vecNew (mkEInt 1) (mkSpan 13 15)))
+    (let declarations
+      (vecPush (vecPush (vecPush (vecPush vecNew function) signature) record) later))
+    (let index (dupIdxBuild declarations))
+    (&& (isNone (firstDefiner (dupIdxBuild vecNew) 1 NS_VALUE "missing"))
+      (&& (isNone (firstDefiner index 0 NS_VALUE "same"))
+        (&& (isNone (firstDefiner index 5 NS_VALUE "missing"))
+          (&& (definitionIndexIs (firstDefiner index 1 NS_VALUE "same") 0)
+            (&& (definitionIndexIs (firstDefiner index 4 NS_VALUE "same") 0)
+              (&& (definitionIndexIs (firstDefiner index 4 NS_SIG "same") 1)
+                (definitionIndexIs (firstDefiner index 4 NS_TYPE "same") 2)))))))
+  })
+
+(:: firstDefinerDiagnosticChecks Bool)
+(fn (firstDefinerDiagnosticChecks)
+  {
+    (let firstSpan (mkSpan 1 3))
+    (let secondSpan (mkSpan 8 10))
+    (let thirdSpan (mkSpan 15 17))
+    (let declarations
+      (vecPush
+        (vecPush (vecPush vecNew (nodeBuildDFn "same" vecNew (mkEInt 0) firstSpan))
+          (nodeBuildDFn "same" vecNew (mkEInt 1) secondSpan))
+        (nodeBuildDFn "same" vecNew (mkEInt 2) thirdSpan)))
+    (let output (checkDuplicates (dupIdxBuild declarations) declarations vecNew 0))
+    (if (== (vecLen output) 2)
+      {
+        (let second (vecGet output 0))
+        (let third (vecGet output 1))
+        (&& (strEq (diagCode second) "AX3006")
+          (&& (strEq (diagMsg second) "duplicate definition `same`")
+            (&& (== (diagSpan second) secondSpan)
+              (&& (== (diagSecSpan second 0) firstSpan)
+                (&& (== (diagSpan third) thirdSpan) (== (diagSecSpan third 0) firstSpan))))))
+      }
+      false)
+  })
+
+(:: firstDefinerFieldChecks Bool)
+(fn (firstDefinerFieldChecks)
+  {
+    (let firstSpan (mkSpan 1 3))
+    (let operationSpan (mkSpan 10 12))
+    (let function (nodeBuildDFn "op" vecNew (mkEInt 0) firstSpan))
+    (let operation (setNodeSpan (mkField "op" 0) operationSpan))
+    (let effect (nodeBuildDEffect "Console" vecNew (vecPush vecNew operation) (mkSpan 7 14)))
+    (let declarations (vecPush (vecPush vecNew function) effect))
+    (let output (checkDuplicates (dupIdxBuild declarations) declarations vecNew 0))
+    (if (== (vecLen output) 1)
+      (&& (strEq (diagCode (vecGet output 0)) "AX3006")
+        (&& (== (diagSpan (vecGet output 0)) operationSpan)
+          (== (diagSecSpan (vecGet output 0) 0) firstSpan)))
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (firstDefinerLookupChecks)
+    (if (firstDefinerDiagnosticChecks)
+      (if (firstDefinerFieldChecks)
+        42
+        3)
+      2)
+    1))
