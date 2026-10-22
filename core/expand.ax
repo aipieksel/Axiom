@@ -9695,10 +9695,9 @@
       })))
 
 ; A name position: a macro parameter substitutes its argument, which
-; MUST be a bare identifier. Answers 0 - refusal already emitted -
-; when it is not.
-(pub :: expSubstName (-> String Names (Vec ASTNode) MEnv Int String))
-;@axiom:effect(unsafe)
+; must be a bare identifier. A refusal returns None after recording its
+; diagnostic; a present name may be empty in compiler-generated syntax.
+(pub :: expSubstName (-> String Names Nodes MEnv Int (Option String)))
 (pub fn (expSubstName s params args env isp)
   ; The join marker resolves each of its two names through this same
   ; function - so a side that is a parameter follows the
@@ -9707,27 +9706,27 @@
   (if (== (expIsJoinMarker s) 1)
     {
       (let ra (expSubstName (expMarkerPart s 0) params args env isp))
-      (if (== (as ra Int) 0)
-        (as 0 String)
+      (if (let (Some ra) ra)
         {
           (let rb (expSubstName (expMarkerPart s 1) params args env isp))
-          (if (== (as rb Int) 0)
-            (as 0 String)
-            (expJoinName ra rb))
-        })
+          (if (let (Some rb) rb)
+            (Some (expJoinName ra rb))
+            None)
+        }
+        None)
     }
     {
       (let foundFor (expForLookup env s))
       (if (let (Some fe) foundFor)
-        fe
+        (Some fe)
         {
           (let idx (expParamIndex params s))
           (if (< idx 0)
-            s
+            (Some s)
             {
               (let a (vecGet args idx))
               (if (== (nodeTag a) TAG_E_VAR)
-                (nodeAName a)
+                (Some (nodeAName a))
                 {
                   (expEmit env
                     (mkDiagNote SEV_ERROR "AX3027" "declaration-macro" isp
@@ -9736,29 +9735,28 @@
                         "` was given an expression")
                       0 0 "pass a plain name in this argument position"
                       "the parameter stands in a NAME position of the template - a declaration head or a parameter list - and only an identifier can be a name"))
-                  (as 0 String)
+                  None
                 })
             })
         })
     }))
 
-(pub :: expSubstNames (-> Names Names (Vec ASTNode) MEnv Int Strings))
+(pub :: expSubstNames (-> Names Names Nodes MEnv Int (Option Names)))
 (pub fn (expSubstNames ss params args env isp)
   (expSubstNamesIn ss params args env isp vecNew 0))
 
-(pub :: expSubstNamesIn (-> Names Names (Vec ASTNode) MEnv Int Strings Int Strings))
-;@axiom:effect(unsafe)
+(pub :: expSubstNamesIn (-> Names Names Nodes MEnv Int Names Int (Option Names)))
 (pub fn (expSubstNamesIn ss params args env isp acc i)
   (if (>= i (vecLen ss))
-    acc
+    (Some acc)
     {
       (let n (expSubstName (vecGetStr ss i) params args env isp))
-      (if (== (as n Int) 0)
-        (as 0 (Vec String))
+      (if (let (Some n) n)
         {
           (vecPush acc n)
           (expSubstNamesIn ss params args env isp acc (+ i 1))
-        })
+        }
+        None)
     }))
 
 ; Structural substitution over a TYPE node: a TCON or TVAR whose name
@@ -9786,37 +9784,37 @@
                 (== (vecLen (nodeBChildren t)) 2))))
         {
           (let l (expSubstTyName (vecGet (nodeBChildren t) 0) params args env isp))
-          (if (== (as l Int) 0)
-            (nodeBuildTErrPlain 0 0 0)
+          (if (let (Some l) l)
             {
               (let r (expSubstTyName (vecGet (nodeBChildren t) 1) params args env isp))
-              (if (== (as r Int) 0)
-                (nodeBuildTErrPlain 0 0 0)
+              (if (let (Some r) r)
                 {
                   (let j (expJoinName l r))
                   (if (== (lexStartsLower j) 1)
                     (mkTVar j)
                     (mkTCon j vecNew))
-                })
-            })
+                }
+                (nodeBuildTErrPlain 0 0 0))
+            }
+            (nodeBuildTErrPlain 0 0 0))
         }
         (if (== tag TAG_T_CON)
           {
             (let n (expSubstName (nodeAName t) params args env isp))
-            (if (== (as n Int) 0)
-              (nodeBuildTErrPlain 0 0 0)
+            (if (let (Some n) n)
               (if (== (lexStartsLower n) 1)
                 (mkTVar n)
-                (mkTCon n (expSubstTyVec (nodeBChildren t) params args env isp))))
+                (mkTCon n (expSubstTyVec (nodeBChildren t) params args env isp)))
+              (nodeBuildTErrPlain 0 0 0))
           }
           (if (== tag TAG_T_VAR)
             {
               (let n (expSubstName (nodeAName t) params args env isp))
-              (if (== (as n Int) 0)
-                (nodeBuildTErrPlain 0 0 0)
+              (if (let (Some n) n)
                 (if (== (lexStartsLower n) 1)
                   (mkTVar n)
-                  (mkTCon n vecNew)))
+                  (mkTCon n vecNew))
+                (nodeBuildTErrPlain 0 0 0))
             }
             (if (== tag TAG_T_ARR)
               (mkTArr (expSubstTy (nodeAChild t) params args env isp)
@@ -9832,8 +9830,7 @@
 ; a name position resolves. A nested join is a type node of its own,
 ; so it recurses through `expSubstTy` and reads its answer back off
 ; the constructor it built.
-(pub :: expSubstTyName (-> ASTNode Names (Vec ASTNode) MEnv Int String))
-;@axiom:effect(unsafe)
+(pub :: expSubstTyName (-> ASTNode Names Nodes MEnv Int (Option String)))
 (pub fn (expSubstTyName t params args env isp)
   (if (|| (== (nodeTag t) TAG_T_CON) (== (nodeTag t) TAG_T_VAR))
     (if (if (== (nodeB t) 0)
@@ -9843,12 +9840,15 @@
       {
         (let sub (expSubstTy t params args env isp))
         (if (== (nodeTag sub) TAG_T_ERR)
-          (as 0 String)
-          (nodeAName sub))
+          None
+          (Some (nodeAName sub)))
       })
-    (as (expQueryErr env isp "a `(syntax/join ...)` in type position joins two type NAMES"
-          "write `(syntax/join a b)` with a name on each side, or a join of two on either"
-          (expMacMod env)) String)))
+    {
+      (expQueryErr env isp "a `(syntax/join ...)` in type position joins two type NAMES"
+        "write `(syntax/join a b)` with a name on each side, or a join of two on either"
+        (expMacMod env))
+      None
+    }))
 
 (pub :: expSubstTyVec (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int Nodes))
 (pub fn (expSubstTyVec v params args env isp)
@@ -9964,12 +9964,10 @@
       {
         (let nsp (expNameSpan (nodeAName t) params args))
         (let nm (expSubstName (nodeAName t) params args env isp))
-        (if (== (as nm Int) 0)
-          nilNode
+        (if (let (Some nm) nm)
           {
             (let ps (expSubstNames (nodeBNames t) params args env isp))
-            (if (== (as ps Int) 0)
-              nilNode
+            (if (let (Some ps) ps)
               {
                 (let prevTb env.tplbinds)
                 (let _pushTb (set env.tplbinds ps))
@@ -9984,15 +9982,16 @@
                     g
                   }
                 }
-              })
-          })
+              }
+              nilNode)
+          }
+          nilNode)
       }
       (if (== tag TAG_D_SIG)
         {
           (let nsp (expNameSpan (nodeAName t) params args))
           (let nm (expSubstName (nodeAName t) params args env isp))
-          (if (== (as nm Int) 0)
-            nilNode
+          (if (let (Some nm) nm)
             {
               (let ty (expSubstTy (nodeTyChild t) params args env isp))
               {
@@ -10009,7 +10008,8 @@
                   g
                 }
               }
-            })
+            }
+            nilNode)
         }
         (if (== tag TAG_D_DATA)
           ; A `data` template (MAC-CAP-7: a macro that generates TYPE
@@ -10024,8 +10024,7 @@
           {
             (let nsp (expNameSpan (nodeAName t) params args))
             (let nm (expSubstName (nodeAName t) params args env isp))
-            (if (== (as nm Int) 0)
-              nilNode
+            (if (let (Some nm) nm)
               {
                 (let cs (expBuildCtors (nodeBChildren t) params args env isp))
                 (if (== (as cs Int) 0)
@@ -10038,7 +10037,8 @@
                       g
                     }
                   })
-              })
+              }
+              nilNode)
           }
           (if (== tag TAG_D_STRUCT)
             ; A `struct` template. Field NAMES are name positions like
@@ -10047,8 +10047,7 @@
             {
               (let nsp (expNameSpan (nodeAName t) params args))
               (let nm (expSubstName (nodeAName t) params args env isp))
-              (if (== (as nm Int) 0)
-                nilNode
+              (if (let (Some nm) nm)
                 {
                   (let fs (expBuildStructFields (nodeBChildren t) params args env isp))
                   (if (== (as fs Int) 0)
@@ -10064,7 +10063,8 @@
                         g
                       }
                     })
-                })
+                }
+                nilNode)
             }
             (if (== tag TAG_D_ALIAS)
               ; A `type` template. The alias's name is a name position, its
@@ -10078,8 +10078,7 @@
               {
                 (let nsp (expNameSpan (nodeAName t) params args))
                 (let nm (expSubstName (nodeAName t) params args env isp))
-                (if (== (as nm Int) 0)
-                  nilNode
+                (if (let (Some nm) nm)
                   {
                     (let ty (expSubstTy (nodeBChild t) params args env isp))
                     (if (nodeSame ty nilNode)
@@ -10091,7 +10090,8 @@
                           g
                         }
                       })
-                  })
+                  }
+                  nilNode)
               }
               (if (== tag TAG_D_EFFECT)
                 ; An `effect` template. The effect's name and each operation's
@@ -10105,8 +10105,7 @@
                 {
                   (let nsp (expNameSpan (nodeAName t) params args))
                   (let nm (expSubstName (nodeAName t) params args env isp))
-                  (if (== (as nm Int) 0)
-                    nilNode
+                  (if (let (Some nm) nm)
                     {
                       (let ops vecNew)
                       (let ofs vecNew)
@@ -10122,17 +10121,18 @@
                             g
                           }
                         })
-                    })
+                    }
+                    nilNode)
                 }
                 (if (== tag TAG_D_MACROCALL)
                   {
                     (let hd (expSubstName (nodeAName t) params args env isp))
-                    (if (== (as hd Int) 0)
-                      nilNode
+                    (if (let (Some hd) hd)
                       {
                         (let as (expSubstArgs (nodeBChildren t) params args env isp))
                         (nodeBuildDMacrocall hd as 0 isp)
-                      })
+                      }
+                      nilNode)
                   }
                   {
                     (expEmit env
@@ -10153,8 +10153,7 @@
     1
     {
       (let nm (expSubstName (vecGet ops i) params args env isp))
-      (if (== (as nm Int) 0)
-        0
+      (if (let (Some nm) nm)
         {
           (let f
             (if (< i (vecLen ofs))
@@ -10172,7 +10171,8 @@
                   0 isp)))
             (expBuildEffectOps ops ofs params args env isp outOps outFs (+ i 1))
           }
-        })
+        }
+        0)
     }))
 
 ; Each constructor of a `data` template: name substituted, field
@@ -10241,8 +10241,7 @@
       (let c (vecGet cs i))
       {
         (let cn (expSubstName (nodeAName c) params args env isp))
-        (if (== (as cn Int) 0)
-          (as 0 Nodes)
+        (if (let (Some cn) cn)
           ; `expNameSpan`, not the template constructor's own
           ; span: a name that came from a join has NO source
           ; spelling, and pointing at the template's `(` made
@@ -10266,7 +10265,8 @@
                 (expBuildCtorsIn cs params args env isp (vecPush acc g) (+ i 1))
               }
             }
-          })
+          }
+          (as 0 Nodes))
       }
     }))
 
@@ -10509,8 +10509,7 @@
       (let f (vecGet fs i))
       {
         (let fn0 (expSubstName (nodeAName f) params args env isp))
-        (if (== (as fn0 Int) 0)
-          (as 0 Nodes)
+        (if (let (Some fn0) fn0)
           ; The parser's field layout (`parseOneFieldNamed`): the name
           ; in a, the FLOAT FLAG in b, the TYPE NODE in ty. This read b
           ; as the type. `expSubstTy` of the integer 1 a bare `Float`
@@ -10546,7 +10545,8 @@
                 (expBuildStructFieldsIn fs params args env isp (vecPush acc g) (+ i 1))
               }
             }
-          })
+          }
+          (as 0 Nodes))
       }
     }))
 
