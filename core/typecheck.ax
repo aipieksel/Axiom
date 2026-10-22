@@ -3495,7 +3495,7 @@
   (mut curDeclNode : ASTNode)
   (mut sigTags : Nodes)
   (mut fnSufIdx : Ints)
-  (mut privIdx : Int)
+  (mut privIdx : (Option StringRows))
   (mut rgnFactsDone : Int)
   (mut curCalls : (Option Names))
   (mut tyIdx : Ints)
@@ -4228,15 +4228,15 @@
     tc
   })
 
-(:: tcPrivIdx (-> Int StringRows))
+(:: tcPrivIdx (-> Int (Option StringRows)))
 ;@axiom:effect(unsafe)
 (fn (tcPrivIdx tc)
   {
     (let t (as tc TC))
-    (as t.privIdx StringRows)
+    t.privIdx
   })
 
-(:: tcSetPrivIdx (-> Int Int Int))
+(:: tcSetPrivIdx (-> Int (Option StringRows) Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetPrivIdx tc v)
   {
@@ -5604,7 +5604,7 @@
                 :curDeclNode nilNode
                 :sigTags nilNodes
                 :fnSufIdx nilWords
-                :privIdx 0
+                :privIdx None
                 :rgnFactsDone 0
                 :curCalls None
                 :tyIdx nilWords
@@ -6546,20 +6546,22 @@
 ; module of private helpers is most of them, and
 ; `(concat curMod "$")` allocated a prefix per call on an allocator
 ; that never frees.
-(pub :: privBlocks (-> StringRows String a Int))
+(pub :: privBlocks (-> (Option StringRows) String a Int))
 ;@axiom:effect(unsafe)
 (pub fn (privBlocks privs key curMod)
-  (if (== (privIdxHas privs key) 0)
-    0
-    (if (== (as curMod Int) 0)
-      (if (privLibraryReach privs key "")
-        0
-        1)
-      (if (== (privOwnedBy key (as curMod String)) 1)
-        0
-        (if (privLibraryReach privs key (as curMod String))
+  (if (let (Some rows) privs)
+    (if (== (privIdxHas rows key) 0)
+      0
+      (if (== (as curMod Int) 0)
+        (if (privLibraryReach rows key "")
           0
-          1)))))
+          1)
+        (if (== (privOwnedBy key (as curMod String)) 1)
+          0
+          (if (privLibraryReach rows key (as curMod String))
+            0
+            1))))
+    0))
 
 ; A public name of an `Internal` module, reached from another module of
 ; the standard library: the library shares it (AX5002). Asked only once
@@ -6604,16 +6606,16 @@
     }
   })
 
-(pub :: privIdxBuild (-> Strings Int))
+(pub :: privIdxBuild (-> Strings (Option StringRows)))
 (pub fn (privIdxBuild privs)
   (if (== (as privs Int) 0)
-    0
+    None
     {
       (let bs (privSetNew (vecLen privs)))
       {
         (for i in 0..(vecLen privs)
           (defIdxPut bs (vecGetStr privs i)))
-        (as bs Int)
+        (Some bs)
       }
     }))
 
@@ -6628,11 +6630,11 @@
         (defIdxHas v key 0))
     }))
 
-(pub :: findFnEntVisibleExact (-> StringRows Ints String String Int))
+(pub :: findFnEntVisibleExact (-> (Option StringRows) Ints String String Int))
 (pub fn (findFnEntVisibleExact privs fns name curMod)
   (findFnEntVisibleExactFrom privs fns name curMod 0))
 
-(pub :: findFnEntVisibleExactFrom (-> StringRows Ints String String Int Int))
+(pub :: findFnEntVisibleExactFrom (-> (Option StringRows) Ints String String Int Int))
 (pub fn (findFnEntVisibleExactFrom privs fns name curMod i)
   (if (>= i (vecLen fns))
     0
@@ -6645,11 +6647,11 @@
         (findFnEntVisibleExactFrom privs fns name curMod (+ i 1)))
     }))
 
-(pub :: findFnEntVisibleSuffix (-> StringRows Ints String String Int))
+(pub :: findFnEntVisibleSuffix (-> (Option StringRows) Ints String String Int))
 (pub fn (findFnEntVisibleSuffix privs fns name curMod)
   (findFnEntVisibleSuffixFrom privs fns name curMod 0))
 
-(pub :: findFnEntVisibleSuffixFrom (-> StringRows Ints String String Int Int))
+(pub :: findFnEntVisibleSuffixFrom (-> (Option StringRows) Ints String String Int Int))
 (pub fn (findFnEntVisibleSuffixFrom privs fns name curMod i)
   (if (>= i (vecLen fns))
     0
@@ -6996,13 +6998,13 @@
 ; over rather than ending the search, exactly as before.
 ;
 ; The suffix pass is deliberately left alone; see the index's note.
-(pub :: fnEntVisibleExact (-> Int StringRows String String Int))
+(pub :: fnEntVisibleExact (-> Int (Option StringRows) String String Int))
 (pub fn (fnEntVisibleExact tc privs name curMod)
   (if (== (tcFnIdx tc) 0)
     (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)
     (fnIdxGetVisible (tcFnIdxVec tc) privs name curMod)))
 
-(pub :: fnIdxGetVisible (-> Ints StringRows String String Int))
+(pub :: fnIdxGetVisible (-> Ints (Option StringRows) String String Int))
 (pub fn (fnIdxGetVisible bs privs name curMod)
   {
     (let v (vecGetVec bs (% (fnIdxHash name) (vecLen bs))))
@@ -7011,7 +7013,7 @@
       (fnIdxScanVisible v privs name curMod 0))
   })
 
-(pub :: fnIdxScanVisible (-> Ints StringRows String String Int Int))
+(pub :: fnIdxScanVisible (-> Ints (Option StringRows) String String Int Int))
 (pub fn (fnIdxScanVisible v privs name curMod i)
   (if (>= i (vecLen v))
     0
@@ -7218,7 +7220,7 @@
         (fnSufIdxScan v name (+ i 1)))
     }))
 
-(pub :: fnSufIdxGetVisible (-> Ints StringRows String String Int))
+(pub :: fnSufIdxGetVisible (-> Ints (Option StringRows) String String Int))
 (pub fn (fnSufIdxGetVisible bs privs name curMod)
   {
     (let v (vecGetVec bs (% (fnIdxHash name) (vecLen bs))))
@@ -7227,7 +7229,7 @@
       (fnSufIdxScanVisible v privs name curMod 0))
   })
 
-(pub :: fnSufIdxScanVisible (-> Ints StringRows String String Int Int))
+(pub :: fnSufIdxScanVisible (-> Ints (Option StringRows) String String Int Int))
 (pub fn (fnSufIdxScanVisible v privs name curMod i)
   (if (>= i (vecLen v))
     0
@@ -7249,7 +7251,7 @@
     (findFnEntSuffix (tcFnsVec tc) name 0)
     (fnSufIdxGet (tcFnSufIdxVec tc) name)))
 
-(pub :: fnEntVisibleSuffix (-> Int StringRows String String Int))
+(pub :: fnEntVisibleSuffix (-> Int (Option StringRows) String String Int))
 (pub fn (fnEntVisibleSuffix tc privs name curMod)
   (if (== (tcFnSufIdx tc) 0)
     (findFnEntVisibleSuffix privs (tcFnsVec tc) name curMod)
@@ -7529,15 +7531,15 @@
     (privKey (tyEntModule te) (tyEntName te))
     (privKey (dataEntModule (tyEntOwner te)) (dataEntName (tyEntOwner te)))))
 
-(pub :: tyVisible (-> StringRows Int Int Int))
+(pub :: tyVisible (-> (Option StringRows) Int Int Int))
 (pub fn (tyVisible privs te curMod)
-  (if (== (as privs Int) 0)
-    1
+  (if (let (Some _) privs)
     (if (&& (!= curMod 0) (&& (== (tyEntModule te) 0) (== (tyBuiltinEntry te) 0)))
       0
       (if (== (privBlocks privs (tyPrivKey te) curMod) 1)
         0
-        1))))
+        1))
+    1))
 
 ; Entry declarations are not imports of another module. Only seeded
 ; Option/Vec entries are visible everywhere; any-visibility classification
@@ -7574,7 +7576,7 @@
           1
           0)))))
 
-(pub :: tyScanFwd (-> Ints Int String StringRows Int Int Int Int))
+(pub :: tyScanFwd (-> Ints Int String (Option StringRows) Int Int Int Int))
 (pub fn (tyScanFwd v kind ref privs curMod tier i)
   (if (>= i (vecLen v))
     0
@@ -7590,7 +7592,7 @@
 ; bare-value and saturation path and the difference is observable when
 ; two `data` declarations in one module name the same constructor, so
 ; the direction is preserved WITHIN each tier rather than dropped.
-(pub :: tyScanRev (-> Ints Int String StringRows Int Int Int Int))
+(pub :: tyScanRev (-> Ints Int String (Option StringRows) Int Int Int Int))
 (pub fn (tyScanRev v kind ref privs curMod tier i)
   (if (< i 0)
     0
@@ -7602,7 +7604,7 @@
         (tyScanRev v kind ref privs curMod tier (- i 1)))
     }))
 
-(pub :: tyPick (-> Ints Int String StringRows Int Int Int Int))
+(pub :: tyPick (-> Ints Int String (Option StringRows) Int Int Int Int))
 (pub fn (tyPick v kind ref privs curMod last tier)
   (if (== last 0)
     (tyScanFwd v kind ref privs curMod tier 0)
@@ -7653,13 +7655,12 @@
 ; subject, and answering AX3002 for it would say "no such type" about
 ; one that exists.
 (pub :: tyIdxHas (-> Int Int String Int))
-;@axiom:effect(unsafe)
 (pub fn (tyIdxHas tc kind name)
   {
     (let v (tyIdxBucket tc name))
     (if (== (as v Int) 0)
       0
-      (if (== (tyScanFwd v kind name (as 0 (Vec (Vec String))) 0 0 0) 0)
+      (if (== (tyScanFwd v kind name None 0 0 0) 0)
         0
         1))
   })
@@ -7686,7 +7687,7 @@
         0))
   })
 
-(pub :: tyMatchCount (-> Ints Int String StringRows Int Int Int Int))
+(pub :: tyMatchCount (-> Ints Int String (Option StringRows) Int Int Int Int))
 (pub fn (tyMatchCount v kind ref privs curMod acc i)
   (if (>= i (vecLen v))
     acc
@@ -7722,7 +7723,7 @@
         }))
   })
 
-(pub :: tyModsOf (-> Ints Int String StringRows Int Ints Int Ints))
+(pub :: tyModsOf (-> Ints Int String (Option StringRows) Int Ints Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (tyModsOf v kind ref privs curMod acc i)
   (if (>= i (vecLen v))
@@ -7927,14 +7928,13 @@
   (tyFindAnyVisFrom tc kind name 0))
 
 (:: tyFindAnyVisFrom (-> Int Int String Int Int))
-;@axiom:effect(unsafe)
 (fn (tyFindAnyVisFrom tc kind name last)
   {
     (let v (tyIdxBucket tc name))
     (if (== (as v Int) 0)
       0
       {
-        (let none (as 0 (Vec (Vec String))))
+        (let none None)
         (let curMod (tcCurModule tc))
         {
           (let te
@@ -13302,7 +13302,10 @@
 (pub :: emitPrivateVar (-> Int String Int String ASTNode))
 (pub fn (emitPrivateVar tc name span declName)
   {
-    (if (&& (!= span 0) (== (privIdxHas (tcPrivIdx tc) (concat "internal " declName)) 1))
+    (if (&& (!= span 0)
+          (if (let (Some rows) (tcPrivIdx tc))
+            (== (privIdxHas rows (concat "internal " declName)) 1)
+            false))
       (emitDiag tc
         (diagSetLabel
           (mkDiag SEV_ERROR "AX5002" "internal-module" span
@@ -13366,7 +13369,7 @@
     0
     (ctorHiddenIn (tcDatasVec tc) (tcPrivIdx tc) (tcCurModuleName tc) name 0)))
 
-(pub :: ctorHiddenIn (-> Ints StringRows String String Int Int))
+(pub :: ctorHiddenIn (-> Ints (Option StringRows) String String Int Int))
 (pub fn (ctorHiddenIn datas privs curMod name i)
   (if (>= i (vecLen datas))
     0
