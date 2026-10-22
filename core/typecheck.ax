@@ -3036,7 +3036,21 @@
   (MaybeLambdaCast)
   (DefiniteLambdaCast))
 
-(pub type FnIndex (Vec (Vec FnEnt)))
+(pub type FnSuffixIndex (Vec (Vec FnEnt)))
+
+(pub struct FnIndexNode word sealed
+  (entry : (Link FnEnt UInt32))
+  (next : (Link FnIndexNode UInt32)))
+
+(pub struct FnIndexBucket word sealed
+  (head : (Link FnIndexNode UInt32))
+  (tail : (Link FnIndexNode UInt32)))
+
+(pub struct FnIndex sealed
+  (entries : (Vec FnEnt))
+  (nodes : (Vec FnIndexNode))
+  (buckets : (Vec FnIndexBucket))
+  (mut indexed : Bool))
 
 (pub struct FnEnt
   (name : String)
@@ -3357,7 +3371,7 @@
   (mut curSigVars : Names)
   (mut curDeclNode : (Option ASTNode))
   (mut sigTags : (Option Nodes))
-  (mut fnSufIdx : (Option FnIndex))
+  (mut fnSufIdx : (Option FnSuffixIndex))
   (mut privIdx : (Option StringRows))
   (mut rgnFactsDone : Int)
   (mut curCalls : (Option Names))
@@ -3904,11 +3918,11 @@
   })
 
 ; The suffix index is absent until collection builds its typed buckets.
-(:: tcFnSufIdx (-> TC (Option FnIndex)))
+(:: tcFnSufIdx (-> TC (Option FnSuffixIndex)))
 (fn (tcFnSufIdx tc)
   tc.fnSufIdx)
 
-(:: tcSetFnSufIdx (-> TC FnIndex TC))
+(:: tcSetFnSufIdx (-> TC FnSuffixIndex TC))
 (fn (tcSetFnSufIdx tc v)
   {
     (set tc.fnSufIdx (Some v))
@@ -6318,13 +6332,17 @@
 ; wins - in the function whose own comment says getting it wrong "is
 ; not a missing diagnostic, it is a link failure".
 ;
-; SHAPE. Buckets, not open addressing: this table is built once and
-; never deleted from, so probing, tombstones and growth would all be
-; machinery for cases that cannot arise. Each bucket keeps insertion
-; order and the scan takes the first match, which is what the linear
-; scan answered - and it has to be, because `tcAddEffectOp` pushes with
-; no presence test, so two entries legitimately share a name and only
-; the first is reachable.
+; Exact buckets keep packed head/tail Links into a word-node vector.
+; Each node links to the owning entry vector and its next node, so no
+; bucket allocates a separate vector. Entries and nodes are append-only;
+; links remain valid when their vector's data buffer grows. Adding at
+; the tail keeps table order, and lookup takes the first match, including
+; duplicate names registered by `tcAddEffectOp`.
+;
+; The index owns its entry vector independently of TC. Its sealed fields
+; keep the vectors that define each Link's identity inside this module.
+; A full UInt32 index or oversized size hint uses the same owning entries
+; with linear lookup. No encoded link is truncated to make it fit.
 ;
 ; The hash is the shape `stdlib/Intern.ax` uses - a multiplicative hash
 ; with an odd multiplier, reduced mod 2^31-1 at every step - spelled out
@@ -6382,6 +6400,56 @@
 ; count is the hint: every `::` and `fn` in the program contributes at
 ; most one entry, so it is an upper bound on the table and the average
 ; bucket stays well under one.
+; A UInt32 Link encodes index plus one. Larger tables use the same
+; owning entry vector with linear lookup rather than truncating an index.
+(:: fnIdxLinkLimit Int)
+(fn (fnIdxLinkLimit)
+  4294967295)
+
+(:: fnIdxHead (-> FnIndex Int (Link FnIndexNode UInt32)))
+(fn (fnIdxHead index hash)
+  {
+    (let bucket (vecGet index.buckets (% hash (vecLen index.buckets))))
+    bucket.head
+  })
+
+(:: fnIdxChain (-> FnIndex String (Link FnIndexNode UInt32) (Option FnEnt)))
+(fn (fnIdxChain index name cursor)
+  (if (linkIsSome cursor)
+    {
+      (let node (linkGet index.nodes cursor))
+      (let entry (linkGet index.entries node.entry))
+      (if (strEq entry.name name)
+        (Some entry)
+        (fnIdxChain index name node.next))
+    }
+    None))
+
+(:: fnIdxVisibleChain
+  (-> FnIndex (Option StringRows) String (Option String) (Link FnIndexNode UInt32) (Option FnEnt)))
+(fn (fnIdxVisibleChain index privs name curMod cursor)
+  (if (linkIsSome cursor)
+    {
+      (let node (linkGet index.nodes cursor))
+      (let entry (linkGet index.entries node.entry))
+      (if (&& (strEq entry.name name) (== (privBlocks privs entry.name curMod) 0))
+        (Some entry)
+        (fnIdxVisibleChain index privs name curMod node.next))
+    }
+    None))
+
+(:: fnIdxQualChain (-> FnIndex String String (Link FnIndexNode UInt32) (Option FnEnt)))
+(fn (fnIdxQualChain index moduleName name cursor)
+  (if (linkIsSome cursor)
+    {
+      (let node (linkGet index.nodes cursor))
+      (let entry (linkGet index.entries node.entry))
+      (if (== (nameIsQual entry.name moduleName name) 1)
+        (Some entry)
+        (fnIdxQualChain index moduleName name node.next))
+    }
+    None))
+
 (pub :: fnIdxBuildSized (-> (Vec FnEnt) Int FnIndex))
 (pub fn (fnIdxBuildSized fns hint)
   {
@@ -6389,25 +6457,64 @@
       (if (> hint (vecLen fns))
         hint
         (vecLen fns)))
-    (let nb (fnIdxBuckets n))
-    (let bs vecNew)
+    (let indexed (<= n fnIdxLinkLimit))
+    (let nb
+      (if indexed
+        (fnIdxBuckets n)
+        17))
+    (let buckets (:: (vecWithCapacity nb) (Vec FnIndexBucket)))
     (for i in 0..nb
-      (vecPush bs vecNew))
+      (vecPush buckets (FnIndexBucket :head linkNone :tail linkNone)))
+    (let index
+      (FnIndex
+        :entries (vecWithCapacity (vecLen fns))
+        :nodes
+          (vecWithCapacity
+            (if indexed
+              (vecLen fns)
+              1))
+        :buckets buckets
+        :indexed indexed))
     (for i in 0..(vecLen fns)
-      (fnIdxAdd bs (vecGet fns i)))
-    bs
+      (fnIdxAdd index (vecGet fns i)))
+    index
   })
 
 (pub :: fnIdxAdd (-> FnIndex FnEnt Int))
-(pub fn (fnIdxAdd bs ent)
+(pub fn (fnIdxAdd index ent)
   {
-    (vecPush (vecGet bs (% (fnIdxHash ent.name) (vecLen bs))) ent)
+    (let entries index.entries)
+    (let nodes index.nodes)
+    (let buckets index.buckets)
+    (let position (vecLen entries))
+    (vecPush entries ent)
+    (if (&& index.indexed (&& (< position fnIdxLinkLimit) (< (vecLen nodes) fnIdxLinkLimit)))
+      {
+        (let bucketIndex (% (fnIdxHash ent.name) (vecLen buckets)))
+        (let bucket (vecGet buckets bucketIndex))
+        (vecPush nodes (FnIndexNode :entry (linkTo entries position) :next linkNone))
+        (let added (linkTo nodes (- (vecLen nodes) 1)))
+        (if (linkIsSome bucket.tail)
+          {
+            (let previous (linkGet nodes bucket.tail))
+            (vecSet nodes (linkIndex bucket.tail) (FnIndexNode :entry previous.entry :next added))
+            (vecSet buckets bucketIndex (FnIndexBucket :head bucket.head :tail added))
+            ()
+          }
+          {
+            (vecSet buckets bucketIndex (FnIndexBucket :head added :tail added))
+            ()
+          })
+      }
+      (set index.indexed false))
     0
   })
 
 (pub :: fnIdxGet (-> FnIndex String (Option FnEnt)))
-(pub fn (fnIdxGet bs name)
-  (fnIdxScan (vecGet bs (% (fnIdxHash name) (vecLen bs))) name 0))
+(pub fn (fnIdxGet index name)
+  (if index.indexed
+    (fnIdxChain index name (fnIdxHead index (fnIdxHash name)))
+    (fnIdxScan index.entries name 0)))
 
 (pub :: fnIdxScan (-> (Vec FnEnt) String Int (Option FnEnt)))
 (pub fn (fnIdxScan v name i)
@@ -6455,8 +6562,10 @@
     (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)))
 
 (pub :: fnIdxGetVisible (-> FnIndex (Option StringRows) String (Option String) (Option FnEnt)))
-(pub fn (fnIdxGetVisible bs privs name curMod)
-  (fnIdxScanVisible (vecGet bs (% (fnIdxHash name) (vecLen bs))) privs name curMod 0))
+(pub fn (fnIdxGetVisible index privs name curMod)
+  (if index.indexed
+    (fnIdxVisibleChain index privs name curMod (fnIdxHead index (fnIdxHash name)))
+    (fnIdxScanVisible index.entries privs name curMod 0)))
 
 (pub :: fnIdxScanVisible
   (-> (Vec FnEnt) (Option StringRows) String (Option String) Int (Option FnEnt)))
@@ -6496,8 +6605,10 @@
   (fnIdxHashFrom name 0 (% (+ (* (fnIdxHashFrom m 0 fnIdxSeed) fnIdxMul) 36) fnIdxPrime)))
 
 (pub :: fnIdxGetQual (-> FnIndex String String (Option FnEnt)))
-(pub fn (fnIdxGetQual bs m name)
-  (fnIdxScanQual (vecGet bs (% (fnIdxHashQual m name) (vecLen bs))) m name 0))
+(pub fn (fnIdxGetQual index m name)
+  (if index.indexed
+    (fnIdxQualChain index m name (fnIdxHead index (fnIdxHashQual m name)))
+    (fnIdxScanQual index.entries m name 0)))
 
 (pub :: fnIdxScanQual (-> (Vec FnEnt) String String Int (Option FnEnt)))
 (pub fn (fnIdxScanQual v m name i)
@@ -6576,7 +6687,7 @@
 ; contributes one key per `$` in its name plus one, and a self-check's
 ; names are `Mod$name`, so twice the declaration count is the hint.
 ; ------------------------------------------------------------------
-(pub :: fnSufIdxBuildSized (-> (Vec FnEnt) Int FnIndex))
+(pub :: fnSufIdxBuildSized (-> (Vec FnEnt) Int FnSuffixIndex))
 (pub fn (fnSufIdxBuildSized fns hint)
   {
     (let n
@@ -6592,7 +6703,7 @@
     bs
   })
 
-(pub :: fnSufIdxAdd (-> FnIndex FnEnt Int))
+(pub :: fnSufIdxAdd (-> FnSuffixIndex FnEnt Int))
 (pub fn (fnSufIdxAdd bs ent)
   {
     (fnSufIdxPut bs ent.name ent)
@@ -6602,7 +6713,7 @@
 ; From 1, not from 0: `nameMatches` demands the `$` be past the first
 ; byte, so a name that merely BEGINS with `$` answers only to itself
 ; and inserting that suffix would invent a match.
-(pub :: fnSufIdxAddSuffixes (-> FnIndex String FnEnt Int Int))
+(pub :: fnSufIdxAddSuffixes (-> FnSuffixIndex String FnEnt Int Int))
 (pub fn (fnSufIdxAddSuffixes bs full ent i)
   (if (>= i (strLen full))
     0
@@ -6612,14 +6723,14 @@
       (fnSufIdxAddSuffixes bs full ent (+ i 1))
     }))
 
-(pub :: fnSufIdxPut (-> FnIndex String FnEnt Int))
+(pub :: fnSufIdxPut (-> FnSuffixIndex String FnEnt Int))
 (pub fn (fnSufIdxPut bs key ent)
   {
     (vecPush (vecGet bs (% (fnIdxHash key) (vecLen bs))) ent)
     0
   })
 
-(pub :: fnSufIdxGet (-> FnIndex String (Option FnEnt)))
+(pub :: fnSufIdxGet (-> FnSuffixIndex String (Option FnEnt)))
 (pub fn (fnSufIdxGet bs name)
   (fnSufIdxScan (vecGet bs (% (fnIdxHash name) (vecLen bs))) name 0))
 
@@ -6634,7 +6745,8 @@
         (fnSufIdxScan v name (+ i 1)))
     }))
 
-(pub :: fnSufIdxGetVisible (-> FnIndex (Option StringRows) String (Option String) (Option FnEnt)))
+(pub :: fnSufIdxGetVisible
+  (-> FnSuffixIndex (Option StringRows) String (Option String) (Option FnEnt)))
 (pub fn (fnSufIdxGetVisible bs privs name curMod)
   (fnSufIdxScanVisible (vecGet bs (% (fnIdxHash name) (vecLen bs))) privs name curMod 0))
 
