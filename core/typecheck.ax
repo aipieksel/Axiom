@@ -3176,6 +3176,14 @@
     e.name
   })
 
+(pub :: structEntNoFields (-> Int Bool))
+;@axiom:effect(unsafe)
+(pub fn (structEntNoFields ent)
+  {
+    (let e (as ent StructEnt))
+    (== (as e.fields Int) 0)
+  })
+
 (pub :: structEntFields (-> Int Nodes))
 ;@axiom:effect(unsafe)
 (pub fn (structEntFields ent)
@@ -14074,7 +14082,7 @@
                     ; An abstract data entry such as Vec has no
                     ; constructors; absence of fields proves nothing.
                     {
-                      (let ctors (memGetWordVec dent 1))
+                      (let ctors (dataEntCtors dent))
                       (if (== (vecLen ctors) 0)
                         0
                         {
@@ -15593,11 +15601,11 @@
                     {
                       (vecPush seen key)
                       (if (! (== dent 0))
-                        (showDerivableCtors tc (memGetWordVec dent 1) ty seen 0)
+                        (showDerivableCtors tc (dataEntCtors dent) ty seen 0)
                         {
                           (let sent (findStruct tc n))
                           (if (! (== sent 0))
-                            (showDerivableFields tc (memGetWordVec sent 1) seen 0)
+                            (showDerivableFields tc (structEntFields sent) seen 0)
                             ty)
                         })
                     }
@@ -15867,7 +15875,7 @@
     (let fnd
       (showDeclare tc nm (mkTArr ty (mkTArr mkVecIntTy mkStringTy)) (showParams "v" "seen") sp))
     {
-      (let ctors (memGetWordVec dent 1))
+      (let ctors (dataEntCtors dent))
       {
         (let arms vecNew)
         {
@@ -15977,10 +15985,10 @@
     (let fnd
       (showDeclare tc nm (mkTArr ty (mkTArr mkVecIntTy mkStringTy)) (showParams "v" "seen") sp))
     {
-      (let fields (memGetWordVec sent 1))
+      (let fields (structEntFields sent))
       (showFinish tc fnd
-        (if (!= (& (memGetWord sent 4) 5) 0)
-          (showLit (concat "<" (concat (memGetWordStr sent 0) ">")) sp)
+        (if (!= (& (structEntRepr sent) 5) 0)
+          (showLit (concat "<" (concat (structEntName sent) ">")) sp)
           (if (== (vecLen fields) 0)
             (showLit "{}" sp)
             (showGuarded tc
@@ -19457,9 +19465,9 @@
     0
     {
       (let sent (findStruct tc n))
-      (if (|| (== sent 0) (== (memGetWord sent 1) 0))
+      (if (|| (== sent 0) (structEntNoFields sent))
         0
-        (fsFields tc t d (memGetWordVec sent 1) e (- (spineArgs e 0) 1) st))
+        (fsFields tc t d (structEntFields sent) e (- (spineArgs e 0) 1) st))
     }))
 
 (pub :: fsFields (-> Int (Vec FieldStore) ASTNode (Vec ASTNode) ASTNode Int FsStack Int))
@@ -20191,7 +20199,7 @@
 (pub :: emitFieldStoreExceeds (-> Int Int FieldDecl Int String Strings ()))
 (pub fn (emitFieldStoreExceeds tc sent d span what effs)
   {
-    (let field (concat (concat (bareOf (memGetWordStr sent 0)) ".") d.name))
+    (let field (concat (concat (bareOf (structEntName sent)) ".") d.name))
     (let diag
       (diagSetLabel
         (mkDiagNote SEV_ERROR "AX3142" "field-effect-exceeded" span
@@ -20244,7 +20252,7 @@
 (pub :: emitFieldStoreUnknown (-> Int Int FieldDecl Int String ()))
 (pub fn (emitFieldStoreUnknown tc sent d span why)
   {
-    (let field (concat (concat (bareOf (memGetWordStr sent 0)) ".") d.name))
+    (let field (concat (concat (bareOf (structEntName sent)) ".") d.name))
     (emitDiag tc
       (diagSetLabel
         (mkDiagNote SEV_ERROR "AX3143" "field-effect-unknown" span
@@ -20681,7 +20689,7 @@
           (if (== (structEntIsWord sent) 1)
             0
             {
-              (let fields (memGetWordVec sent 1))
+              (let fields (structEntFields sent))
               (if (== (as fields Int) 0)
                 0
                 (vecLen fields))
@@ -23681,7 +23689,7 @@
                   (let dent (findData tc (nodeAName baseTy)))
                   (if (! (== dent 0))
                     {
-                      (let ctors (memGetWordVec dent 1))
+                      (let ctors (dataEntCtors dent))
                       (if (nodeSame (dataFieldTyInCtors ctors (nodeBName e) 0) nilNode)
                         {
                           (emitFieldNotFound tc (nodeBName e) (nodeAName baseTy) (nodeSpan e))
@@ -23697,7 +23705,7 @@
                         ; refused.
                         (if (== (dataHasNullary dent) 1)
                           {
-                            (emitFieldOnMixed tc (nodeBName e) (memGetWordStr dent 0) (nodeSpan e))
+                            (emitFieldOnMixed tc (nodeBName e) (dataEntName dent) (nodeSpan e))
                             (nodeBuildTErrPlain 0 0 0)
                           }
                           {
@@ -23783,7 +23791,7 @@
 (fn (stampFieldData e dent)
   {
     (setNodeTyText e "")
-    (setNodeBinderTyText e (ctorResolvedName (vecGet (memGetWordVec dent 1) 0)))
+    (setNodeBinderTyText e (ctorResolvedName (vecGet (dataEntCtors dent) 0)))
   })
 
 ; The type of a named constructor field, searching every data type in
@@ -23811,7 +23819,7 @@
 ; dereferences a small integer.
 (pub :: dataHasNullary (-> Int Int))
 (pub fn (dataHasNullary dent)
-  (dataHasNullaryIn (memGetWordVec dent 1) 0))
+  (dataHasNullaryIn (dataEntCtors dent) 0))
 
 (pub :: dataHasNullaryIn (-> Ints Int Int))
 (pub fn (dataHasNullaryIn ctors i)
@@ -25318,7 +25326,7 @@
                 0
               }))
           {
-            (let missing (matMissing matrix (memGetWordVec dent 1) vecNew 0))
+            (let missing (matMissing matrix (dataEntCtors dent) vecNew 0))
             (if (> (vecLen missing) 0)
               ; An incomplete constructor set is covered only by
               ; a binder, and then the binder's row is the only
@@ -25329,7 +25337,7 @@
                   (memSetWord missOut 0 missing)
                   0
                 })
-              (matCtorsExh tc matrix rest (memGetWordVec dent 1) ty missOut 0))
+              (matCtorsExh tc matrix rest (dataEntCtors dent) ty missOut 0))
           })
       }
     }))
@@ -25770,7 +25778,7 @@
     (if (== dent 0)
       ""
       {
-        (let ctors (memGetWordVec dent 1))
+        (let ctors (dataEntCtors dent))
         (let pad (spacesOf indent))
         (let parts vecNew)
         (let mut i 0)
