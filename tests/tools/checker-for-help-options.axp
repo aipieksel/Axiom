@@ -1,0 +1,55 @@
+; Optional specialised loop help preserves the generic fallback and diagnostics.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source "integer string map other")
+    (let tokens (lex source))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "for-help.ax" :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew vecNew vecNew units))
+    (let span (tokenSpan (vecGet tokens 0)))
+    (let want (mkTCon "Vec" (vecPush vecNew (mkTVar "a"))))
+    (say 1 (== (forVecMismatch tc "Vec$vecLen" 1 mkIntTy want span) 1))
+    (say 2
+      (==
+        (forVecMismatch tc "Vec$vecLen" 1 (mkTCon "String" vecNew) want
+          (tokenSpan (vecGet tokens 1)))
+        1))
+    (say 3
+      (==
+        (forVecMismatch tc "Vec$vecLen" 1 (mkTCon "Map" vecNew) want (tokenSpan (vecGet tokens 2)))
+        1))
+    (say 4 (== (forVecMismatch tc "Vec$vecLen" 0 mkIntTy want span) 0))
+    (say 5 (== (forVecMismatch tc "Other$vecLen" 1 mkIntTy want span) 0))
+    (say 6 (== (forVecMismatch tc "Vec$vecLen" 1 want want span) 0))
+    (say 7 (== (forVecMismatch tc "Vec$vecLen" 1 (mkTVar "a") want span) 0))
+    (say 8 (== (forVecMismatch tc "Vec$vecLen" 1 mkTErr want span) 0))
+    (say 9 (== (forVecMismatch tc "Vec$vecLen" 1 (mkTCon "Other" vecNew) want span) 0))
+    (say 10 (== (forVecMismatch tc "Vec$vecLen" 1 nilNode want span) 0))
+    (say 11 (== (countErrorDiags (tcOutVec tc)) 3))
+    (say 12 (== (forVecMismatch tc "Vec$vecGet" 1 mkIntTy want span) 1))
+    (say 13 (== (countErrorDiags (tcOutVec tc)) 4))
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+    0
+  })
