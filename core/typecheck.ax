@@ -26975,23 +26975,24 @@
       (if (let (Some ent) entFound)
         {
           {
-            (let sys (graphWitnessAny tc (Some ent) "syscall"))
-            (if (! (== (vecLen sys) 0))
+            (let sysFound (graphWitnessAny tc (Some ent) "syscall"))
+            (if (let (Some sys) sysFound)
               (emitIsrWaits tc d v
                 (concat
                   (concat
                     "reaches a system call, where every blocking library call ends, and baremetal-aarch64 has no kernel to answer it: "
                     (graphRender sys))
                   "")
-                sys))
+                sys)
+              ())
           }
           (if (strEq v "irq")
             {
-              (let w (graphWitnessAny tc (Some ent) "wfi"))
-              (if (== (vecLen w) 0)
-                0
+              (let wFound (graphWitnessAny tc (Some ent) "wfi"))
+              (if (let (Some w) wFound)
                 (emitIsrWaits tc d v
-                  (concat "waits for an interrupt with IRQs masked: " (graphRender w)) w))
+                  (concat "waits for an interrupt with IRQs masked: " (graphRender w)) w)
+                0)
             }
             0)
         }
@@ -27367,8 +27368,8 @@
 (pub :: restrictNoForeign (-> Int ASTNode String Strings Int))
 (pub fn (restrictNoForeign tc d r eff)
   {
-    (let path (graphWitness tc (restrictOwnEnt tc d) "extern"))
-    (if (> (vecLen path) 0)
+    (let pathFound (graphWitness tc (restrictOwnEnt tc d) "extern"))
+    (if (let (Some path) pathFound)
       {
         (let hit (vecGet path (- (vecLen path) 1)))
         (if (== (effPossible eff (builtinEff "IO")) 1)
@@ -27395,9 +27396,8 @@
             "the body calls a value the compiler could not resolve, and the call graph has no edge for it")
           vecNew)
         {
-          (let mayPath (graphWitnessMay tc (restrictOwnEnt tc d) "extern"))
-          (if (== (vecLen mayPath) 0)
-            0
+          (let mayPathFound (graphWitnessMay tc (restrictOwnEnt tc d) "extern"))
+          (if (let (Some mayPath) mayPathFound)
             (emitRestrictUnverifiable tc d r
               (concat
                 (concat
@@ -27405,7 +27405,8 @@
                     (bareOf (fnEntName (vecGet mayPath (- (vecLen mayPath) 1)))))
                   "` through a call through a field or a local that holds one of several functions: ")
                 (graphRender mayPath))
-              mayPath))
+              mayPath)
+            0)
         }))
   })
 
@@ -27417,8 +27418,8 @@
 (pub :: restrictNoRecursion (-> Int ASTNode String Strings Int))
 (pub fn (restrictNoRecursion tc d r eff)
   {
-    (let path (graphCycle tc (restrictOwnEnt tc d)))
-    (if (> (vecLen path) 0)
+    (let pathFound (graphCycle tc (restrictOwnEnt tc d)))
+    (if (let (Some path) pathFound)
       {
         (let again (vecGet path (- (vecLen path) 1)))
         (if (== (effAnyPossibleOnly eff) 1)
@@ -27442,9 +27443,8 @@
             "the body calls a value the compiler could not resolve, and that call may close a cycle the graph does not show")
           vecNew)
         {
-          (let mayPath (graphCycleMay tc (restrictOwnEnt tc d)))
-          (if (== (vecLen mayPath) 0)
-            0
+          (let mayPathFound (graphCycleMay tc (restrictOwnEnt tc d)))
+          (if (let (Some mayPath) mayPathFound)
             (emitRestrictUnverifiable tc d r
               (concat
                 (concat
@@ -27452,15 +27452,15 @@
                     (bareOf (fnEntName (vecGet mayPath (- (vecLen mayPath) 1)))))
                   "` through a call through a field or a local that holds one of several functions: ")
                 (graphRender mayPath))
-              mayPath))
+              mayPath)
+            0)
         }))
   })
 
 ; The first cycle reachable from `start`, as the walk's own path: every
 ; entry from `start` down to the one met twice, and that entry once
-; more at the end - so `ping -> pong -> pang -> ping` reads as the
-; cycle it is, and `entry -> countdown -> countdown` shows the hop to
-; a cycle below the claim. Or 0.
+; more at the end. None means no reachable cycle. The path includes
+; the start even when the cycle is below it.
 ;
 ; Depth-first with an explicit stack of the entries on the current
 ; path (`vecPush`/`vecPop`) and a `done` set of names whose subtrees
@@ -27470,82 +27470,74 @@
 ; and closed no cycle through the stack as it stands - which is
 ; sufficient, because any cycle reachable from it would have been
 ; found when it was searched.
-(pub :: graphCycle (-> Int (Option FnEnt) (Vec FnEnt)))
+(pub :: graphCycle (-> Int (Option FnEnt) (Option (Vec FnEnt))))
 (pub fn (graphCycle tc start)
   (if (let (Some entry) start)
     (graphCycleVia tc entry 0)
-    vecNew))
+    None))
 
 ; The first cycle through certain and may edges alike, for the reason
 ; `graphWitnessMay` gives.
-(pub :: graphCycleMay (-> Int (Option FnEnt) (Vec FnEnt)))
+(pub :: graphCycleMay (-> Int (Option FnEnt) (Option (Vec FnEnt))))
 (pub fn (graphCycleMay tc start)
   (if (let (Some entry) start)
     (graphCycleVia tc entry 1)
-    vecNew))
+    None))
 
-(pub :: graphCycleVia (-> Int FnEnt Int (Vec FnEnt)))
+(pub :: graphCycleVia (-> Int FnEnt Int (Option (Vec FnEnt))))
 (pub fn (graphCycleVia tc start withMay)
   (graphCycleFrom tc start vecNew vecNew withMay))
 
-(pub :: graphCycleFrom (-> Int FnEnt (Vec FnEnt) Strings Int (Vec FnEnt)))
+(pub :: graphCycleFrom (-> Int FnEnt (Vec FnEnt) Strings Int (Option (Vec FnEnt))))
 (pub fn (graphCycleFrom tc ent stack done withMay)
   {
     (vecPush stack ent)
+    (let certain (graphCycleEdges tc ent.calls 0 stack done withMay))
     (let found
-      {
-        (let certain (graphCycleEdges tc ent.calls 0 stack done withMay))
-        (if (|| (> (vecLen certain) 0) (== withMay 0))
-          certain
-          (graphCycleEdges tc ent.mayCalls 0 stack done withMay))
-      })
+      (if (|| (isSome certain) (== withMay 0))
+        certain
+        (graphCycleEdges tc ent.mayCalls 0 stack done withMay)))
     (vecPop stack)
-    (if (== (vecLen found) 0)
+    (if (isNone found)
       (vecPush done ent.name))
     found
   })
 
-(pub :: graphCycleEdges (-> Int Names Int (Vec FnEnt) Strings Int (Vec FnEnt)))
+(pub :: graphCycleEdges (-> Int Names Int (Vec FnEnt) Strings Int (Option (Vec FnEnt))))
 (pub fn (graphCycleEdges tc calls i stack done withMay)
   (if (>= i (vecLen calls))
-    vecNew
+    None
     {
       (let name (vecGetStr calls i))
       (if (let (Some on) (graphStackIndex stack name))
-          (graphCyclePath stack on (vecGet stack on) vecNew)
+          (Some (graphCyclePath stack on (vecGet stack on) vecNew))
         (== (strInVec done name 0) 1)
           (graphCycleEdges tc calls (+ i 1) stack done withMay)
         {
           (let found
             (if (let (Some e) (fnEntExact tc name))
               (graphCycleFrom tc e stack done withMay)
-              vecNew))
-          (if (> (vecLen found) 0)
+              None))
+          (if (isSome found)
             found
             (graphCycleEdges tc calls (+ i 1) stack done withMay))
         })
     }))
 
-; The slot of `name` on the stack, or -1.
 ; Where `name` sits on the walk stack, or `None`.
 ;
 ; `Option` rather than -1: the caller reads the answer as
 ; `(vecGet stack on)`, so a miss that reached the index is a wild read.
 (pub :: graphStackIndex (-> (Vec FnEnt) String (Option Int)))
 (pub fn (graphStackIndex stack name)
-  {
-    (let i (graphStackIndexFrom stack name 0))
-    (if (< i 0)
-      None
-      (Some i))
-  })
+  (graphStackIndexFrom stack name 0))
 
-(pub :: graphStackIndexFrom (-> (Vec FnEnt) String Int Int))
+(pub :: graphStackIndexFrom (-> (Vec FnEnt) String Int (Option Int)))
 (pub fn (graphStackIndexFrom stack name i)
   (if (>= i (vecLen stack))
-    -1
+    None
     (if (strEq (fnEntName (vecGet stack i)) name)
-      i
+      (Some i)
       (graphStackIndexFrom stack name (+ i 1)))))
 
 ; The whole stack, root first, then the repeated entry once more.
@@ -27585,34 +27577,42 @@
 ; prose was rendered from. It used to call `graphWitness` itself and
 ; throw the vector away, which is exactly why the `->` chain lived
 ; only inside the quoted string.
-(pub :: witnessTextOf (-> Int (Vec FnEnt) String String))
-(pub fn (witnessTextOf tc path e)
-  (if (== (vecLen path) 0)
-    " (the walk found no path to a source of it)"
-    {
-      (let last (vecGet path (- (vecLen path) 1)))
-      (if (== (graphSeeds tc last e 1) 1)
-        (concat ": " (graphRender path))
-        (if (== (vecLen path) 1)
-          " in its own body (a constructor or closure, an `alloc` form, a `handle` installing a handler, or a call through a field that declares the effect)"
-          (concat (concat (concat ": " (graphRender path)) ", in ")
-            (concat (concat "`" (bareOf (fnEntName last))) "`'s own body"))))
-    }))
+(pub :: witnessTextOf (-> Int (Option (Vec FnEnt)) String String))
+(pub fn (witnessTextOf tc pathFound e)
+  (match pathFound
+    ((None) " (the walk found no path to a source of it)")
+    ((Some path)
+      (if (== (vecLen path) 0)
+        " (the walk found no path to a source of it)"
+        {
+          (let last (vecGet path (- (vecLen path) 1)))
+          (if (== (graphSeeds tc last e 1) 1)
+            (concat ": " (graphRender path))
+            (if (== (vecLen path) 1)
+              " in its own body (a constructor or closure, an `alloc` form, a `handle` installing a handler, or a call through a field that declares the effect)"
+              (concat (concat (concat ": " (graphRender path)) ", in ")
+                (concat (concat "`" (bareOf (fnEntName last))) "`'s own body"))))
+        })
+    )))
 
 ; The path the RELATED LOCATIONS are built from - which is the path
 ; the prose rendered, and 0 in the one arm above that renders no chain
 ; at all. The two are decided by the same three tests, in the same
 ; order, because a `^` field for a hop the message never named would
 ; be a location with nothing to explain it.
-(pub :: witnessSecPath (-> Int (Vec FnEnt) String (Vec FnEnt)))
-(pub fn (witnessSecPath tc path e)
-  (if (== (vecLen path) 0)
-    vecNew
-    (if (== (graphSeeds tc (vecGet path (- (vecLen path) 1)) e 1) 1)
-      path
-      (if (== (vecLen path) 1)
+(pub :: witnessSecPath (-> Int (Option (Vec FnEnt)) String (Vec FnEnt)))
+(pub fn (witnessSecPath tc pathFound e)
+  (match pathFound
+    ((None) vecNew)
+    ((Some path)
+      (if (== (vecLen path) 0)
         vecNew
-        path))))
+        (if (== (graphSeeds tc (vecGet path (- (vecLen path) 1)) e 1) 1)
+          path
+          (if (== (vecLen path) 1)
+            vecNew
+            path)))
+    )))
 
 ; This declaration's own entry, looked up under its own module -
 ; `inferEffectsOne` states why: a private function is invisible to a
@@ -27648,8 +27648,8 @@
 ; The witness: the nearest entry reachable from `start` at which
 ; `kind` ENTERS the graph, with the path to it. `kind` is "IO",
 ; "Alloc", "extern", "cast", or the NAME of a declared custom effect.
-; Answers a Vec of entries from `start` to the witness inclusive, or 0
-; when nothing reachable qualifies.
+; Some retains the path from `start` to the witness inclusive. None
+; means nothing reachable qualifies; a hit always includes the start.
 ;
 ; A custom effect has no seed of its own: an operation is not a
 ; function and `tcNoteCall` records no edge for it, so the entry that
@@ -27663,11 +27663,11 @@
 ; index is kept per queue slot so the path reads back from the hit.
 ; Every entry's word 7 is a Vec - `regFn`, `regFnEff`, `tcAddExtern`
 ; and `tcCollectFn` all construct one - so no edge list needs a guard.
-(pub :: graphWitness (-> Int (Option FnEnt) String (Vec FnEnt)))
+(pub :: graphWitness (-> Int (Option FnEnt) String (Option (Vec FnEnt))))
 (pub fn (graphWitness tc start kind)
   (if (let (Some entry) start)
     (graphWitnessVia tc entry kind 0)
-    vecNew))
+    None))
 
 ; The witness through the edges a body MAY take as well as the certain
 ; ones. `FnEnt` word 11 holds the functions a call through a field, or
@@ -27678,60 +27678,49 @@
 ; either kind proves the claim as far as the graph goes. A call the
 ; walk could not resolve has no edge of either kind, which is why
 ; every caller tests `effUnresolved` first.
-(pub :: graphWitnessMay (-> Int (Option FnEnt) String (Vec FnEnt)))
+(pub :: graphWitnessMay (-> Int (Option FnEnt) String (Option (Vec FnEnt))))
 (pub fn (graphWitnessMay tc start kind)
   (if (let (Some entry) start)
     (graphWitnessVia tc entry kind 1)
-    vecNew))
+    None))
 
 ; A certain path when there is one, else a path through may edges: what
 ; a check asks when it must refuse anything the body may reach, and
 ; should still name the certain route.
-(pub :: graphWitnessAny (-> Int (Option FnEnt) String (Vec FnEnt)))
+(pub :: graphWitnessAny (-> Int (Option FnEnt) String (Option (Vec FnEnt))))
 (pub fn (graphWitnessAny tc start kind)
-  {
-    (let certain (graphWitness tc start kind))
-    (if (> (vecLen certain) 0)
-      certain
-      (graphWitnessMay tc start kind))
-  })
+  (if (let (Some certain) (graphWitness tc start kind))
+    (Some certain)
+    (graphWitnessMay tc start kind)))
 
-(pub :: graphWitnessVia (-> Int FnEnt String Int (Vec FnEnt)))
+(pub :: graphWitnessVia (-> Int FnEnt String Int (Option (Vec FnEnt))))
 (pub fn (graphWitnessVia tc start kind withMay)
   {
     (let queue vecNew)
     (let parent vecNew)
     (let seen vecNew)
     (let mut qi 0)
-    (let mut hit (- 0 1))
-    {
-      (vecPush queue start)
-      (vecPush parent (- 0 1))
-      (vecPush seen (fnEntName start))
-      (while (if (< hit 0)
-        (< qi (vecLen queue))
-        false)
-        {
-          (let ent (vecGet queue qi))
-          {
-            (if (== (graphSeeds tc ent kind qi) 1)
-              (set hit qi)
-              (if (== (graphOwnSource tc ent kind) 1)
-                (set hit qi)
-                {
-                  (graphEnqueue tc (fnEntCalls ent) 0 queue parent seen qi
-                    (graphStopsAtTrusted kind))
-                  (if (== withMay 1)
-                    (graphEnqueue tc (fnEntMayCalls ent) 0 queue parent seen qi
-                      (graphStopsAtTrusted kind)))
-                }))
-            (set qi (+ qi 1))
-          }
-        })
-      (if (< hit 0)
-        vecNew
-        (graphReadBack queue parent hit vecNew))
-    }
+    (let mut hit None)
+    (vecPush queue start)
+    (vecPush parent None)
+    (vecPush seen start.name)
+    (while (&& (isNone hit) (< qi (vecLen queue)))
+      {
+        (let ent (vecGet queue qi))
+        (if (== (graphSeeds tc ent kind qi) 1)
+          (set hit (Some qi))
+          (if (== (graphOwnSource tc ent kind) 1)
+            (set hit (Some qi))
+            {
+              (graphEnqueue tc ent.calls 0 queue parent seen qi (graphStopsAtTrusted kind))
+              (if (== withMay 1)
+                (graphEnqueue tc ent.mayCalls 0 queue parent seen qi (graphStopsAtTrusted kind)))
+            }))
+        (set qi (+ qi 1))
+      })
+    (match hit
+      ((None) None)
+      ((Some index) (Some (graphReadBack queue parent (Some index) vecNew))))
   })
 
 ; Where `kind` ENTERS rather than being inherited:
@@ -27857,7 +27846,7 @@
 ; its parent slot. `fnEntExact` and not `findFnEnt`: an edge names the
 ; RESOLVED entry (`Mod$name`), which is the exact-name index's key,
 ; and visibility was decided when the edge was recorded.
-(pub :: graphEnqueue (-> Int Names Int (Vec FnEnt) Ints Strings Int Int Int))
+(pub :: graphEnqueue (-> Int Names Int (Vec FnEnt) (Vec (Option Int)) Strings Int Int Int))
 (pub fn (graphEnqueue tc calls i queue parent seen from skipTrusted)
   (if (>= i (vecLen calls))
     0
@@ -27873,7 +27862,7 @@
                 (if (! (&& (== skipTrusted 1) (== (fnEntUnsafe e) 1)))
                   {
                     (vecPush queue e)
-                    (vecPush parent from)
+                    (vecPush parent (Some from))
                   }
                   ())
                 ())
@@ -27885,15 +27874,15 @@
 
 ; The path from the start to slot `i`, start first: recurse to the
 ; parent, then push.
-(pub :: graphReadBack (-> (Vec FnEnt) Ints Int (Vec FnEnt) (Vec FnEnt)))
+(pub :: graphReadBack (-> (Vec FnEnt) (Vec (Option Int)) (Option Int) (Vec FnEnt) (Vec FnEnt)))
 (pub fn (graphReadBack queue parent i acc)
-  (if (< i 0)
-    acc
+  (if (let (Some index) i)
     {
-      (graphReadBack queue parent (vecGet parent i) acc)
-      (vecPush acc (vecGet queue i))
+      (graphReadBack queue parent (vecGet parent index) acc)
+      (vecPush acc (vecGet queue index))
       acc
-    }))
+    }
+    acc))
 
 ; `a -> b -> c`, in the resolved spellings the edges carry, so a path
 ; cross-checks `#calls=` hop for hop.
@@ -27997,8 +27986,8 @@
             (emitRestrictUnverifiable tc d r
               "a reachable function value may call a lambda containing a cast" vecNew))
           {
-            (let path (graphWitness tc (restrictOwnEnt tc d) "cast"))
-            (if (> (vecLen path) 0)
+            (let pathFound (graphWitness tc (restrictOwnEnt tc d) "cast"))
+            (if (let (Some path) pathFound)
               {
                 (let hit (vecGet path (- (vecLen path) 1)))
                 (if (== (effAnyPossibleOnly eff) 1)
@@ -28025,9 +28014,8 @@
                   vecNew)
                 (if (== (vecLen local) 0)
                   {
-                    (let mayPath (graphWitnessMay tc (restrictOwnEnt tc d) "cast"))
-                    (if (== (vecLen mayPath) 0)
-                      0
+                    (let mayPathFound (graphWitnessMay tc (restrictOwnEnt tc d) "cast"))
+                    (if (let (Some mayPath) mayPathFound)
                       (emitRestrictUnverifiable tc d r
                         (concat
                           (concat
@@ -28035,7 +28023,8 @@
                               (bareOf (fnEntName (vecGet mayPath (- (vecLen mayPath) 1)))))
                             "` through a call through a field or a local that holds one of several functions: ")
                           (graphRender mayPath))
-                        mayPath))
+                        mayPath)
+                      0)
                   }
                   0)))
           })
@@ -29695,15 +29684,16 @@
         (let d (vecGet pending i))
         {
           (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
-          (let path (graphWitness tc (restrictOwnEnt tc d) "forge"))
-          (if (! (== (vecLen path) 0))
+          (let pathFound (graphWitness tc (restrictOwnEnt tc d) "forge"))
+          (if (let (Some path) pathFound)
             (emitRestrictViolated tc d "no-unsafe"
               (concat
                 (concat
                   (concat (concat "the body performs Unsafe: " (graphRender path)) ", where `")
                   (bareOf (fnEntName (vecGet path (- (vecLen path) 1)))))
                 "` forges a reference with `as` and does not say `effect(unsafe)`")
-              path))
+              path)
+            ())
         }
       }
       (unsafeLateRestricts tc pending (+ i 1))
@@ -30441,13 +30431,17 @@
 ; The path, in `graphRender`'s spelling, so it cross-checks
 ; `symbols --calls` hop for hop as AX3049's does. A path of one entry
 ; is `main` performing the operation itself.
-(pub :: unhandledPathText (-> (Vec FnEnt) String))
-(pub fn (unhandledPathText path)
-  (if (== (vecLen path) 0)
-    ""
-    (if (<= (vecLen path) 1)
-      " - in `main`'s own body"
-      (concat " - " (graphRender path)))))
+(pub :: unhandledPathText (-> (Option (Vec FnEnt)) String))
+(pub fn (unhandledPathText pathFound)
+  (match pathFound
+    ((None) "")
+    ((Some path)
+      (if (== (vecLen path) 0)
+        ""
+        (if (<= (vecLen path) 1)
+          " - in `main`'s own body"
+          (concat " - " (graphRender path))))
+    )))
 
 ; The witness's declaration span, and ONLY when the witness is
 ; declared in the same module as `main`.
@@ -30462,46 +30456,59 @@
 ; message names `Test$assertEq` in `symbols --calls`' own spelling and
 ; is the whole answer in that case; a related span that points at the
 ; wrong file is worse than none.
-(pub :: unhandledRelSpan (-> Int ASTNode (Vec FnEnt) Int))
-(pub fn (unhandledRelSpan tc d path)
-  (if (== (vecLen path) 0)
-    0
-    (if (<= (vecLen path) 1)
-      0
-      {
-        (let dd (declByName (tcAllDeclsVec tc) (fnEntName (vecGet path (- (vecLen path) 1))) 0))
-        (if (nodeSame dd nilNode)
+(pub :: unhandledRelSpan (-> Int ASTNode (Option (Vec FnEnt)) Int))
+(pub fn (unhandledRelSpan tc d pathFound)
+  (match pathFound
+    ((None) 0)
+    ((Some path)
+      (if (== (vecLen path) 0)
+        0
+        (if (<= (vecLen path) 1)
           0
-          (if (== (typeModuleSame (nodeModuleOpt dd) (nodeModuleOpt d)) 1)
-            (nodeSpan dd)
-            0))
-      })))
+          {
+            (let dd
+              (declByName (tcAllDeclsVec tc) (fnEntName (vecGet path (- (vecLen path) 1))) 0))
+            (if (nodeSame dd nilNode)
+              0
+              (if (== (typeModuleSame (nodeModuleOpt dd) (nodeModuleOpt d)) 1)
+                (nodeSpan dd)
+                0))
+          }))
+    )))
 
 ; A String either way: `mkDiagFix2` reads this position only when the
 ; related SPAN is non-zero, which is the predicate `unhandledRelSpan`
 ; answers, so the empty string is never rendered.
-(pub :: unhandledRelText (-> (Vec FnEnt) String))
-(pub fn (unhandledRelText path)
-  (if (== (vecLen path) 0)
-    ""
-    (if (<= (vecLen path) 1)
-      ""
-      (concat (concat "`" (bareOf (fnEntName (vecGet path (- (vecLen path) 1)))))
-        "` performs it"))))
+(pub :: unhandledRelText (-> (Option (Vec FnEnt)) String))
+(pub fn (unhandledRelText pathFound)
+  (match pathFound
+    ((None) "")
+    ((Some path)
+      (if (== (vecLen path) 0)
+        ""
+        (if (<= (vecLen path) 1)
+          ""
+          (concat (concat "`" (bareOf (fnEntName (vecGet path (- (vecLen path) 1)))))
+            "` performs it")))
+    )))
 
 ; The witness's own module, when it is not `main`'s: the sentence that
 ; replaces a related span the renderer could not place, so the report
 ; still says WHERE without pointing at the wrong bytes.
-(pub :: unhandledElsewhereText (-> Int ASTNode (Vec FnEnt) String))
-(pub fn (unhandledElsewhereText tc d path)
-  (if (== (unhandledRelSpan tc d path) 0)
-    (if (== (vecLen path) 0)
-      ""
-      (if (<= (vecLen path) 1)
-        ""
-        (concat (concat ", and `" (bareOf (fnEntName (vecGet path (- (vecLen path) 1)))))
-          "` is what performs it")))
-    ""))
+(pub :: unhandledElsewhereText (-> Int ASTNode (Option (Vec FnEnt)) String))
+(pub fn (unhandledElsewhereText tc d pathFound)
+  (match pathFound
+    ((None) "")
+    ((Some path)
+      (if (== (unhandledRelSpan tc d (Some path)) 0)
+        (if (== (vecLen path) 0)
+          ""
+          (if (<= (vecLen path) 1)
+            ""
+            (concat (concat ", and `" (bareOf (fnEntName (vecGet path (- (vecLen path) 1)))))
+              "` is what performs it")))
+        "")
+    )))
 
 ; AX3039 over the tags on `(effect ...)` declarations.
 ;

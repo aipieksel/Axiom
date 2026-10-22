@@ -17,7 +17,10 @@ def main():
     fixtures = [repo / "tests/selfhost" / name for name in [
         "typecheck-type-registry.ax", "typecheck-module-options.ax",
     ]]
-    refusal = repo / "tests/selfhost/typecheck-type-registry-payload.axp"
+    refusals = [
+        ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
+        ("typecheck-graph-options-exhaustive.axp", "AX3005", ("None",)),
+    ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
             executable = Path(work) / "registry"
@@ -31,16 +34,18 @@ def main():
             ran = subprocess.run([str(executable)], capture_output=True, text=True)
             if ran.returncode != 42 or ran.stdout or ran.stderr:
                 raise SystemExit(f"registry fixture: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
-        checked = subprocess.run(
-            [str(compiler), "--diagnostic-format=ai", "check", str(refusal)],
-            env=env, capture_output=True, text=True,
-        )
-        errors = [line for line in checked.stderr.splitlines() if line.startswith("E ")]
-        if checked.returncode != 1 or len(errors) != 1 or "E AX3004 " not in errors[0]:
-            raise SystemExit(f"payload refusal: status={checked.returncode}\n{checked.stdout}{checked.stderr}")
-        if "DataEnt" not in errors[0] or "StructEnt" not in errors[0]:
-            raise SystemExit(f"payload refusal named unexpected types: {errors[0]}")
-    print("typed registry: lookup/order and module runtime 42; mismatched payload AX3004")
+        for name, code, expected_names in refusals:
+            refusal = repo / "tests/selfhost" / name
+            checked = subprocess.run(
+                [str(compiler), "--diagnostic-format=ai", "check", str(refusal)],
+                env=env, capture_output=True, text=True,
+            )
+            errors = [line for line in checked.stderr.splitlines() if line.startswith("E ")]
+            if checked.returncode != 1 or len(errors) != 1 or f"E {code} " not in errors[0]:
+                raise SystemExit(f"{name}: status={checked.returncode}\n{checked.stdout}{checked.stderr}")
+            if any(expected not in errors[0] for expected in expected_names):
+                raise SystemExit(f"{name}: unexpected refusal: {errors[0]}")
+    print("typed registry: lookup/order and module runtime 42; mismatched payload AX3004; graph missing None AX3005")
 
 
 if __name__ == "__main__":
