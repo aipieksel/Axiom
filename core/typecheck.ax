@@ -1807,15 +1807,9 @@
   (if (== (as xs Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen xs))
-          {
-            (sigTyVarsInto (vecGet xs i) acc)
-            (set i (+ i 1))
-          })
-        0
-      }
+      (for i in 0..(vecLen xs)
+        (sigTyVarsInto (vecGet xs i) acc))
+      0
     }))
 
 (pub :: tyHasPoison (-> ASTNode Int))
@@ -1844,15 +1838,11 @@
   (if (== (as xs Int) 0)
     0
     {
-      (let mut i 0)
       (let mut found 0)
       {
-        (while (< i (vecLen xs))
-          {
-            (if (== (tyHasPoison (vecGet xs i)) 1)
-              (set found 1))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen xs)
+          (if (== (tyHasPoison (vecGet xs i)) 1)
+            (set found 1)))
         found
       }
     }))
@@ -2144,24 +2134,18 @@
                   (let w vecNew)
                   (let poisoned (tyHasPoison t))
                   {
-                    (let mut i 0)
-                    {
-                      (while (< i (vecLen vars))
-                        {
-                          (vecPush w
-                            (if (== poisoned 1)
-                              0
-                              (- 0 1)))
-                          (set i (+ i 1))
-                        })
-                      (writeNodeChild e 6
-                        (setNodeTyNames
-                          (nodeBuildEvstampCallPlain (tcCurDeclNode tc) w
-                            (if (== poisoned 1)
-                              vecNew
-                              env))
-                          vars))
-                    }
+                    (for i in 0..(vecLen vars)
+                      (vecPush w
+                        (if (== poisoned 1)
+                          0
+                          (- 0 1))))
+                    (writeNodeChild e 6
+                      (setNodeTyNames
+                        (nodeBuildEvstampCallPlain (tcCurDeclNode tc) w
+                          (if (== poisoned 1)
+                            vecNew
+                            env))
+                        vars))
                   }
                 })
             }
@@ -2302,15 +2286,11 @@
   {
     (let env (nodeCTypeEnv st))
     {
-      (let mut i 0)
       (let mut src "")
       {
-        (while (< i (vecLen env))
-          {
-            (if (nodeSame (typeBindingTy (vecGet env i)) pt)
-              (set src (typeBindingName (vecGet env i))))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen env)
+          (if (nodeSame (typeBindingTy (vecGet env i)) pt)
+            (set src (typeBindingName (vecGet env i)))))
         (if (strEq src "")
           0
           {
@@ -2531,12 +2511,8 @@
           (vecPush bs 0)
           (set i (+ i 1))
         })
-      (set i 0)
-      (while (< i (vecLen decls))
-        {
-          (dupIdxAddDecl bs (vecGet decls i) i)
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen decls)
+        (dupIdxAddDecl bs (vecGet decls i) i))
       bs
     }
   })
@@ -2847,25 +2823,21 @@
           (vecPush bs (as 0 (Vec String)))
           (set i (+ i 1))
         })
-      (set i 0)
-      (while (< i (vecLen allDecls))
+      (for i in 0..(vecLen allDecls)
         {
           ; A definition that is not exported does not answer an
           ; entry-file signature, so it is not in the index at all -
           ; the `nodeVis` test the linear scan made, made once.
-          {
-            (let d (vecGet allDecls i))
-            (if (&& (== (nodeTag d) TAG_D_FN) (== (nodeVis d) 1))
-              (defIdxAddKeys bs (nodeAName d))
-              ; An `extern` block DEFINES every name in it, so a `::`
-              ; written over one is answered rather than drawing a false
-              ; AX3015. Without this arm the index holds only TAG_D_FN
-              ; and every signature over a binding is "a signature with
-              ; no definition behind it".
-              (if (&& (== (nodeTag d) TAG_D_EXTERN) (== (nodeVis d) 1))
-                (defIdxAddExternKeys bs (nodeCChildren d) 0)))
-          }
-          (set i (+ i 1))
+          (let d (vecGet allDecls i))
+          (if (&& (== (nodeTag d) TAG_D_FN) (== (nodeVis d) 1))
+            (defIdxAddKeys bs (nodeAName d))
+            ; An `extern` block DEFINES every name in it, so a `::`
+            ; written over one is answered rather than drawing a false
+            ; AX3015. Without this arm the index holds only TAG_D_FN
+            ; and every signature over a binding is "a signature with
+            ; no definition behind it".
+            (if (&& (== (nodeTag d) TAG_D_EXTERN) (== (nodeVis d) 1))
+              (defIdxAddExternKeys bs (nodeCChildren d) 0)))
         })
       bs
     }
@@ -5494,28 +5466,22 @@
 ;@axiom:effect(unsafe)
 (pub fn (checkCtorWidths tc ctors)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen ctors))
-        {
-          {
-            (let c (vecGet ctors i))
-            (if (> (nodeB c) 46)
-              (emitDiag tc
-                (diagSetLabel
-                  (mkDiagNote SEV_ERROR "AX3029" "record-bitmap-capacity" (nodeSpan c)
-                    (concat (concat (concat "constructor `" (as (nodeA c) String)) "` has ")
-                      (concat (fmtInt (nodeB c))
-                        " fields, and a cell's reference map covers 46 beside the tag word"))
-                    0 0
-                    "split the declaration: a nested struct or constructor cell is ONE word of the outer block, and every block carries its own map"
-                    "the shape word packs one bit per payload word - is this word a reference the release path must follow - beside the form bit and the word count; bits 16..62 give 47 mappable words, the tag takes the first, and the widest declaration in this repository is the compiler's own 37-field CG record (docs/memory-model.md MM-LIFE-2d)")
-                  "too wide for one reference map")))
-          }
-          (set i (+ i 1))
-        })
-      0
-    }
+    (for i in 0..(vecLen ctors)
+      {
+        (let c (vecGet ctors i))
+        (if (> (nodeB c) 46)
+          (emitDiag tc
+            (diagSetLabel
+              (mkDiagNote SEV_ERROR "AX3029" "record-bitmap-capacity" (nodeSpan c)
+                (concat (concat (concat "constructor `" (as (nodeA c) String)) "` has ")
+                  (concat (fmtInt (nodeB c))
+                    " fields, and a cell's reference map covers 46 beside the tag word"))
+                0 0
+                "split the declaration: a nested struct or constructor cell is ONE word of the outer block, and every block carries its own map"
+                "the shape word packs one bit per payload word - is this word a reference the release path must follow - beside the form bit and the word count; bits 16..62 give 47 mappable words, the tag takes the first, and the widest declaration in this repository is the compiler's own 37-field CG record (docs/memory-model.md MM-LIFE-2d)")
+              "too wide for one reference map")))
+      })
+    0
   })
 
 (pub :: evSigVarCount (-> ASTNode Int))
@@ -5551,28 +5517,22 @@
   (if (== (as fields Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen fields))
-          {
-            ; the operation's declared TYPE rides in slot b of its
-            ; TAG_FIELD node - the same slot tcCollectEffectOps
-            ; registers from
-            {
-              (let f (vecGet fields i))
-              (if (== (tyHasSrcVar (nodeBChild f)) 1)
-                (emitDiag tc
-                  (diagSetLabel
-                    (mkDiagNote SEV_ERROR "AX3017" "effect-handler-unsupported" (nodeSpan f)
-                      "an effect operation's type cannot mention a type variable" 0 0
-                      "give the operation a concrete type"
-                      "a handler is installed and called through a protocol that carries no pointerhood evidence, so a variable here would be invisible to the reference maps (docs/memory-model.md MM-LIFE-2d)")
-                    "no evidence crosses a handler")))
-            }
-            (set i (+ i 1))
-          })
-        0
-      }
+      (for i in 0..(vecLen fields)
+        {
+          ; the operation's declared TYPE rides in slot b of its
+          ; TAG_FIELD node - the same slot tcCollectEffectOps
+          ; registers from
+          (let f (vecGet fields i))
+          (if (== (tyHasSrcVar (nodeBChild f)) 1)
+            (emitDiag tc
+              (diagSetLabel
+                (mkDiagNote SEV_ERROR "AX3017" "effect-handler-unsupported" (nodeSpan f)
+                  "an effect operation's type cannot mention a type variable" 0 0
+                  "give the operation a concrete type"
+                  "a handler is installed and called through a protocol that carries no pointerhood evidence, so a variable here would be invisible to the reference maps (docs/memory-model.md MM-LIFE-2d)")
+                "no evidence crosses a handler")))
+        })
+      0
     }))
 
 (pub :: tcCollect (-> Int (Vec ASTNode) Int Int))
@@ -5753,27 +5713,20 @@
   (if (== (as fields Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen fields))
-          {
-            {
-              (let f (vecGet fields i))
-              (if (&& (== (nodeB f) 0) (!= (nodeSpan f) 0))
-                (emitDiag tc
-                  (diagSetLabel
-                    (mkDiag SEV_ERROR "AX3055" "effect-op-untyped" (nodeSpan f)
-                      (concat
-                        (concat (concat (concat "operation `" (nodeAName f)) "` of effect `")
-                          effName)
-                        "` declares no type; a handler is checked against it and a call is checked against its arity")
-                      0 0 (concat (concat "write `(" (nodeAName f)) " :: (-> Arg Result))`"))
-                    "no `::` type after the operation's name")))
-            }
-            (set i (+ i 1))
-          })
-        0
-      }
+      (for i in 0..(vecLen fields)
+        {
+          (let f (vecGet fields i))
+          (if (&& (== (nodeB f) 0) (!= (nodeSpan f) 0))
+            (emitDiag tc
+              (diagSetLabel
+                (mkDiag SEV_ERROR "AX3055" "effect-op-untyped" (nodeSpan f)
+                  (concat
+                    (concat (concat (concat "operation `" (nodeAName f)) "` of effect `") effName)
+                    "` declares no type; a handler is checked against it and a call is checked against its arity")
+                  0 0 (concat (concat "write `(" (nodeAName f)) " :: (-> Arg Result))`"))
+                "no `::` type after the operation's name")))
+        })
+      0
     }))
 
 ; A struct field must DECLARE its type, and the reason is the same one
@@ -5806,29 +5759,22 @@
   (if (== (as fields Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen fields))
-          {
-            {
-              (let f (vecGet fields i))
-              (if (&& (== (fieldTyIsUnread f) 1) (!= (nodeSpan f) 0))
-                (emitDiag tc
-                  (diagSetLabel
-                    (mkDiag SEV_ERROR "AX3056" "struct-field-untyped" (nodeSpan f)
-                      (concat
-                        (concat (concat (concat "field `" (nodeAName f)) "` of struct `")
-                          structName)
-                        "` declares no type; a field's type is what decides whether the release path follows it")
-                      0 0
-                      (concat (concat "write `(" (nodeAName f))
-                        " : Type)` - the `:` is what makes this a field declaration"))
-                    "no `:` type after the field's name")))
-            }
-            (set i (+ i 1))
-          })
-        0
-      }
+      (for i in 0..(vecLen fields)
+        {
+          (let f (vecGet fields i))
+          (if (&& (== (fieldTyIsUnread f) 1) (!= (nodeSpan f) 0))
+            (emitDiag tc
+              (diagSetLabel
+                (mkDiag SEV_ERROR "AX3056" "struct-field-untyped" (nodeSpan f)
+                  (concat
+                    (concat (concat (concat "field `" (nodeAName f)) "` of struct `") structName)
+                    "` declares no type; a field's type is what decides whether the release path follows it")
+                  0 0
+                  (concat (concat "write `(" (nodeAName f))
+                    " : Type)` - the `:` is what makes this a field declaration"))
+                "no `:` type after the field's name")))
+        })
+      0
     }))
 
 ; The field type the parser could not read, in either of the two ways
@@ -6382,13 +6328,9 @@
   {
     (let nb (fnIdxBuckets n))
     (let bs vecNew)
-    (let mut i 0)
     {
-      (while (< i nb)
-        {
-          (vecPush bs (as 0 (Vec String)))
-          (set i (+ i 1))
-        })
+      (for i in 0..nb
+        (vecPush bs (as 0 (Vec String))))
       bs
     }
   })
@@ -6399,13 +6341,9 @@
     0
     {
       (let bs (privSetNew (vecLen privs)))
-      (let mut i 0)
       {
-        (while (< i (vecLen privs))
-          {
-            (defIdxPut bs (vecGetStr privs i))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen privs)
+          (defIdxPut bs (vecGetStr privs i)))
         (as bs Int)
       }
     }))
@@ -6718,12 +6656,8 @@
             (vecPush bs 0)
             (set i (+ i 1))
           })
-        (set i 0)
-        (while (< i (vecLen fns))
-          {
-            (fnIdxAdd bs (vecGet fns i))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen fns)
+          (fnIdxAdd bs (vecGet fns i)))
         bs
       }
     }
@@ -6949,12 +6883,8 @@
             (vecPush bs 0)
             (set i (+ i 1))
           })
-        (set i 0)
-        (while (< i (vecLen fns))
-          {
-            (fnSufIdxAdd bs (vecGet fns i))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen fns)
+          (fnSufIdxAdd bs (vecGet fns i)))
         bs
       }
     }
@@ -7194,13 +7124,9 @@
   {
     (let nb (fnIdxBuckets hint))
     (let bs vecNew)
-    (let mut i 0)
     {
-      (while (< i nb)
-        {
-          (vecPush bs 0)
-          (set i (+ i 1))
-        })
+      (for i in 0..nb
+        (vecPush bs 0))
       bs
     }
   })
@@ -7841,25 +7767,21 @@
   {
     (let ms (structMarkers d))
     (let seen vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen ms))
+      (for i in 0..(vecLen ms)
         {
           (let m (vecGet ms i))
           (let n (nodeAName (vecGet ms i)))
-          {
-            (if (|| (strEq n "word") (|| (strEq n "shared") (strEq n "sealed")))
-              (if (>= (strVecIdx seen n) 0)
-                (emitStructMarkerDiag tc (nodeSpan m) (concat (concat "`" n) "` is written twice")
-                  "write each marker once"
-                  "a marker says one thing about the struct, and saying it twice says nothing more")
-                (vecPushStr seen n))
-              (emitStructMarkerDiag tc (nodeSpan m)
-                (concat (concat "`" n) "` is not a struct marker")
-                "a struct takes `word`, which makes it one machine word rather than a heap block, `sealed`, which keeps its constructor and fields in its module, and `shared`, which lets a `parallel` binding capture it; anything else after the struct's name is refused"
-                "the markers come between the name and the first field: `(struct Ticket word shared (slot : Int))`"))
-            (set i (+ i 1))
-          }
+          (if (|| (strEq n "word") (|| (strEq n "shared") (strEq n "sealed")))
+            (if (>= (strVecIdx seen n) 0)
+              (emitStructMarkerDiag tc (nodeSpan m) (concat (concat "`" n) "` is written twice")
+                "write each marker once"
+                "a marker says one thing about the struct, and saying it twice says nothing more")
+              (vecPushStr seen n))
+            (emitStructMarkerDiag tc (nodeSpan m)
+              (concat (concat "`" n) "` is not a struct marker")
+              "a struct takes `word`, which makes it one machine word rather than a heap block, `sealed`, which keeps its constructor and fields in its module, and `shared`, which lets a `parallel` binding capture it; anything else after the struct's name is refused"
+              "the markers come between the name and the first field: `(struct Ticket word shared (slot : Int))`"))
         })
       (if (&& (structIsShared d)
             (if (|| (structIsWord d) (structHasMarker d "sealed"))
@@ -7891,26 +7813,22 @@
   {
     (let fs (nodeBChildren d))
     (let name (nodeAName d))
-    (let mut i 0)
     {
       (if (!= (nodeTy d) 0)
         (emitStructMarkerDiag tc (nodeSpan d)
           (concat (concat "shared struct `" name) "` takes type parameters")
           "drop the parameters: a shared struct's module states what every field is"
           "a `parallel` form lends a shared struct whole, and its module, not its caller, answers for every field's use from several bindings (MM-PAR-16)"))
-      (while (< i (vecLen fs))
+      (for i in 0..(vecLen fs)
         {
           (let f (vecGet fs i))
-          {
-            (if (== (fieldIsMut f) 1)
-              (emitStructMarkerDiag tc (spanOf f)
-                (concat
-                  (concat (concat (concat "field `" (nodeAName f)) "` of shared struct `") name)
-                  "` is `mut`")
-                "drop `mut`: keep what changes in the memory the struct names, behind its module's atomics or lock"
-                "a lent block is read by every binding at once, so a plain store to its field would race (MM-PAR-9)"))
-            (set i (+ i 1))
-          }
+          (if (== (fieldIsMut f) 1)
+            (emitStructMarkerDiag tc (spanOf f)
+              (concat
+                (concat (concat (concat "field `" (nodeAName f)) "` of shared struct `") name)
+                "` is `mut`")
+              "drop `mut`: keep what changes in the memory the struct names, behind its module's atomics or lock"
+              "a lent block is read by every binding at once, so a plain store to its field would race (MM-PAR-9)"))
         })
       0
     }
@@ -8087,15 +8005,9 @@
   (if (nodeSame dst src)
     0
     {
-      (let mut k 0)
-      {
-        (while (< k 12)
-          {
-            (nodeCopyWord dst src k)
-            (set k (+ k 1))
-          })
-        0
-      }
+      (for k in 0..12
+        (nodeCopyWord dst src k))
+      0
     }))
 
 ; ------------------------------------------------------------------
@@ -9750,17 +9662,13 @@
   {
     (let out vecNew)
     (let n (vecLen names))
-    (let mut i 0)
     {
-      (while (< i n)
+      (for i in 0..n
         {
           (let nm (vecGetStr names i))
-          {
-            (if (== (divTailOk decls (findFnBody decls nm) names 0) 1)
-              (vecPush out (as nm Int))
-              (as 0 (Vec Int)))
-            (set i (+ i 1))
-          }
+          (if (== (divTailOk decls (findFnBody decls nm) names 0) 1)
+            (vecPush out (as nm Int))
+            (as 0 (Vec Int)))
         })
       out
     }
@@ -9984,15 +9892,9 @@
   (if (== (as xs Int) 0)
     0
     {
-      (let mut i 0)
-      {
-        (while (< i (vecLen xs))
-          {
-            (sigSplitPolar (vecGet xs i) pol pos neg)
-            (set i (+ i 1))
-          })
-        0
-      }
+      (for i in 0..(vecLen xs)
+        (sigSplitPolar (vecGet xs i) pol pos neg))
+      0
     }))
 
 ; One source-written variable into one bucket, deduplicated. The same
@@ -10748,14 +10650,10 @@
 (fn (unsignedParamIn params ty0)
   {
     (let ty (tyResolve ty0))
-    (let mut i 0)
     (let mut found false)
-    (while (< i (vecLen params))
-      {
-        (if (nodeSame ty (vecGet params i))
-          (set found true))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen params)
+      (if (nodeSame ty (vecGet params i))
+        (set found true)))
     (if (|| found (nodeSame ty nilNode))
       found
       (if (== (nodeTag ty) TAG_T_CON)
@@ -10792,12 +10690,8 @@
       (if (! (unsignedParamIn params ty))
         false
         {
-          (let mut i 0)
-          (while (< i (vecLen params))
-            {
-              (writeNodeWord (vecGet params i) 0 TAG_T_ERR)
-              (set i (+ i 1))
-            })
+          (for i in 0..(vecLen params)
+            (writeNodeWord (vecGet params i) 0 TAG_T_ERR))
           true
         }))
   })
@@ -11850,13 +11744,9 @@
       {
         (let copy (nodeClone e))
         (let xs vecNew)
-        (let mut k 5)
         {
-          (while (< k 12)
-            {
-              (nodeCopyWord copy e k)
-              (set k (+ k 1))
-            })
+          (for k in 5..12
+            (nodeCopyWord copy e k))
           (vecPush xs copy)
           (vecPush xs (mkEUnitAt (nodeSpan e)))
           ; Built as a node first, so the block holds its share of
@@ -12285,13 +12175,9 @@
   {
     (let nb (fnIdxBuckets hint))
     (let bs vecNew)
-    (let mut i 0)
     {
-      (while (< i nb)
-        {
-          (vecPush bs 0)
-          (set i (+ i 1))
-        })
+      (for i in 0..nb
+        (vecPush bs 0))
       bs
     }
   })
@@ -13235,13 +13121,9 @@
 (pub fn (capBoundOf params)
   {
     (let v vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen params))
-        {
-          (vecPush v (vecGet params i))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen params)
+        (vecPush v (vecGet params i)))
       v
     }
   })
@@ -14862,15 +14744,9 @@
 (pub :: showSplice (-> ASTNode ASTNode Int))
 (pub fn (showSplice e arg)
   {
-    (let mut i 0)
-    {
-      (while (< i 12)
-        {
-          (nodeCopyWord e arg i)
-          (set i (+ i 1))
-        })
-      2
-    }
+    (for i in 0..12
+      (nodeCopyWord e arg i))
+    2
   })
 
 ; `(if b "true" "false")` in the application's place. Word 6 is the
@@ -18505,17 +18381,13 @@
 (pub :: handlerOpaqueArgs (-> Strings (Vec FnVal) ()))
 (pub fn (handlerOpaqueArgs acc members)
   {
-    (let mut i 0)
-    (while (< i (vecLen members))
-      {
-        (match (vecGet members i)
-          ((NamedFn ent)
-            (if (> (vecLen ent.eparams) 0)
-              (effAdd acc effIncomplete))
-          )
-          ((LambdaFn _) 0))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen members)
+      (match (vecGet members i)
+        ((NamedFn ent)
+          (if (> (vecLen ent.eparams) 0)
+            (effAdd acc effIncomplete))
+        )
+        ((LambdaFn _) 0)))
     ()
   })
 
@@ -18656,13 +18528,9 @@
 (pub fn (fieldLambdaBindings stack limit)
   {
     (let bindings vecNew)
-    (let mut i 0)
-    (while (< i limit)
-      {
-        (vecPush bindings
-          (FieldLambdaBinding :name (vecGetStr stack.names i) :initialiser (vecGet stack.inits i)))
-        (set i (+ i 1))
-      })
+    (for i in 0..limit
+      (vecPush bindings
+        (FieldLambdaBinding :name (vecGetStr stack.names i) :initialiser (vecGet stack.inits i))))
     bindings
   })
 
@@ -18670,16 +18538,12 @@
 (pub fn (fieldCallableMembers tc members)
   {
     (let resolved vecNew)
-    (let mut i 0)
-    (while (< i (vecLen members))
-      {
-        (match (vecGet members i)
-          ((KnownFn callable) (vecPush resolved callable))
-          ((DeferredFn closure) (vecPush resolved (LambdaFn (fieldLambdaEffects tc closure))))
-          ((UnknownFn) resolved)
-          ((NonCallableFn) resolved))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen members)
+      (match (vecGet members i)
+        ((KnownFn callable) (vecPush resolved callable))
+        ((DeferredFn closure) (vecPush resolved (LambdaFn (fieldLambdaEffects tc closure))))
+        ((UnknownFn) resolved)
+        ((NonCallableFn) resolved)))
     resolved
   })
 
@@ -18687,8 +18551,7 @@
 (pub fn (fieldLambdaScope tc bindings)
   {
     (let mut bound (bsMake vecNew vecNew vecNew vecNew nilNode (bsCtxOf vecNew vecNew 0 vecNew)))
-    (let mut i 0)
-    (while (< i (vecLen bindings))
+    (for i in 0..(vecLen bindings)
       {
         (let binding (vecGet bindings i))
         (let value
@@ -18698,7 +18561,6 @@
         (set bound (match value
           ((Some functions) (bsWithVals bound binding.name functions))
           ((None) (bsWith bound binding.name bsOpaque))))
-        (set i (+ i 1))
       })
     bound
   })
@@ -22476,13 +22338,9 @@
 (pub fn (flagsNew n)
   {
     (let v vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush v 0)
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush v 0))
       v
     }
   })
@@ -22493,13 +22351,9 @@
 (pub fn (allIndexes n)
   {
     (let v vecNew)
-    (let mut i 0)
     {
-      (while (< i n)
-        {
-          (vecPush v i)
-          (set i (+ i 1))
-        })
+      (for i in 0..n
+        (vecPush v i))
       v
     }
   })
@@ -24315,21 +24169,17 @@
   {
     (let mut hasT 0)
     (let mut hasF 0)
-    (let mut i 0)
     {
-      (while (< i (vecLen arms))
+      (for i in 0..(vecLen arms)
         {
-          {
-            (let p (nodeAChild (vecGet arms i)))
-            (if (== (nodeTag p) TAG_E_VAR)
-              {
-                (if (strEq (nodeAName p) "true")
-                  (set hasT 1))
-                (if (strEq (nodeAName p) "false")
-                  (set hasF 1))
-              })
-          }
-          (set i (+ i 1))
+          (let p (nodeAChild (vecGet arms i)))
+          (if (== (nodeTag p) TAG_E_VAR)
+            {
+              (if (strEq (nodeAName p) "true")
+                (set hasT 1))
+              (if (strEq (nodeAName p) "false")
+                (set hasF 1))
+            })
         })
       (if (&& (== hasT 1) (== hasF 1))
         1
@@ -26445,13 +26295,9 @@
     (let names vecNew)
     (sigTyVarsInto ty names)
     (let env vecNew)
-    (let mut i 0)
-    (while (< i (vecLen names))
-      {
-        (vecPush env
-          (TypeBinding :name (vecGet names i) :ty (mkTVar (concat "signaturevar" (fmtInt i)))))
-        (set i (+ i 1))
-      })
+    (for i in 0..(vecLen names)
+      (vecPush env
+        (TypeBinding :name (vecGet names i) :ty (mkTVar (concat "signaturevar" (fmtInt i))))))
     (tyInstIn tc ty env)
   })
 
@@ -27537,16 +27383,10 @@
 (pub :: graphCyclePath (-> Ints Int Int Ints Ints))
 (pub fn (graphCyclePath stack on again acc)
   {
-    (let mut i 0)
-    {
-      (while (< i (vecLen stack))
-        {
-          (vecPush acc (vecGet stack i))
-          (set i (+ i 1))
-        })
-      (vecPush acc again)
-      acc
-    }
+    (for i in 0..(vecLen stack)
+      (vecPush acc (vecGet stack i)))
+    (vecPush acc again)
+    acc
   })
 
 ; The suffix a `no-io`/`no-alloc` violation carries: `: a -> b -> c`,
@@ -31879,19 +31719,13 @@
             0)
           0))
       {
-        (let mut i 0)
-        {
-          (while (< i (vecLen indices))
-            {
-              {
-                (let pos (vecGet indices i))
-                (if (< pos (vecLen args))
-                  (rgnCheckScopedValue rc (vecGet args pos) span))
-              }
-              (set i (+ i 1))
-            })
-          0
-        }
+        (for i in 0..(vecLen indices)
+          {
+            (let pos (vecGet indices i))
+            (if (< pos (vecLen args))
+              (rgnCheckScopedValue rc (vecGet args pos) span))
+          })
+        0
       }
     }
   })
@@ -32524,13 +32358,9 @@
           (rgnExpr rc (nodeAChild e))
           (rgnSeq rc (nodeBChildren e) 0 0)
           (set changed 0)
-          (set i 0)
-          (while (< i mark)
-            {
-              (if (!= (vecGet before i) (vecGet (rgnOrigs rc) i))
-                (set changed 1))
-              (set i (+ i 1))
-            })
+          (for i in 0..mark
+            (if (!= (vecGet before i) (vecGet (rgnOrigs rc) i))
+              (set changed 1)))
           (set round (+ round 1))
         })
       (memSetWord rc 11 rep)
@@ -33066,14 +32896,10 @@
   (if (== (vecLen args) 0)
     0
     {
-      (let mut i 0)
       (let mut last 0)
       {
-        (while (< i (vecLen args))
-          {
-            (set last (rgnExpr rc (vecGet args i)))
-            (set i (+ i 1))
-          })
+        (for i in 0..(vecLen args)
+          (set last (rgnExpr rc (vecGet args i))))
         last
       }
     }))
@@ -33107,20 +32933,16 @@
             " - the call may store its arguments or fresh values into a capture" nilNode)
           (rgnNoteFlow rc (| u (memGetWord rc 7)) captures "<unresolved call>")
         })
-      (set i 0)
-      (while (< i (vecLen args))
-        {
-          (if (!= (vecGet masks i) 0)
-            {
-              (rgnEmitEscape rc (rgnStoreBadMask rc (| u (memGetWord rc 7)) (vecGet masks i)) span
-                (concat (concat "argument " (fmtInt (+ i 1)))
-                  " of a call the compiler cannot resolve")
-                " - a call through a parameter, a closure or a field is assumed to store every argument into every argument"
-                nilNode)
-              (rgnNoteFlow rc (| u (memGetWord rc 7)) (vecGet masks i) "<unresolved call>")
-            })
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen args)
+        (if (!= (vecGet masks i) 0)
+          {
+            (rgnEmitEscape rc (rgnStoreBadMask rc (| u (memGetWord rc 7)) (vecGet masks i)) span
+              (concat (concat "argument " (fmtInt (+ i 1)))
+                " of a call the compiler cannot resolve")
+              " - a call through a parameter, a closure or a field is assumed to store every argument into every argument"
+              nilNode)
+            (rgnNoteFlow rc (| u (memGetWord rc 7)) (vecGet masks i) "<unresolved call>")
+          }))
       (if (== (memGetWord (rgnFacts rc) 5) 0)
         {
           (memSetWord (rgnFacts rc) 5 1)
@@ -33137,13 +32959,9 @@
 (pub fn (rgnBuiltinCall rc n args span)
   {
     (let masks (rgnIntVec))
-    (let mut i 0)
     {
-      (while (< i (vecLen args))
-        {
-          (vecPush masks (rgnExpr rc (vecGet args i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen args)
+        (vecPush masks (rgnExpr rc (vecGet args i))))
       (if (|| (strEq n "__store64")
             (|| (strEq n "__atomic_store") (|| (strEq n "__atomic_cas") (strEq n "__atomic_add"))))
         (if (>= (vecLen masks) 2)
@@ -33205,68 +33023,62 @@
         (if (! (== f 0))
           {
             (rgnNoteReclaim rc (memGetWord f 8))
-            (set i 0)
-            (while (< i (vecLen args))
-              {
-                (if (< i (memGetWord f 7))
-                  {
-                    (let fresh (!= (& (memGetWord f 1) (<< 1 i)) 0))
-                    (let from (vecGet (memGetWordVec f 2) i))
-                    (let into
-                      ; Parameter names are diagnostic text. Resolving one
-                      ; scans declarations, so defer it until a reporting
-                      ; walk has a parameter flow that can use the text.
-                      (if (&& (!= (rgnReport rc) 0) (|| fresh (!= from 0)))
+            (for i in 0..(vecLen args)
+              (if (< i (memGetWord f 7))
+                {
+                  (let fresh (!= (& (memGetWord f 1) (<< 1 i)) 0))
+                  (let from (vecGet (memGetWordVec f 2) i))
+                  (let into
+                    ; Parameter names are diagnostic text. Resolving one
+                    ; scans declarations, so defer it until a reporting
+                    ; walk has a parameter flow that can use the text.
+                    (if (&& (!= (rgnReport rc) 0) (|| fresh (!= from 0)))
+                      (concat
                         (concat
-                          (concat
-                            (concat (concat "parameter `" (rgnCalleeParamName tc callee i))
-                              "` of `")
-                            (bareOf callee))
-                          "`")
-                        ""))
-                    {
-                      (if fresh
-                        {
-                          (if (== (rgnReport rc) 1)
-                            {
-                              (let bad (rgnStoreBadMask rc (memGetWord rc 7) (vecGet masks i)))
-                              (if (!= bad 0)
-                                (rgnEmitEscape rc bad span into
-                                  (concat (concat " - `" (bareOf callee))
-                                    "` stores a value it allocates into that parameter")
-                                  nilNode))
-                            })
-                          (rgnNoteFlow rc (memGetWord rc 7) (vecGet masks i) callee)
-                        })
+                          (concat (concat "parameter `" (rgnCalleeParamName tc callee i)) "` of `")
+                          (bareOf callee))
+                        "`")
+                      ""))
+                  {
+                    (if fresh
                       {
-                        (let mut j 0)
-                        (while (&& (< j (vecLen args)) (< j (memGetWord f 7)))
+                        (if (== (rgnReport rc) 1)
                           {
-                            (if (!= (& from (<< 1 j)) 0)
-                              {
-                                (if (== (rgnReport rc) 1)
-                                  {
-                                    (let bad
-                                      (rgnStoreBadMask rc (vecGet masks j) (vecGet masks i)))
-                                    (if (!= bad 0)
-                                      (rgnEmitEscape rc bad span into
-                                        (concat
-                                          (concat
-                                            (concat (concat " - `" (bareOf callee))
-                                              "` stores its parameter `")
-                                            (rgnCalleeParamName tc callee j))
-                                          "` into it")
-                                        (vecGet args j)))
-                                  })
-                                (rgnNoteFlow rc (vecGet masks j) (vecGet masks i) callee)
-                              })
-                            (set j (+ j 1))
+                            (let bad (rgnStoreBadMask rc (memGetWord rc 7) (vecGet masks i)))
+                            (if (!= bad 0)
+                              (rgnEmitEscape rc bad span into
+                                (concat (concat " - `" (bareOf callee))
+                                  "` stores a value it allocates into that parameter")
+                                nilNode))
                           })
-                      }
+                        (rgnNoteFlow rc (memGetWord rc 7) (vecGet masks i) callee)
+                      })
+                    {
+                      (let mut j 0)
+                      (while (&& (< j (vecLen args)) (< j (memGetWord f 7)))
+                        {
+                          (if (!= (& from (<< 1 j)) 0)
+                            {
+                              (if (== (rgnReport rc) 1)
+                                {
+                                  (let bad (rgnStoreBadMask rc (vecGet masks j) (vecGet masks i)))
+                                  (if (!= bad 0)
+                                    (rgnEmitEscape rc bad span into
+                                      (concat
+                                        (concat
+                                          (concat (concat " - `" (bareOf callee))
+                                            "` stores its parameter `")
+                                          (rgnCalleeParamName tc callee j))
+                                        "` into it")
+                                      (vecGet args j)))
+                                })
+                              (rgnNoteFlow rc (vecGet masks j) (vecGet masks i) callee)
+                            })
+                          (set j (+ j 1))
+                        })
                     }
-                  })
-                (set i (+ i 1))
-              })
+                  }
+                }))
             (if (!= (memGetWord f 5) 0)
               (if (== (memGetWord (rgnFacts rc) 5) 0)
                 {
@@ -33594,14 +33406,10 @@
       0
     }
     {
-      (let mut index i)
       (let mut changed 0)
-      (while (< index (vecLen decls))
-        {
-          (if (!= (rgnWalkOne tc (vecGet decls index) report) 0)
-            (set changed 1))
-          (set index (+ index 1))
-        })
+      (for index in i..(vecLen decls)
+        (if (!= (rgnWalkOne tc (vecGet decls index) report) 0)
+          (set changed 1)))
       changed
     }))
 
@@ -33832,16 +33640,12 @@
 (pub :: ctClaimText (-> Strings String))
 (pub fn (ctClaimText cs)
   {
-    (let mut i 0)
     (let mut s "")
     {
-      (while (< i (vecLen cs))
-        {
-          (set s (if (== i 0)
-            (vecGet cs i)
-            (concat s (concat ", " (vecGet cs i)))))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen cs)
+        (set s (if (== i 0)
+          (vecGet cs i)
+          (concat s (concat ", " (vecGet cs i))))))
       s
     }
   })
@@ -33857,20 +33661,16 @@
         (let decls (tcAllDeclsVec tc))
         (let tab vecNew)
         (let sums vecNew)
-        (let mut i 0)
         {
-          (while (< i (vecLen decls))
+          (for i in 0..(vecLen decls)
             {
-              {
-                (let dd (vecGet decls i))
-                (if (== (nodeTag dd) TAG_D_FN)
-                  (if (> (vecLen (ctClaimOf tc dd)) 0)
-                    {
-                      (vecPush tab dd)
-                      (vecPush sums (- 0 1))
-                    }))
-              }
-              (set i (+ i 1))
+              (let dd (vecGet decls i))
+              (if (== (nodeTag dd) TAG_D_FN)
+                (if (> (vecLen (ctClaimOf tc dd)) 0)
+                  {
+                    (vecPush tab dd)
+                    (vecPush sums (- 0 1))
+                  }))
             })
           (tcSetCtResults tc (as sums Int))
           (tcSetCtClaimed tc tab)
@@ -34098,14 +33898,10 @@
 (pub :: ctEvalVec (-> CtWalk (Vec ASTNode) Int))
 (pub fn (ctEvalVec w es)
   {
-    (let mut i 0)
     (let mut t 0)
     {
-      (while (< i (vecLen es))
-        {
-          (set t (ctEval w (vecGet es i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen es)
+        (set t (ctEval w (vecGet es i))))
       t
     }
   })
@@ -34114,13 +33910,9 @@
 (pub fn (ctEvalArgs w es)
   {
     (let ts vecNew)
-    (let mut i 0)
     {
-      (while (< i (vecLen es))
-        {
-          (vecPush ts (ctEval w (vecGet es i)))
-          (set i (+ i 1))
-        })
+      (for i in 0..(vecLen es)
+        (vecPush ts (ctEval w (vecGet es i))))
       ts
     }
   })
@@ -34329,21 +34121,17 @@
 (pub :: ctEvalArms (-> CtWalk (Vec ASTNode) Int Int))
 (pub fn (ctEvalArms w arms s)
   {
-    (let mut i 0)
     (let mut r 0)
     {
-      (while (< i (vecLen arms))
+      (for i in 0..(vecLen arms)
         {
+          (let a (vecGet arms i))
+          (let mark (vecLen w.names))
           {
-            (let a (vecGet arms i))
-            (let mark (vecLen w.names))
-            {
-              (ctBindPat w (nodeAChild a) s)
-              (set r (ctJoin r (ctEval w (nodeBChild a))))
-              (ctUnscope w mark)
-            }
+            (ctBindPat w (nodeAChild a) s)
+            (set r (ctJoin r (ctEval w (nodeBChild a))))
+            (ctUnscope w mark)
           }
-          (set i (+ i 1))
         })
       r
     }
@@ -34491,33 +34279,29 @@
 (pub fn (ctClaimShape tc d cs)
   {
     (let ps (nodeBNames d))
-    (let mut i 0)
     (let mut ok 1)
     {
-      (while (< i (vecLen cs))
+      (for i in 0..(vecLen cs)
         {
-          {
-            (let c (vecGet cs i))
-            (let p
-              (if (strStartsWith (vecGet cs i) "*")
-                (strSlice (vecGet cs i) 1 (- (strLen (vecGet cs i)) 1))
-                (vecGet cs i)))
-            (if (== (strLen p) 0)
+          (let c (vecGet cs i))
+          (let p
+            (if (strStartsWith (vecGet cs i) "*")
+              (strSlice (vecGet cs i) 1 (- (strLen (vecGet cs i)) 1))
+              (vecGet cs i)))
+          (if (== (strLen p) 0)
+            {
+              (set ok 0)
+              (emitCtMalformed tc d
+                (concat (concat "`" (bareOf (nodeAName d)))
+                  "` claims `ct(...)` and names no parameter"))
+            }
+            (if (! (== (strInVec ps p 0) 1))
               {
                 (set ok 0)
                 (emitCtMalformed tc d
-                  (concat (concat "`" (bareOf (nodeAName d)))
-                    "` claims `ct(...)` and names no parameter"))
-              }
-              (if (! (== (strInVec ps p 0) 1))
-                {
-                  (set ok 0)
-                  (emitCtMalformed tc d
-                    (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` claims `ct(") c)
-                      (concat (concat ")`, and `" p) "` isn't one of its parameters")))
-                }))
-          }
-          (set i (+ i 1))
+                  (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` claims `ct(") c)
+                    (concat (concat ")`, and `" p) "` isn't one of its parameters")))
+              }))
         })
       ok
     }
