@@ -173,7 +173,7 @@
   (mut nodes : Int)
   (mut blown : Int)
   (mut site : Int)
-  (frames : (Vec Int))
+  (frames : Frames)
   (mut declmod : Int)
   (units : Units)
   (mut forstack : (Vec Int))
@@ -1837,8 +1837,9 @@
       (if (&& (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))
             (&& (strEq (nodeAName d) t)
               (|| (== visibleOnly 0)
-                (|| (== (expModEq (nodeModule d) 0) 1)
-                  (|| (== (expModEq (nodeModule d) site) 1) (== (nodeVis d) 1))))))
+                (|| (== (expModEq (nodeModuleOpt d) None) 1)
+                  (|| (== (expModEq (nodeModuleOpt d) (expModuleWordOpt (as site Int))) 1)
+                    (== (nodeVis d) 1))))))
         d
         (expFindDeclNamedFrom decls t visibleOnly site (+ i 1)))
     }))
@@ -1905,7 +1906,8 @@
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_DATA)
-            (|| (== visibleOnly 0) (|| (== (expModEq (nodeModule d) 0) 1) (== (nodeVis d) 1))))
+            (|| (== visibleOnly 0)
+              (|| (== (expModEq (nodeModuleOpt d) None) 1) (== (nodeVis d) 1))))
         {
           (let k (expFindCtorIn (nodeBChildren d) c 0))
           (if (! (nodeSame k nilNode))
@@ -5917,7 +5919,7 @@
     {
       (let units env.units)
       {
-        (let u (expUnitOfMod units env.declmod))
+        (let u (expUnitOfMod units (expModuleWordOpt env.declmod)))
         (if (>= u (vecLen units))
           ""
           (unitFile (vecGet units u)))
@@ -6628,12 +6630,12 @@
         (let prevSc (expScEnterInst env))
         (let _frame
           (vecPush env.frames
-            (as (ExpFrame
-                  :site env.declmod
-                  :span isp
-                  :name (nodeAName mac)
-                  :defSpan (nodeSpan mac)
-                  :defMod (nodeModule mac)) Int)))
+            (ExpFrame
+              :site (expModuleWordOpt env.declmod)
+              :span isp
+              :name (nodeAName mac)
+              :defSpan (nodeSpan mac)
+              :defMod (nodeModuleOpt mac))))
         (let _setmod (expSetMacMod env (nodeModule mac)))
         (let _setsite (set env.site (nodeModule mac)))
         (let _setfors (set env.forstack vecNew))
@@ -6688,12 +6690,12 @@
         (let prevSc (expScEnterInst env))
         (let _frame
           (vecPush env.frames
-            (as (ExpFrame
-                  :site env.declmod
-                  :span isp
-                  :name (nodeAName mac)
-                  :defSpan (nodeSpan mac)
-                  :defMod (nodeModule mac)) Int)))
+            (ExpFrame
+              :site (expModuleWordOpt env.declmod)
+              :span isp
+              :name (nodeAName mac)
+              :defSpan (nodeSpan mac)
+              :defMod (nodeModuleOpt mac))))
         (let _setmod (expSetMacMod env (nodeModule mac)))
         (let _setsite (set env.site (nodeModule mac)))
         (let _setfors (set env.forstack vecNew))
@@ -7419,7 +7421,7 @@
 (pub :: expMarkUnit (-> MEnv diag::Diag a diag::Diag))
 (pub fn (expMarkUnit env dg m)
   {
-    (diagSetUnit dg (expUnitOfMod env.units m))
+    (diagSetUnit dg (expUnitOfMod env.units (expModuleWordOpt (as m Int))))
     dg
   })
 
@@ -9103,12 +9105,12 @@
       ; slice made legal. The expression path (`expandDecl`) has always
       ; read its site from the declaration being expanded.
       (vecPush env.frames
-        (as (ExpFrame
-              :site (nodeModule d)
-              :span isp
-              :name (nodeAName mac)
-              :defSpan (nodeSpan mac)
-              :defMod (nodeModule mac)) Int))
+        (ExpFrame
+          :site (nodeModuleOpt d)
+          :span isp
+          :name (nodeAName mac)
+          :defSpan (nodeSpan mac)
+          :defMod (nodeModuleOpt mac)))
       {
         (let made
           (expBuildDecls (expRuleTpl (expMatchOf m)) (expMatchNames m) (expMatchVals m) env isp
@@ -10809,60 +10811,50 @@
 ; macro's MODULE and is resolved to that table here, where the table
 ; exists - the expander itself never sees units.
 ; ------------------------------------------------------------------
-(pub struct ExpFrame
-  (site : Int)
-  (span : Int)
-  (name : String)
-  (defSpan : Int)
-  (defMod : Int))
-
-; Module identity where 0 and "" both mean the entry file.
-(pub :: expModEq (-> a b Int))
+; The expander's module cache is borrowed from live declaration nodes.
+; Cross into an owning frame or optional lookup through this boundary.
+(:: expModuleWordOpt (-> Int (Option String)))
 ;@axiom:effect(unsafe)
-(pub fn (expModEq a b)
-  {
-    (let an
-      (if (== (as a Int) 0)
-        1
-        (if (== (strLen (as a String)) 0)
-          1
-          0)))
-    (let bn
-      (if (== (as b Int) 0)
-        1
-        (if (== (strLen (as b String)) 0)
-          1
-          0)))
-    (if (== an 1)
-      bn
-      (if (== bn 1)
-        0
-        (if (strEq (as a String) (as b String))
-          1
-          0)))
-  })
+(fn (expModuleWordOpt moduleWord)
+  (if (== moduleWord 0)
+    None
+    (Some (as moduleWord String))))
 
-(pub :: expUnitMod (-> Units Int Int))
+; Entry modules may be absent or explicitly named by the empty string.
+; Normalise both forms when comparing the source units of a frame.
+(:: expModuleText (-> (Option String) String))
+(fn (expModuleText name)
+  (if (let (Some text) name)
+    text
+    ""))
+
+(pub :: expModEq (-> (Option String) (Option String) Int))
+(pub fn (expModEq a b)
+  (if (strEq (expModuleText a) (expModuleText b))
+    1
+    0))
+
+(pub :: expUnitMod (-> Units Int (Option String)))
 (pub fn (expUnitMod units idx)
   (if (|| (== (as units Int) 0) (>= idx (vecLen units)))
-    0
-    (unitModule (vecGet units idx))))
+    None
+    (expModuleWordOpt (unitModule (vecGet units idx)))))
 
-(pub :: expUnitOfMod (-> Units a Int))
+(pub :: expUnitOfMod (-> Units (Option String) Int))
 (pub fn (expUnitOfMod units m)
   (if (== (as units Int) 0)
     0
     (expUnitOfModFrom units m 0)))
 
-(pub :: expUnitOfModFrom (-> Units a Int Int))
+(pub :: expUnitOfModFrom (-> Units (Option String) Int Int))
 (pub fn (expUnitOfModFrom units m i)
   (if (>= i (vecLen units))
     0
-    (if (== (expModEq (unitName (vecGet units i)) m) 1)
+    (if (== (expModEq (expUnitMod units i) m) 1)
       i
       (expUnitOfModFrom units m (+ i 1)))))
 
-(pub :: expAttachFrames (-> Diags Ints Units Int))
+(pub :: expAttachFrames (-> Diags Frames Units Int))
 (pub fn (expAttachFrames diags table units)
   (if (== (as table Int) 0)
     0
@@ -10908,7 +10900,7 @@
 (pub fn (expMaxFrames)
   128)
 
-(pub :: expAttachTo (-> diag::Diag Ints Units Int Int Int))
+(pub :: expAttachTo (-> diag::Diag Frames Units (Option String) Int Int))
 (pub fn (expAttachTo d table units dmod j)
   {
     (let n (expAttachFrom d table units dmod j 0))
@@ -10923,17 +10915,16 @@
 ; of them. The count keeps rising after the cap so the note can say
 ; what it left out - a truncation nobody counts is how a reader stops
 ; being able to trust the ones that are shown.
-(pub :: expAttachFrom (-> diag::Diag Ints Units Int Int Int Int))
+(pub :: expAttachFrom (-> diag::Diag Frames Units (Option String) Int Int Int))
 (pub fn (expAttachFrom d table units dmod j seen)
   (if (>= j (vecLen table))
     seen
     {
       (let e (vecGet table j))
-      (if (&& (== (diagSpan d) (memGetWord e 1)) (== (expModEq (memGetWord e 0) dmod) 1))
+      (if (&& (== (diagSpan d) e.span) (== (expModEq e.site dmod) 1))
         {
           (if (< seen expMaxFrames)
-            (diagAddTrace d (memGetWordStr e 2) (memGetWord e 3)
-              (expUnitOfMod units (memGetWord e 4))))
+            (diagAddTrace d e.name e.defSpan (expUnitOfMod units e.defMod)))
           (expAttachFrom d table units dmod (+ j 1) (+ seen 1))
         }
         (expAttachFrom d table units dmod (+ j 1) seen))
@@ -11437,7 +11428,7 @@
       (for d in decls
         (if (&& (== (nodeTag d) TAG_D_STRUCT) (strEq (nodeAName d) bare))
           {
-            (let own (== (expModEq (nodeModule d) site) 1))
+            (let own (== (expModEq (nodeModuleOpt d) (expModuleWordOpt (as site Int))) 1))
             (let qualified (! (strEq name bare)))
             (let full
               (if (== (nodeModule d) 0)
