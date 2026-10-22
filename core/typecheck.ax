@@ -8419,8 +8419,8 @@
                     (writeNodeChild d 2 mkTErr)
                   }
                   {
-                    (let free (aliasFreeVar (nodeBChild d) params))
-                    (if (! (nodeSame free nilNode))
+                    (let freeFound (aliasFreeVar (nodeBChild d) params))
+                    (if (let (Some free) freeFound)
                       {
                         (emitTypeParameter tc d
                           (concat "undeclared type parameter `" (concat (nodeAName free) "`")))
@@ -8489,48 +8489,45 @@
         i
         (aliasFirstUnused params used (+ i 1))))))
 
-(pub :: aliasFreeVar (-> ASTNode Names ASTNode))
+(pub :: aliasFreeVar (-> ASTNode Names (Option ASTNode)))
 (pub fn (aliasFreeVar t params)
   (if (nodeSame t nilNode)
-    nilNode
+    None
     {
       (let tg (nodeTag t))
       (if (== tg TAG_T_VAR)
         (if (strEq (nodeAName t) "")
-          nilNode
+          None
           (if (== (as params Int) 0)
-            t
+            (Some t)
             (if (== (strInVec params (nodeAName t) 0) 1)
-              nilNode
-              t)))
+              None
+              (Some t))))
         (if (== tg TAG_T_CON)
           (aliasFreeVarVec (nodeBChildren t) params 0)
           (if (== tg TAG_T_ARR)
             {
-              (let bad (aliasFreeVar (nodeAChild t) params))
-              (if (! (nodeSame bad nilNode))
-                bad
+              (let badFound (aliasFreeVar (nodeAChild t) params))
+              (if (let (Some bad) badFound)
+                (Some bad)
                 (aliasFreeVar (nodeBChild t) params))
             }
             (if (== tg TAG_T_TUP)
               (aliasFreeVarVec (nodeAChildren t) params 0)
               (if (== tg TAG_T_PTR)
                 (aliasFreeVar (nodeAChild t) params)
-                nilNode)))))
+                None)))))
     }))
 
-(pub :: aliasFreeVarVec (-> Nodes Names Int ASTNode))
+(pub :: aliasFreeVarVec (-> Nodes Names Int (Option ASTNode)))
 (pub fn (aliasFreeVarVec xs params i)
   (if (== (as xs Int) 0)
-    nilNode
+    None
     (if (>= i (vecLen xs))
-      nilNode
-      {
-        (let bad (aliasFreeVar (vecGet xs i) params))
-        (if (! (nodeSame bad nilNode))
-          bad
-          (aliasFreeVarVec xs params (+ i 1)))
-      })))
+      None
+      (if (let (Some bad) (aliasFreeVar (vecGet xs i) params))
+        (Some bad)
+        (aliasFreeVarVec xs params (+ i 1))))))
 
 (pub :: emitTypeParameter (-> TC ASTNode String Int))
 (pub fn (emitTypeParameter tc d message)
@@ -8812,11 +8809,11 @@
                   (concat "invalid or repeated type parameter `"
                     (concat (vecGetStr params badParam) "`")))
                 {
-                  (let free
+                  (let freeFound
                     (if (== (nodeTag d) TAG_D_DATA)
                       (dataFreeVar (nodeBChildren d) params 0)
                       (structFreeVar (nodeBChildren d) params 0)))
-                  (if (! (nodeSame free nilNode))
+                  (if (let (Some free) freeFound)
                     (emitTypeParameter tc d
                       (concat "undeclared type parameter `" (concat (nodeAName free) "`"))))
                 })
@@ -8826,27 +8823,21 @@
       (tcCheckTypeParams tc decls (+ i 1))
     }))
 
-(pub :: dataFreeVar (-> (Vec ASTNode) Names Int ASTNode))
+(pub :: dataFreeVar (-> (Vec ASTNode) Names Int (Option ASTNode)))
 (pub fn (dataFreeVar ctors params i)
   (if (>= i (vecLen ctors))
-    nilNode
-    {
-      (let bad (aliasFreeVarVec (nodeTyChildren (vecGet ctors i)) params 0))
-      (if (! (nodeSame bad nilNode))
-        bad
-        (dataFreeVar ctors params (+ i 1)))
-    }))
+    None
+    (if (let (Some bad) (aliasFreeVarVec (nodeTyChildren (vecGet ctors i)) params 0))
+      (Some bad)
+      (dataFreeVar ctors params (+ i 1)))))
 
-(pub :: structFreeVar (-> (Vec ASTNode) Names Int ASTNode))
+(pub :: structFreeVar (-> (Vec ASTNode) Names Int (Option ASTNode)))
 (pub fn (structFreeVar fields params i)
   (if (>= i (vecLen fields))
-    nilNode
-    {
-      (let bad (aliasFreeVar (nodeTyChild (vecGet fields i)) params))
-      (if (! (nodeSame bad nilNode))
-        bad
-        (structFreeVar fields params (+ i 1)))
-    }))
+    None
+    (if (let (Some bad) (aliasFreeVar (nodeTyChild (vecGet fields i)) params))
+      (Some bad)
+      (structFreeVar fields params (+ i 1)))))
 
 (pub :: tcCheckDeclaredTypeUses (-> TC (Vec ASTNode) Int Int))
 (pub fn (tcCheckDeclaredTypeUses tc decls i)
@@ -14893,26 +14884,26 @@
 ; anything that is neither a scalar nor a declared `data`/`struct`.
 ; `seen` is the generation-time visited set, keyed on the rendered
 ; type, so a recursive type is asked once.
-(pub :: showDerivable (-> TC ASTNode Strings ASTNode))
+(pub :: showDerivable (-> TC ASTNode Strings (Option ASTNode)))
 (pub fn (showDerivable tc t seen)
   {
     (let ty (tyExpandAliases tc t 0))
     (if (nodeSame ty nilNode)
-      (mkTVar "?")
+      (Some (mkTVar "?"))
       (if (!= (nodeTag ty) TAG_T_CON)
-        ty
+        (Some ty)
         (if (== (showTyGround ty) 0)
-          ty
+          (Some ty)
           {
             (let n (nodeAName ty))
             (if (|| (strEq n "String")
                   (|| (> (integerTypeCode n) 0)
                     (|| (strEq n "Float") (|| (strEq n "Bool") (strEq n "Char")))))
-              nilNode
+              None
               {
                 (let key (showTyName ty))
                 (if (== (showSeenName seen key 0) 1)
-                  nilNode
+                  None
                   {
                     (let dentFound (findData tc n))
                     {
@@ -14923,7 +14914,7 @@
                           (let sentFound (findStruct tc n))
                           (if (let (Some sent) sentFound)
                             (showDerivableFields tc (structEntFields sent) seen 0)
-                            ty)
+                            (Some ty))
                         })
                     }
                   })
@@ -14939,46 +14930,38 @@
       1
       (showSeenName seen key (+ i 1)))))
 
-(pub :: showDerivableCtors (-> TC (Vec CtorEnt) ASTNode Strings Int ASTNode))
+(pub :: showDerivableCtors (-> TC (Vec CtorEnt) ASTNode Strings Int (Option ASTNode)))
 (pub fn (showDerivableCtors tc ctors ty seen i)
   (if (>= i (vecLen ctors))
-    nilNode
-    {
-      (let bad (showDerivableVec tc (showCtorFieldTys tc (vecGet ctors i) ty) seen 0))
-      (if (! (nodeSame bad nilNode))
-        bad
-        (showDerivableCtors tc ctors ty seen (+ i 1)))
-    }))
+    None
+    (if (let (Some bad) (showDerivableVec tc (showCtorFieldTys tc (vecGet ctors i) ty) seen 0))
+      (Some bad)
+      (showDerivableCtors tc ctors ty seen (+ i 1)))))
 
-(pub :: showDerivableVec (-> TC Nodes Strings Int ASTNode))
+(pub :: showDerivableVec (-> TC Nodes Strings Int (Option ASTNode)))
 (pub fn (showDerivableVec tc tys seen i)
   (if (>= i (vecLen tys))
-    nilNode
-    {
-      (let bad (showDerivable tc (vecGet tys i) seen))
-      (if (! (nodeSame bad nilNode))
-        bad
-        (showDerivableVec tc tys seen (+ i 1)))
-    }))
+    None
+    (if (let (Some bad) (showDerivable tc (vecGet tys i) seen))
+      (Some bad)
+      (showDerivableVec tc tys seen (+ i 1)))))
 
 ; A struct's fields are the declaration's own TAG_FIELD nodes, typed
 ; as written; a field with no type kept is the silent wildcard, which
 ; has no rendering.
-(pub :: showDerivableFields (-> TC (Vec ASTNode) Strings Int ASTNode))
+(pub :: showDerivableFields (-> TC (Vec ASTNode) Strings Int (Option ASTNode)))
 (pub fn (showDerivableFields tc fields seen i)
   (if (>= i (vecLen fields))
-    nilNode
+    None
     {
       (let f (vecGet fields i))
-      {
-        (let bad
-          (if (== (nodeTy f) 0)
-            (mkTVar "?")
-            (showDerivable tc (nodeTyChild f) seen)))
-        (if (! (nodeSame bad nilNode))
-          bad
-          (showDerivableFields tc fields seen (+ i 1)))
-      }
+      (let badFound
+        (if (== (nodeTy f) 0)
+          (Some (mkTVar "?"))
+          (showDerivable tc (nodeTyChild f) seen)))
+      (if (let (Some bad) badFound)
+        (Some bad)
+        (showDerivableFields tc fields seen (+ i 1)))
     }))
 
 ; The renderer for `ty`, by name - generated now if this is its first
@@ -14994,8 +14977,8 @@
     (if (isSome (fnEntExact tc nm))
       nm
       {
-        (let bad (showDerivable tc ty vecNew))
-        (if (! (nodeSame bad nilNode))
+        (let badFound (showDerivable tc ty vecNew))
+        (if (let (Some bad) badFound)
           {
             (showDiag tc sp
               (concat (concat (concat "`format` cannot render `" (tyRender ty)) "`: it holds ")
@@ -16158,7 +16141,9 @@
                   "write the value to convert before the target type - `(as e Int)` - or, for a function value, `(lambda (x) (as x Int))`"
                   "`as` is a form and not a function: with its value missing there was nothing to convert, and the emitter read the type name as a variable the native toolchain refused")
                 "`as` takes a value and a target type; an operand is missing")))
-          (if (&& (>= (vecLen args) 1) (! (nodeSame (castTypeBadPart (vecGet args 0)) nilNode)))
+          (if (let (Some badPart) (if (>= (vecLen args) 1)
+            (castTypeBadPart (vecGet args 0))
+            None))
             ; A LITERAL cannot name a type, and `exprToType`
             ; answers the SILENT WILDCARD for every shape it
             ; cannot convert - a type that unifies with anything,
@@ -16182,13 +16167,12 @@
             {
               (emitDiag tc
                 (diagSetLabel
-                  (mkDiagNote SEV_ERROR "AX3002" "undefined-type"
-                    (spanOf (castTypeBadPart (vecGet args 0)))
+                  (mkDiagNote SEV_ERROR "AX3002" "undefined-type" (spanOf badPart)
                     (if (isValueCastForm hname)
-                      (if (== (castTypeIsLiteral (castTypeBadPart (vecGet args 0))) 1)
+                      (if (== (castTypeIsLiteral badPart) 1)
                         "a literal is not a type, and `as` takes a target type after the value"
                         "this expression is not a type, and `as` takes a target type after the value")
-                      (if (== (castTypeIsLiteral (castTypeBadPart (vecGet args 0))) 1)
+                      (if (== (castTypeIsLiteral badPart) 1)
                         (concat (concat "a literal is not a type, and `" hname) "` takes a type")
                         (concat (concat "this expression is not a type, and `" hname)
                           "` takes a type")))
@@ -16424,34 +16408,31 @@
         (|| (== tag TAG_T_ARR) (|| (== tag TAG_T_TUP) (|| (== tag TAG_T_PTR) (== tag TAG_T_ERR))))))
   })
 
-(pub :: castTypeBadPart (-> ASTNode ASTNode))
+(pub :: castTypeBadPart (-> ASTNode (Option ASTNode)))
 (pub fn (castTypeBadPart e)
   (if (nodeSame e nilNode)
-    nilNode
+    None
     {
       (let t (nodeTag e))
       (if (|| (isUnitLit e) (|| (isTypeNode e) (== t TAG_E_VAR)))
-        nilNode
+        None
         (if (== t TAG_E_APP)
           {
             (let head (spineHead e))
             (if (!= (nodeTag head) TAG_E_VAR)
-              head
+              (Some head)
               (castTypeBadArgs (spineArgVec e vecNew) 0))
           }
-          e))
+          (Some e)))
     }))
 
-(pub :: castTypeBadArgs (-> Nodes Int ASTNode))
+(pub :: castTypeBadArgs (-> Nodes Int (Option ASTNode)))
 (pub fn (castTypeBadArgs args i)
   (if (>= i (vecLen args))
-    nilNode
-    {
-      (let b (castTypeBadPart (vecGet args i)))
-      (if (! (nodeSame b nilNode))
-        b
-        (castTypeBadArgs args (+ i 1)))
-    }))
+    None
+    (if (let (Some bad) (castTypeBadPart (vecGet args i)))
+      (Some bad)
+      (castTypeBadArgs args (+ i 1)))))
 
 (pub :: exprToType (-> ASTNode ASTNode))
 (pub fn (exprToType e)
