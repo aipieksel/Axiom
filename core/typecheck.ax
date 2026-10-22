@@ -8491,36 +8491,30 @@
             (let params (nodeCNames d))
             {
               (tcSetCurModule tc (nodeModuleOpt d))
-              {
-                (let badParam (aliasBadParam params 0))
-                (if (>= badParam 0)
-                  {
-                    (emitTypeParameter tc d
-                      (concat "invalid or repeated type parameter `"
-                        (concat (vecGetStr params badParam) "`")))
-                    (writeNodeChild d 2 mkTErr)
-                  }
-                  {
-                    (let freeFound (aliasFreeVar (nodeBChild d) params))
-                    (if (let (Some free) freeFound)
-                      {
-                        (emitTypeParameter tc d
-                          (concat "undeclared type parameter `" (concat (nodeAName free) "`")))
-                        (writeNodeChild d 2 mkTErr)
-                      })
-                  })
-              }
-              (if (!= (nodeTag (nodeBChild d)) TAG_T_ERR)
+              (if (let (Some badParam) (aliasBadParam params 0))
                 {
-                  (let unused (aliasUnusedParam (nodeBChild d) params))
-                  (if (>= unused 0)
+                  (emitTypeParameter tc d
+                    (concat "invalid or repeated type parameter `"
+                      (concat (vecGetStr params badParam) "`")))
+                  (writeNodeChild d 2 mkTErr)
+                }
+                {
+                  (let freeFound (aliasFreeVar (nodeBChild d) params))
+                  (if (let (Some free) freeFound)
                     {
                       (emitTypeParameter tc d
-                        (concat "unused alias type parameter `"
-                          (concat (vecGetStr params unused) "`")))
+                        (concat "undeclared type parameter `" (concat (nodeAName free) "`")))
                       (writeNodeChild d 2 mkTErr)
                     })
                 })
+              (if (!= (nodeTag (nodeBChild d)) TAG_T_ERR)
+                (if (let (Some unused) (aliasUnusedParam (nodeBChild d) params))
+                  {
+                    (emitTypeParameter tc d
+                      (concat "unused alias type parameter `"
+                        (concat (vecGetStr params unused) "`")))
+                    (writeNodeChild d 2 mkTErr)
+                  }))
               (if (== (tyCheckAliasArity tc (nodeBChild d) (nodeSpan d)) 0)
                 (writeNodeChild d 2 mkTErr))
               (tcSetCurModule tc saved)
@@ -8530,16 +8524,16 @@
       (tcCheckAliasDecls tc decls (+ i 1))
     }))
 
-(pub :: aliasBadParam (-> Names Int Int))
+(pub :: aliasBadParam (-> Names Int (Option Int)))
 (pub fn (aliasBadParam params i)
   (if (== (as params Int) 0)
-    (- 0 1)
+    None
     (if (>= i (vecLen params))
-      (- 0 1)
+      None
       {
         (let name (vecGetStr params i))
         (if (|| (== (lexStartsLower name) 0) (== (aliasParamBefore params name i 0) 1))
-          i
+          (Some i)
           (aliasBadParam params (+ i 1)))
       })))
 
@@ -8551,7 +8545,7 @@
       1
       (aliasParamBefore params name end (+ i 1)))))
 
-(pub :: aliasUnusedParam (-> ASTNode Names Int))
+(pub :: aliasUnusedParam (-> ASTNode Names (Option Int)))
 (pub fn (aliasUnusedParam target params)
   {
     (let used vecNew)
@@ -8561,14 +8555,14 @@
     }
   })
 
-(pub :: aliasFirstUnused (-> Names Names Int Int))
+(pub :: aliasFirstUnused (-> Names Names Int (Option Int)))
 (pub fn (aliasFirstUnused params used i)
   (if (== (as params Int) 0)
-    (- 0 1)
+    None
     (if (>= i (vecLen params))
-      (- 0 1)
+      None
       (if (== (strVecHas used (vecGetStr params i)) 0)
-        i
+        (Some i)
         (aliasFirstUnused params used (+ i 1))))))
 
 (pub :: aliasFreeVar (-> ASTNode Names (Option ASTNode)))
@@ -8884,22 +8878,19 @@
         (if (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))
           {
             (let params (nodeTyNames d))
-            {
-              (let badParam (aliasBadParam params 0))
-              (if (>= badParam 0)
-                (emitTypeParameter tc d
-                  (concat "invalid or repeated type parameter `"
-                    (concat (vecGetStr params badParam) "`")))
-                {
-                  (let freeFound
-                    (if (== (nodeTag d) TAG_D_DATA)
-                      (dataFreeVar (nodeBChildren d) params 0)
-                      (structFreeVar (nodeBChildren d) params 0)))
-                  (if (let (Some free) freeFound)
-                    (emitTypeParameter tc d
-                      (concat "undeclared type parameter `" (concat (nodeAName free) "`"))))
-                })
-            }
+            (if (let (Some badParam) (aliasBadParam params 0))
+              (emitTypeParameter tc d
+                (concat "invalid or repeated type parameter `"
+                  (concat (vecGetStr params badParam) "`")))
+              {
+                (let freeFound
+                  (if (== (nodeTag d) TAG_D_DATA)
+                    (dataFreeVar (nodeBChildren d) params 0)
+                    (structFreeVar (nodeBChildren d) params 0)))
+                (if (let (Some free) freeFound)
+                  (emitTypeParameter tc d
+                    (concat "undeclared type parameter `" (concat (nodeAName free) "`"))))
+              })
           })
       }
       (tcCheckTypeParams tc decls (+ i 1))

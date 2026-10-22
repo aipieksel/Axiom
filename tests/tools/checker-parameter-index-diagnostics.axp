@@ -1,0 +1,38 @@
+; A missing declared result differs from a present poison or inferred type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let nodes (pResNodes parsed))
+        (let units
+          (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+        (let tc (tcNew nodes nodes units))
+        (tcWalkDecls tc 0)
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      }
+      (println "invalid diagnostic fixture"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "1421-generic-alias-parameters.ax"
+      "; Alias parameters are unique, lowercase and closed over the target.\n(type Repeated (a a) a)\n(type WrongName (a B) a)\n(type Missing a (Option b))\n(type NestedFree a (-> (Option a) (Option c)))\n(type Unbound (-> a Int))\n(type Unused a Int)\n(type PartUnused a b (Option a))\n(data Duplicate a a (Dup a))\n(data FreeField a (Contains b))\n(struct BadStruct (a a) (value : a))\n(struct FreeStruct (a) (value : b))\n(:: main Int)\n(fn (main) 0)\n")
+    (checkSource "parameter-first-witness.ax"
+      "(type FirstBad (a B a) a)\n(type FirstUnused (a b c) Int)\n(type FreeBeforeUnused (a b) c)\n")
+    0
+  })
