@@ -18,7 +18,7 @@ def check(axiom, repo, work):
     expected = fixture.with_suffix(".out").read_text().splitlines()
     if expected != [f"{i} true" for i in range(1, 44)]:
         raise RuntimeError("update the explicit 43-case assertion count")
-    env = dict(os.environ, AXIOM_PATH=str(repo / "self_host"), AXIOM_STDLIB=str(repo / "stdlib"))
+    env = dict(os.environ, AXIOM_PATH=str(repo / "core"), AXIOM_STDLIB=str(repo / "stdlib"))
 
     def build_run(label, level, modules, negative=()):
         binary = work / label
@@ -33,10 +33,10 @@ def check(axiom, repo, work):
         return check_output(output, expected, required_failures=negative)
 
     for level in (0, 2):
-        build_run(f"positive-O{level}", level, repo / "self_host")
+        build_run(f"positive-O{level}", level, repo / "core")
         print(f"ok   emitter symbol scopes: 43 cases at -O{level} with allocation poisoning", flush=True)
 
-    original = (repo / "self_host/codegen.ax").read_text()
+    original = (repo / "core/codegen.ax").read_text()
     binding = original
     for slot, value in [(6, "name"), (7, "reg"), (16, "isFloat"), (20, "kind")]:
         binding = replace_once(
@@ -68,7 +68,7 @@ def check(axiom, repo, work):
     for label, source, negative in variants:
         modules = work / f"{label}-modules"
         modules.mkdir(exist_ok=True)
-        for path in (repo / "self_host").iterdir():
+        for path in (repo / "core").iterdir():
             destination = modules / path.name
             if path.name == "codegen.ax":
                 destination.write_text(source)

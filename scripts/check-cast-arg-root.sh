@@ -20,7 +20,7 @@ bad() { echo "FAIL $*"; failed=$((failed + 1)); }
 gate_build_axc axc
 
 echo "--- 1. user-level cast count does not grow ---"
-# self_host/ is excluded: (cast Int ...) there is compiler plumbing
+# core/ is excluded: (cast Int ...) there is compiler plumbing
 # for untyped words, not the user-level laundering MM-VAL-22 names.
 # Baseline 385 measured 2026-09-29: five arrived with the typed handles.
 # `tests/stdlib/572-spawn-joined-twice.ax` (two) spells a forged handle
@@ -200,7 +200,7 @@ echo "--- 1. user-level cast count does not grow ---"
 # Baseline 1042 adds one: `tests/selfhost/290-emit.ax` spells the one
 # compilation unit it builds as the word the units vector holds, as
 # `300-pipeline.ax` does, to drive the compiler's own passes, whose
-# words `self_host/` is excluded for. It creates no reference or
+# words `core/` is excluded for. It creates no reference or
 # ownership.
 # Baseline 1048 adds six reviewed conversions. The two checked-program
 # selfhost fixtures pass CUnit2 handles through the compiler pipeline's
@@ -405,12 +405,12 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # downstream can say what the word was (MM-VAL-24). `symbols` prints
 # `#erasures=n` on each function whose body has n of them, judged by
 # the operand's TYPE once the body is typed (`eraseSettle` in
-# `self_host/typecheck.ax`), so `(cast Int c)` of a `Char` is not one,
+# `core/typecheck.ax`), so `(cast Int c)` of a `Char` is not one,
 # and `(cast Foreign s)` or `(cast Word p)` through an alias is.
 #
 # The compiler's own total is the work of retiring `Int` as its heap
 # handle, and it may only fall. The ratchet is <=; a commit that adds
-# an erasure to `self_host/` must lower another or update this number
+# an erasure to `core/` must lower another or update this number
 # with its reason.
 #
 # Baseline 836 measured 2026-10-06: 804 on trunk `fc7ef7c0`, plus the
@@ -438,15 +438,15 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # Typed records and string vectors in the driver, REPL, highlighter,
 # history, completion, AXIR and nolint modules leave 666.
 erasure_pin=666
-erasure_sum() {  # <axsym> -> the #erasures= total over self_host/ rows
-  awk '$1 == "F" && index($3, "self_host/") == 1 {
+erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
+  awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
            if ($i ~ /^#erasures=[0-9]+$/) { v = $i; sub(/^#erasures=/, "", v); t += v }
        }
        END { print t + 0 }' "$1"
 }
-"$axc" --diagnostic-format=ai symbols self_host/main.ax > "$work/main.axsym" 2> "$work/main.err" || true
-sh_rows="$(awk '$1 == "F" && index($3, "self_host/") == 1' "$work/main.axsym" | wc -l | tr -d ' ')"
+"$axc" --diagnostic-format=ai symbols core/main.ax > "$work/main.axsym" 2> "$work/main.err" || true
+sh_rows="$(awk '$1 == "F" && index($3, "core/") == 1' "$work/main.axsym" | wc -l | tr -d ' ')"
 if (( sh_rows < 4000 )); then
   bad "symbols listed $sh_rows compiler functions (floor 4000): the read broke"
   sed 's/^/     /' "$work/main.err" | head -4
@@ -458,18 +458,18 @@ else
     ok "compiler erasures $erasures <= $erasure_pin, over $sh_rows functions"
   else
     bad "compiler erasures $erasures > $erasure_pin: a new erasure needs another removed, or a reason and a new pin"
-    awk '$1 == "F" && index($3, "self_host/") == 1 && / #erasures=/ { for (i = 4; i <= NF; i++) if ($i ~ /^#erasures=/) print "     " $2, $3, $i }' "$work/main.axsym" \
+    awk '$1 == "F" && index($3, "core/") == 1 && / #erasures=/ { for (i = 4; i <= NF; i++) if ($i ~ /^#erasures=/) print "     " $2, $3, $i }' "$work/main.axsym" \
       | sort -t= -k2 -rn | head -10
   fi
 fi
 # Every compiler module that writes a cast must be in the closure the
 # sum reads, or its erasures would never be counted.
 outside=""
-for f in $(git -C "$repo_root" grep -l '(as ' -- 'self_host/*.ax'); do
+for f in $(git -C "$repo_root" grep -l '(as ' -- 'core/*.ax'); do
   grep -q " $f:" "$work/main.axsym" || outside="$outside $f"
 done
 if [[ -z "$outside" ]]; then
-  ok "every self_host module with a cast is in self_host/main.ax's closure"
+  ok "every core module with a cast is in core/main.ax's closure"
 else
   bad "modules with casts outside the counted closure:$outside"
 fi
@@ -541,10 +541,10 @@ else
 fi
 # The sum reads compiler rows only, and every key on them.
 printf '%s\n' \
-  'F a self_host/x.ax:1:5-6 "Int" @0000000000000001 #effects=Alloc #erasures=3' \
-  'F b self_host/y.ax:2:5-6 "Int" @0000000000000002 #erasures=1 #unsafe=trusted' \
+  'F a core/x.ax:1:5-6 "Int" @0000000000000001 #effects=Alloc #erasures=3' \
+  'F b core/y.ax:2:5-6 "Int" @0000000000000002 #erasures=1 #unsafe=trusted' \
   'F c stdlib/Mem.ax:3:5-6 "Int" @0000000000000003 #erasures=5' \
-  'F d self_host/z.ax:4:5-6 "Int" @0000000000000004 #calls=e' > "$work/synthetic.axsym"
+  'F d core/z.ax:4:5-6 "Int" @0000000000000004 #calls=e' > "$work/synthetic.axsym"
 if [[ "$(erasure_sum "$work/synthetic.axsym")" == 4 ]]; then
   ok "the sum counts compiler rows and skips the library's"
 else

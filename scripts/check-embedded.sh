@@ -10,7 +10,7 @@
 # 192 KiB of SRAM has neither, so three choices are per target:
 #
 #   4.1  the chunk size is a constant, `targetArenaChunkBytes`, beside
-#        the syscall numbers in `self_host/codegen.ax`'s target table.
+#        the syscall numbers in `core/codegen.ax`'s target table.
 #   4.2  the source of pages is a strategy. Zero from
 #        `targetArenaStaticBytes` means `mmap` (or `VirtualAlloc`);
 #        non-zero means one statically reserved region that
@@ -32,7 +32,7 @@
 # Why variant compilers: no supported target declares a small chunk or
 # a static arena, so the tree's compiler alone can show only that the
 # literals are gone, not what replaced them. A4-A6 build a second
-# compiler from a copy of `self_host/` with two rows of the target
+# compiler from a copy of `core/` with two rows of the target
 # table changed, which is the edit a bare-metal port makes:
 #
 #   * a target that is not the host gets a 4 KiB chunk. Its IR must move
@@ -109,7 +109,7 @@
 # as ok, and the summary says how many. CI runners have no QEMU, so
 # there they skip.
 #
-# Ablations. `AXIOM_ABLATE=<name>` copies `self_host/` to a scratch
+# Ablations. `AXIOM_ABLATE=<name>` copies `core/` to a scratch
 # directory, breaks one thing in `codegen.ax` there, builds every
 # compiler this gate uses from the broken copy, and the gate must fail.
 # `scripts/lib/embedded-patch.py` applies each patch by exact string
@@ -241,9 +241,9 @@ abort() { echo "ABORT: $1" >&2; exit 1; }
 src_root="$repo_root"
 if [[ -n "${AXIOM_ABLATE:-}" ]]; then
   mkdir -p "$work/tree"
-  cp -a "$repo_root/self_host" "$work/tree/self_host"
+  cp -a "$repo_root/core" "$work/tree/core"
   python3 "$repo_root/scripts/lib/embedded-patch.py" \
-    "$AXIOM_ABLATE" "$work/tree/self_host/codegen.ax" || exit 1
+    "$AXIOM_ABLATE" "$work/tree/core/codegen.ax" || exit 1
   src_root="$work/tree"
   echo "== building the compiler under test from the ABLATED tree =="
   if ! gate_build_tree "$axiom" "$src_root" "$AXIOM_STDLIB" "$work/axc-abl" \
@@ -267,7 +267,7 @@ fi
 # ---------------------------------------------------------------------
 targets=(darwin-aarch64 darwin-x86_64 linux-aarch64 linux-x86_64 freebsd-x86_64 freebsd-aarch64 windows-x86_64 windows-aarch64)
 
-codes_raw="$(python3 - "$src_root/self_host/codegen.ax" <<'PY'
+codes_raw="$(python3 - "$src_root/core/codegen.ax" <<'PY'
 import re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
 i = src.index("(pub fn (targetCode name)")
@@ -477,12 +477,12 @@ checks=$((checks + 1))
 # Comment lines are not spellings: the paragraph above the table names
 # the number too. The check is about a second place the emitter could
 # take the value from, so it counts only lines that are not comments.
-n_lit=$(grep -v '^[[:space:]]*;' "$src_root/self_host/codegen.ax" | grep -c '1048576' || true)
+n_lit=$(grep -v '^[[:space:]]*;' "$src_root/core/codegen.ax" | grep -c '1048576' || true)
 if [[ "$n_lit" != "1" ]]; then
   bad "\`1048576\` appears $n_lit times in codegen.ax; it must appear once, in
      targetArenaChunkBytes. A second spelling is a target that cannot move its
      own chunk size, which is what 4.1 exists to remove:"
-  grep -n '1048576' "$src_root/self_host/codegen.ax" | grep -v ':[[:space:]]*;' | head -5 | sed 's/^/       /'
+  grep -n '1048576' "$src_root/core/codegen.ax" | grep -v ':[[:space:]]*;' | head -5 | sed 's/^/       /'
 else
   note "\`1048576\` is written once, in the target table"
 fi
@@ -561,9 +561,9 @@ fi
 echo "== building the variant compiler: 4 KiB chunk on $t41, static arena on $host_target =="
 # ---------------------------------------------------------------------
 mkdir -p "$work/vtree"
-cp -a "$src_root/self_host" "$work/vtree/self_host"
+cp -a "$src_root/core" "$work/vtree/core"
 python3 "$repo_root/scripts/lib/embedded-patch.py" \
-  "variant:$code41:$host_code" "$work/vtree/self_host/codegen.ax" || exit 1
+  "variant:$code41:$host_code" "$work/vtree/core/codegen.ax" || exit 1
 if ! gate_build_tree "$axiom" "$work/vtree" "$AXIOM_STDLIB" "$work/vaxc" \
       > "$work/vbuild.log" 2>&1; then
   # A failed variant build is a red: a target table whose rows cannot
@@ -908,7 +908,7 @@ done
 # and the line under it as one spelling.
 checks=$((checks + 1))
 prob=0
-spell="$(grep -A1 '^(pub fn (targetTrapSilent t)$' "$src_root/self_host/codegen.ax")"
+spell="$(grep -A1 '^(pub fn (targetTrapSilent t)$' "$src_root/core/codegen.ax")"
 want="$(printf '(pub fn (targetTrapSilent t)\n  0)')"
 if [[ "$spell" != "$want" ]]; then
   bad "targetTrapSilent's default is not the one spelling - a second spelling
@@ -928,9 +928,9 @@ echo "== A9. 4.3: silent traps exit with the status and print nothing =="
 # agree and only one of them may have spoken.
 checks=$((checks + 1))
 mkdir -p "$work/stree"
-cp -a "$src_root/self_host" "$work/stree/self_host"
+cp -a "$src_root/core" "$work/stree/core"
 python3 "$repo_root/scripts/lib/embedded-patch.py" \
-  "silent:$host_code" "$work/stree/self_host/codegen.ax" || exit 1
+  "silent:$host_code" "$work/stree/core/codegen.ax" || exit 1
 if ! gate_build_tree "$axiom" "$work/stree" "$AXIOM_STDLIB" "$work/saxc" \
       > "$work/sbuild.log" 2>&1; then
   bad "the silent variant does not build - a target-table row that cannot take 1 is not a row"

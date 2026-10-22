@@ -165,7 +165,7 @@ def check(axiom, repo, work):
     expected = source.with_suffix(".out").read_text().splitlines()
     if expected != [f"{i} true" for i in range(1, 58)]:
         raise RuntimeError("update the explicit 57-case assertion count")
-    env = dict(os.environ, AXIOM_PATH=str(repo / "self_host"), AXIOM_STDLIB=str(repo / "stdlib"))
+    env = dict(os.environ, AXIOM_PATH=str(repo / "core"), AXIOM_STDLIB=str(repo / "stdlib"))
 
     run_checked([str(axiom), "--diagnostic-format=ai", "fmt", "--check", str(fixture)],
                 env=env, stdout=work / "fixture.fmt.stdout", stderr=work / "fixture.fmt.stderr")
@@ -173,7 +173,7 @@ def check(axiom, repo, work):
     def prepare_module(label, source):
         module_root = work / f"{label}-modules"
         module_root.mkdir(exist_ok=True)
-        for path in (repo / "self_host").iterdir():
+        for path in (repo / "core").iterdir():
             destination = module_root / path.name
             if path.name == "codegen.ax":
                 destination.write_text(source + BRIDGES)
@@ -201,7 +201,7 @@ def check(axiom, repo, work):
         print(f"note fresh-Vec/hoisted/direct payload growth in {label}: {tuple(map(int, growth.groups()))} bytes", flush=True)
         return failures
 
-    original = (repo / "self_host/codegen.ax").read_text()
+    original = (repo / "core/codegen.ax").read_text()
     for level in (0, 2):
         label = f"positive-O{level}"
         build_run(label, level, prepare_module(label, original))

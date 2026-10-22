@@ -12,7 +12,7 @@ ok() { checks=$((checks + 1)); echo "ok   $*"; }
 fail() { echo "FAIL $*" >&2; exit 1; }
 build() {
   local compiler="$1" output="$2"; shift 2
-  if ! "$compiler" --diagnostic-format=ai "$@" build self_host/main.ax -o "$output" >"$output.log" 2>&1; then
+  if ! "$compiler" --diagnostic-format=ai "$@" build core/main.ax -o "$output" >"$output.log" 2>&1; then
     head -12 "$output.log" >&2
     fail "could not build $output"
   fi
@@ -76,7 +76,7 @@ ok "poisoned stage1 builds poisoned stage2"
 build "$work/stage2" "$work/stage3" --alloc-poison
 ok "poisoned stage2 builds poisoned stage3"
 for stage in stage2 stage3; do
-  "$work/$stage" --diagnostic-format=ai --alloc-poison emit-llvm self_host/main.ax -o "$work/$stage.ll" \
+  "$work/$stage" --diagnostic-format=ai --alloc-poison emit-llvm core/main.ax -o "$work/$stage.ll" \
     >"$work/$stage.emit.log" 2>&1 || { head -12 "$work/$stage.emit.log" >&2; fail "$stage could not emit itself"; }
 done
 cmp -s "$work/stage2.ll" "$work/stage3.ll" || fail "the poisoned generations emit different IR"

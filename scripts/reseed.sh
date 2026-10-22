@@ -3,7 +3,7 @@
 # a compiler descended from the COMMITTED seed, and record the link.
 #
 # Run this when `scripts/bootstrap-from-seed.sh` fails because the
-# committed seed can no longer compile self_host/ - that is the seed
+# committed seed can no longer compile core/ - that is the seed
 # going stale, and it is the only routine reason to move it. Advancing
 # it otherwise is optional and costs about 42 MB of generated text in
 # the diff - six files of 7.06 MB, measured 2026-08-29 - so do it on
@@ -127,20 +127,20 @@ fi
 echo "the committed seed is ${prev}'s"
 
 # The sources the new seed is emitted from must be committed. The seed
-# is read below from the working tree's `stdlib` and `self_host`, so an
+# is read below from the working tree's `stdlib` and `core`, so an
 # uncommitted edit there - another session's, in a shared checkout -
 # would become a seed whose tree no commit holds, and the lineage gate
 # could never replay its row. Reseed from a clean worktree instead.
-dirty="$(git status --porcelain --untracked-files=all -- self_host stdlib 2>/dev/null | head -5)"
+dirty="$(git status --porcelain --untracked-files=all -- core stdlib 2>/dev/null | head -5)"
 if [[ -n "$dirty" ]]; then
-  fail "self_host/ or stdlib/ has uncommitted changes, and the seed would be emitted from them:
+  fail "core/ or stdlib/ has uncommitted changes, and the seed would be emitted from them:
 $dirty
      commit them, or reseed from a clean worktree (git worktree add <dir> HEAD)"
 fi
 
 ln -s "$repo_root/stdlib"    "$work/stdlib"
-ln -s "$repo_root/self_host" "$work/self_host"
-cp "$repo_root/self_host/main.ax" "$work/in.ax"
+ln -s "$repo_root/core" "$work/core"
+cp "$repo_root/core/main.ax" "$work/in.ax"
 
 optimised() {
   if (( have_opt )) && opt -O1 "$1" -S -o "$2" 2>/dev/null; then printf '%s' "$2"; else printf '%s' "$1"; fi
@@ -150,7 +150,7 @@ build_compiler() {  # <in.ll> <out>
     && cc "$2.o" -o "$2" $link_entry 2>>"$2.err"
 }
 emit() {  # <compiler> <target> <out.ll>: the shape every seed is emitted in
-  ( cd "$work" && AXIOM_STDLIB="$repo_root/stdlib" AXIOM_PATH=self_host "$1" --diagnostic-format=ai emit-llvm in.ax --target "$2" > "$3" 2> "$3.err" ) || return 1
+  ( cd "$work" && AXIOM_STDLIB="$repo_root/stdlib" AXIOM_PATH=core "$1" --diagnostic-format=ai emit-llvm in.ax --target "$2" > "$3" 2> "$3.err" ) || return 1
   grep -q '^target triple' "$3" || return 1
   (( $(wc -l < "$3") > 10000 )) || return 1
 }
@@ -183,7 +183,7 @@ else
     exit 1
   fi
   echo "generating with the bridge compiler $bridge instead, and recording that"
-  if ! "$bridge" --diagnostic-format=ai build --input self_host/main.ax --output "$work/gen" >"$work/build.log" 2>&1; then
+  if ! "$bridge" --diagnostic-format=ai build --input core/main.ax --output "$work/gen" >"$work/build.log" 2>&1; then
     tail -20 "$work/build.log" >&2
     fail "could not build a generator with $bridge either"
   fi
@@ -217,7 +217,7 @@ echo "wrote bootstrap/SHA256SUMS"
 
 # THE STAMP RECORDS A HASH, NOT A COMMIT, and that is a correction
 # rather than a preference. This wrote `git rev-parse HEAD`, and the
-# routine reason to run `reseed.sh` is that `self_host/` has just
+# routine reason to run `reseed.sh` is that `core/` has just
 # changed - so the tree is DIRTY here by construction, and HEAD is the
 # commit before the one that will carry the seed. The recorded commit
 # was therefore wrong every time, and nothing read it, so nothing said
@@ -229,7 +229,7 @@ echo "wrote bootstrap/SHA256SUMS"
 # other way - the one that last touched the seed `.ll` files - and requires its
 # sources to hash to this line before regenerating from them.
 stamp="$(gate_seed_source_stamp "$repo_root")"
-nfiles="$( cd "$repo_root" && find self_host stdlib -name '*.ax' -type f | wc -l | tr -d ' ' )"
+nfiles="$( cd "$repo_root" && find core stdlib -name '*.ax' -type f | wc -l | tr -d ' ' )"
 {
   printf 'Source stamp:          %s\n' "$stamp"
   printf 'Source files:          %s\n' "$nfiles"
@@ -263,7 +263,7 @@ nfiles="$( cd "$repo_root" && find self_host stdlib -name '*.ax' -type f | wc -l
   printf 'Verified by:           scripts/bootstrap-from-seed.sh, scripts/check-seed-provenance.sh, scripts/check-seed-lineage.sh\n'
   printf '\n'
   printf 'The source stamp is `gate_seed_source_stamp` (scripts/lib/gate.sh) over\n'
-  printf 'the `self_host/**.ax` and `stdlib/**.ax` bytes these seeds were\n'
+  printf 'the `core/**.ax` and `stdlib/**.ax` bytes these seeds were\n'
   printf 'generated from: the path list, then every byte, hashed. It is the\n'
   printf 'CHECKABLE claim here, and `scripts/check-seed-provenance.sh` checks it -\n'
   printf 'it finds the commit that last touched the seed `.ll` files - not this\n'

@@ -546,7 +546,7 @@ So a repeat has its own channel on the environment, modelled on the
 for-binding stack that `syntax/for` uses (`expForLookup`).
 
 `...` lexes as an ordinary identifier. Three dots are one token, and
-there is no new token kind. `self_host/lexer.ax` meets byte 46 (`.`),
+there is no new token kind. `core/lexer.ax` meets byte 46 (`.`),
 looks at the next two bytes, and emits `TK_IDENT` spanning all three
 when they are dots too, or `TK_DOT` for a single one. A lone `.` is
 untouched, so field access, module paths and `MAC-HYG-3`'s gensym
@@ -559,8 +559,8 @@ had to change. Each was checked by running
 
 | Implementation | What it does with `...` |
 |---|---|
-| `self_host/lexer.ax` | Changed. It was the only one that refused it. |
-| `self_host/format.ax` | Accepts it unchanged. The rule form's interior is copied verbatim, and the ellipsis survives a format byte for byte. |
+| `core/lexer.ax` | Changed. It was the only one that refused it. |
+| `core/format.ax` | Accepts it unchanged. The rule form's interior is copied verbatim, and the ellipsis survives a format byte for byte. |
 | `tree-sitter-axiom/grammar.js` | Parsed it already, with no `ERROR` node, because its identifier rule admits `.`. It now has an `ellipsis` node, which marks the element before it as repeating. That is a fidelity change, not a fix. |
 | `tests/fmt/verify-fmt.py` | Unaffected. It models no macros. |
 
@@ -661,7 +661,7 @@ one arity are still refused.
 ### 2.1 Position in the pipeline
 
 **MAC-EXP-1 (H).** Expansion is a pass of its own
-(`self_host/expand.ax`). It runs over the merged declaration list,
+(`core/expand.ax`). It runs over the merged declaration list,
 **after import resolution and before the type checker**.
 
 This position is normative. The checker sees the expanded program, so
@@ -817,7 +817,7 @@ the surplus argument, which is the token the author can delete. That
 gap is `MAC-EXP-8`'s recorded defect.
 
 No implementation meets that SHOULD yet. `spanOf` in
-`self_host/typecheck.ax` gives an application its callee's span, so
+`core/typecheck.ax` gives an application its callee's span, so
 giving the expander-built application the surplus argument's span
 changes nothing by itself. Reading the stored span instead would move
 every application's anchor: `((if c f g) x)` reports at `c` today.
@@ -1089,7 +1089,7 @@ hand-written declaration already follows:
   prevent.
 
 Import resolution (in `codegen.ax`) and phase D (in `expand.ax`) share
-one implementation of these rules, in `self_host/namespace.ax`. Because
+one implementation of these rules, in `core/namespace.ax`. Because
 `codegen.ax` imports `expand.ax`, the helpers can live in neither file,
 and one copy keeps the two passes from drifting apart.
 
@@ -1453,7 +1453,7 @@ discarding the argument.
 
 All three binder positions the expander owns follow the rule: `let`
 and `let mut` binders, `lambda` parameters and match-arm pattern
-binders (`expBinderParam` in `self_host/expand.ax`). Such a binder gets
+binders (`expBinderParam` in `core/expand.ax`). Such a binder gets
 no scope record. A reference to the parameter elsewhere in the template
 already substitutes to the same identifier through the ordinary
 parameter path, so a record would be a second route to one answer.
@@ -1627,7 +1627,7 @@ The details, query by query:
 
 No query name ends in `?`, because `?` isn't an identifier character.
 Admitting it is reserved as a separate language change (see the comment
-in `self_host/lexer.ax`). So the names are `syntax/defined` and
+in `core/lexer.ax`). So the names are `syntax/defined` and
 `syntax/same`, and `syntax/defined?` and `syntax/same?` don't lex.
 
 Each of the three scalar queries, `syntax/name`, `syntax/arity` and
@@ -2234,7 +2234,7 @@ checked by `scripts/check-tree-sitter.sh` and `scripts/check-fmt.sh`.
 **MAC-DIAG-1 (H).** Macro diagnostics live in the semantic range,
 because expansion happens at semantic-analysis time. These codes can
 reach a macro author. `axiom explain --list` is the authority on the
-set, and all but `AX3023` are constructed in `self_host/expand.ax`:
+set, and all but `AX3023` are constructed in `core/expand.ax`:
 
 | Code | Slug | Fires when |
 |---|---|---|
@@ -2450,7 +2450,7 @@ cached shape inline. If either number moves, the gate fails, and the
 question to settle in review is whether this rule still holds.
 
 `axiom/expandMacro` needs to turn a tree back into source. The printer
-is `lspRenderDecl`/`lspRenderExpr` in `self_host/lsp.ax`. It promises
+is `lspRenderDecl`/`lspRenderExpr` in `core/lsp.ax`. It promises
 that its output parses and means what the tree meant:
 
 - The gate checks the first half by reopening the rendering as a

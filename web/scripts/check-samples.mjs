@@ -100,7 +100,7 @@ function ax(file, code, args) {
 const trimEnd = (s) => s.replace(/\s+$/, '')
 
 // The human renderer is coloured ALWAYS, even into a pipe - a choice
-// `self_host/style.ax` explains - and the page paints its own colour
+// `core/style.ax` explains - and the page paints its own colour
 // over plain text (`src/components/Terminal.tsx`). So the escapes are
 // removed before comparing, and only the SGR form the palette emits.
 // eslint-disable-next-line no-control-regex

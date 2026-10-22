@@ -18,7 +18,7 @@
 # tail for scheduled runs and release checks.
 #
 # One shared compiler. A gate that tests the working tree builds the
-# compiler from `self_host/` unless `AXIOM_AXC` names a binary whose
+# compiler from `core/` unless `AXIOM_AXC` names a binary whose
 # `.stamp` matches `gate_source_stamp`; then `gate_build_axc` copies it.
 # `scripts/build-shared-axc.sh` writes that pair, so this builds once
 # and exports it. Each gate then only copies the compiler into its own

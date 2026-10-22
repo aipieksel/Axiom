@@ -22,7 +22,7 @@
 #   P2h every answer `check` gives in the human format - a refusal, or
 #       an acceptance that printed warnings - is safe to print to a
 #       terminal: well-formed UTF-8, no control byte but the newline,
-#       and no escape sequence but a colour from self_host/style.ax's
+#       and no escape sequence but a colour from core/style.ax's
 #       palette (`human_ok` in fuzz.py). Added 2026-09-27 when the
 #       quoted source line was found echoing a mutant's raw NUL and ESC
 #       bytes; a NUL cannot sit in a diagnostics fixture (the harness
@@ -182,7 +182,7 @@ bad() { echo "FAIL $*"; failed=$((failed + 1)); }
 # aarch64: over 9,000 mutants the slowest `check` of an ordinary one
 # took 3.7s and the slowest emit-plus-llc 3.8s, but ONE took 35s and
 # finished - `(import Vec)` mutated to `(import main)`, which the
-# resolver's working-directory fallback answers with `self_host/main.ax`,
+# resolver's working-directory fallback answers with `core/main.ax`,
 # so the mutant checked the whole compiler and drew 46 refusals. A 30s
 # deadline called that a hang on this machine, and CI runners are
 # slower. 120s is still a hang and not a slow input.

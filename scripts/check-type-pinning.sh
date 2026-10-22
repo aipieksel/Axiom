@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check that a bound type placeholder stays bound.
 #
-# `tyCompat` (self_host/typecheck.ax) pins an instantiation placeholder
+# `tyCompat` (core/typecheck.ax) pins an instantiation placeholder
 # to the type it first meets. Without that, a let-bound container could
 # take a different element type at each use:
 #

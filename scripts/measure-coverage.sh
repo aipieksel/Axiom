@@ -71,7 +71,7 @@ bad() { echo "FAIL $*"; failed=$((failed + 1)); }
 
 echo "== building the instrumented compiler =="
 cc -c -O1 "$rt" -o "$work/axcov.o" || { echo "FAIL: $rt does not compile"; exit 1; }
-"$axc" emit-llvm "$repo_root/self_host/main.ax" -o "$work/axc.ll" > "$work/emit.log" 2>&1 \
+"$axc" emit-llvm "$repo_root/core/main.ax" -o "$work/axc.ll" > "$work/emit.log" 2>&1 \
   || { echo "FAIL: the compiler under test could not emit itself"; tail -3 "$work/emit.log"; exit 1; }
 instrument "$work/axc.ll" "$work/axc-cov" > "$work/instr.log" 2>&1 \
   || { echo "FAIL: the instrumented build failed"; tail -5 "$work/instr.log"; exit 1; }
@@ -80,7 +80,7 @@ echo "   $(grep -c '__sancov_gen_' "$work/axc-cov.cov.ll") counter references in
 
 echo "== 1. the counters change nothing the compiler does =="
 n=0
-for f in tests/stdlib/070-vec.ax tests/stdlib/130-booleans.ax tests/embedded/blink.ax self_host/lexer.ax; do
+for f in tests/stdlib/070-vec.ax tests/stdlib/130-booleans.ax tests/embedded/blink.ax core/lexer.ax; do
   "$axc" emit-llvm "$repo_root/$f" -o "$work/plain.ll" >/dev/null 2>&1
   "$cov" emit-llvm "$repo_root/$f" -o "$work/instr.ll" >/dev/null 2>&1
   if cmp -s "$work/plain.ll" "$work/instr.ll"; then
@@ -166,7 +166,7 @@ cd "$repo_root"
 before="$(git status --porcelain | LC_ALL=C sort)"
 corpus "check tests/diagnostics" check < <(git ls-files 'tests/diagnostics/*.ax' | nth)
 corpus "emit-llvm tests/stdlib + tests/selfhost" emit < <(git ls-files 'tests/stdlib/*.ax' 'tests/selfhost/*.ax' | nth)
-corpus "emit-llvm self_host/main.ax" emit < <(echo self_host/main.ax)
+corpus "emit-llvm core/main.ax" emit < <(echo core/main.ax)
 corpus "fmt --check tests/fmt" fmt < <(git ls-files 'tests/fmt/*.ax' | nth)
 corpus "symbols --calls" syms < <(git ls-files 'tests/stdlib/*.ax' | awk 'NR % 10 == 1')
 corpus "explain" explain < <(printf 'AX3049\nAX1001\n')

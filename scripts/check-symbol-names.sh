@@ -15,7 +15,7 @@
 # into the source.
 #
 # A sweep over real code cannot find this. Every top-level name in
-# `stdlib/` and `self_host/` is already inside LLVM's set, and every
+# `stdlib/` and `core/` is already inside LLVM's set, and every
 # apostrophe there is in a comment or a string. Only a sweep over the
 # rule can.
 #
@@ -70,7 +70,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
 # Built from the tree, like every other self-hosting gate, so an ablation
-# of `self_host/` shows here instead of hiding behind whatever binary
+# of `core/` shows here instead of hiding behind whatever binary
 # `AXIOM` names.
 gate_build_axc axc "$work/axiom"
 

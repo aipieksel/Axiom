@@ -26,7 +26,7 @@ filter="${1:-}"
 
 # Compiler-internal probes use an explicit module root. gate_init
 # already supplies AXIOM_STDLIB for standard-library imports.
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 
 # Helper modules for cases that import a SIBLING - a shape no case
 # could express while every case was one file, and the one an effect
@@ -40,7 +40,7 @@ export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
 # The two kinds are told apart by name below.
 cp "$repo_root"/tests/selfhost/[A-Z]*.ax "$work/" 2>/dev/null || true
 
-# stage1: the compiler built from the current self_host/ by $axiom.
+# stage1: the compiler built from the current core/ by $axiom.
 gate_build_axc stage1
 
 passed=0
@@ -150,7 +150,7 @@ fi
 # salted with symlinks.
 #
 # stage1 used to search the entry file's directory and then the literal
-# strings `self_host/` and `stdlib/` RELATIVE TO ITS WORKING DIRECTORY,
+# strings `core/` and `stdlib/` RELATIVE TO ITS WORKING DIRECTORY,
 # so a user compiling a hello-world that imports `IO` from anywhere else
 # got `cannot read module: IO` and exit 3. Every gate in this repository
 # hid that by running from the repo root or by symlinking `stdlib` into

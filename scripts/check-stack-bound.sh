@@ -10,7 +10,7 @@
 # longest path, and `scripts/lib/stack-bound.py` computes it.
 #
 # Frame sizes come from llc, which lays out frames after `axiom` hands
-# over text IR (self_host/driver.ax, `IR -> opt -> llc -> cc`). They are
+# over text IR (core/driver.ax, `IR -> opt -> llc -> cc`). They are
 # read from llc's `--stack-usage-file`, or parsed from the prologues in
 # `llc -filetype=asm`.
 #
@@ -225,7 +225,7 @@ fi
 # ====================================================================
 # A2, A3 and A4, all from one emit of the compiler's own IR.
 # ====================================================================
-if pipeline "self_host/main.ax" 0 "selfhost"; then
+if pipeline "core/main.ax" 0 "selfhost"; then
   if (( su_ok )) && [[ -s "$work/selfhost.su" ]]; then
     checks=$((checks + 1))
     cc_out="$(python3 "$analyzer" "$work/selfhost.ll" --asm "$work/selfhost.s" \
@@ -254,7 +254,7 @@ if pipeline "self_host/main.ax" 0 "selfhost"; then
 
     # A3b. The analyzer's blockaddress rule (line-table stores) must
     # have stores to act on. If the emitter stops marking calls, this
-    # trips. The floor of 100 is about two orders below self_host's
+    # trips. The floor of 100 is about two orders below core's
     # count, so only losing the markers can reach it.
     checks=$((checks + 1))
     nba="$(grep -c 'blockaddress(@' "$work/selfhost.ll" || true)"

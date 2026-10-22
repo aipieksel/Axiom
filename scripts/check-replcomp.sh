@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------
 # REPL identifier completion, checked without a terminal.
 #
-# `self_host/replcomp.ax` answers "what are the candidates at this
+# `core/replcomp.ax` answers "what are the candidates at this
 # cursor, and what should the screen show" as a value: no file
 # descriptor, no key, no protocol. `tests/replcomp/drive.ax` takes a
 # session, a buffer and a cursor offset on the command line and prints
@@ -10,20 +10,20 @@
 # would add a terminal emulator and check nothing more.
 #
 # Key bindings are out of scope. `replComplTab` takes a direction, and
-# the line editor in `self_host/repl.ax` decides which keys produce it.
+# the line editor in `core/repl.ax` decides which keys produce it.
 #
 # Nothing here is blessed. Every expected set is recomputed from files
 # the module under test does not write:
 #
 #   * the colon-command vocabulary, from the `(strEq w ":...")`
-#     dispatch sites in `self_host/repl.ax`. `replcomp.ax` keeps its own
+#     dispatch sites in `core/repl.ax`. `replcomp.ax` keeps its own
 #     copy, because `repl.ax` imports it and importing `repl.ax` back
 #     would close a cycle. The copy is checked instead, the way
 #     `check-lsp-selfhost.sh` checks `lspKeywords` against `parser.ax`'s
 #     `kwEq` sites.
 #   * the imported-name set, from `(pub :: ...)` in `stdlib/Str.ax`.
 #   * the gather cap, from `LSP_COMPL_MAX`'s definition in
-#     `self_host/lsp.ax`, which `replcomp.ax` inherits by importing
+#     `core/lsp.ax`, which `replcomp.ax` inherits by importing
 #     `lspComplWants`.
 #
 # `AXIOM_BLESS` has nothing to write, so a re-bless cannot make this
@@ -39,7 +39,7 @@
 # ablation of it is visible whichever compiler compiled it. Building a
 # second compiler would cost a minute per run and check nothing more.
 #
-# Ablations: `AXIOM_ABLATE=<name>` copies `self_host/` to a scratch
+# Ablations: `AXIOM_ABLATE=<name>` copies `core/` to a scratch
 # directory, breaks one thing in `replcomp.ax` there, and runs the whole
 # gate against the copy, which must fail. Each patch applies by exact
 # string match, and the run aborts if the string is missing: a drill
@@ -117,8 +117,8 @@ bad()  { echo "FAIL $1"; failed=$((failed + 1)); }
 src_root="$repo_root"
 if [[ -n "${AXIOM_ABLATE:-}" ]]; then
   mkdir -p "$work/tree"
-  cp -a "$repo_root/self_host" "$work/tree/self_host"
-  target="$work/tree/self_host/replcomp.ax"
+  cp -a "$repo_root/core" "$work/tree/core"
+  target="$work/tree/core/replcomp.ax"
   if ! python3 - "$AXIOM_ABLATE" "$target" <<'PY'
 import sys
 name, path = sys.argv[1], sys.argv[2]
@@ -208,11 +208,11 @@ PY
 fi
 
 # Resolve the selected source tree explicitly, including ablated copies.
-export AXIOM_PATH="$src_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$src_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 cp "$repo_root"/tests/replcomp/*.session "$repo_root"/tests/replcomp/*.pending "$work/"
 cp "$repo_root/tests/replcomp/drive.ax" "$work/drive.ax"
 
-echo "== building the harness against $( [[ -n "${AXIOM_ABLATE:-}" ]] && echo "the ABLATED tree" || echo "self_host/replcomp.ax" ) =="
+echo "== building the harness against $( [[ -n "${AXIOM_ABLATE:-}" ]] && echo "the ABLATED tree" || echo "core/replcomp.ax" ) =="
 if ! (cd "$work" && "$axiom" build --input drive.ax --output drive) > "$work/build.log" 2>&1; then
   echo "FAIL: could not build tests/replcomp/drive.ax"
   sed 's/^/    /' "$work/build.log" | head -25
@@ -222,14 +222,14 @@ fi
 drive() { (cd "$work" && ./drive "$@"); }
 
 # --------------------------------------------------------------
-echo "== 1. the colon commands are the ones self_host/repl.ax dispatches =="
+echo "== 1. the colon commands are the ones core/repl.ax dispatches =="
 # --------------------------------------------------------------
-derived_cmds="$(grep -oE '\(strEq w ":[a-z]+"\)' "$repo_root/self_host/repl.ax" \
+derived_cmds="$(grep -oE '\(strEq w ":[a-z]+"\)' "$repo_root/core/repl.ax" \
                 | grep -oE ':[a-z]+' | sort -u)"
 n_cmds=$(printf '%s\n' "$derived_cmds" | grep -c .)
 checks=$((checks + 1))
 if (( n_cmds < 10 )); then
-  echo "ABORT: only $n_cmds colon commands derived from self_host/repl.ax; the floor is 10."
+  echo "ABORT: only $n_cmds colon commands derived from core/repl.ax; the floor is 10."
   echo "       The dispatch was reworded and this derivation stopped reading it, so an"
   echo "       equality against it would assert almost nothing."
   exit 1
@@ -354,12 +354,12 @@ fi
 # --------------------------------------------------------------
 echo "== 7. an empty prefix, and the cap that bounds it =="
 # --------------------------------------------------------------
-cap="$(tr '\n' ' ' < "$repo_root/self_host/lsp.ax" \
+cap="$(tr '\n' ' ' < "$repo_root/core/lsp.ax" \
        | grep -oE '\(pub fn \(LSP_COMPL_MAX\) +[0-9]+\)' \
        | grep -oE '[0-9]+')"
 checks=$((checks + 1))
 if [[ -z "$cap" ]] || (( cap < 50 )); then
-  echo "ABORT: could not derive LSP_COMPL_MAX from self_host/lsp.ax (got '${cap:-}')."
+  echo "ABORT: could not derive LSP_COMPL_MAX from core/lsp.ax (got '${cap:-}')."
   exit 1
 fi
 note "the gather cap derives from lsp.ax as $cap"
@@ -627,11 +627,11 @@ done
 # --------------------------------------------------------------
 echo "== 12. the escape stream stays inside style.ax's alphabet =="
 # --------------------------------------------------------------
-alphabet="$(grep -oE '"[0-9;]+"' "$repo_root/self_host/style.ax" | tr -d '"' | sort -u)"
+alphabet="$(grep -oE '"[0-9;]+"' "$repo_root/core/style.ax" | tr -d '"' | sort -u)"
 n_alpha=$(printf '%s\n' "$alphabet" | grep -c .)
 checks=$((checks + 1))
 if (( n_alpha < 5 )); then
-  echo "ABORT: only $n_alpha SGR parameters found in self_host/style.ax."
+  echo "ABORT: only $n_alpha SGR parameters found in core/style.ax."
   exit 1
 fi
 note "$n_alpha SGR parameters declared in style.ax"
@@ -644,7 +644,7 @@ data = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
 params = re.findall(r"\x1b\[([0-9;]*)m", data)
 bad = [p for p in params if p != "0" and p not in alphabet]
 if bad:
-    print("FAIL: the menu emitted SGR %s, which self_host/style.ax does not declare" % sorted(set(bad)))
+    print("FAIL: the menu emitted SGR %s, which core/style.ax does not declare" % sorted(set(bad)))
     sys.exit(1)
 opens = [p for p in params if p != "0"]
 resets = [p for p in params if p == "0"]

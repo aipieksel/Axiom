@@ -11,7 +11,7 @@
 # with a module it does not import, read its own source, or prove it can
 # fail. The layers below do those.
 #
-# This gate tests the leaf module `self_host/replhl.ax`, not the
+# This gate tests the leaf module `core/replhl.ax`, not the
 # compiler, so it does not call `gate_build_axc`. The resolved `$axiom`
 # compiles a fixture that imports the working tree's `replhl.ax`, so
 # every edit to that file is visible. Staying out of `gate_build_axc`
@@ -26,13 +26,13 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 # The fixture and generated probes import the working tree's leaf modules.
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 
 failed=0
 checks=0
 
 fixture=tests/selfhost/272-highlight.ax
-module=self_host/replhl.ax
+module=core/replhl.ax
 
 # ---------------------------------------------------------------------
 # Layer 1: the fixture answers what its own first line says.
@@ -242,9 +242,9 @@ cat > "$work/reconcile.ax" <<'AXEOF'
 
 ;@axiom:effect(io)
 (fn (main)
-  { (let a (sweepFile "self_host/replhl.ax"))
-    { (let b (sweepFile "self_host/style.ax"))
-      { (let c (sweepFile "self_host/lexer.ax"))
+  { (let a (sweepFile "core/replhl.ax"))
+    { (let b (sweepFile "core/style.ax"))
+      { (let c (sweepFile "core/lexer.ax"))
         (if (> (+ a (+ b c)) 0)
           (+ a (+ b c))
           42
@@ -301,7 +301,7 @@ heads_of() {  # <file> <function name> -> the quoted words, sorted
     | sed 's/.*"\(.*\)".*/\1/' \
     | LC_ALL=C sort
 }
-repl_heads="$(heads_of self_host/repl.ax isDeclLine)"
+repl_heads="$(heads_of core/repl.ax isDeclLine)"
 hl_heads="$(heads_of "$module" hlIsDeclHead)"
 n_repl="$(printf '%s\n' "$repl_heads" | grep -c . || true)"
 n_hl="$(printf '%s\n' "$hl_heads" | grep -c . || true)"
@@ -332,7 +332,7 @@ if (( n_used < 5 )); then
 else
   unknown=0
   for name in $used; do
-    if ! grep -q "^(pub :: $name String)" self_host/style.ax; then
+    if ! grep -q "^(pub :: $name String)" core/style.ax; then
       echo "FAIL: $module uses $name, which style.ax does not export"
       unknown=$((unknown + 1))
     fi
@@ -375,7 +375,7 @@ probe() {  # <label> <python edit> <expected status>
   local sandbox="$work/neg-$expect"
   rm -rf "$sandbox"
   mkdir -p "$sandbox/tests/selfhost"
-  cp -R self_host "$sandbox/self_host"
+  cp -R core "$sandbox/core"
   cp "$fixture" "$sandbox/tests/selfhost/"
   # The edit must land. A `replace` that matched nothing would leave the
   # module intact, the fixture would answer 42, and this probe would
@@ -389,7 +389,7 @@ assert s != orig, "the ablation matched nothing in " + p
 open(p, "w").write(s)
 PYEOF
   set +e
-  ( cd "$sandbox" && AXIOM_PATH="$sandbox/self_host${AXIOM_PATH:+:$AXIOM_PATH}" "$axiom" run "$fixture" >/dev/null 2>&1 )
+  ( cd "$sandbox" && AXIOM_PATH="$sandbox/core${AXIOM_PATH:+:$AXIOM_PATH}" "$axiom" run "$fixture" >/dev/null 2>&1 )
   local rc=$?
   set -e
   checks=$((checks + 1))

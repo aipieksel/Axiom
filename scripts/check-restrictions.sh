@@ -61,7 +61,7 @@
 #      is.
 #
 #   4. THE COMPILER THAT STOPS ANSWERING IS CAUGHT. A second compiler
-#      is built from a copy of `self_host/` in which `checkAxtags` no
+#      is built from a copy of `core/` in which `checkAxtags` no
 #      longer calls `checkRestricts` - the single hook - and section 2
 #      is run against it, and must FAIL. `check-tools-selfhost.sh`'s
 #      header records the failure this half exists to prevent: point
@@ -169,7 +169,7 @@ shadow="$work/ir/tree/tests/selfhost"
 mkdir -p "$shadow" "$work/ir"
 for sib in tests/selfhost/*.ax; do ln -s "$repo_root/$sib" "$shadow/$(basename "$sib")"; done
 # Compiler-internal probes, including 270-lex, use an explicit root.
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 filter_line_attr() {
   # The line-attribution pass (`emitLineTable` in codegen.ax) writes
   # one `; @@line` marker at every call site, plus the filename
@@ -338,7 +338,7 @@ fi
 
 # A run directory shared by sections 2 and 5, mirroring
 # `check-diagnostics.sh`'s: helper modules copied flat (a module name
-# is its file stem), `stdlib/` and `self_host/` reachable, and each
+# is its file stem), `stdlib/` and `core/` reachable, and each
 # case COPIED in, so that a fixture's `(import Mod)` resolves as it
 # does under that gate - 377 imports `RestrictLeaf` from `mods/`.
 mkdir -p "$work/run"
@@ -521,15 +521,15 @@ echo "== 4. a compiler that stops answering is caught =="
 # `restrict` tag is metadata again, which is exactly the state before
 # this feature existed. Built from a copy so the tree is untouched.
 mkdir -p "$work/ablate"
-cp -R "$repo_root/self_host" "$work/ablate/self_host"
+cp -R "$repo_root/core" "$work/ablate/core"
 hook='          (checkRestricts tc d own sig eff)'
-if ! grep -qF "$hook" "$work/ablate/self_host/typecheck.ax"; then
+if ! grep -qF "$hook" "$work/ablate/core/typecheck.ax"; then
   bad "the ablation target \`$hook\` is not in typecheck.ax - this probe no longer ablates anything"
 else
   # The call line, at its indentation, so a mention in a comment is not
   # what gets replaced; `count == 1` is asserted so the ablation cannot
   # silently become two.
-  python3 - "$work/ablate/self_host/typecheck.ax" "$hook" <<'PY'
+  python3 - "$work/ablate/core/typecheck.ax" "$hook" <<'PY'
 import sys
 p, hook = sys.argv[1], sys.argv[2]
 s = open(p).read()
@@ -761,8 +761,8 @@ fi
 # The negative: all three arms scoped to a constant, so no exemption
 # can fire. Built from a copy; the tree is untouched.
 mkdir -p "$work/exabl"
-cp -R "$repo_root/self_host" "$work/exabl/self_host"
-python3 - "$work/exabl/self_host/typecheck.ax" <<'PY'
+cp -R "$repo_root/core" "$work/exabl/core"
+python3 - "$work/exabl/core/typecheck.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -781,7 +781,7 @@ s = s.replace(forbump, forbump[:len(forbump) - len(forbump.lstrip())] + '(if (! 
 s = s.replace(floatop, floatop[:len(floatop) - len(floatop.lstrip())] + '(if (! (== 2 1))\n')
 open(p, 'w').write(s)
 PY
-if grep -q '(if (! (== 2 1))' "$work/exabl/self_host/typecheck.ax"; then
+if grep -q '(if (! (== 2 1))' "$work/exabl/core/typecheck.ax"; then
   if gate_build_tree "$axiom" "$work/exabl" "$AXIOM_STDLIB" "$work/exabl/axc" > "$work/exabl/build.log" 2>&1; then
     ( cd "$work/exempt" && "$work/exabl/axc" --diagnostic-format=ai check exempt.ax ) > /dev/null 2> "$work/exempt/abl.err" || true
     restriction_lines "$work/exempt/abl.err" > "$work/exempt/abl.hits"

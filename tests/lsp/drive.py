@@ -46,7 +46,7 @@ any compiler at all:
 
   3. TWO INVARIANTS ON EVERY SYMBOL of every document including the
      6001-symbol generated one: `selectionRange` contained in `range`,
-     which is what LSP requires and what self_host/lsp.ax's comment
+     which is what LSP requires and what core/lsp.ax's comment
      claims; and the source sliced at `selectionRange` spelling the
      symbol's own `name`.
 
@@ -844,7 +844,7 @@ for fx in fixtures:
 # compact, so any message which did not fit in the free space was
 # mis-sliced - and the symptom was a message silently DROPPED, read by
 # the server as the client hanging up. Every fixture above is a few
-# hundred bytes, so none of them could see it; `self_host/codegen.ax`
+# hundred bytes, so none of them could see it; `core/codegen.ax`
 # is about 150 KB, so an editor opening the compiler's own source
 # would have.
 #
@@ -975,7 +975,7 @@ expect_symbols += N + 1
 # ---------------------------------------------------------------------
 # The head keywords, derived from the parser rather than written down.
 #
-# `self_host/lsp.ax` carries a copy of this set - it has to, the
+# `core/lsp.ax` carries a copy of this set - it has to, the
 # protocol wants labels - and a hand-kept copy of another module's
 # vocabulary drifts. So the reference is `parseTopForm`/`parseExpr`'s
 # own `kwEq name ...` call sites, and the check is an EQUALITY against
@@ -989,7 +989,7 @@ expect_symbols += N + 1
 RETIRED_KEYWORDS = {"union", "foreign", "trait", "impl", "cond", "begin", "alloc",
                     "consume", "define", "emacro", "cast"}
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PARSER_AX = os.path.join(REPO, "self_host", "parser.ax")
+PARSER_AX = os.path.join(REPO, "core", "parser.ax")
 _psrc = open(PARSER_AX, encoding="utf-8").read()
 _kwdefs = dict(re.findall(r'\(pub fn \((kw[A-Za-z]+)\)\s+"([^"]+)"\)', _psrc))
 _kwlits = set(re.findall(r'kwEq\s+\w+\s+"([^"]+)"', _psrc))
@@ -1077,7 +1077,7 @@ IMP_USE = locate(NAV, "bump", 1)            # the imported call
 BUMP_DECL = locate(NAVHELPER, "bump", 2)    # its `fn` name, in the OTHER file
 NOTHING = locate(NAV, "tag", 2)             # a name no declaration in scope has
 # The language itself: words no declaration explains, answered from
-# self_host/lexicon.ax. Each hover must equal what `axiom explain`
+# core/lexicon.ax. Each hover must equal what `axiom explain`
 # prints for the same word, so the two cannot drift apart.
 KW_LET = locate(NAV, "let", 1)              # the keyword at the head of a form
 TY_INT = locate(NAV, "Int", 1)              # a builtin type in a signature
@@ -1466,7 +1466,7 @@ shutil.rmtree(NAVDIR, ignore_errors=True)
 # =====================================================================
 # SECTION NAV TESTS: references, rename, document highlights, and the
 # local-binding half of definition. Owned by that section of
-# self_host/lsp.ax; every expected answer here is DERIVED from the
+# core/lsp.ax; every expected answer here is DERIVED from the
 # documents' own bytes, never read from a golden.
 # =====================================================================
 
@@ -1732,15 +1732,15 @@ for _what, _text in (("count result", COUNT_RESULT), ("data name", SHAPE_NAME),
 # The checker's builtin rows, derived from the checker rather than
 # written down.
 #
-# `self_host/lsp.ax` carries a copy of these rows - `lspShapeBuiltinRes`
+# `core/lsp.ax` carries a copy of these rows - `lspShapeBuiltinRes`
 # answers a hover's `+` from it - and a hand-kept copy of another
 # module's table drifts. So the reference is `tcNew`'s own `regFn`
-# rows in self_host/typecheck.ax, and the check is an EQUALITY: the
+# rows in core/typecheck.ax, and the check is an EQUALITY: the
 # hover on `ph`, whose value is `(+ ph 1)`, must carry the result the
 # checker's row for `+` types, and the copy in lsp.ax must name
 # exactly the operators the checker rows. A builtin the checker
 # retypes, adds or drops fails here until the server follows.
-TYPECHECK_AX = os.path.join(REPO, "self_host", "typecheck.ax")
+TYPECHECK_AX = os.path.join(REPO, "core", "typecheck.ax")
 _tcsrc = open(TYPECHECK_AX, encoding="utf-8").read()
 
 
@@ -1827,7 +1827,7 @@ _binop = {n for n, (p, r) in CHECKER_BUILTINS.items()
 if _binop != set(_SHAPE_WANT):
     sys.exit(f"FAIL: the checker's operator rows are {sorted(_binop)}, "
              f"this file assumes {sorted(_SHAPE_WANT)}")
-_lsrc = open(os.path.join(REPO, "self_host", "lsp.ax"), encoding="utf-8").read()
+_lsrc = open(os.path.join(REPO, "core", "lsp.ax"), encoding="utf-8").read()
 _lshape = _lsrc[_lsrc.index("(pub fn (lspShapeBuiltinRes"):
                _lsrc.index("(pub :: lspShapeApplyArrow")]
 LSP_BUILTINS = set(re.findall(r'\(strEq h "([^"]+)"\)', _lshape))
@@ -2434,7 +2434,7 @@ shutil.rmtree(NAVREF_DIR, ignore_errors=True)
 # ---------------------------------------------------------------------
 # textDocument/declaration, and the three call-hierarchy requests.
 #
-# Still SECTION NAV TESTS, because self_host/lsp.ax's SECTION NAV owns
+# Still SECTION NAV TESTS, because core/lsp.ax's SECTION NAV owns
 # all four. Five documents written HERE, so no position below can drift
 # away from the text it describes, and EVERY expected answer is
 # computed from those documents' own bytes:
@@ -3030,7 +3030,7 @@ else:
     passed += 2
 shutil.rmtree(CH_DIR, ignore_errors=True)
 
-# Still SECTION NAV TESTS, because self_host/lsp.ax's SECTION NAV owns
+# Still SECTION NAV TESTS, because core/lsp.ax's SECTION NAV owns
 # all three. Four documents written HERE, so no position below can drift
 # away from the text it describes, and EVERY expected answer is
 # computed from those documents' own bytes:
@@ -5509,7 +5509,7 @@ shutil.rmtree(CADIR2, ignore_errors=True)
 # The protocol's delta array is decoded by a second implementation,
 # and every token of every answer is held to what a client depends on:
 # inside the legend, non-empty, inside its line, sorted, never
-# overlapping. The legend is read off `self_host/lsp.ax`'s own two
+# overlapping. The legend is read off `core/lsp.ax`'s own two
 # lists and must equal what the server advertises. A document that
 # does not parse answers the same keywords, literals and comments as
 # its parsing twin, and the read of a parameter is `parameter` in both:
@@ -5617,7 +5617,7 @@ def hl_source_list(fn_name):
     m = re.search(r"\(pub fn \(" + re.escape(fn_name)
                   + r"\)([\s\S]*?)(?=\n\(pub (?:fn|::)|\Z)", _lsrc)
     if not m:
-        sys.exit(f"FAIL: could not read `{fn_name}` out of self_host/lsp.ax - the "
+        sys.exit(f"FAIL: could not read `{fn_name}` out of core/lsp.ax - the "
                  f"legend check would compare the server against nothing")
     return re.findall(r'\(vecPush v "([^\"]+)"\)', m.group(1))
 
@@ -5642,7 +5642,7 @@ for _need in ("declaration", "definition", "readonly", "modification", "deprecat
 
 # The lexicon's builtin type and effect names, read off lexicon.ax's
 # `lexKind` table: the `type` row and the `effect` row.
-_lexsrc = open(os.path.join(REPO, "self_host", "lexicon.ax"), encoding="utf-8").read()
+_lexsrc = open(os.path.join(REPO, "core", "lexicon.ax"), encoding="utf-8").read()
 
 
 def hl_lexicon_row(kind):

@@ -77,7 +77,7 @@ else
   # machine that has not run the npm install below - so on a developer
   # machine the gate reported success without checking anything. It hid
   # two real breakages at once: the grammar rejected every `struct` with
-  # fields (and so most of `self_host/`), and the highlight-query step
+  # fields (and so most of `core/`), and the highlight-query step
   # named a file that had been deleted. Both would have been caught the
   # day they landed.
   #

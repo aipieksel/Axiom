@@ -26,7 +26,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
-# Built from the tree, so a change to `self_host/` shows here, whatever
+# Built from the tree, so a change to `core/` shows here, whatever
 # binary `AXIOM` names.
 gate_build_axc axc "$work/axiom"
 

@@ -1,7 +1,7 @@
 ; Syntax highlighting for Axiom.
 ;
 ; The roles are VS Code's. In VS Code the language server colours each
-; token (its semantic tokens, `SECTION HL` in `self_host/lsp.ax`) over
+; token (its semantic tokens, `SECTION HL` in `core/lsp.ax`) over
 ; the TextMate grammar in `editors/vscode/syntaxes/`, and this file
 ; gives every token the role VS Code gives it: one keyword colour, an
 ; operator wherever a word is spelled only with operator characters,

@@ -56,10 +56,10 @@ The nid is unique within one comparison, not across modules, so a tool
 that joins two streams must not assume it is unique. It is FNV-1a 64
 over `DKind:name`, using the bare name, so two modules that declare the
 same unmangled name get the same nid. For example,
-`axiom symbols self_host/main.ax --builtins --diagnostic-format ai`
+`axiom symbols core/main.ax --builtins --diagnostic-format ai`
 gives two different functions named `die`, one in `stdlib/IO.ax` and
-one in `self_host/main.ax`, the same nid, `@52fb9ccad9feab1b`. The same
-happens to `jsonHexDigit` in `self_host/render.ax` and `stdlib/Cereal.ax`.
+one in `core/main.ax`, the same nid, `@52fb9ccad9feab1b`. The same
+happens to `jsonHexDigit` in `core/render.ax` and `stdlib/Cereal.ax`.
 
 That doesn't weaken this rule, because `check-compat.sh` compares one
 library against a baseline of the same library. It does matter to
@@ -70,7 +70,7 @@ location, quoted type and nid) for this reason.
 are equal, in order, instead of looking the nid up.
 
 **COMPAT-3 (H).** Every public name has a row in the symbol stream,
-macros and effect declarations included. `self_host/symbols.ax`
+macros and effect declarations included. `core/symbols.ax`
 records each macro and each `(effect ...)` declaration's own name, and
 [diagnostics.md](diagnostics.md) lists their AXSYM kinds, `M` and `E`.
 
@@ -230,7 +230,7 @@ it would refuse releases we intend to make.
 <a id="4-what-is-not-promised"></a>
 ## What isn't promised
 
-- **The compiler's internals.** `self_host/` is not a library, and
+- **The compiler's internals.** `core/` is not a library, and
   nothing in `compat/` covers it.
 - **The IR.** Emitted LLVM text isn't a function of source and flags
   alone ([agent harness](agent-harness.md)), and nothing pins its shape.
@@ -239,7 +239,7 @@ it would refuse releases we intend to make.
   them into one entry, so the surface is the same on every target. The
   values behind those names belong to each target and aren't promised.
 - **A registry, a lockfile or version constraints.** A dependency is a
-  path on your machine (`self_host/pkg.ax` states this), and so is a
+  path on your machine (`core/pkg.ax` states this), and so is a
   `crate`, a native dependency. This policy doesn't change that. A
   lockfile isn't a step towards a fetcher either: over a path you
   already control, a digest protects nothing and changes on every edit

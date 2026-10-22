@@ -7,7 +7,7 @@ Constructor resolution uses declarations, imports and lexical bindings. An
 uncertain constructor use aborts that file rather than guessing field names.
 
 Usage:
-  scripts/migrate-route-b.py --review self_host stdlib
+  scripts/migrate-route-b.py --review core stdlib
   scripts/migrate-route-b.py --check --locals-only path/to/file.ax
   scripts/migrate-route-b.py --write -I module/directory path/to/file.ax
 
@@ -366,7 +366,7 @@ class Repository:
         if not name or any(part in {"", ".", ".."} for part in name.split(".")) or "/" in name or "\\" in name:
             return [], f"invalid module path {name!r}"
         relative = Path(*name.split("."))
-        directories = [entry.parent, *self.import_dirs, self.root / "stdlib", self.root / "self_host"]
+        directories = [entry.parent, *self.import_dirs, self.root / "stdlib", self.root / "core"]
         for directory in dict.fromkeys(directories):
             path = directory / relative.with_suffix(".ax")
             if path.is_file():

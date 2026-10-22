@@ -71,7 +71,7 @@ to `.ax`, so target-specific files have priority across roots.
 `AXIOM_STDLIB` selects the standard-library root; otherwise the
 compiler searches beside its executable. `AXIOM_LINK_SEARCH` supplies
 archive roots. The working directory contributes no implicit
-`self_host/` or `stdlib/` root. See the
+`core/` or `stdlib/` root. See the
 [module reference](reference.md#modules-and-imports) and [Rust linking](ffi.md).
 
 ## Recognise address and ownership types

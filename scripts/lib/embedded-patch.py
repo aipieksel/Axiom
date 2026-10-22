@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One edit to a copy of `self_host/codegen.ax`, by exact string match.
+"""One edit to a copy of `core/codegen.ax`, by exact string match.
 
 `scripts/check-embedded.sh` needs two kinds of edit and they are the
 same mechanism, so they live together:

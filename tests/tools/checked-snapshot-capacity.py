@@ -122,7 +122,7 @@ EXPORTS = r'''
 
 
 def checked_source(root):
-    source = (root / 'self_host/checked.ax').read_text()
+    source = (root / 'core/checked.ax').read_text()
     begin = source.index('(data CheckedSyntax\n')
     end = source.index('(pub :: checkedSyntaxUnchanged ', begin)
     copy_begin = source.index('(:: checkedCopyDeclarations ')
@@ -145,7 +145,7 @@ def run(compiler, root, work, source, name, level):
     fixture = directory / template.with_suffix('.ax').name
     fixture.write_bytes(template.read_bytes())
     env = dict(os.environ, AXIOM_STDLIB=str(root / 'stdlib'),
-               AXIOM_PATH=os.pathsep.join((str(directory), str(root / 'self_host'))))
+               AXIOM_PATH=os.pathsep.join((str(directory), str(root / 'core'))))
     formatted = subprocess.run([compiler, '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],
                                env=env, cwd=work, capture_output=True, text=True, timeout=30)
     assert formatted.returncode == 0, (name, formatted.stdout, formatted.stderr)

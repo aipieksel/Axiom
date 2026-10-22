@@ -163,13 +163,13 @@ fi
 # and is out of its scope. The header floor stops a compiler that emits
 # no literals at all from passing.
 echo "== the compiler's own IR: zero static releases =="
-if ! "$axc" emit-llvm "$repo_root/self_host/main.ax" -o "$work/self.ll" >"$work/self.log" 2>&1; then
-  bad "could not emit IR for self_host/main.ax"
+if ! "$axc" emit-llvm "$repo_root/core/main.ax" -o "$work/self.ll" >"$work/self.log" 2>&1; then
+  bad "could not emit IR for core/main.ax"
   sed 's/^/     /' "$work/self.log" | head -20
 else
   read -r sst stot shd <<<"$(count_static_releases "$work/self.ll")"
   if [[ "$shd" -lt 2000 ]]; then
-    bad "self_host/main.ax emitted $shd string headers; the floor is 2000 - this check has stopped seeing the program"
+    bad "core/main.ax emitted $shd string headers; the floor is 2000 - this check has stopped seeing the program"
   elif [[ "$sst" != 0 ]]; then
     bad "$sst static release(s) in the compiler's own IR; the cap is 0 - a missed elision, or a new nodeless path to name"
   else
@@ -183,12 +183,12 @@ fi
 echo "== ablation: isStaticSentinelNode answering 0 puts them all back =="
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
 # Flip the one answer the fix turns on. The predicate still exists and
 # still runs, so a broken build reads differently from a restored defect.
-python3 - "$abl/self_host/codegen.ax" <<'PY'
+python3 - "$abl/core/codegen.ax" <<'PY'
 import re, sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
@@ -205,7 +205,7 @@ else
        "$work/axc-ablated" >"$work/ablated.build.log" 2>&1; then
     bad "the ablated compiler did not build"
     sed 's/^/     /' "$work/ablated.build.log" | head -20
-  elif ! "$work/axc-ablated" emit-llvm "$repo_root/self_host/main.ax" \
+  elif ! "$work/axc-ablated" emit-llvm "$repo_root/core/main.ax" \
        -o "$work/abl.ll" >"$work/abl.emit.log" 2>&1; then
     bad "the ablated compiler did not emit"
     sed 's/^/     /' "$work/abl.emit.log" | head -20

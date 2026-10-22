@@ -199,7 +199,7 @@ the checked-in bindings.
 
 An `extern` block binds Axiom names to symbols in a Rust archive. The
 parser (`parseExternDecl`, `parseExternItems` and `parseExternClauses`
-in `self_host/parser.ax`) accepts exactly this shape:
+in `core/parser.ax`) accepts exactly this shape:
 
 ```scheme
 (pub extern "axiom_demo"
@@ -978,7 +978,7 @@ axiom build --input hostlib.ax --output libaxiom_hostlib.a \
 
 `--emit-rust-binding PATH` writes the Rust view of the file's `pub`
 surface, from the same declarations the IR came from
-(`self_host/rustbind.ax`). It holds one `extern "C"` declaration per
+(`core/rustbind.ax`). It holds one `extern "C"` declaration per
 function in a `raw` module, and one wrapper per function in Rust's own
 types. The wrappers are safe, except where a raw `AxWord` crosses:
 
@@ -1062,7 +1062,7 @@ instantiation a `pub` signature mentions (`(Option Pair)`, or
 `(List Int)` of the file's own `List`) cross as values. Only the
 emitter knows a block's layout, so the same build synthesises accessor
 shims into the module before it is checked and compiled (`rbAppendShims` in
-`self_host/rustbind.ax`). They are ordinary `pub fn`s, type-checked
+`core/rustbind.ax`). They are ordinary `pub fn`s, type-checked
 like the file's own:
 
 ```text
@@ -1262,7 +1262,7 @@ Eight rules govern the boundary. The code cites them by name:
 
 ## 12. Linking and the driver
 
-`effectiveLinkArgs` in `self_host/driver.ax` builds the link line in
+`effectiveLinkArgs` in `core/driver.ax` builds the link line in
 this order. Each directory appears once, and only if it exists.
 
 1. Explicit `--link-search DIR` (`-L`) and `--link-lib NAME` (`-l`), as
@@ -1399,7 +1399,7 @@ The help for `AX3036` reads:
 > handle, or through the wrapper `axiom-bindgen` generates (a `String`
 > result, a `Result`, an `Option`, an opaque type)
 
-The check is `tcCheckExternTypes` in `self_host/typecheck.ax`. It walks
+The check is `tcCheckExternTypes` in `core/typecheck.ax`. It walks
 the signature's own arrow spine. An arrow in parameter position passes
 only as a callback over word leaves (`allIntArrow`), and an arrow
 anywhere else is refused. For the long form, run `axiom explain AX3036`,
@@ -1595,7 +1595,7 @@ Each limit below names the fact that stands in the way.
   an Axiom value from it is outside the model.
 
   Axiom does have threads: `parallel` has a `--threads` lowering that
-  calls `pthread_create` (`emitParThread` in `self_host/codegen.ax`).
+  calls `pthread_create` (`emitParThread` in `core/codegen.ax`).
   The limit comes from the runtime. Its `axiom_retain` and
   `axiom_release` are a plain load, add and store, not an `atomicrmw`,
   so two threads touching one block's count lose increments.

@@ -87,7 +87,7 @@ cost worked out from two points.
 ### 1.1 `Option` is built in, `Result` is imported
 
 `Some` and `None` are built-in constructors. They are registered before
-any user constructor (`self_host/typecheck.ax`), need no declaration and
+any user constructor (`core/typecheck.ax`), need no declaration and
 no import, and are written `(Option Int)` in a signature.
 
 `Ok`, `Err` and `Result` are not built in. They are ordinary
@@ -224,7 +224,7 @@ already does everything a built-in would:
 - It is classified as a reference and reclaimed at a release boundary,
   even when applied polymorphically (`ERR-MEM-3`).
 
-A built-in would mean changing `self_host/typecheck.ax`, and so a seed
+A built-in would mean changing `core/typecheck.ax`, and so a seed
 rebuild with `scripts/reseed.sh`, on a compiler whose bootstrap
 fixpoint is a v1 exit criterion. Nothing measured justifies that cost
 before the model has users. Making `Result` built in is deferred, not
@@ -438,7 +438,7 @@ empty definite effect row. An exemption would have to be carved out for
 every reader of that row, not just for this rule, and `Alloc` is the
 effect `restrict(no-alloc)` exists to name. So construction allocates,
 and a constructing function is not pure. No `;@axiom:effect(pure)` claim in
-`stdlib/` or `self_host/` sits on a constructing function.
+`stdlib/` or `core/` sits on a constructing function.
 
 **ERR-PROP-3 (H, program obligation). In a recursive function, the
 fallible call MUST be the `match` scrutinee and the recursive call MUST
@@ -526,7 +526,7 @@ gets reclaimed, and what your program must do so a loop that carries
 errors runs in constant memory.
 
 **ERR-MEM-1 (H). A payload field's declared type decides whether its
-contents are reclaimed.** `fldClass` in `self_host/codegen.ax` builds a
+contents are reclaimed.** `fldClass` in `core/codegen.ax` builds a
 block's reference map from its declared field types:
 
 - *reference*: `String`, a declared `data` or `struct` type, a tuple
@@ -609,7 +609,7 @@ call answering a `Result` allocates one block. It is released after the
 
 A `match` scrutinee is released after the merge only when no arm's
 binder escapes through that arm's body (`scrutineeReleasable` and
-`escapesViaBinders` in `self_host/codegen.ax`). A binder that reaches
+`escapesViaBinders` in `core/codegen.ax`). A binder that reaches
 its arm's value, bare or through arithmetic, counts as an escape unless
 it is a machine scalar. A scalar can't alias the block it was copied
 out of. A field read can be classified where it stands
@@ -656,7 +656,7 @@ released a block a returned `String` still lived in. The same sharing
 caused `MM-LIFE-2j` in [memory-model.md](memory-model.md). Traits were
 removed in 0.6.0, and the path went with them. A compiler built with
 last-write-wins stamps now emits byte-identical IR across 278 fixtures,
-every `stdlib/` module and `self_host/main.ax`, so nothing Axiom can
+every `stdlib/` module and `core/main.ax`, so nothing Axiom can
 express checks one pattern binder twice at two types. The disagreement
 arm stays as a guard against that class of mistake, and
 `scripts/check-fallible-reclaim.sh` asserts that nothing reaches it.
@@ -1126,7 +1126,7 @@ review. `ERR-DIAG-2` proposes the lint that would make it visible.
 **ERR-DIAG-1 (H). Every diagnostic this model adds goes through
 `mkDiag`/`mkDiagFix` at the site that detects the condition, carries a
 stable code and a kebab-case slug, and has long-form text in
-`self_host/explain.ax`.** Error handling doesn't change how the
+`core/explain.ax`.** Error handling doesn't change how the
 compiler reports. This rule keeps it that way, so no one adds a second
 channel for "error-model errors".
 
@@ -1235,8 +1235,8 @@ the AXTAG namespace this compiler can't decide. `restrict(...)` is
 checked by analysis the checker already performs. `(> n 0)` is a
 statement about a value, and the compiler has no value analysis:
 `grep -v '^ *;' FILE | grep -c 'constFold\|constantFold\|interval\|rangeOf\|abstractVal'`
-answers 0, 0 and 0 over `self_host/typecheck.ax`, `self_host/codegen.ax`
-and `self_host/expand.ax`. Comment lines are excluded because a comment
+answers 0, 0 and 0 over `core/typecheck.ax`, `core/codegen.ax`
+and `core/expand.ax`. Comment lines are excluded because a comment
 stating this claim matches the pattern.
 
 So the claim is enforced at run time. `expLowerContracts` compiles the
@@ -1402,7 +1402,7 @@ function or lambda answers that `Err` unchanged, and nothing after the
 
 `(halveTwice 40)` answers `(Ok 10)`, so the program exits 10.
 
-Axiom has no early return, so the expander (`self_host/expand.ax`,
+Axiom has no early return, so the expander (`core/expand.ax`,
 `qmBody`) makes the rest of the body the `Ok` arm of a `match` on `e`,
 the shape `ERR-PROP-3` calls safe:
 
@@ -1541,7 +1541,7 @@ runs the direct read and the routed one and compares their answers.
 | `ERR-PROP-3` | **H, gated** | `tests/stdlib/370-error-propagation.ax` term 16 + ablation |
 | `ERR-PROP-4` | **H, gated** | `tests/diagnostics/1005-recursion-in-scrutinee.ax` + `severity.policy` + `scripts/check-diagnostic-coverage.sh` |
 | `ERR-PROP-5` | H | effect inference, unchanged |
-| `ERR-MEM-1` | H | `fldClass`, `self_host/codegen.ax` |
+| `ERR-MEM-1` | H | `fldClass`, `core/codegen.ax` |
 | `ERR-MEM-2` | **H, gated** | `370-error-propagation.ax` term 4 + ablation |
 | `ERR-MEM-3` | H | 176 / 288 bytes, mono / poly, 2000 iterations |
 | `ERR-MEM-4` | **H, gated** | `370-error-propagation.ax` terms 32 + 64, and `scripts/check-fallible-reclaim.sh` ablates the compiler |
@@ -1678,7 +1678,7 @@ The slices, in order, each green before the next starts:
    the hot printing path rather than a filesystem call, so it is its
    own decision.
 
-   `self_host/` calls none of these. Porting the one internal use and
+   `core/` calls none of these. Porting the one internal use and
    two test fixtures gave `unwrapOr`, `isErr` and `errCode` callers.
    `tests/stdlib/055-filesystem.ax` asserts an errno through `errCode`
    instead of comparing against `(- 0 2)`. With a sentinel, "it failed
@@ -1777,7 +1777,7 @@ The slices, in order, each green before the next starts:
    for the one below). Once a `Result` became an unboxed pair, a direct
    match builds no block on success
    (§10.1), and §10.1
-   records their port. `runTool` in `self_host/driver.ax` unwraps
+   records their port. `runTool` in `core/driver.ax` unwraps
    at the stdlib boundary, because the compiler's own phases are
    slice 4.
 
@@ -1834,10 +1834,10 @@ The slices, in order, each green before the next starts:
 
    All three use `match` now. **`unwrapOr` is safe only where the
    fallback is genuinely equivalent to the error.**
-4. `self_host/`: the compiler's own phases, where the model stops
+4. `core/`: the compiler's own phases, where the model stops
    being a library and becomes the thing that proves it.
 
-   Twenty-five declarations in `self_host/` carry a sentinel contract.
+   Twenty-five declarations in `core/` carry a sentinel contract.
    Classified by what the sentinel means, twenty-one are absence, not
    failure. `namedFieldIndex` answers "where the pattern mentions field
    `n`, or -1". `structFieldOf` answers "0 when the struct does not
@@ -1873,9 +1873,9 @@ is about +4% on code generation, quoted as a range. End to end it is
 
 `#effects=` predicted which callers would pay. `internFind` had nine
 external callers, each testing `(< id 0)`. The two in
-`self_host/namespace.ax` already read `Alloc,Mut` and run during
+`core/namespace.ax` already read `Alloc,Mut` and run during
 resolve, and the check stage didn't move. The five in
-`self_host/codegen.ax` had an empty row, and the whole +4.6% is in the
+`core/codegen.ax` had an empty row, and the whole +4.6% is in the
 stage they run in. Read the effect row before a port: it sorts the
 callers into those that pay and those that don't.
 
@@ -1910,7 +1910,7 @@ sorting the sentinels by it changes what finishing the migration means.
 |---|---|---|
 | `stdlib/`, by the census that read prose | 8 | 5 |
 | `stdlib/`, by the census that reads bodies | **9** | **29** |
-| `self_host/`, slice 4's 25 | 21 | 1 |
+| `core/`, slice 4's 25 | 21 | 1 |
 | `stdlib/`, after slices 1–4 and the type correction below | 7 | 9 |
 | `stdlib/`, after the box moved to the caller (§10.1) and the two ports it permitted | 3 | 0 |
 | `stdlib/`, today, after `strFindByte` became a loop | **2** | **0** |
@@ -2081,7 +2081,7 @@ may `println`'s effect row widen?
 With `sysWriteFd` ported alone, the row widens from `IO` to `Alloc,IO`
 on **11 functions** in the compiler's whole closure. Six are public
 (`sysWriteFd`, `sysWriteAllFd`, `writeStr`, `printLit`, `printlnLit`,
-`rpcPut`) and five are in `self_host/`. There are **zero**
+`rpcPut`) and five are in `core/`. There are **zero**
 `restrict(no-alloc)` refusals, because nothing in the tree claims to
 print without allocating.
 
@@ -2111,7 +2111,7 @@ row widens through the seam whichever way the wrapper is written.
 
 `strFindByte` was held out because "a self tail call is the one shape
 the pair does not take yet". That is true of the emitter: `wantsTCO` is
-a refusal in the pair's eligibility test in `self_host/codegen.ax`. It
+a refusal in the pair's eligibility test in `core/codegen.ax`. It
 is a fact about the body, not the function, and the body can be written
 the other way. Both versions were probed on a copy of the tree:
 
@@ -2160,7 +2160,7 @@ slices actually landed in.
 |---|---|---|
 | 1 | **1st** | `stdlib/Err.ax` |
 | 3 | **2nd** | `stdlib/IO.ax`, then `stdlib/Sys.ax`'s filesystem and process halves |
-| 4 | **3rd** | `self_host/`: one function, `runTool` |
+| 4 | **3rd** | `core/`: one function, `runTool` |
 | 2 (part) | **4th** | `stdlib/Path.ax`'s two, and `stdlib/Agent/Tags.ax`'s two, which the list never named |
 | 3 | 5th–8th | `Sys.ax` socket-configuration, "did it work", descriptor-answering, `sysGetCwd` |
 | — | 9th | `stdlib/Intern.ax`'s `internFind`, a module the list never named |
@@ -2170,7 +2170,7 @@ slices actually landed in.
 
 Slice 2 was called "the rehearsal", and it finished last, over four
 separate commits. Slice 3 was called the hard one, "the `-errno`
-convention", and it went second, in one day, because `self_host/`
+convention", and it went second, in one day, because `core/`
 called none of it (§10 slice 3 records this). The list was ordered by
 how complicated each convention looked: `-1` is simpler than `-errno`,
 so the `-1` modules came first.
@@ -2226,7 +2226,7 @@ closed, so the constraint this rule states is discharged. The rule
 stays because these two programs are still what any future per-call
 cost has to be measured against.
 
-- `self_host/lsp.ax`, the language server, measured per edit by
+- `core/lsp.ax`, the language server, measured per edit by
   `scripts/check-lsp-selfhost.sh`.
 - `tests/net/echo-server.ax` is a pre-forked server whose workers run
   until they are signalled, driven in CI by `scripts/check-net.sh`. It

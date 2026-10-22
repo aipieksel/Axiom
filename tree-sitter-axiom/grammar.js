@@ -3,8 +3,8 @@
  *
  * The reference for every rule here is the compiler in this repository,
  * not a description of it: keyword spellings come from
- * `self_host/lexer.ax`, declaration and expression shapes from
- * `self_host/parser.ax`. Where the two could drift, the corpus in
+ * `core/lexer.ax`, declaration and expression shapes from
+ * `core/parser.ax`. Where the two could drift, the corpus in
  * `test/corpus/` is what catches it - it is parsed by both this grammar
  * and the real compiler in `scripts/check-tree-sitter.sh`.
  *
@@ -36,7 +36,7 @@
  */
 
 // Characters the lexer treats as operator constituents.
-// Source: `isIdentStart`/`isIdentChar` in self_host/lexer.ax.
+// Source: `isIdentStart`/`isIdentChar` in core/lexer.ax.
 const OPERATOR_CHAR = /[+\-*\/%^=<>!&|.~@]/;
 
 // Built-in type names, which the lexer tokenises as distinct keywords
@@ -273,7 +273,7 @@ module.exports = grammar({
     // Type parameters hold only lowercase names and constructors only
     // uppercase ones, which is not a stylistic convention here but the
     // rule the compiler uses: `looks_like_tyvar_list` in
-    // `self_host/parser.ax` accepts a parenthesised group as a type
+    // `core/parser.ax` accepts a parenthesised group as a type
     // parameter list exactly when every name in it starts lowercase.
     //
     // Encoding that makes `(data Maybe (a) (Nothing) (Just a))`
@@ -391,7 +391,7 @@ module.exports = grammar({
     ),
 
     // MAC-LANG-15: a rule's parameter is a PATTERN, not only a name.
-    // Four kinds, matching `parseMacroPat` (self_host/parser.ax): an
+    // Four kinds, matching `parseMacroPat` (core/parser.ax): an
     // identifier (a binder, or `_` binding nothing), a literal, or a
     // parenthesised form of patterns.
     //
@@ -451,7 +451,7 @@ module.exports = grammar({
     // The compiler's rule is the `:`: a group whose second token is a
     // colon is a field, and one whose second token is not is a
     // parameter list (`structGroupIsTyParams` in
-    // `self_host/parser.ax`). Precedence expresses exactly that here,
+    // `core/parser.ax`). Precedence expresses exactly that here,
     // because `(x : Int)` cannot match `type_parameters` at all - the
     // colon excludes it - so raising this rule only settles the case
     // where the two genuinely collide, which is the case the compiler
@@ -511,7 +511,7 @@ module.exports = grammar({
     ),
 
     // `(subtype Name is Base range LO[..HI])` — Ada-style
-    // range-constrained subtypes (`self_host/parser.ax`'s
+    // range-constrained subtypes (`core/parser.ax`'s
     // `parseSubtypeDecl`). The upper bound is present exactly when two
     // consecutive dots follow the lower bound. The compiler lexes `..`
     // as two DOT tokens; here it is one token the way `...` is
@@ -722,7 +722,7 @@ module.exports = grammar({
     type_variable: _ => token(/[+*/%<>=!&|^~-]*[a-z][A-Za-z0-9_']*/),
 
     // There is no general "parenthesised type" rule, and that is not an
-    // omission: `parseType` in `self_host/parser.ax` accepts a
+    // omission: `parseType` in `core/parser.ax` accepts a
     // parenthesised group in type position only when it is headed by `->`,
     // `*`, a comma-separated tuple, `()`, or a *capitalised*
     // name. `(a)` for a lowercase type variable is not valid Axiom, so it
@@ -737,7 +737,7 @@ module.exports = grammar({
     type_constructor: $ => choice(
       $.constructor_identifier,
       // `(Mod::T U)`: a qualified head takes arguments like a bare one
-      // (`parseTypeParens` in self_host/parser.ax reads the head
+      // (`parseTypeParens` in core/parser.ax reads the head
       // through the same qualified tail as a bare atom).
       seq('(', field('name', choice($.constructor_identifier, $.qualified_type)), repeat(field('argument', $._type)),
           ')'),
@@ -946,7 +946,7 @@ module.exports = grammar({
 
     // `(for i in lo..hi body)`, `(for i in lo..hi by step body)`,
     // `(for x in xs body)` and `(for (x k) in xs body)`, with exactly one
-    // body expression (`self_host/parser.ax`'s `parseForExpr`). `..`
+    // body expression (`core/parser.ax`'s `parseForExpr`). `..`
     // marks a range and `by` its step. `in` and `by` are keywords only
     // here: the `word` rule lexes each as one only where this rule
     // allows it, so `(in a x)` elsewhere is still an application of an
@@ -978,7 +978,7 @@ module.exports = grammar({
     // `(region r body)` - a checked allocation scope, MM-RGN-1 of
     // docs/memory-model.md (S2, 2026-09-03). The name is a
     // binder and the body is exactly one expression
-    // (`self_host/parser.ax`'s `parseRegionExpr`); a second body is a
+    // (`core/parser.ax`'s `parseRegionExpr`); a second body is a
     // parse error in the compiler and is simply not in this grammar's
     // language either. `region` was a REMOVED keyword until this rule
     // existed - see `removed_form` above, which no longer names it.
@@ -991,7 +991,7 @@ module.exports = grammar({
 
     // `(parallel p ((a e1) (b e2) ...) body...)` - the region name, a
     // binding list of `(name expr)` pairs, one or more body expressions
-    // (`self_host/parser.ax`'s `parseParallelExpr`). A binding is its own
+    // (`core/parser.ax`'s `parseParallelExpr`). A binding is its own
     // node rather than a `local_binding` because `mut` is refused here -
     // the compiler makes it AX2001 (`tests/diagnostics/640-parallel-shape`)
     // and this grammar simply does not admit it.
@@ -1221,7 +1221,7 @@ module.exports = grammar({
     // so `*Int` is one identifier naming the unknown type `*Int`
     // (the compiler's AX3002 spells `(* T)` at it), not a star
     // followed by a name. Source: `isIdentStart` in
-    // self_host/lexer.ax.
+    // core/lexer.ax.
     constructor_identifier: _ => token(/[+*/%<>=!&|^~-]*[A-Z][A-Za-z0-9_']*/),
 
     // An identifier is either a name or a bare run of operator

@@ -114,7 +114,7 @@ misplaced_imports() {  # <exe> <allow-file>
 
 # Every symbol an IR module declares: its import surface before it is
 # linked, `dllimport` or not. The intrinsics the driver grounds in the
-# backend (`backendGroundedSym` in self_host/driver.ax) are left out:
+# backend (`backendGroundedSym` in core/driver.ax) are left out:
 # the saturating conversions, and the `llvm.trap` that ends the
 # recovery abort on windows-x86_64. Neither is an import.
 declares_of() {

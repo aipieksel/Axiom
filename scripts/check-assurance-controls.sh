@@ -25,12 +25,12 @@
 # copied flat beside `tests/diagnostics/mods/*.ax`, as
 # `check-diagnostics.sh` does, because a helper module's name is its
 # file stem; a compiler module is checked with `AXIOM_PATH` naming
-# `self_host/`; everything else is checked as itself.
+# `core/`; everything else is checked as itself.
 #
 # Then the negative controls. A refusal fixture can draw its code and
 # still not test the rule the row names, if the code reaches it another
 # way. For three codes the gate removes the enforcement in a copy of
-# `self_host/`, builds a compiler from the copy, and requires the
+# `core/`, builds a compiler from the copy, and requires the
 # refusal fixtures to be accepted by it: no line with the code, no
 # error the compiler under test did not also report, and no crash.
 #
@@ -45,7 +45,7 @@
 # still runs on something the compiler under test refuses with that
 # code. Each seam is an exact string that must occur exactly once
 # before it is edited; zero or several matches is a FAIL, never a
-# skip. A reformat of `self_host/typecheck.ax` (`axiom fmt`) that
+# skip. A reformat of `core/typecheck.ax` (`axiom fmt`) that
 # respells a seam fails here loudly, and both strings are then updated
 # to the new spelling.
 #
@@ -145,11 +145,11 @@ run_check() {
     tests/diagnostics/*)
       base="$(basename "$p")"; base="${base%.axbad}"; base="${base%.ax}.ax"
       cp "$repo_root/$p" "$work/diag/$base"
-      ( cd "$work/diag" && AXIOM_PATH="$repo_root/self_host" \
+      ( cd "$work/diag" && AXIOM_PATH="$repo_root/core" \
           "$cc" --diagnostic-format=ai check "$base" ) > "$work/last.out" 2>&1 </dev/null || rc=$?
       ;;
-    self_host/*)
-      AXIOM_PATH="$repo_root/self_host" \
+    core/*)
+      AXIOM_PATH="$repo_root/core" \
         "$cc" --diagnostic-format=ai check "$p" > "$work/last.out" 2>&1 </dev/null || rc=$?
       ;;
     *)
@@ -200,7 +200,7 @@ done < "$work/rows.tsv"
 
 # --------------------------------------------------------------------
 # 2. Negative controls. Each is a code, a fixture of the gate's own,
-#    and one or two seams in `self_host/typecheck.ax`: the text as the
+#    and one or two seams in `core/typecheck.ax`: the text as the
 #    formatter lays it out, then the same text with the enforcement
 #    gone. The fixtures under a control are its own and those of every
 #    row that names the code.
@@ -215,12 +215,12 @@ fixtures_for() {
 }
 
 # ablate <tree> <file> <old> <new> [<old> <new> ...]: apply each seam
-# to `<tree>/self_host/<file>` after counting it. Prints the counts;
+# to `<tree>/core/<file>` after counting it. Prints the counts;
 # returns 1 when any seam does not occur exactly once, with the file
 # untouched.
 ablate() {
   local tree="$1" file="$2"; shift 2
-  python3 - "$tree/self_host/$file" "$@" <<'PY'
+  python3 - "$tree/core/$file" "$@" <<'PY'
 import sys
 p = sys.argv[1]
 pairs = sys.argv[2:]
@@ -246,9 +246,9 @@ control() {
   echo
   echo "== negative control: $code, $what =="
   mkdir -p "$tree"
-  cp -R "$repo_root/self_host" "$tree/"
+  cp -R "$repo_root/core" "$tree/"
   if ! ablate "$tree" typecheck.ax "$@"; then
-    bad "$code: a seam does not occur exactly once in self_host/typecheck.ax, so there is nothing to ablate"
+    bad "$code: a seam does not occur exactly once in core/typecheck.ax, so there is nothing to ablate"
     return
   fi
   ok "$code: every seam occurs once, and the copy is ablated"

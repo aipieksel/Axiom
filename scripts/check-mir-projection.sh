@@ -6,7 +6,7 @@
 # decorative.
 #
 # WHAT IS BEING PUBLISHED, and why it needs a gate. `FnEnt` word 8 is
-# the region-facts record `rgnFactsNew` builds in self_host/
+# the region-facts record `rgnFactsNew` builds in core/
 # typecheck.ax: a per-function interprocedural dataflow summary saying
 # which parameters the body stores a FRESH value into, which parameters
 # flow into which, where the result comes from, and whether the walk hit
@@ -33,9 +33,9 @@
 #   predicate rather than two that agree today; this is the assertion
 #   that keeps them agreeing. It is order-sensitive on purpose: the
 #   join key is the whole tuple because the nid is NOT unique - measured
-#   2026-09-03 over `symbols self_host/main.ax --builtins`, 4,068 rows
+#   2026-09-03 over `symbols core/main.ax --builtins`, 4,068 rows
 #   carry a nid and 4,066 are distinct, with `die` (stdlib/IO.ax:501 vs
-#   self_host/main.ax:2009) and `jsonHexDigit` (self_host/render.ax:1184
+#   core/main.ax:2009) and `jsonHexDigit` (core/render.ax:1184
 #   vs stdlib/Cereal.ax:453) colliding between genuinely different
 #   functions.
 #
@@ -236,7 +236,7 @@ python3 - "$work/mir.axsym" "$work/probe.axir" <<'PY' || exit 1
 import sys, re
 axsym, axir = sys.argv[1], sys.argv[2]
 
-# The encodings, from self_host/typecheck.ax's `rgnFactsNew` comment
+# The encodings, from core/typecheck.ax's `rgnFactsNew` comment
 # and `rgnNoteFlow`:
 #   word 1 flowsCUR   bit i -> a fresh value flows into parameter i
 #   word 2 flowsFrom  one mask per parameter

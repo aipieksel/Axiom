@@ -53,8 +53,8 @@
 #     signature;
 #   * the menu offered to a document that does NOT parse must equal,
 #     exactly, the head keywords extracted from the `kwEq name ...`
-#     call sites in self_host/parser.ax - so the copy of that
-#     vocabulary in self_host/lsp.ax is a checked claim rather than a
+#     call sites in core/parser.ax - so the copy of that
+#     vocabulary in core/lsp.ax is a checked claim rather than a
 #     list that drifts. drive.py refuses to run if that extraction
 #     yields fewer than 15 keywords, or if any derived form text or
 #     paragraph comes out empty.
@@ -135,7 +135,7 @@
 #
 # NEGATIVE TESTS, re-run 2026-08-08 against this version of the gate.
 # The hover and completion ablations are from 2026-08-26 and are at the
-# end. Six ablations first. Each PATCHES self_host/lsp.ax in a scratch tree (never
+# end. Six ablations first. Each PATCHES core/lsp.ax in a scratch tree (never
 # the real one), builds a server from it - six distinct binaries, sha256
 # all different from the good one's 0cffc884 - RE-BLESSES every golden
 # from that build so the golden half is green by construction, and then
@@ -169,7 +169,7 @@
 #   `range` is `(lspRange src 0)`. WAS exit 0, with 060-outline.golden
 #   re-blessed to call an enum a Function and to publish a
 #   selectionRange NOT contained in its range - the invariant
-#   self_host/lsp.ax's own comment claims it satisfies. NOW exit 1:
+#   core/lsp.ax's own comment claims it satisfies. NOW exit 1:
 #   7 goldens rewritten, 8 failures, the first being "symbol 'Color':
 #   selectionRange (0, 6)-(0, 11) is not contained in range
 #   (0, 0)-(0, 0), which the protocol requires", and the large-document
@@ -221,7 +221,7 @@
 # pass").
 #
 # HOVER AND COMPLETION, nine more ablations, 2026-08-26. Each patches
-# self_host/lsp.ax in a scratch tree, builds a server from it,
+# core/lsp.ax in a scratch tree, builds a server from it,
 # re-blesses every golden from that build, and then runs this script
 # clean. Every one exits 1, and each names its own thing:
 #
@@ -270,7 +270,7 @@
 #   the cost block's own header.
 #
 # DECLARATION AND CALL HIERARCHY, five more ablations, 2026-08-31.
-# Same method: each patches self_host/lsp.ax in a scratch COPY of the
+# Same method: each patches core/lsp.ax in a scratch COPY of the
 # tree (never this one), builds a server from it, re-blesses all 8
 # goldens from that build so the golden half is green by construction,
 # and runs this script clean. Every one exits 1 with "31 passed, 1
@@ -338,7 +338,7 @@
 # leaving to be noticed: the constructor block's requests are written
 # INTO drive.py's navigation session, not read from tests/lsp/, so
 # there is no *.golden a bless could satisfy and none of these runs
-# rewrote one. Each patches self_host/lsp.ax in a scratch copy, builds
+# rewrote one. Each patches core/lsp.ax in a scratch copy, builds
 # a server with scripts/build-shared-axc.sh, and runs drive.py against
 # the UNBLESSED goldens. Every one exits 1 with "33 passed, 1 failed"
 # and exactly one FAIL line, which is also the proof that the change
@@ -398,7 +398,7 @@
 # above these touch no golden: the hierarchy block's requests are
 # written INTO drive.py's navigation session, not read from
 # tests/lsp/, so there is no *.golden a bless could satisfy. Each
-# patches self_host/lsp.ax in a scratch copy, builds a server with
+# patches core/lsp.ax in a scratch copy, builds a server with
 # scripts/build-shared-axc.sh, and runs this script clean with
 # AXIOM_AXC pointed at that build. Every one exits 1 with "43 passed,
 # 1 failed" and exactly one FAIL line, which is also the proof that
@@ -433,7 +433,7 @@
 # the first definition; VS Code said "duplicate definition `main`" and
 # pointed at nothing.
 #
-# Each of these patches self_host/lsp.ax in a scratch copy, builds a
+# Each of these patches core/lsp.ax in a scratch copy, builds a
 # server, re-blesses all 9 goldens FROM THAT BUILD into a scratch copy
 # of tests/lsp/ so the golden half is green by construction, and runs
 # drive.py clean against it. All four exit 1.
@@ -573,7 +573,7 @@ filter="${1:-}"
 bless="${AXIOM_BLESS:-0}"
 
 # The server under test is built FROM SOURCE by `$axiom`, not `$axiom`
-# itself: this gate exists to watch self_host/, and `$axiom` may be an
+# itself: this gate exists to watch core/, and `$axiom` may be an
 # older seed-descended binary that predates the change being tested.
 gate_build_axc stage1
 
@@ -667,7 +667,7 @@ echo "swept $fixtures fixtures (floor $floor), $rows manifest rows, $orows outli
 # `lspChar`'s `lineStartOf` rescans to find the line start - and
 # `lspRange` calls it twice per symbol, so an outline cost four
 # whole-document scans per symbol. Measured before the line index:
-# `documentSymbol` on `self_host/typecheck.ax` took 0.166 s against
+# `documentSymbol` on `core/typecheck.ax` took 0.166 s against
 # 0.042 s for the entire `didOpen` that parses and checks the same file,
 # and 2.22 s at 8,002 symbols against 0.20 s.
 #
@@ -724,7 +724,7 @@ print(f"outline {syms} symbols: didOpen {t_open:.3f}s, documentSymbol {cost:.3f}
 if ratio > 2.0:
     print(f"FAIL documentSymbol cost {ratio:.2f}x the whole parse-and-check of the same")
     print( "     document, over a ceiling of 2.00x. The line index is what keeps this")
-    print( "     under one - see lspLineIndex in self_host/lsp.ax.")
+    print( "     under one - see lspLineIndex in core/lsp.ax.")
     sys.exit(1)
 # SEMANTIC TOKENS' COST, the same ratio on the same document. The answer
 # is the largest this server sends - five integers per token, ~23,000
@@ -749,7 +749,7 @@ print(f"semantic tokens {tokens} tokens: didOpen {t_open:.3f}s, semanticTokens/f
 if sratio > 2.0:
     print(f"FAIL semanticTokens/full cost {sratio:.2f}x the whole parse-and-check of the same")
     print( "     document, over a ceiling of 2.00x. One parse, one occurrence walk and one")
-    print( "     byte scan is the budget - see SECTION HL in self_host/lsp.ax.")
+    print( "     byte scan is the budget - see SECTION HL in core/lsp.ax.")
     sys.exit(1)
 PY
 )
@@ -868,7 +868,7 @@ for what, ch, want_floor in (("empty prefix", 1, floor), ("filtered", 8, 1)):
         print(f"FAIL completion cost {ratio:.2f}x the whole parse-and-check of the same")
         print( "     document, over a ceiling of 2.00x. It is asked once per keystroke,")
         print( "     so this is the budget - see lspComplWants and LSP_COMPL_MAX in")
-        print( "     self_host/lsp.ax.")
+        print( "     core/lsp.ax.")
         bad=1
 sys.exit(bad)
 PY

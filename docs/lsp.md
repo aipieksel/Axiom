@@ -6,14 +6,14 @@ shows how to run it, how to connect Neovim, Helix, Emacs and VS Code,
 and what each request answers and refuses. It ends with how
 highlighting works and the cost rule the server follows.
 
-The server is `self_host/lsp.ax`, one module of the self-hosted
+The server is `core/lsp.ax`, one module of the self-hosted
 compiler, and it handles the protocol and nothing else. Every
 diagnostic it publishes comes from the same
 `parseModuleWith`/`checkModule` pair that `axiom check` runs. Every
 answer is read off the compiler's own parse tree.
 
 Tested by `scripts/check-lsp-selfhost.sh`, which builds a server from
-`self_host/` and drives it with `tests/lsp/drive.py`.
+`core/` and drives it with `tests/lsp/drive.py`.
 
 For a reference forged with `as`, `AX3073` points to the source value
 and explains its representation and lifetime obligations. The editor
@@ -887,7 +887,7 @@ expected shape from the modules that declare it.
 
 A local name shadows an imported one, and both shadow a keyword. The
 keyword list in `lsp.ax` is checked against the `kwEq` call sites in
-`self_host/parser.ax`, so the two can't drift apart.
+`core/parser.ax`, so the two can't drift apart.
 
 The list is filtered on the prefix under the cursor and capped at
 `LSP_COMPL_MAX`. It's sent with `isIncomplete: true`, which tells the
@@ -1039,7 +1039,7 @@ doesn't parse gets `null`.
 
 `textDocument/rangeFormatting` isn't offered. `fmtFormat` proves its
 output is a fixed point of the whole file, and a slice formatted alone
-doesn't always give the same bytes. Across `stdlib/` and `self_host/`,
+doesn't always give the same bytes. Across `stdlib/` and `core/`,
 a few runs of top-level forms formatted differently alone than inside
 their file. Every difference was about where a comment lands:
 
@@ -1381,7 +1381,7 @@ typed. Hover on either `bump` quotes its signature, `y` and `n` resolve
 to their binders, the outline lists `bump` and `f`, and completion at
 `bu` offers `bump`.
 
-`lspParse` in `self_host/lsp.ax` reads such a document at the token
+`lspParse` in `core/lsp.ax` reads such a document at the token
 level, the way a Lisp editor would:
 
 1. An unterminated string is closed at the end of its line.
@@ -1470,7 +1470,7 @@ bracket pair by its nesting depth, which semantic tokens don't do.
 `scripts/check-tree-sitter.sh` tests both against every `.ax` file in
 the repository.
 
-The REPL colours Axiom a third way. `self_host/replhl.ax` paints
+The REPL colours Axiom a third way. `core/replhl.ax` paints
 source from the compiler's own lexer, because a REPL has no editor to
 consult.
 

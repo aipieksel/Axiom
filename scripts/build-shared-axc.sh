@@ -18,7 +18,7 @@
 # It is not a gate, but every gate that reuses the artifact rests on its
 # claim: "this artifact is what you would have built". So it builds the
 # compiler twice and compares, byte for byte, the IR both emit for
-# `self_host/main.ax`, the largest Axiom program. It compares IR, not
+# `core/main.ax`, the largest Axiom program. It compares IR, not
 # binaries, because the macOS linker stamps a build UUID into each
 # Mach-O. The extra build is cheap next to what the cache saves.
 
@@ -57,18 +57,18 @@ initial_stamp="$(gate_source_stamp)"
 candidate="$work/candidate"
 
 build_one() {  # build_one <output> <log>
-  if ! "$axiom" build --input self_host/main.ax --output "$1" >"$2" 2>&1; then
-    echo "FAIL: could not build the shared compiler from self_host/" >&2
+  if ! "$axiom" build --input core/main.ax --output "$1" >"$2" 2>&1; then
+    echo "FAIL: could not build the shared compiler from core/" >&2
     sed 's/^/    /' "$2" | head -20 >&2
     exit 1
   fi
 }
 
-echo "== building the shared compiler under test from self_host/ =="
+echo "== building the shared compiler under test from core/ =="
 build_one "$candidate" "$work/build.log"
 
 # A second, independent build from the same tree and builder, then both
-# compilers emit the IR for `self_host/main.ax`. The shared artifact is
+# compilers emit the IR for `core/main.ax`. The shared artifact is
 # the compiler each gate would have built exactly when the two files are
 # identical.
 #
@@ -85,14 +85,14 @@ build_one "$candidate" "$work/build.log"
 # builds do not emit the same IR" and exits 1.
 #
 # A source change that alters no emitted byte passes, such as a comment
-# added to `self_host/main.ax`, and so does building the second compiler
+# added to `core/main.ax`, and so does building the second compiler
 # with the seed-descended `.axiom-bin/axiom`. That is correct: this
 # compares what the compilers do, and the stamp covers their inputs.
 echo "== building it a second time, to measure the equality this claims =="
 build_one "$work/second" "$work/build2.log"
 
-"$candidate"  emit-llvm self_host/main.ax -o "$work/a.ll" >/dev/null
-"$work/second" emit-llvm self_host/main.ax -o "$work/b.ll" >/dev/null
+"$candidate"  emit-llvm core/main.ax -o "$work/a.ll" >/dev/null
+"$work/second" emit-llvm core/main.ax -o "$work/b.ll" >/dev/null
 
 a_lines=$(wc -l < "$work/a.ll" | tr -d ' ')
 
@@ -140,4 +140,4 @@ pending=""
 
 echo "ok   $out"
 echo "ok   stamp $(cut -c1-16 "$out.stamp")… - gates will reuse this until a source file moves"
-echo "ok   a second build emits identical IR for self_host/main.ax ($a_lines lines)"
+echo "ok   a second build emits identical IR for core/main.ax ($a_lines lines)"

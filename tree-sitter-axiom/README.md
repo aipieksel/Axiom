@@ -64,7 +64,7 @@ It runs these checks in order:
    `by` and `set`.
 4. Every `.ax` file in the repository must parse with no `ERROR` node.
    This check matters most. Whoever changes the grammar writes the
-   corpus, but `stdlib/` and `self_host/` get new language forms first,
+   corpus, but `stdlib/` and `core/` get new language forms first,
    so this fails until the grammar catches up. The file count is the
    one the [root README](../README.md) states, and
    `scripts/check-doc-drift.sh` recomputes it.
@@ -103,8 +103,8 @@ language server's fixtures.
 ## Design notes
 
 The grammar follows the compiler. Keyword spellings come from
-`self_host/lexer.ax`, and declaration and expression shapes from
-`self_host/parser.ax`. Where the grammar has to make a choice, it makes
+`core/lexer.ax`, and declaration and expression shapes from
+`core/parser.ax`. Where the grammar has to make a choice, it makes
 the one the compiler makes.
 
 - Case decides `(data Maybe (a) (Nothing) ...)`. `(a)` and `(Nothing)`
@@ -133,7 +133,7 @@ the one the compiler makes.
   Tree-sitter can't express nesting as a token, and the obvious
   chunked regex disagrees with the compiler. For example, `#| a||# |#`
   closes at the `|#` inside `a||#` for `skipBlockComment` in
-  `self_host/lexer.ax`, but not for the regex. The scanner reproduces
+  `core/lexer.ax`, but not for the regex. The scanner reproduces
   that function byte for byte.
 
 ### Declared conflicts

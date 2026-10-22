@@ -636,7 +636,7 @@ def cmd_diff(args, pos):
 
 
 CODE_RE = re.compile(r"AX[0-9]{4}\Z")
-# `renderFailTrailer` (self_host/render.ax) prints this after a failed
+# `renderFailTrailer` (core/render.ax) prints this after a failed
 # compilation in every format, so the JSON-mode contract allows it, but
 # only as the last line and only spelled exactly so.
 TRAILER_RE = re.compile(r"compilation failed due to [0-9]+ previous errors?\Z")
@@ -745,7 +745,7 @@ def cmd_json(pos):
 
 
 # One SGR colour sequence, the only escape the human renderer writes.
-# Its parameters must be a palette entry in self_host/style.ax (the
+# Its parameters must be a palette entry in core/style.ax (the
 # render gate's check 5 reads the same table) or `0`, the reset. The
 # shape alone would excuse a source file that smuggles `ESC [ 31 m`
 # into a quoted line.
@@ -753,8 +753,8 @@ SGR_RE = re.compile(rb"\x1b\[([0-9;]*)m")
 
 
 def style_palette(root):
-    """The SGR parameter strings self_host/style.ax declares, and `0`."""
-    with open(os.path.join(root, "self_host", "style.ax"), encoding="utf-8") as f:
+    """The SGR parameter strings core/style.ax declares, and `0`."""
+    with open(os.path.join(root, "core", "style.ax"), encoding="utf-8") as f:
         pal = set(re.findall(r'"([0-9;]+)"', f.read()))
     pal.add("0")
     return pal

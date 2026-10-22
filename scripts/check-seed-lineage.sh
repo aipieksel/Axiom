@@ -13,7 +13,7 @@
 # that is NOT descended from any Axiom seed, and this repository has
 # one: the Rust implementation it deleted on 2026-08-08 (`430a138`),
 # whose last commit `bb730db` is still in this history and still
-# builds with cargo. Measured 2026-08-29: it compiles the `self_host/`
+# builds with cargo. Measured 2026-08-29: it compiles the `core/`
 # tree of the FIRST seed commit `60445dc` into a stage1 whose emission
 # of that tree is byte-identical to the committed first seed - Wheeler's
 # diverse double-compile, at the root of the lineage. From that root
@@ -229,16 +229,28 @@ has_seed() {  # <commit> -> 0 when the host's seed exists there
 seed_at() {  # <commit> <out.ll>
   git -C "$repo_root" show "$1:bootstrap/axiom-$target.ll" > "$2" 2>/dev/null
 }
-extract() {  # <commit> <dir> [paths...] - the tree's self_host and stdlib
-  local sha="$1" dest="$2"; shift 2
+extract() {  # <commit> <dir> [paths...] - the tree's core and stdlib
+  # `core` names the compiler's directory, which commits before the
+  # rename call `self_host`; either way it lands at `<dir>/core`. The
+  # name reaches no emitted IR, so a seed compares the same.
+  local sha="$1" dest="$2" p; shift 2
+  local paths=()
+  for p in "$@"; do
+    if [[ "$p" == core ]] && ! git -C "$repo_root" cat-file -e "$sha:core" 2>/dev/null; then
+      paths+=(self_host)
+    else
+      paths+=("$p")
+    fi
+  done
   mkdir -p "$dest"
-  ( cd "$repo_root" && git archive "$sha" "$@" ) | tar -x -C "$dest"
+  ( cd "$repo_root" && git archive "$sha" "${paths[@]}" ) | tar -x -C "$dest"
+  if [[ -d "$dest/self_host" ]]; then mv "$dest/self_host" "$dest/core"; fi
 }
 workdir() {  # <treedir> <wdir>
   mkdir -p "$2"
   ln -sfn "$1/stdlib"    "$2/stdlib"
-  ln -sfn "$1/self_host" "$2/self_host"
-  cp "$1/self_host/main.ax" "$2/in.ax"
+  ln -sfn "$1/core" "$2/core"
+  cp "$1/core/main.ax" "$2/in.ax"
 }
 optimised() {
   if (( have_opt )) && opt -O1 "$1" -S -o "$2" 2>/dev/null; then printf '%s' "$2"; else printf '%s' "$1"; fi
@@ -267,7 +279,7 @@ seed_argv=()
 emit() {  # <compiler> <wdir> <out.ll>; sets emit_reason on failure
   local comp="$1" w="$2" out="$3" rc
   (( ${#seed_argv[@]} > 0 )) || { emit_reason="no emission spelling was chosen (emit_as)"; return 1; }
-  ( cd "$w" && AXIOM_STDLIB="$w/stdlib" AXIOM_PATH=self_host "$comp" "${seed_argv[@]}" > "$out" 2> "$out.err" ); rc=$?
+  ( cd "$w" && AXIOM_STDLIB="$w/stdlib" AXIOM_PATH=core "$comp" "${seed_argv[@]}" > "$out" 2> "$out.err" ); rc=$?
   if ! grep -q '^target triple' "$out" || (( $(wc -l < "$out") <= 10000 )); then
     emit_reason="rc=$rc, $(wc -l < "$out" | tr -d ' ') lines"
     # `error[` and `error:` are the compiler's own; a bare `error`
@@ -336,26 +348,26 @@ final_ir=""; stage_note=""
 replay_seed() {  # <prev> <next> <dir>
   local prev="$1" next="$2" d="$3"
   seed_compiler "$prev" "$d" || return 1
-  extract "$next" "$d/tree" self_host stdlib; workdir "$d/tree" "$d/w"
+  extract "$next" "$d/tree" core stdlib; workdir "$d/tree" "$d/w"
   seed_at "$next" "$d/want.ll"
   ladder "$d/seed" "$d/w" "$d/want.ll" 1 link
 }
 
 # mixed-tree: the previous seed cannot compile the next tree (that is
 # asserted, so a bridge nobody needs is refused), but it can compile
-# `self_host@next` over `stdlib@prev` into an intermediate that can.
+# `core@next` over `stdlib@prev` into an intermediate that can.
 # The intermediate's emission is stage2 - the intermediate itself
 # being the stage1 the seed could not produce.
 replay_mixed() {  # <prev> <next> <dir>
   local prev="$1" next="$2" d="$3"
   seed_compiler "$prev" "$d" || return 1
-  extract "$next" "$d/tree" self_host stdlib; workdir "$d/tree" "$d/w"
+  extract "$next" "$d/tree" core stdlib; workdir "$d/tree" "$d/w"
   seed_at "$next" "$d/want.ll"
   if ladder "$d/seed" "$d/w" "$d/want.ll" 1 plain; then
     ladder_reason="the plain link reproduces at $matched - the mixed-tree bridge is not needed and the row must say \`seed\`"; return 1
   fi
   echo "     the plain link fails, as the bridge requires: $ladder_reason"
-  extract "$prev" "$d/mixed" stdlib; extract "$next" "$d/mixed" self_host; workdir "$d/mixed" "$d/mw"
+  extract "$prev" "$d/mixed" stdlib; extract "$next" "$d/mixed" core; workdir "$d/mixed" "$d/mw"
   emit "$d/seed" "$d/mw" "$d/i1.ll" || { ladder_reason="the seed cannot compile the mixed tree ($emit_reason)"; return 1; }
   build_compiler "$d/i1.ll" "$d/i1" || { ladder_reason="the intermediate does not build ($(build_reason "$d/i1"))"; return 1; }
   ladder "$d/i1" "$d/w" "$d/want.ll" 2 link
@@ -367,11 +379,11 @@ replay_mixed() {  # <prev> <next> <dir>
 replay_skip() {  # <prev> <next> <skipped> <dir>
   local prev="$1" next="$2" orphan="$3" d="$4"
   seed_compiler "$prev" "$d" || return 1
-  extract "$next" "$d/tree" self_host stdlib; workdir "$d/tree" "$d/w"
+  extract "$next" "$d/tree" core stdlib; workdir "$d/tree" "$d/w"
   seed_at "$next" "$d/want.ll"
   ladder "$d/seed" "$d/w" "$d/want.ll" 1 link || return 1
   local got="$matched" note="$stage_note"
-  extract "$orphan" "$d/otree" self_host stdlib; workdir "$d/otree" "$d/ow"
+  extract "$orphan" "$d/otree" core stdlib; workdir "$d/otree" "$d/ow"
   seed_at "$orphan" "$d/orphan.ll"
   emit_as "$orphan"
   if ladder "$d/seed" "$d/ow" "$d/orphan.ll" 1 orphan; then
@@ -388,7 +400,7 @@ replay_skip() {  # <prev> <next> <skipped> <dir>
   matched="$got"; stage_note="$note"
 }
 
-# walk: every commit between two seeds that touched `self_host/` or
+# walk: every commit between two seeds that touched `core/` or
 # `stdlib/`, each compiled by the compiler built from the one before.
 # The list is checked in (`list=`) and must equal git's, so a walk
 # cannot quietly skip a commit. A step may carry a bridge:
@@ -411,7 +423,7 @@ replay_walk() {  # <prev> <next> <listfile> <dir>
   while read -r c how arg sha; do
     [[ -z "$c" || "$c" == \#* ]] && continue
     i=$((i + 1)); nd="$d/$i-$c"; ts=$SECONDS
-    extract "$c" "$nd/tree" self_host stdlib; workdir "$nd/tree" "$nd/w"
+    extract "$c" "$nd/tree" core stdlib; workdir "$nd/tree" "$nd/w"
     case "${how:-plain}" in
       plain)
         if ! emit "$cur" "$nd/w" "$nd/w/s1.ll"; then ladder_reason="step $i (${c}): the compiler from step $((i-1)) cannot compile it ($emit_reason)"; return 1; fi
@@ -427,14 +439,16 @@ replay_walk() {  # <prev> <next> <listfile> <dir>
         else ladder_reason="step $i (${c}): the plain step succeeds - the \`$how\` annotation is stale"; return 1; fi
         echo "     step $i (${c}): $how bridge; the plain step fails as it must: $plain_reason"
         if [[ "$how" == mixed-tree ]]; then
-          extract "$pc" "$nd/mixed" stdlib; extract "$c" "$nd/mixed" self_host; workdir "$nd/mixed" "$nd/mw"
+          extract "$pc" "$nd/mixed" stdlib; extract "$c" "$nd/mixed" core; workdir "$nd/mixed" "$nd/mw"
           emit "$cur" "$nd/mw" "$nd/w/i1.ll" || { ladder_reason="step $i (${c}): the mixed tree does not compile ($emit_reason)"; return 1; }
         else
           local pf="$repo_root/$lineage_dir/$arg"
           [[ -f "$pf" ]] || { ladder_reason="step $i (${c}): patch $arg is not in $lineage_dir"; return 1; }
           [[ "$(gate_sha "$pf")" == "$sha" ]] || { ladder_reason="step $i (${c}): $arg hashes to $(gate_sha "$pf" | cut -c1-12), the list says ${sha:0:12}"; return 1; }
-          extract "$c" "$nd/patched" self_host stdlib
-          ( cd "$nd/patched" && patch -p1 < "$pf" ) > "$nd/patch.log" 2>&1 || { ladder_reason="step $i (${c}): $arg does not apply"; return 1; }
+          extract "$c" "$nd/patched" core stdlib
+          # A patch names the compiler's files where its commit kept them;
+          # `extract` moved them to `core/`, so its paths move the same way.
+          ( cd "$nd/patched" && sed -e 's#^\([-+][-+][-+] [ab]/\)self_host/#\1core/#' "$pf" | patch -p1 ) > "$nd/patch.log" 2>&1 || { ladder_reason="step $i (${c}): $arg does not apply"; return 1; }
           workdir "$nd/patched" "$nd/pw"
           emit "$cur" "$nd/pw" "$nd/w/i1.ll" || { ladder_reason="step $i (${c}): the patched tree does not compile ($emit_reason)"; return 1; }
         fi
@@ -468,7 +482,7 @@ replay_walk() {  # <prev> <next> <listfile> <dir>
   # The last step's tree is the next seed's tree. Its predecessor's
   # emission of it was stage1 of the final link; the final compiler's
   # own re-emission is stage2.
-  extract "$next" "$d/ftree" self_host stdlib; workdir "$d/ftree" "$d/fw"
+  extract "$next" "$d/ftree" core stdlib; workdir "$d/ftree" "$d/fw"
   emit "$cur" "$d/fw" "$d/fw/final.ll" || { ladder_reason="the final compiler cannot re-emit the ${next:0:7} tree ($emit_reason)"; return 1; }
   if seed_cmp "$d/fw/final.ll" "$want"; then matched="stage2"; final_ir="$d/fw/final.ll"; stage_note=" ($i steps, $((SECONDS - t0))s)"; return 0; fi
   ladder_reason="the walk ends $(lines_differing "$d/fw/final.ll" "$want") lines from the ${next:0:7} seed"
@@ -495,7 +509,7 @@ replay_anchor() {  # <next> <dir>
   rust_bin="$d/target/release/axiom"
   [[ -x "$rust_bin" ]] || { ladder_reason="cargo built nothing at $rust_bin"; return 1; }
   echo "     the Rust compiler built in $((SECONDS - t0))s ($(wc -c < "$rust_bin" | tr -d ' ') bytes)"
-  extract "$next" "$d/tree" self_host stdlib; workdir "$d/tree" "$d/w"
+  extract "$next" "$d/tree" core stdlib; workdir "$d/tree" "$d/w"
   seed_at "$next" "$d/want.ll"
   anchor_stage1 "$d/tree" "$d/w" || return 1
   ladder "$d/w/stage1" "$d/w" "$d/want.ll" 2 link || return 1
@@ -505,7 +519,7 @@ replay_anchor() {  # <next> <dir>
 anchor_stage1() {  # <tree> <wdir>: the Rust compiler builds stage1 from the tree, with its own llc/cc driver
   local tree="$1" w="$2"
   rm -f "$w/stage1" "$w/stage1.ll"
-  ( cd "$w" && AXIOM_STDLIB="$tree/stdlib" "$rust_bin" build --input self_host/main.ax --output stage1 --emit-llvm ) > "$w/rust-build.log" 2>&1 \
+  ( cd "$w" && AXIOM_STDLIB="$tree/stdlib" "$rust_bin" build --input core/main.ax --output stage1 --emit-llvm ) > "$w/rust-build.log" 2>&1 \
     || { ladder_reason="the Rust compiler cannot build stage1: $(grep -m1 -iE 'error' "$w/rust-build.log" | cut -c1-120)"; return 1; }
   [[ -x "$w/stage1" && -s "$w/stage1.ll" ]] || { ladder_reason="the Rust compiler produced no stage1"; return 1; }
 }
@@ -703,7 +717,7 @@ for ((i = 0; i < nrows; i++)); do
         listed_full+="$f"$'\n'
       done <<< "$listed"
       listed_full="${listed_full%$'\n'}"
-      gits="$(git -C "$repo_root" log --reverse --format=%H "${row_from[i]}..${row_seed[i]}" -- self_host stdlib)"
+      gits="$(git -C "$repo_root" log --reverse --format=%H "${row_from[i]}..${row_seed[i]}" -- self_host core stdlib)"
       if (( listed_ok )) && [[ "$listed_full" == "$gits" ]]; then
         ok "row ${row_seed_short[i]} walks the $(grep -c . <<< "$listed") commits between ${row_from[i]:0:7} and ${row_seed_short[i]} that touched the sources - the list is git's"
       else
@@ -732,7 +746,7 @@ for ((i = 0; i < nrows; i++)); do
     bridge-needed)
       fail "$chain:${row_line[i]}: the ${row_seed_short[i]} seed was generated by a compiler that is not the ${row_from[i]:0:7} seed's descendant (${row_detail[i]# })"
       echo "      That link is not replayable as written. Certify it: try \`mixed-tree\` (the previous"
-      echo "      seed over self_host@new + stdlib@previous), or a \`walk\` over the commits between,"
+      echo "      seed over core@new + stdlib@previous), or a \`walk\` over the commits between,"
       echo "      and replace this row with the method that reproduces the seed." ;;
   esac
 done
@@ -944,7 +958,7 @@ echo "== STAMP names the tree of ${current:0:7}, and the seed in the tree is tha
 # is the EXTRACTED tree at the seed commit, and STAMP must describe it,
 # or the replay would compare the right bytes against the wrong claim.
 want_stamp="$(sed -n 's/^Source stamp: *//p' bootstrap/STAMP | tr -d '[:space:]')"
-extract "$current" "$work/current" self_host stdlib
+extract "$current" "$work/current" core stdlib
 got_stamp="$(gate_seed_source_stamp "$work/current")"
 if [[ "$got_stamp" == "$want_stamp" ]]; then ok "bootstrap/STAMP hashes ${current:0:7}'s sources (${got_stamp:0:12})"; else fail "bootstrap/STAMP (${want_stamp:0:12}) does not describe ${current:0:7}'s sources (${got_stamp:0:12})"; fi
 if seed_at "$current" "$work/current-seed.ll" && cmp -s "$work/current-seed.ll" "bootstrap/axiom-$target.ll"; then
@@ -1145,7 +1159,7 @@ if (( full && have_cargo )) && [[ -n "$rust_bin" && -x "$rust_bin" ]]; then
   # (101); ask about `f` (102) in a copy. The anchor line is asserted
   # present before the edit: the first attempt at this probe perturbed
   # a file that did not exist at that commit and "passed".
-  pd="$work/anchor-ax-probe"; extract "$first_seed" "$pd/tree" self_host stdlib
+  pd="$work/anchor-ax-probe"; extract "$first_seed" "$pd/tree" core stdlib
   victim="$pd/tree/stdlib/Json.ax"
   if [[ "$(grep -c '(== (strByte src p) 101)' "$victim" 2>/dev/null)" != 1 ]]; then
     fail "the .ax probe's anchor \`(== (strByte src p) 101)\` is not exactly once in stdlib/Json.ax at ${first_seed:0:7} - re-derive it"
@@ -1173,7 +1187,7 @@ if (( full && have_cargo )) && [[ -n "$rust_bin" && -x "$rust_bin" ]]; then
        && ! ( cd "$ad/src" && CARGO_TARGET_DIR="$ad/target" cargo build --release -p axiom-cli ) > "$ad/cargo-probe.log" 2>&1; then
       fail "the patched Rust compiler does not build: $(grep -m1 -E '^error' "$ad/cargo-probe.log" | cut -c1-120)"
     else
-      rd="$work/anchor-rs-probe"; extract "$first_seed" "$rd/tree" self_host stdlib; workdir "$rd/tree" "$rd/w"
+      rd="$work/anchor-rs-probe"; extract "$first_seed" "$rd/tree" core stdlib; workdir "$rd/tree" "$rd/w"
       outcome=""
       if ! anchor_stage1 "$rd/tree" "$rd/w"; then outcome="the patched anchor cannot build stage1 ($ladder_reason)"
       else

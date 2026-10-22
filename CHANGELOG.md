@@ -16,6 +16,14 @@ its changelog too.
 
 ## Unreleased
 
+- The compiler's source moved from `self_host/` to `core/`: Axiom is
+  self-hosting, so the old name described nothing the tree doesn't
+  already say. Point `AXIOM_PATH` at `core` where it named `self_host`.
+  The seed tools still replay commits from before the move, reading
+  their compiler from `self_host/` and patching it under the new name.
+  Tested by `scripts/check-seed-provenance.sh` and
+  `scripts/check-seed-lineage.sh`.
+
 - A recursive data structure built and dropped inside a `region` is
   freed by the region's reset alone. The emitter used to keep the
   release, and walked every node of a tree just before the reset

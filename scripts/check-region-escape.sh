@@ -194,10 +194,10 @@ fi
 echo "== 3. ablation: rgnCheckAll answering 0 =="
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
-cp "$abl/self_host/typecheck.ax" "$work/typecheck.unablated.ax"
-python3 - "$abl/self_host/typecheck.ax" <<'PY'
+cp "$abl/core/typecheck.ax" "$work/typecheck.unablated.ax"
+python3 - "$abl/core/typecheck.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
@@ -263,8 +263,8 @@ fi
 # Isolate the loop rule: restore the reporting pass and replace only
 # rgnWhile's fixpoint with its former two-pass traversal.
 echo "== 3b. ablation: two walks of a loop body =="
-cp "$work/typecheck.unablated.ax" "$abl/self_host/typecheck.ax"
-python3 - "$abl/self_host/typecheck.ax" "$work/run/escape-loop-backedge.ax" \
+cp "$work/typecheck.unablated.ax" "$abl/core/typecheck.ax"
+python3 - "$abl/core/typecheck.ax" "$work/run/escape-loop-backedge.ax" \
   "$work/run/escape-loop-backedge-run.ax" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
@@ -331,8 +331,8 @@ fi
 # invocation checking. Both direct and unseen handlers must become
 # accepted, and the executable witness must expose reclaimed storage.
 echo "== 3c. ablation: handler invocations use their installation's lifetime =="
-cp "$work/typecheck.unablated.ax" "$abl/self_host/typecheck.ax"
-python3 - "$abl/self_host/typecheck.ax" <<'PY'
+cp "$work/typecheck.unablated.ax" "$abl/core/typecheck.ax"
+python3 - "$abl/core/typecheck.ax" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()

@@ -3,7 +3,7 @@
 # effect rows printed beside it, and that asking for it changes nothing
 # for anyone who did not.
 #
-# `inferEffects` (self_host/typecheck.ax) is a monotone fixpoint over the
+# `inferEffects` (core/typecheck.ax) is a monotone fixpoint over the
 # call graph. It resolves every reference site to a `FnEnt` and folds
 # that entry's effect row into the caller's. `tcNoteCall` records each
 # resolved edge and `#calls=` prints it, so a reader can see which call
@@ -351,15 +351,15 @@ echo "== grounding: every inferred IO reaches a primitive through the graph =="
 # The walk is transitive because the library is several hops deep:
 # `writeStr` -> `ioWriteAll` -> `ioWriteAllFrom` -> `ioWriteFd` -> `__syscall3`.
 #
-# The origin list is read from `self_host/typecheck.ax`, never copied:
+# The origin list is read from `core/typecheck.ax`, never copied:
 # `regFnEff <name> <type> (builtinEff "IO")`, or `regFnEff2` for a
 # primitive with a second effect (a spawn's `Spawn`, a join's `Block`).
 # Registrations may wrap across lines. Read their complete forms and
 # both effect slots, so layout cannot silently drop a real origin.
-io_prims="$(python3 "$totality" --io-primitives "$repo_root/self_host/typecheck.ax" | tr '\n' ',')"
+io_prims="$(python3 "$totality" --io-primitives "$repo_root/core/typecheck.ax" | tr '\n' ',')"
 n_io_prims="$(printf '%s' "$io_prims" | tr ',' '\n' | grep -c . || true)"
 if [[ "$n_io_prims" -lt 4 ]]; then
-  echo "FAIL: only $n_io_prims IO-registering primitive(s) found in self_host/typecheck.ax;"
+  echo "FAIL: only $n_io_prims IO-registering primitive(s) found in core/typecheck.ax;"
   echo "      the floor is 4 (8 on 2026-09-03: __argc, __argv and the six spawn/join"
   echo "      primitives). The reader has stopped matching \`regFnEff\`, and a grounding"
   echo "      check with no origins grounds nothing."

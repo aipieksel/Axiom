@@ -3,7 +3,7 @@
 # MM-LIFE-2c, the closure half).
 #
 # A DIRECT call has given back the owned temporaries it consumed since
-# MM-LIFE-2g - `releaseOwnedArgs` in self_host/codegen.ax. An
+# MM-LIFE-2g - `releaseOwnedArgs` in core/codegen.ax. An
 # application THROUGH A CLOSURE gave back nothing at all, and the
 # clearest measurement of the gap is that the same work costs 0 bytes
 # a call one way and 32 the other:
@@ -55,7 +55,7 @@
 # for some other question moves both numbers and leaves 56 alone. Term
 # 128 was added the same day and did exactly that: 127/71 became
 # 255/199. Its own discrimination is a DIFFERENT ablation - revert
-# `checkLamAgainst`'s third caller in self_host/typecheck.ax and the
+# `checkLamAgainst`'s third caller in core/typecheck.ax and the
 # fixture exits 127, which is 255 with term 128 struck out and nothing
 # else moved.
 #
@@ -159,14 +159,14 @@ echo
 echo "== and one word in each walker is what does it =="
 # --------------------------------------------------------------------
 # Ablated on a COPY of the tree: `gate_source_stamp` hashes
-# `self_host/`, so an ablation left behind would silently become the
+# `core/`, so an ablation left behind would silently become the
 # tree every later gate builds from.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
-target="$abl/self_host/codegen.ax"
+target="$abl/core/codegen.ax"
 if ! python3 - "$target" <<'PY'
 import sys
 p = sys.argv[1]
@@ -319,7 +319,7 @@ ablate_and_run() {  # <name> <relative file> <needle> <replacement> -> exit stat
   local name="$1" rel="$2" needle="$3" repl="$4"
   local tree="$work/abl-$name"
   rm -rf "$tree"; mkdir -p "$tree"
-  cp -R "$repo_root/self_host" "$repo_root/stdlib" "$tree/" || return 1
+  cp -R "$repo_root/core" "$repo_root/stdlib" "$tree/" || return 1
   NEEDLE="$needle" REPL="$repl" python3 - "$tree/$rel" <<'PY' || return 1
 import os, sys
 p = sys.argv[1]
@@ -352,7 +352,7 @@ PY
 # stamps, and 462's ground String callback, must stay correct.
 # A unique match is required before rebuilding, so source drift cannot
 # silently skip the negative control.
-rc_b="$(ablate_and_run checker self_host/typecheck.ax \
+rc_b="$(ablate_and_run checker core/typecheck.ax \
   '(let c (evClassOf tc argTy))' \
   '(let c (if (&& (== headIsVar 1) (&& (isValueCastForm hname) (> (spineArgs e 0) 2))) 0 (evClassOf tc argTy)))')" || rc_b=""
 if [[ -z "$rc_b" ]]; then
@@ -371,7 +371,7 @@ fi
 # over-applied factory and `(as (mkParker log) (-> String Int))`.
 # The canonical call must match once before either park can lose its
 # share. Only the two generic terms may disappear from the bitmask.
-rc_a="$(ablate_and_run emitter self_host/codegen.ax \
+rc_a="$(ablate_and_run emitter core/codegen.ax \
   '(emitApplyChainOwned args cg rec i 0 evs snode 0)' \
   '(emitApplyChainOwned args cg rec i 0 vecNew snode 0)')" || rc_a=""
 if [[ -z "$rc_a" ]]; then
@@ -424,9 +424,9 @@ fi
 
 argabl="$work/tree-arg"
 rm -rf "$argabl"; mkdir -p "$argabl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$argabl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$argabl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
-if ! python3 - "$argabl/self_host/typecheck.ax" <<'PY'
+if ! python3 - "$argabl/core/typecheck.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()

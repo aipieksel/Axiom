@@ -29,7 +29,7 @@ a *different* artifact, one that re-blessing can't satisfy:
 Every golden contains `line:col`, so **reformatting a case invalidates
 its golden**. `axiom fmt` inserts blank lines between declarations and
 splits declarations that share a line, which moves every position in
-the file. So these cases stay unformatted, like most of `self_host/`.
+the file. So these cases stay unformatted, like most of `core/`.
 `scripts/check-fmt.sh` formats a copy of the tree and re-runs the
 suites against it. It doesn't require the working tree to be formatted.
 

@@ -62,7 +62,7 @@
 #
 #   compiling     the whole tree is copied, formatted, and the compiler
 #                 is REBUILT from the formatted copy - which type-checks
-#                 every formatted stdlib and self_host file by using it
+#                 every formatted stdlib and core file by using it
 #                 - and that compiler must reproduce the zoo golden. A
 #                 formatter that changes what a program means fails here
 #                 even when the change re-parses, which is how the
@@ -76,7 +76,7 @@
 # the last day there were two compilers to compare.
 #
 # Ablation drills, run at introduction rather than assumed. The wrong
-# printer is a compiler built from a scratch copy of self_host/ in which
+# printer is a compiler built from a scratch copy of core/ in which
 # `flushTrailing` advances the comment queue without emitting anything -
 # every `(foo)  ; note` loses its note - and `fmtFormat`'s own
 # count-and-content verification is removed so the loss is written
@@ -113,7 +113,7 @@ gate_init
 failed=0
 
 # The formatter under test is the one built FROM SOURCE by `$axiom`, not
-# `$axiom` itself: this gate exists to test `self_host/format.ax`, and
+# `$axiom` itself: this gate exists to test `core/format.ax`, and
 # `$axiom` may be an older seed-descended binary that predates the change
 # being tested.
 gate_build_axc axc
@@ -168,7 +168,7 @@ echo "== corpus: formatting a copy of the tree =="
 orig="$work/orig"
 copy="$work/copy"
 mkdir -p "$orig"
-tar -cf - stdlib self_host tests | (cd "$orig" && tar -xf -)
+tar -cf - stdlib core tests | (cd "$orig" && tar -xf -)
 cp -R "$orig" "$copy"
 
 : > "$work/observed"
@@ -179,7 +179,7 @@ swept=0; refused=0; nonidem=0; dirty_after=0; wrote_on_refusal=0
 # otherwise be recorded as the new source mapping to the old file's
 # formatted bytes - a mismatch against the table that says nothing about
 # the formatter. Measured the hard way: a preservation run reported 3
-# lost comments and 3 lost strings in `self_host/main.ax` that were only
+# lost comments and 3 lost strings in `core/main.ax` that were only
 # ever an edit landing between the copy and the compare.
 for af in $(find "$orig" -name '*.ax' | sort); do
   f="${af#"$orig"/}"

@@ -118,8 +118,8 @@ echo "== 3. the ablations: each half, deliberately broken =="
 # is open) but has no effect, so both fixtures must check clean.
 abl="$work/abl-noop"
 rm -rf "$abl"; mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/"
-if python3 - "$abl/self_host/typecheck.ax" <<'PY'
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/"
+if python3 - "$abl/core/typecheck.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
@@ -237,8 +237,8 @@ refused "$fx1486" 'AX4009:`onIrq` is bound by `isr(irq)` and waits for an interr
 while IFS='~' read -r name anchor repl fx; do
   abl="$work/abl-$name"
   rm -rf "$abl"; mkdir -p "$abl"
-  cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/"
-  if ! python3 - "$abl/self_host/typecheck.ax" "$anchor" "$repl" <<'PY'
+  cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/"
+  if ! python3 - "$abl/core/typecheck.ax" "$anchor" "$repl" <<'PY'
 import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p, encoding="utf-8").read()

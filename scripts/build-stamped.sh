@@ -9,12 +9,12 @@
 #
 #   <12 hex>            the first twelve characters of
 #                       `gate_seed_source_stamp`, a hash of every `.ax`
-#                       byte and path under `self_host/` and `stdlib/`.
+#                       byte and path under `core/` and `stdlib/`.
 #                       This is the identity. It tells trees apart even
 #                       when they share a commit and differ only in the
 #                       working directory.
 #   <commit>[-dirty]    what git says, for a human to look up. `-dirty`
-#                       means `self_host/` or `stdlib/` has uncommitted
+#                       means `core/` or `stdlib/` has uncommitted
 #                       changes. The part is omitted outside a git
 #                       checkout, such as a release tarball.
 #
@@ -22,7 +22,7 @@
 # source you can check out. An id that covered its own stamp could not
 # be computed.
 #
-# The tree is never modified: `self_host/` is copied to a scratch
+# The tree is never modified: `core/` is copied to a scratch
 # directory and `build.ax` is rewritten there. Editing the tracked file
 # would mark every later build `-dirty`, and `check-fmt-selfhost.sh`
 # would format the rewrite back into the repository.
@@ -48,7 +48,7 @@ compute_id() {
   id="${stamp:0:12}"
   if commit="$(git -C "$repo_root" rev-parse --short=12 HEAD 2>/dev/null)"; then
     dirty=""
-    if [[ -n "$(git -C "$repo_root" status --porcelain -- self_host stdlib 2>/dev/null)" ]]; then
+    if [[ -n "$(git -C "$repo_root" status --porcelain -- core stdlib 2>/dev/null)" ]]; then
       dirty="-dirty"
     fi
     id="$id $commit$dirty"
@@ -72,14 +72,14 @@ else
   id="$(compute_id)"
 fi
 
-# `self_host/build.ax` must hold the literal this replaces: a `sed` that
+# `core/build.ax` must hold the literal this replaces: a `sed` that
 # matches nothing would silently ship `unstamped`. The formatter puts the
 # declaration and its value on two lines, so the guard joins them with
 # `N`, as `axv_replace` does for `axiomVersion` in version-sites.sh.
-src="$repo_root/self_host/build.ax"
+src="$repo_root/core/build.ax"
 [[ -f "$src" ]] || { echo "FAIL: $src is missing" >&2; exit 1; }
 if ! grep -A1 -Fx '(pub fn (axiomBuildId)' "$src" | grep -qFx '  "unstamped")'; then
-  echo "FAIL: self_host/build.ax no longer holds the literal this rewrites." >&2
+  echo "FAIL: core/build.ax no longer holds the literal this rewrites." >&2
   echo "      Looked for: (pub fn (axiomBuildId) on one line, \`  \"unstamped\")\` on the next" >&2
   exit 1
 fi
@@ -91,8 +91,8 @@ case "$id" in
     exit 1 ;;
 esac
 
-tree="$work/self_host"
-cp -R "$repo_root/self_host" "$tree"
+tree="$work/core"
+cp -R "$repo_root/core" "$tree"
 sed "/(pub fn (axiomBuildId)/{N;s/\"unstamped\")/\"$id\")/;}" \
   "$src" > "$tree/build.ax"
 

@@ -4,7 +4,7 @@
 #
 # MM-PAR-3 (`docs/memory-model.md`) gets private globals per process
 # from `fork`. Threads need the same set made thread-local: the eight
-# `@__axiom_` globals in `self_host/codegen.ax`.
+# `@__axiom_` globals in `core/codegen.ax`.
 #
 #   @__axiom_bump  _bump_end  _chunk  _free  _high   the allocator's
 #   @__axiom_slabs                                   4,143 class heads
@@ -283,13 +283,13 @@ echo "== 6. and assertion 5 can fail: drop (localexec) and they appear =="
 # --------------------------------------------------------------------
 gd="$work/gd"
 mkdir -p "$gd"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$gd/"
+cp -R "$repo_root/core" "$repo_root/stdlib" "$gd/"
 seam2='"internal thread_local(localexec) global"'
-n2="$(grep -c -F "$seam2" "$gd/self_host/codegen.ax" || true)"
+n2="$(grep -c -F "$seam2" "$gd/core/codegen.ax" || true)"
 if [[ "$n2" != 1 ]]; then
   bad "codegen.ax holds $n2 copies of the localexec spelling; this arm expects exactly 1"
 else
-  python3 - "$gd/self_host/codegen.ax" <<'PY'
+  python3 - "$gd/core/codegen.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()

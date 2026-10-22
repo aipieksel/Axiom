@@ -3,7 +3,7 @@
 #
 # `(parallel p ((a e1) (b e2)) body)` runs every binding beside the
 # caller and joins them in argument order (docs/memory-model.md
-# MM-RGN-7, `self_host/parser.ax` `parseParallelExpr`). Codegen lowers
+# MM-RGN-7, `core/parser.ax` `parseParallelExpr`). Codegen lowers
 # the pair of primitives it desugars to in two ways - PROCESSES by
 # default (fork, one shared page per binding, wait4) and THREADS under
 # `--threads` (the platform's pthread, mutable runtime state
@@ -1390,8 +1390,8 @@ fi
 # build (~40s here) and buys the arm above the ability to fail.
 abl_bt="$work/abl-bt"
 rm -rf "$abl_bt"; mkdir -p "$abl_bt"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl_bt/"
-if python3 - "$abl_bt/self_host/codegen.ax" <<'PY'
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl_bt/"
+if python3 - "$abl_bt/core/codegen.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()

@@ -383,7 +383,7 @@ under contract-checked ownership, with the timer as a deadline.
 ### The vector table is trusted code
 
 The table is the one piece of hand-written assembly the port carries
-besides `_start`. `emitBaremetalVectors` (`self_host/codegen.ax`) emits
+besides `_start`. `emitBaremetalVectors` (`core/codegen.ax`) emits
 it as `module asm`, and no check in the compiler looks inside it. It's
 short:
 
@@ -454,7 +454,7 @@ What that gives you:
 The MMU is always on, and there is no flag to turn it off. The
 protection is part of the port, and one configuration is one thing to
 review. A peripheral outside the two device blocks faults: the map is
-`emitMmuTables` in `self_host/codegen.ax`, and adding a block there is
+`emitMmuTables` in `core/codegen.ax`, and adding a block there is
 the change a new device needs.
 
 ### Caches

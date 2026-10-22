@@ -272,7 +272,7 @@ the prototypes match and nothing is owed after it.** The emitter marks
 such a call `musttail`, LLVM's *guaranteed* tail call: `llc` lowers it
 to a jump at every optimisation level, or refuses the module. The
 emitter marks a call when all of the following hold (`mustTailOK` in
-`self_host/codegen.ax` is the list):
+`core/codegen.ax` is the list):
 
 - The call sits in tail position with no leaf retain owed.
 - The callee is a function defined with `fn`, with or without a
@@ -502,9 +502,9 @@ claim the emitted code keeps, which is the opposite error.
 Every effect row this moved gained `Alloc`, and none lost anything.
 Seven `restrict(no-alloc)` claims in the tree were false and were
 withdrawn at their sites, each with the reason beside it: `mkSpan` and
-`mkToken` (`self_host/core.ax`), `mkDiagBase` (`self_host/diag.ax`),
+`mkToken` (`core/core.ax`), `mkDiagBase` (`core/diag.ax`),
 `vecTry` (`stdlib/Vec.ax`), `strFind` and `strParseInt`
-(`stdlib/Str.ax`), and `histFindBack` (`self_host/replhist.ax`), the
+(`stdlib/Str.ax`), and `histFindBack` (`core/replhist.ax`), the
 last through `strFind`'s `Some`. No `;@axiom:effect(pure)` claim in the tree
 broke, since none is on a constructing function. `ERR-PROP-2` in
 [error-model.md](error-model.md) relied on the old behaviour, and its probe
@@ -2352,7 +2352,7 @@ check is emitted only when the program has at least one evidence slot.
 At zero slots, `emitLiveHandleTrap` and `emitEvCheck` both answer `cg`
 unchanged, so no trap, message constant or call is written.
 `tests/stdlib/010-hello.ax` and `tests/stdlib/160-arena.ax` emit
-byte-identical IR with and without the check. `self_host/` declares no
+byte-identical IR with and without the check. `core/` declares no
 effect at all, so the compiler itself is in that class.
 
 **MM-ALLOC-16a (H, program obligation; implementation obligation).**
@@ -2554,7 +2554,7 @@ is one that will eventually be wrong.
 
 *Today:* an escape analysis exists, and it arrived with counting rather
 than with regions. `escapes` and `escapesViaBinders`
-(`self_host/codegen.ax`), over the two call-graph fixpoints
+(`core/codegen.ax`), over the two call-graph fixpoints
 `inferOwnership` and `inferFlows`, decide whether a frame-owned
 reference may outlive the frame that built it. The walk shipped with
 `MM-LIFE-2c`'s events 2 and 3.
@@ -2814,8 +2814,8 @@ length, an `Int`, leaves. Answering the string itself is refused:
 error[AX3059]: region `r` answers a value of type `String`, which may point into the memory the region reclaims
 ```
 
-Evidence: [codegen.ax](../self_host/codegen.ax), `emitRegion` and
-`emitRegionCell`; [typecheck.ax](../self_host/typecheck.ax),
+Evidence: [codegen.ax](../core/codegen.ax), `emitRegion` and
+`emitRegionCell`; [typecheck.ax](../core/typecheck.ax),
 `rgTyScalar`; [check-region-scope.sh](../scripts/check-region-scope.sh),
 with its unsafe-escape ablation and its no-region and two-region
 controls; [168-region.ax](../tests/stdlib/168-region.ax).
@@ -2827,7 +2827,7 @@ signature-region clause is withdrawn: types carry no region names.
 A `parallel` binding does not create a typed sibling region yet
 (`MM-RGN-7`).
 
-Evidence: [typecheck.ax](../self_host/typecheck.ax), `rgnOutlives` and
+Evidence: [typecheck.ax](../core/typecheck.ax), `rgnOutlives` and
 `rgnFormNestedIn`;
 [646-region-escape-return.ax](../tests/diagnostics/646-region-escape-return.ax)
 and [648-region-argument.ax](../tests/diagnostics/648-region-argument.ax).
@@ -2897,7 +2897,7 @@ layouts and raw mark and reset calls keep the obligations of
 evidence are still needed (`MM-ALLOC-16a`, `MM-ALLOC-16b`), and the
 region rule doesn't replace them.
 
-Evidence: [typecheck.ax](../self_host/typecheck.ax), `rgnCheckAll`,
+Evidence: [typecheck.ax](../core/typecheck.ax), `rgnCheckAll`,
 `rgnEnsureFacts`, `rgnStoreOk`, `rgnUnknownCall`.
 [check-region-escape.sh](../scripts/check-region-escape.sh) tests each
 refusal, and ablates the rule to expose the read of reclaimed memory.
@@ -2927,7 +2927,7 @@ claim that the function allocates nothing or returns no reference. A
 proven violation is `AX3049`. An unresolved call or a truncated
 analysis is `AX3051`, or `AX3057` under `strict`. `AX3051` is a
 warning: the claim is unverified, not proven. Evidence:
-`restrictNoEscape` in [typecheck.ax](../self_host/typecheck.ax),
+`restrictNoEscape` in [typecheck.ax](../core/typecheck.ax),
 [649-restrict-no-escape.ax](../tests/diagnostics/649-restrict-no-escape.ax)
 and [check-restrictions.sh](../scripts/check-restrictions.sh).
 
@@ -2953,8 +2953,8 @@ Tail-call ownership classification stays conservative, even when an
 ordinary release is elided.
 
 Evidence: `rgnStamping`, `rgnCheckAll`, `rgnApp`, `rgnArms` in
-[typecheck.ax](../self_host/typecheck.ax); `releaseOwnedArgs`,
-`emitLetAt`, `releaseScrutinee` in [codegen.ax](../self_host/codegen.ax).
+[typecheck.ax](../core/typecheck.ax); `releaseOwnedArgs`,
+`emitLetAt`, `releaseScrutinee` in [codegen.ax](../core/codegen.ax).
 The call, binding, join and scrutinee paths each have an ablation check:
 [check-region-fresh.sh](../scripts/check-region-fresh.sh),
 [check-region-fresh-let.sh](../scripts/check-region-fresh-let.sh),
@@ -2995,7 +2995,7 @@ survive the reset. Cycles wholly inside a reset extent are discarded
 with it. Counting alone still doesn't collect cycles (`MM-LIFE-3`).
 
 Evidence: `emitArenaHelpers`, `isRegionCoveredCon` and the release
-sites in [codegen.ax](../self_host/codegen.ax);
+sites in [codegen.ax](../core/codegen.ax);
 [check-region-reclaim.sh](../scripts/check-region-reclaim.sh),
 [check-static-release.sh](../scripts/check-static-release.sh),
 [check-arena-reset-rate.sh](../scripts/check-arena-reset-rate.sh), and
@@ -3023,8 +3023,8 @@ sharing a `Foreign` value is the foreign side's responsibility.
 `MM-PAR-5` to `MM-PAR-8` and `MM-FFI-7` give the transport, cleanup and
 capture contracts.
 
-Evidence: `mkParallel` in [parser.ax](../self_host/parser.ax),
-`checkSpawnCaptures` in [typecheck.ax](../self_host/typecheck.ax),
+Evidence: `mkParallel` in [parser.ax](../core/parser.ax),
+`checkSpawnCaptures` in [typecheck.ax](../core/typecheck.ax),
 [check-parallel.sh](../scripts/check-parallel.sh) and
 [check-thread-local.sh](../scripts/check-thread-local.sh).
 
@@ -3381,7 +3381,7 @@ A callee that ends a parameter's share *consumes* it, and neither event
 parameter ends the caller's share, so a `let`-bound container passed to
 such a callee takes no scope-end release, and an owned temporary handed
 to it is not released after the call. The compiler records this in
-`FSig.consume` (`fnConsumeMask` in `self_host/codegen.ax`), computed in
+`FSig.consume` (`fnConsumeMask` in `core/codegen.ax`), computed in
 the flow fixpoint beside `stash`. Every caller-side release decision
 reads it. The return path never does, because a consumed parameter
 still owes its slot release there. Without it, the map is released
@@ -3663,7 +3663,7 @@ memory of one row. Reads of `s` stay borrows, with no count traffic.
 A borrow is sound only while nothing a read produced is still in use
 when a `set` or the scope end releases the value it came from. So the
 compiler gives a slot ownership only when it can show that
-(`slotOwns` in [codegen.ax](../self_host/codegen.ax)):
+(`slotOwns` in [codegen.ax](../core/codegen.ax)):
 
 - no binder in the slot's scope reuses its name;
 - the value of a `(set x v)` goes nowhere but a statement or the
@@ -3720,7 +3720,7 @@ sites to the compiler's own IR and reclaimed nothing.
 The pair is sound and cheap once the emitter knows who owns each
 result, who releases it, and where each argument goes. It learns these
 from three fixpoints over the call graph (`inferOwnership` and
-`inferFlows` in `self_host/codegen.ax`):
+`inferFlows` in `core/codegen.ax`):
 
 <!-- doc-gate:negative-exempt narrative: a definition of the ownership lattice. The negative quantifier belongs to the BORROWED arm and has nothing to do with the test corpus. -->
 - **Who owns a result.** A signed global's result is *owned* when every
@@ -3889,7 +3889,7 @@ field order, a 400,000-level caterpillar tree and a 20-deep full tree,
 all whole, in 0.45 s and 129 MiB
 (`tests/selfhost/994-deep-release-first-field.ax`).
 
-On the compiler compiling itself (emit-llvm of `self_host/main.ax`,
+On the compiler compiling itself (emit-llvm of `core/main.ax`,
 same machine and load for both), reclamation takes the time from
 2.93 s to 1.94 s and the peak from 314 to 248 MiB. Release
 sites go from 143 to 5,817 and retain sites from 399 to 559, with
@@ -5136,7 +5136,7 @@ A container is reclaimed by a raw arena reset like any other block
 lives in: its release afterwards would write into reclaimed memory.
 Keep what crosses the reset in raw memory below the mark, as the
 language server keeps its document store (`lspMain` in
-[lsp.ax](../self_host/lsp.ax)). A checked `region` refuses the shapes
+[lsp.ax](../core/lsp.ax)). A checked `region` refuses the shapes
 it can see (`MM-RGN-3`).
 
 Tested by `tests/stdlib/770-vec-files.ax` (a `Vec` of `File`s dropped
@@ -5175,7 +5175,7 @@ in the reference):
   `pthread_join` (and `__tlv_bootstrap` on Darwin), which is tier 3 of
   `MM-FFI-1`'s table. The eight mutable globals of the emitted runtime
   become `thread_local(localexec)`. That is the obligation `MM-PAR-6`
-  states, discharged by `cgThreads` in `self_host/codegen.ax`: a scan
+  states, discharged by `cgThreads` in `core/codegen.ax`: a scan
   that answers 1 exactly for a module that spawns a thread.
 
 A program that spawns no thread is emitted byte for byte as it would be
@@ -5342,7 +5342,7 @@ Threads buy the same property by making the same globals thread-local,
 one for one: the five allocator words, the size-class array,
 `@__axiom_recover_top`, and one evidence slot per declared effect.
 That makes **eight**, a count taken by enumerating `@__axiom_` in
-`self_host/codegen.ax`. A module that spawns has *ten*: the child
+`core/codegen.ax`. A module that spawns has *ten*: the child
 registry's head and sequence counter (`MM-PAR-7`) are per thread too,
 because each thread sweeps the children it spawned. A module with the
 owner registry has three more, its head, counter and unwinding flag
@@ -7403,7 +7403,7 @@ with the fixture that pins it.
 | ~~`MM-VAL-3b`~~ | **CLOSED.** `INT_MIN / -1` and shifts of 64 or more were undefined, and answered differently at each `--opt` level. Both are guarded traps now: `INT_MIN / -1` exits 83, an out-of-range shift exits 84, and each is recoverable. `tests/stdlib/695-intmin-div-trap.ax` and `tests/stdlib/696-shift-wide-trap.ax` gate them, and `restrict(no-trap)` - spelled `no-untrapped` until the guards landed - still refuses the raw operators in favour of `stdlib/Err.ax`'s checked arithmetic |
 | `MM-EXEC-9a` | Effect inference under-approximates. Of seven known gaps, six are closed: `__alloc`, trait dispatch, `__store8`/`__store64` (`Mut`), `__argc`/`__argv` (`IO`), the arena primitives (`Alloc`) and constructor allocation. One remains: a call through a local, a parameter or an unresolved name. It sets `#effects-incomplete` instead of reporting a set that looks complete |
 | `MM-LIFE-7` | `consume` and `alloc` win as expression heads, so you can define a function with either name but can't call it |
-| `MM-LIFE-2j` | **Resolved by removal in 0.6.0.** A trait default body's shape word depended on `impl` declaration order. `checkImplComplete` synthesised the default into every impl that omitted the method without copying the body's nodes, so one AST was checked once per implementing type, and per-node stamps were last-write-wins across the monomorphisations. On the fixture `373-shared-default-binder` in 0.3.0, `Ident#String#ident` got header `131076` and `axiom_retain(%x)` with the `Int` impl declared first, and header `4` (a leaf) with no retain with the `String` impl first. Removing traits removed the only way to check one body under two type environments. Emitted IR from a last-write-wins compiler is byte-identical to the tree's across 278 fixtures, every `stdlib/` module and `self_host/main.ax`. `scripts/check-fallible-reclaim.sh` asserts that the case stays unreachable, so the rule stays listed: a future construct that re-checks a body per instantiation would bring it back |
+| `MM-LIFE-2j` | **Resolved by removal in 0.6.0.** A trait default body's shape word depended on `impl` declaration order. `checkImplComplete` synthesised the default into every impl that omitted the method without copying the body's nodes, so one AST was checked once per implementing type, and per-node stamps were last-write-wins across the monomorphisations. On the fixture `373-shared-default-binder` in 0.3.0, `Ident#String#ident` got header `131076` and `axiom_retain(%x)` with the `Int` impl declared first, and header `4` (a leaf) with no retain with the `String` impl first. Removing traits removed the only way to check one body under two type environments. Emitted IR from a last-write-wins compiler is byte-identical to the tree's across 278 fixtures, every `stdlib/` module and `core/main.ax`. `scripts/check-fallible-reclaim.sh` asserts that the case stays unreachable, so the rule stays listed: a future construct that re-checks a body per instantiation would bring it back |
 | ~~`MM-EXEC-16`~~ | **CLOSED.** Status **72** meant division by zero here, and also, in `docs/ffi.md` C7, the exit a `no_std` crate's panic handler took. A supervisor reading the status couldn't tell an Axiom division from a Rust panic. The FFI exit moved to **73**, which `MM-EXEC-16` doesn't reserve, and `tests/ffi/demo/115-abort-status.ax` gates it |
 | ~~`MM-LIFE-2a`~~ | **CLOSED.** The defect was that nothing measured this cost. The cost itself stays, by design: every arena reset charges **4,143** slab-head stores on the once-per-request path, because releases file blocks into those heads and a head left dangling across a reset double-issues storage. `scripts/check-arena-reset-rate.sh` measures it. Three spellings of one program, one word apart, put a reset at **about 1.35 µs** against a mark's few nanoseconds. A fourth binary, built by deleting the `slabclear` block from the emitted IR, shows the scrub is the cost. The emitter's `[4143 x i64]` and loop bound are asserted with no clock involved. The cost is **1.7–1.8%** of the 77 µs per-connection budget |
 
@@ -7563,7 +7563,7 @@ specification's most useful sentences are often about what is absent.
 Three were false at the same time, and none failed anything:
 
 - the exit-status sentence above;
-- `error-model.md`'s `ERR-ADOPT-3`, calling `self_host/lsp.ax` "the one
+- `error-model.md`'s `ERR-ADOPT-3`, calling `core/lsp.ax` "the one
   long-lived Axiom program v1 ships", while a pre-forked server ran
   under CI;
 - `MM-PAR-2`'s "the language has no construct that can name an

@@ -87,8 +87,8 @@ and count traps, `Task`'s stacks and deadlines, and the restricted
 profile's rules.
 
 The contract does not cover the trusted boundaries, so a review must.
-They are the compiler's own raw layer (`self_host/raw.ax`) and every
-`effect(unsafe)` body in `self_host/`. They are the runtime the
+They are the compiler's own raw layer (`core/raw.ax`) and every
+`effect(unsafe)` body in `core/`. They are the runtime the
 compiler emits, from the allocator to the traps. They are
 `Internal.Raw`, `Internal.RawVec` and every `effect(unsafe)` body in
 the standard library, which `tests/agent/stdlib-effects.allow` lists.

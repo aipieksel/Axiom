@@ -121,7 +121,7 @@ MAX_DOC = 40000
 
 # Every request the server answers, by the capability that advertises
 # it. `caps` fails on an advertised key this table does not name, so a
-# provider added to `self_host/lsp.ax` and not here is a red gate.
+# provider added to `core/lsp.ax` and not here is a red gate.
 # Position encoding has no request; capability_errors checks the default
 # UTF-16 representation used by the session generator and its oracle.
 CAP_METHODS = {
@@ -298,7 +298,7 @@ def eligible_docs(corpus, max_doc=MAX_DOC):
     the answer is the same on every host."""
     out = []
     for i, p in enumerate(corpus.paths):
-        if p.startswith("self_host/") and max_doc <= MAX_DOC:
+        if p.startswith("core/") and max_doc <= MAX_DOC:
             continue
         if len(corpus.text(i).encode("utf-8", "surrogateescape")) > max_doc:
             continue

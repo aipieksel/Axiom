@@ -17,7 +17,7 @@
 #      and blank lines, `:quit`'s exit without a farewell, a `fn` spanning
 #      several lines (130-multiline), and an IO-performing expression that
 #      evaluates instead of being refused (140-io; see `replCompileExpr` in
-#      self_host/repl.ax). Those two are outside verify-repl.py's model and
+#      core/repl.ax). Those two are outside verify-repl.py's model and
 #      rest on this byte pin, with values simple enough to check by hand.
 #
 #   3. Marker shapes (NNN-*-shape.markers) for output that is not fixed
@@ -25,7 +25,7 @@
 #      `:defs` lists each declaration indented, an IO body under
 #      `restrict(no-io)` is reported, and redefining `f` evaluates the new
 #      body instead of refusing every later expression
-#      (`replDeclsSrcDropping` in self_host/repl.ax). Only substrings are
+#      (`replDeclsSrcDropping` in core/repl.ax). Only substrings are
 #      compared. The markers are hand-maintained and AXIOM_BLESS never
 #      writes them, so this layer is a check, not a record. 100-defs-shape
 #      requires the `  alpha`, `  beta` and `  gamma` lines that only
@@ -89,7 +89,7 @@
 # their prose, so read the diff of what you bless.
 #
 # The REPL keeps its scratch files in a private `<tmp>/axiom-repl-<pid>.d`
-# (mode 0700, created exclusively; see `replEval` in self_host/repl.ax).
+# (mode 0700, created exclusively; see `replEval` in core/repl.ax).
 # Concurrent REPLs don't collide, so this gate need not run serially.
 #
 # Usage:  scripts/check-repl-selfhost.sh
@@ -105,7 +105,7 @@ filter="${1:-}"
 bless="${AXIOM_BLESS:-0}"
 
 # The compiler under test is built from source by `$axiom`. This gate
-# tests self_host/repl.ax, and `$axiom` may be an older seed-descended
+# tests core/repl.ax, and `$axiom` may be an older seed-descended
 # binary that predates the change.
 gate_build_axc axc
 

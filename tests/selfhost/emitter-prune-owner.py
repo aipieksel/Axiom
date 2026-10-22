@@ -185,7 +185,7 @@ def restore_old_loop(source):
 
 def private_modules(directory, source_root, source):
     directory.mkdir(parents=True, exist_ok=True)
-    for item in (source_root / 'self_host').iterdir():
+    for item in (source_root / 'core').iterdir():
         target = directory / item.name
         if item.name == 'codegen.ax':
             target.write_text(source + BRIDGES)
@@ -201,7 +201,7 @@ def check(axiom, repo, source_root, work):
         raise RuntimeError('update the explicit 34-case verdict inventory')
     fixture = work / 'fixture.ax'
     fixture.write_text(template.read_text())
-    source = (source_root / 'self_host/codegen.ax').read_text()
+    source = (source_root / 'core/codegen.ax').read_text()
     report = {'builder': str(axiom), 'source_root': str(source_root),
               'builder_sha256': hashlib.sha256(axiom.read_bytes()).hexdigest(),
               'source_sha256': hashlib.sha256(source.encode()).hexdigest(),

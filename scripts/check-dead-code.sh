@@ -2,7 +2,7 @@
 # A PROGRAM CONTAINS ONLY WHAT IT USES.
 #
 # Measured on trunk 2026-08-30, before `pruneDeadDefs` in
-# self_host/codegen.ax existed:
+# core/codegen.ax existed:
 #
 #   (import IO)
 #   (:: main Int)
@@ -653,7 +653,7 @@ cat > "$work/graph.ax" <<'PROBE'
       })
   })
 PROBE
-if AXIOM_PATH="$repo_root/self_host" "$axc" --diagnostic-format=ai build \
+if AXIOM_PATH="$repo_root/core" "$axc" --diagnostic-format=ai build \
      --input "$work/graph.ax" --output "$work/graph" > "$work/graph.log" 2>&1; then
   graph_out="$("$work/graph" 2>&1)"; graph_rc=$?
   expected_graph="$(printf 'true\n%.0s' {1..22})"
@@ -790,14 +790,14 @@ echo "--- 8. the ablation: with the pass off, §2 and §3 must go red ---"
 # change the ANSWER without withdrawing the claim.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/"
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/"
 seam='(pub fn (pruneDeadDefs cg)
   (if cgStaticlib'
-n_seam="$(grep -c -F 'pub fn (pruneDeadDefs cg)' "$abl/self_host/codegen.ax" || true)"
+n_seam="$(grep -c -F 'pub fn (pruneDeadDefs cg)' "$abl/core/codegen.ax" || true)"
 if [[ "$n_seam" != 1 ]]; then
-  bad "self_host/codegen.ax holds $n_seam copies of the ablation seam; this gate expects exactly 1"
+  bad "core/codegen.ax holds $n_seam copies of the ablation seam; this gate expects exactly 1"
 else
-  python3 - "$abl/self_host/codegen.ax" <<'PY'
+  python3 - "$abl/core/codegen.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()

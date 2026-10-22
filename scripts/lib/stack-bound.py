@@ -10,9 +10,9 @@ frame, a callee whose frame is unknown, or a function address it cannot
 classify.
 
 WHERE THE FRAME SIZES COME FROM, and why not from the compiler.  The
-workstream that asked for this assumed `self_host/codegen.ax` knows each
+workstream that asked for this assumed `core/codegen.ax` knows each
 frame's size.  It does not, and cannot: `axiom` emits LLVM *text* IR and
-shells out to opt/llc (self_host/driver.ax, `IR -> opt -> llc -> cc`);
+shells out to opt/llc (core/driver.ax, `IR -> opt -> llc -> cc`);
 the frame is decided by LLVM's register allocator, long after Axiom's
 codegen has stopped running.  A number computed inside codegen.ax would
 be either unsound or a large over-estimate.  So the sizes are taken from
@@ -216,7 +216,7 @@ CALL = re.compile(
     r'\b(musttail|tail|notail)?\s*(?:call|invoke)\b[^@%]*?@("[^"]+"|[\w.$]+)\s*\(')
 ICALL = re.compile(r'\b(?:musttail|tail|notail)?\s*(?:call|invoke)\b[^\n]*?\s(%[\w.]+)\s*\(')
 # LLVM quotes an identifier containing `$` in some outputs and not in
-# others: self_host's emitted IR has @Str$strLen, and the same module
+# others: core's emitted IR has @Str$strLen, and the same module
 # after `opt` has @"Str$strLen". Both forms must be scanned, or the
 # symbol table goes unread and the address-taken set is silently empty.
 PTRTOINT_INSTR = re.compile(r'(?<!\()\bptrtoint ptr @("[^"]+"|[\w.$]+) to i64')
@@ -361,7 +361,7 @@ def classify_line(m, line, lineno, cur, curglobal):
         return
 
     # Strip LLVM byte-array literals before looking for names. The
-    # compiler emits IR as text, so self_host's module is full of string
+    # compiler emits IR as text, so core's module is full of string
     # constants like
     #     @str_2355 = private constant [44 x i8] c"define internal i64 @__axiom_div_by_zero() \00"
     # That `@__axiom_div_by_zero` is text the compiler prints, not a

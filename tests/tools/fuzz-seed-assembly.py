@@ -13,7 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--axiom', type=Path, required=True)
     parser.add_argument('--modules', type=Path, required=True,
-                        help='isolated self_host/stdlib source tree for the compiler')
+                        help='isolated core/stdlib source tree for the compiler')
     parser.add_argument('--work', type=Path)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
@@ -118,7 +118,7 @@ sys.exit(0)
     for name, input_, baseline, compiler_mode, llc_mode, verdict, stage in cases:
         case_env = dict(env, FUZZ_TEST_COMPILER=compiler_mode, FUZZ_TEST_LLC=llc_mode)
         result = subprocess.run(['/bin/bash', str(runner), str(wrapper), str(input_),
-                                 str(modules / 'self_host'), str(baseline) if baseline else ''],
+                                 str(modules / 'core'), str(baseline) if baseline else ''],
                                 env=case_env, capture_output=True, text=True, timeout=60)
         (work / f'{name}.stdout').write_text(result.stdout)
         (work / f'{name}.stderr').write_text(result.stderr)

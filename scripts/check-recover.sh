@@ -608,7 +608,7 @@ for target in $acct_targets; do
       fp="x29"
       # x30 must be spelled `lr`. LLVM silently ignores `~{x30}` as an
       # AArch64 clobber name (see `targetRecoverArmAsm` in
-      # self_host/codegen.ax).
+      # core/codegen.ax).
       if [[ "$block" == *'~{lr}'* ]]; then
         : # accounted for
       else
@@ -787,7 +787,7 @@ fi
 # ------------------------------------------------------------------
 # 6. The negative probe, run by hand because it needs a compiler build.
 #
-# Delete this line from `emitDivTrap` in self_host/codegen.ax and
+# Delete this line from `emitDivTrap` in core/codegen.ax and
 # rebuild the compiler:
 #
 #     (emitLine cg "  call i64 @__axiom_recover_abort(i64 72)")

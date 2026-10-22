@@ -16,7 +16,7 @@
 # That is the failure this repository names most often, so the arm was
 # removed rather than repointed. What remains is
 #
-#   1. golden == the compiler built from self_host/, byte for byte, for
+#   1. golden == the compiler built from core/, byte for byte, for
 #      every case. The goldens are checked in, so a change in the
 #      compiler's output arrives as a diff to a file in the repository.
 #   2. tests/diagnostics/verify-axdl-spans.py: every span every golden
@@ -73,7 +73,7 @@
 #
 # PROVENANCE.  No golden was newly materialized for this conversion; all
 # 52 were already checked in. Measured 2026-08-08, while both compilers
-# still existed: the Rust compiler, the compiler built from self_host/
+# still existed: the Rust compiler, the compiler built from core/
 # by the installed self-hosted binary, and the checked-in goldens agree
 # on all 52 cases byte for byte, and the span verifier passes on those
 # same goldens with 0 of 109 claims wrong. That is the last moment there
@@ -94,7 +94,7 @@
 #     40, so it now names the owner rather than the value.
 #
 #   * False positives on the compiler's own source. A checker that
-#     rejects self_host/, stdlib/ or the stdlib test corpus is worse
+#     rejects core/, stdlib/ or the stdlib test corpus is worse
 #     than no checker, and no corpus case would notice, so the sweep
 #     runs the compiler over every file in all four trees and requires
 #     silence. tests/stdlib/ is in that list because it is the only
@@ -131,7 +131,7 @@ bless="${AXIOM_BLESS:-0}"
 # Explicit relative module roots keep diagnostic paths reproducible.
 # Cases run from $work so their entry filename is a bare NAME.ax.
 ln -s "$repo_root/stdlib" "$work/stdlib"
-ln -s "$repo_root/self_host" "$work/self_host"
+ln -s "$repo_root/core" "$work/core"
 # The sweep below runs from `$work` and names its inputs by
 # repo-relative path, so `tests/` has to be reachable from here too.
 # Without this the sweep read nothing, reported nothing, and passed -
@@ -149,7 +149,7 @@ ln -s "$repo_root/tests" "$work/tests"
 # repository names it. `verify-axdl-spans.py` refuses an absolute path
 # outright, so this cannot go wrong quietly.
 export AXIOM_STDLIB="stdlib"
-export AXIOM_PATH="self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="core${AXIOM_PATH:+:$AXIOM_PATH}"
 
 # Helper MODULES for cases that need more than one file. They live in a
 # subdirectory so the per-case glob below cannot mistake one for a case
@@ -160,7 +160,7 @@ export AXIOM_PATH="self_host${AXIOM_PATH:+:$AXIOM_PATH}"
 cp "$repo_root"/tests/diagnostics/mods/*.ax "$work/" 2>/dev/null || true
 
 # The compiler under test is the one built FROM SOURCE by `$axiom`, not
-# `$axiom` itself: this gate exists to test self_host/, and `$axiom` may
+# `$axiom` itself: this gate exists to test core/, and `$axiom` may
 # be an older seed-descended binary that predates the change being
 # tested.
 gate_build_axc axc
@@ -364,10 +364,10 @@ fi
 # compiler must ACCEPT, which is what stops the refusal cases below
 # being satisfied by a compiler that refuses everything.
 echo
-echo "--- the compiler finds nothing to report in self_host/, stdlib/, tests/stdlib/, tests/selfhost/ ---"
+echo "--- the compiler finds nothing to report in core/, stdlib/, tests/stdlib/, tests/selfhost/ ---"
 selfclean=0
 swept=0
-for src in self_host/*.ax stdlib/*.ax stdlib/Sys/*.ax tests/stdlib/*.ax \
+for src in core/*.ax stdlib/*.ax stdlib/Sys/*.ax tests/stdlib/*.ax \
            tests/selfhost/*.ax; do
   [[ -e "$src" ]] || continue
   swept=$((swept + 1))
@@ -399,7 +399,7 @@ for src in self_host/*.ax stdlib/*.ax stdlib/Sys/*.ax tests/stdlib/*.ax \
     # are the only programs in the repository that use the effect system
     # and the builtin `Option` - and a checker that rejected every
     # effect program was invisible to a sweep that covered only
-    # self_host/ and stdlib/, which is exactly what happened.
+    # core/ and stdlib/, which is exactly what happened.
     echo "FAIL $src (exited $out with no diagnostic: it did not get far enough to check)"
     sed 's/^/    /' "$work/sweep.err" | head -3
     failed=$((failed + 1))
@@ -502,7 +502,7 @@ fi
 
 # Floors PER TREE, not one total. A single total only notices the loss
 # of tests/selfhost/, which is the largest tree; losing all of stdlib/
-# or all of self_host/ left the total above the floor and the sweep
+# or all of core/ left the total above the floor and the sweep
 # reported the silence it was looking for.
 #
 # Re-derived 2026-08-22 against 22/20/59/168 = 269 files. They were
@@ -520,7 +520,7 @@ sweep_floor() {
     failed=$((failed + 1))
   fi
 }
-sweep_floor "self_host/"      20 "$(ls self_host/*.ax 2>/dev/null)"
+sweep_floor "core/"      20 "$(ls core/*.ax 2>/dev/null)"
 sweep_floor "stdlib/"         18 "$(ls stdlib/*.ax stdlib/Sys/*.ax 2>/dev/null)"
 sweep_floor "tests/stdlib/"   55 "$(ls tests/stdlib/*.ax 2>/dev/null)"
 sweep_floor "tests/selfhost/" 160 "$(ls tests/selfhost/*.ax 2>/dev/null)"
@@ -551,9 +551,9 @@ echo "--- the parser and expander depth limits agree ---"
 depth_of() { # <file> <fn> -> the number its body answers
   grep -A1 "(pub fn ($2)" "$1" | tail -n 1 | tr -d '[:space:])'
 }
-parse_depth="$(depth_of self_host/parser.ax parseMaxDepth)"
-walk_depth="$(depth_of self_host/expand.ax expMaxWalk)"
-rec_depth="$(depth_of self_host/expand.ax expDepthLimit)"
+parse_depth="$(depth_of core/parser.ax parseMaxDepth)"
+walk_depth="$(depth_of core/expand.ax expMaxWalk)"
+rec_depth="$(depth_of core/expand.ax expDepthLimit)"
 if ! [[ "$parse_depth" =~ ^[0-9]+$ && "$walk_depth" =~ ^[0-9]+$ && "$rec_depth" =~ ^[0-9]+$ ]]; then
   echo "FAIL depths: the extractor stopped matching (parse=$parse_depth walk=$walk_depth rec=$rec_depth)"
   failed=$((failed + 1))
@@ -569,7 +569,7 @@ else
 fi
 # The ablation: the comparison must be able to fail. A copy of
 # expand.ax with expMaxWalk bumped by one must read as a mismatch.
-cp self_host/expand.ax "$work/expand-abl.ax"
+cp core/expand.ax "$work/expand-abl.ax"
 python3 - "$work/expand-abl.ax" <<'PY'
 import sys
 p = sys.argv[1]

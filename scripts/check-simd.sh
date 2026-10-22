@@ -6,7 +6,7 @@
 # shape the emitter gives it. `--opt 1`, the default, runs no vectorizer.
 #
 # The emitter property this gate holds is the trap runtime being
-# `noreturn cold` (`trapFnAttrs`, self_host/codegen.ax). The inliner leaves
+# `noreturn cold` (`trapFnAttrs`, core/codegen.ax). The inliner leaves
 # a cold callee as a call, and a noreturn call ends in `unreachable`
 # instead of an edge back into the loop. Without it, `vecGet` and every
 # accessor like it carry the trap's body into each hot loop.
@@ -348,9 +348,9 @@ fi
 echo "-- ablation: trapFnAttrs blanked to #0 puts the copies back --"
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
-python3 - "$abl/self_host/codegen.ax" <<'PY'
+python3 - "$abl/core/codegen.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
@@ -385,15 +385,15 @@ fi
 echo
 echo "== 5. the compiler's own IR: a census, and two bounds =="
 # ---------------------------------------------------------------
-if ! "$axc" emit-llvm "$repo_root/self_host/main.ax" -o "$work/self.ll" >"$work/self.emit.log" 2>&1; then
-  bad "could not emit self_host/main.ax"
+if ! "$axc" emit-llvm "$repo_root/core/main.ax" -o "$work/self.ll" >"$work/self.emit.log" 2>&1; then
+  bad "could not emit core/main.ax"
   sed 's/^/     /' "$work/self.emit.log" | head -10
 else
   opt -O2 -S "$work/self.ll" -o "$work/self.O2.ll" \
       --pass-remarks-output="$work/self.yaml" --pass-remarks-filter=loop-vectorize >/dev/null 2>&1 || true
   scopies="$(grep -c '@__axiom_index_msg to i64' "$work/self.O2.ll" || true)"
   svec="$(grep -c '^Name: *Vectorized' "$work/self.yaml" || true)"
-  echo "     self_host/main.ax at --opt 2: $scopies trap copies, $svec vectorized loops ($(wc -l < "$work/self.ll" | tr -d ' ') lines emitted)"
+  echo "     core/main.ax at --opt 2: $scopies trap copies, $svec vectorized loops ($(wc -l < "$work/self.ll" | tr -d ' ') lines emitted)"
   if (( scopies <= SELF_COPIES_MAX )); then
     ok "at most $SELF_COPIES_MAX inlined trap copies in the compiler's own IR"
   else

@@ -57,7 +57,7 @@ Tested by `scripts/check-diagnostics.sh` and
 ## 3. Choose a safe boundary
 
 Compiler passes exchange opaque `ASTNode` handles and typed node
-vectors. You can import compiler modules with `AXIOM_PATH=self_host`,
+vectors. You can import compiler modules with `AXIOM_PATH=core`,
 but their APIs and packed boundary layouts remain internal.
 Use AXSYM and AXIR for a stable read-only view.
 

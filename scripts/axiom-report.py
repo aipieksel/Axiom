@@ -232,7 +232,7 @@ def load_source_graph(axiom, src, target):
         raise ReportError('`%s` exited %d:\n%s' % (' '.join(cmd), p.returncode, err[:2000]))
     # The search roots the compiler itself uses, in its order (its
     # AX5001 message lists them): `$AXIOM_PATH`, the standard library
-    # beside the binary and one level up, then `self_host/` and
+    # beside the binary and one level up, then `core/` and
     # `stdlib/` relative to the working directory. A module found
     # through a root missing here would be named by its file stem,
     # its `#calls=` spelling would not resolve, and RP-6 would say so.
@@ -240,7 +240,7 @@ def load_source_graph(axiom, src, target):
     exe = shutil.which(axiom) or axiom
     for rel in ('../stdlib', '../../stdlib'):
         bases.append(os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(exe)), rel)))
-    for rel in ('self_host', 'stdlib'):
+    for rel in ('core', 'stdlib'):
         bases.append(os.path.realpath(rel))
     fns = {}
     for line in out.splitlines():
@@ -463,7 +463,7 @@ IRNAME = r'@("(?:[^"\\]|\\.)*"|[-A-Za-z0-9_$.]+)'
 # The baremetal-aarch64 fault stack (docs/embedded-guide.md section 6):
 # the entry a trap's exit branches to when a fault hook is bound, the two
 # functions the fault exit starts from on that stack, and its size, which
-# the linker script in `self_host/driver.ax` reserves.
+# the linker script in `core/driver.ax` reserves.
 FAULT_STACK_ENTRY = '__axiom_trap_entry'
 FAULT_ROOTS = ('__axiom_cpu_exception', '__axiom_fault_trap')
 FAULT_STACK_BYTES = 8192

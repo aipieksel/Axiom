@@ -6,7 +6,7 @@ WHAT THIS IS. `Model` below is a second, independent statement of what
 `axiom_alloc`, `axiom_retain`, `axiom_release`, `__axiom_arena_mark_fn`,
 `__axiom_arena_reset_fn` and the `(region r ...)` form do to the bump
 pointer, the per-class free lists and the 16-byte block header
-(self_host/codegen.ax). It is written from docs/memory-model.md, not
+(core/codegen.ax). It is written from docs/memory-model.md, not
 transliterated from the IR: it knows offsets, counts, payload words and a
 LIFO list per size class, and nothing about registers or chunks.
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Write the grammar's two keyword alternations from the compiler.
 //
-// The head keywords are whatever `self_host/parser.ax` dispatches on,
+// The head keywords are whatever `core/parser.ax` dispatches on,
 // read from its `kwEq name "..."` call sites and the `kwFn`-style
-// constants they compare against, plus the menu `self_host/lsp.ax`
+// constants they compare against, plus the menu `core/lsp.ax`
 // offers in `lspKeywords`. The grammar's `keyword-head` and
 // `keyword-removed` rules are rewritten from that set, so a keyword the
 // parser learns reaches the editor without anyone typing it twice.
@@ -34,13 +34,13 @@ const FIXED = [
 ];
 
 // The character that may continue an identifier, from `isIdentChar` in
-// self_host/lexer.ax, plus `.`, `:` and `?`, which the lexer stops on
+// core/lexer.ax, plus `.`, `:` and `?`, which the lexer stops on
 // but which must not follow a keyword either.
 const BOUND = "(?![A-Za-z0-9_'!*+/<>=%&|^.:?-])";
 
 export function derivedKeywords() {
-  const parser = readFileSync(join(repo, "self_host", "parser.ax"), "utf8");
-  const lsp = readFileSync(join(repo, "self_host", "lsp.ax"), "utf8");
+  const parser = readFileSync(join(repo, "core", "parser.ax"), "utf8");
+  const lsp = readFileSync(join(repo, "core", "lsp.ax"), "utf8");
   const defs = new Map();
   for (const m of parser.matchAll(/\(pub fn \((kw[A-Za-z]+)\)\s+"([^"]+)"\)/g)) defs.set(m[1], m[2]);
   const words = new Set(FIXED);

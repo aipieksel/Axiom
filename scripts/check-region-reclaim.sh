@@ -12,7 +12,7 @@
 # whose operand IS the construction - a fully-applied data or struct
 # construction, emitted right here, after the mark, at count 1 -
 # dropped inside the region body. `isRegionCoveredCon`
-# (self_host/codegen.ax) answers it; `releaseOwnedArgs` spends the
+# (core/codegen.ax) answers it; `releaseOwnedArgs` spends the
 # answer while `argOwnedRelease` still says 1, so `mustTailOK` stays
 # conservative and `check-tail-calls.sh` does not move.
 #
@@ -126,14 +126,14 @@ echo
 echo "== 2-4. six releases gone, nothing else moved, ablation red =="
 # ---------------------------------------------------------------
 # Ablated on a COPY of the tree: `gate_source_stamp` hashes
-# `self_host/`, so an ablation left behind would silently become the
+# `core/`, so an ablation left behind would silently become the
 # tree every later gate builds from.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
-target="$abl/self_host/codegen.ax"
+target="$abl/core/codegen.ax"
 if ! python3 - "$target" <<'PY'
 import sys
 p = sys.argv[1]

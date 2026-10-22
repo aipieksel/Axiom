@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Measures how much stack the compiler needs to check the largest Axiom
-# program in the tree, `self_host/main.ax`, by bisection.
+# program in the tree, `core/main.ax`, by bisection.
 #
 # The frames-per-entry hazard: recursion that costs one stack frame per
 # table entry or per source byte. It crashes with SIGSEGV inside whatever
@@ -14,7 +14,7 @@
 #
 # This gate turns that whole class into one number that regresses
 # visibly, for a handful of sub-second runs. It asserts:
-#   * The minimum stack at which `check self_host/main.ax` succeeds is
+#   * The minimum stack at which `check core/main.ax` succeeds is
 #     under a ceiling. It is printed either way, so growth shows in the
 #     log before it fails.
 #   * At half that minimum the process reports status 86 with a named
@@ -42,14 +42,14 @@ gate_init
 # size, and leaves room for other platforms' frame layouts and other
 # toolchains' spilling. A tight ceiling would fail on host differences.
 ceiling_kib=1024
-subject="self_host/main.ax"
+subject="core/main.ax"
 
 # Measure a compiler built from the current sources. `$AXIOM` is only the
 # builder, as in the other `*-selfhost` gates, so pointing it at an old
 # binary does not change what is measured.
 if ! gate_build_tree "$axiom" "$repo_root" "$AXIOM_STDLIB" "$work/stage1" \
        --opt 1 >"$work/build.log" 2>&1; then
-  echo "FAIL: could not build a compiler from self_host/" >&2
+  echo "FAIL: could not build a compiler from core/" >&2
   tail -20 "$work/build.log" >&2
   exit 1
 fi

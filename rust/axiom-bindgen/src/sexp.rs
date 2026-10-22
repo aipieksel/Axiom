@@ -69,7 +69,7 @@ fn ind(col: usize) -> String {
 }
 
 /// The widest line a form is laid out on: `fmtWidth` in
-/// `self_host/format.ax`.
+/// `core/format.ax`.
 const WIDTH: usize = 100;
 
 /// The column the next byte of `out` lands at.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A `Vec` field is a reference the record owns.
 #
-# `fldClass` (self_host/codegen.ax) decides, per declared field type,
+# `fldClass` (core/codegen.ax) decides, per declared field type,
 # whether a block's reference map names that word: 0 (scalar, never
 # walked), 2 (reference, walked and released) or 1 (unclassifiable).
 # Class 1 forces the whole block to the leaf shape, the safe direction:

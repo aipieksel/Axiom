@@ -7,7 +7,7 @@
 # `appendFile` deleted. Telling a written file from a live ring needs
 # two processes.
 #
-# `histOpen` (self_host/replhist.ax) takes `interactive` as an Int and
+# `histOpen` (core/replhist.ax) takes `interactive` as an Int and
 # never checks for a terminal itself. A module that called isatty would
 # show a script only the "no file" direction, which a module that writes
 # nothing also produces. So one `write` binary, run with each value, must
@@ -59,7 +59,7 @@ checks=0
 ok()   { checks=$((checks + 1)); echo "ok   $*"; }
 bad()  { checks=$((checks + 1)); failed=$((failed + 1)); echo "FAIL $*"; }
 
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 
 echo "== building the probes from the working tree =="
 for probe in write read bulk concurrent; do
@@ -366,10 +366,10 @@ fi
 # shows up as a missing match.
 # ---------------------------------------------------------------
 echo "== E: the two spellings that are bugs are not in the module =="
-mod="$repo_root/self_host/replhist.ax"
+mod="$repo_root/core/replhist.ax"
 
 # Search code, not comments. `sed 's/;.*$//'` strips them the way
-# check-doc-drift.sh reads construction sites in `self_host/*.ax`. The
+# check-doc-drift.sh reads construction sites in `core/*.ax`. The
 # module's header names both hazards, and a search that read comments
 # would refuse the file for documenting them. Line numbers survive,
 # because `sed` deletes the tail of a line and never the line.

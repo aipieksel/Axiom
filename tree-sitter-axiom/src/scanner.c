@@ -13,7 +13,7 @@
 // chunk regex consumes `||` as one match and leaves a `#` that cannot
 // close anything. A grammar that drifts from the compiler is the failure
 // `scripts/check-tree-sitter.sh` exists to prevent, so this reproduces
-// `skipBlockComment` in `self_host/lexer.ax` byte for byte instead of
+// `skipBlockComment` in `core/lexer.ax` byte for byte instead of
 // approximating it.
 //
 // UNTERMINATED is not an error here either: the loop stops at EOF with

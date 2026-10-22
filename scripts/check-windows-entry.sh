@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Windows entry shim's parsers, executed on this host.
 #
-# `mainCRTStartup` (self_host/codegen.ax, `emitWinEntry`) narrows the
+# `mainCRTStartup` (core/codegen.ax, `emitWinEntry`) narrows the
 # UTF-16 command line and environment to UTF-8 and lays them out as the
 # POSIX vector `Sys.ax` reads. The split follows `CommandLineToArgvW`'s
 # rules. A wrong rule yields a plausible argv, not a crash: a path split

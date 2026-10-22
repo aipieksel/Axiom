@@ -7,7 +7,7 @@
 #   1. An unstamped build says `unstamped`, so a missing id never reads
 #      as a version, a zero hash or an empty string.
 #   2. The id is a function of the source: the same tree gives the same
-#      id, and one changed byte under `self_host/` or `stdlib/` moves it.
+#      id, and one changed byte under `core/` or `stdlib/` moves it.
 #      This is checked without building, because it is a property of
 #      the id, not of the compiler.
 #   3. The id reaches the binary: `axiom version` reports the stamp.
@@ -44,10 +44,10 @@ fi
 # releases silently report `unstamped`. The formatter puts
 # `(pub fn (axiomBuildId)` and `"unstamped")` on separate lines, so the
 # match spans two lines.
-if grep -A1 -Fx '(pub fn (axiomBuildId)' "$repo_root/self_host/build.ax" | grep -qFx '  "unstamped")'; then
-  ok "self_host/build.ax holds the literal build-stamped.sh rewrites"
+if grep -A1 -Fx '(pub fn (axiomBuildId)' "$repo_root/core/build.ax" | grep -qFx '  "unstamped")'; then
+  ok "core/build.ax holds the literal build-stamped.sh rewrites"
 else
-  bad "self_host/build.ax no longer holds that literal"
+  bad "core/build.ax no longer holds that literal"
 fi
 
 # --------------------------------------------------------------------
@@ -75,7 +75,7 @@ fi
 # different source.
 probe="$work/probe"
 mkdir -p "$probe"
-cp -R "$repo_root/self_host" "$probe/self_host"
+cp -R "$repo_root/core" "$probe/core"
 cp -R "$repo_root/stdlib"    "$probe/stdlib"
 before="$(gate_seed_source_stamp "$probe")"
 if [[ "${before:0:12}" != "$hash_part" ]]; then
@@ -152,10 +152,10 @@ echo "== stamping does not modify the tree =="
 # The stamper rewrites a copy. An in-place rewrite would mark every
 # later build `-dirty`, and `check-fmt-selfhost.sh` would format it into
 # the repository.
-if grep -A1 -Fx '(pub fn (axiomBuildId)' "$repo_root/self_host/build.ax" | grep -qFx '  "unstamped")'; then
-  ok "self_host/build.ax still says \`unstamped\` after a stamped build"
+if grep -A1 -Fx '(pub fn (axiomBuildId)' "$repo_root/core/build.ax" | grep -qFx '  "unstamped")'; then
+  ok "core/build.ax still says \`unstamped\` after a stamped build"
 else
-  bad "a stamped build rewrote self_host/build.ax in the tree"
+  bad "a stamped build rewrote core/build.ax in the tree"
 fi
 
 echo

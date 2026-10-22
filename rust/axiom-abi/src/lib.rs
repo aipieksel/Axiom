@@ -15,7 +15,7 @@
 //! MM-VAL-1, invariant I1). Every Axiom function emits as
 //! `define i64 @name(i64, ...)` with no parameter attributes and no
 //! calling-convention marker (the `"define i64 @"` header `emitFnDef`
-//! writes in `self_host/codegen.ax`). So the
+//! writes in `core/codegen.ax`). So the
 //! entire ABI is: **i64 in, i64 out, C calling convention**.
 //!
 //! # What Rust may and may not touch
@@ -64,7 +64,7 @@ pub const AX_NONE: AxStatus = 2;
 // The Axiom runtime symbols Rust is permitted to call.
 //
 // These four have EXTERNAL linkage in every emitted module - grep
-// `self_host/codegen.ax` for `define i64 @main`, `define i64
+// `core/codegen.ax` for `define i64 @main`, `define i64
 // @axiom_alloc`, `define void @axiom_retain` and `define void
 // @axiom_release`. The internal helpers are emitted as
 // `define internal` (`__axiom_str_eq`, `__axiom_div_by_zero`,
@@ -394,7 +394,7 @@ pub trait AxRecord: Sized {
 // ---------------------------------------------------------------------
 //
 // An Axiom closure is a heap record whose word 0 is the code address
-// and whose later words are the captures (`self_host/codegen.ax`,
+// and whose later words are the captures (`core/codegen.ax`,
 // "Lambda expressions: capture, lifting, and the record convention").
 // The lifted code is an ordinary C function
 // `i64 (i64 %_env, i64 arg, i64 evidence)` that takes the record itself
@@ -404,7 +404,7 @@ pub trait AxRecord: Sized {
 //
 // EVERY function value absorbs exactly one argument. The parser builds
 // `(lambda (x y) b)` as `(lambda (x) (lambda (y) b))`
-// (`self_host/parser.ax`, `curryLam`), so a `(-> Int Int Int)` value
+// (`core/parser.ax`, `curryLam`), so a `(-> Int Int Int)` value
 // is a chain: applying the first argument answers the record of the
 // next link, and only the last application answers the value. The
 // compiler's own `emitApplyChain` does exactly this, one step per

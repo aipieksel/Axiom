@@ -114,7 +114,7 @@ echo "== registry: constructed <-> listed =="
 # construction site. A code appears before any `;` on its own line at
 # every real construction site, so truncating at the first `;` keeps
 # every one of them.
-constructed="$(sed 's/;.*$//' self_host/*.ax | grep -ohE '"AX[0-9]{4}"' | tr -d '"' | sort -u)"
+constructed="$(sed 's/;.*$//' core/*.ax | grep -ohE '"AX[0-9]{4}"' | tr -d '"' | sort -u)"
 listed="$("$axc" explain --list 2>/dev/null | grep -oE 'AX[0-9]{4}' | sort -u)"
 nc="$(printf '%s\n' "$constructed" | grep -c .)"
 nl="$(printf '%s\n' "$listed" | grep -c .)"
@@ -416,7 +416,7 @@ print("== counts: every number the prose documents state is recomputed ==")
 # absent - and the fix for it is to scope THAT claim, not to narrow the
 # pattern back until it matches one document's wording again.
 compiler_lines = sum(
-    1 for p in sorted(glob.glob("self_host/*.ax"))
+    1 for p in sorted(glob.glob("core/*.ax"))
     for _ in open(p, encoding="utf-8"))
 # Stated in whole hundreds, so adding a fixture moves no claim.
 claim("`.ax` files in the repo", r"over ([\d,]+) `\.ax` files", ax_files // 100 * 100)
@@ -549,7 +549,7 @@ else:
 # The same check over SOURCE and FIXTURE comments, which this gate did
 # not reach and which dangle exactly as readily. Found on 2026-08-16:
 # retiring a diagnostic deleted a fixture under `tests/diagnostics/`
-# and left two comments pointing at it - one in `self_host/expand.ax`
+# and left two comments pointing at it - one in `core/expand.ax`
 # explaining the retirement, one in the fixture that replaced it - and
 # nothing failed, because both live outside `docs/`. A comment naming a
 # file that is not there is drift whatever file the comment is in, and

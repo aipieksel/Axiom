@@ -270,7 +270,7 @@ else
 fi
 
 echo "== 6. ablations: each turns its check red =="
-# A compiler built from self_host/ with each <old> seam replaced by its
+# A compiler built from core/ with each <old> seam replaced by its
 # <new>, aborting when a seam is not there exactly once, so a drill that
 # silently did not apply cannot pass as one that could not fail.
 # `ablate_file` names the compiler source the seams are in.
@@ -278,8 +278,8 @@ ablate_file=codegen.ax
 ablate_cc() {  # <tag> <old> <new> [<old> <new> ...]
   local tag="$1" dir="$work/cc-$1"; shift
   rm -rf "$dir"; mkdir -p "$dir"
-  cp -R "$repo_root/self_host" "$dir/self_host"
-  python3 - "$dir/self_host/$ablate_file" "$@" <<'PY' || return 1
+  cp -R "$repo_root/core" "$dir/core"
+  python3 - "$dir/core/$ablate_file" "$@" <<'PY' || return 1
 import sys
 p, pairs = sys.argv[1], sys.argv[2:]
 s = open(p, encoding="utf-8").read()

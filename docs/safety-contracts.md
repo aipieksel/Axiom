@@ -39,7 +39,7 @@ constructed, passed, stored, returned or read. Axiom's machine words
 are not self-describing. A word with a valid address can still have
 the wrong layout, element type or ownership map.
 
-[`tyCompat` in typecheck.ax](../self_host/typecheck.ax) compares types
+[`tyCompat` in typecheck.ax](../core/typecheck.ax) compares types
 at uses and results. `checkStructConAt` and `checkStructFieldsInst`
 check construction against field types. `checkCastForm` records the
 source and target types of explicit conversions. These checks remain
@@ -96,7 +96,7 @@ the outgoing one. Moving a share must remove it from its old place.
 The runtime's map must name managed references, with zero in unused
 mapped slots.
 
-[`valueOwnedRef`, `emitRetainOf` and `emitReleaseOf` in codegen.ax](../self_host/codegen.ax)
+[`valueOwnedRef`, `emitRetainOf` and `emitReleaseOf` in codegen.ax](../core/codegen.ax)
 select ownership traffic. The emitted allocator and release walk
 interpret the maps described by `MM-LIFE-2d`. A map is an instruction
 to the release walk, not a runtime proof of a slot's type.
@@ -156,7 +156,7 @@ uses. Ordinary captured references and mutable containers cannot be
 treated as scalar words. Shared runtime objects need their own
 ownership and synchronisation rules.
 
-[`checkSpawnCaptures` in typecheck.ax](../self_host/typecheck.ax)
+[`checkSpawnCaptures` in typecheck.ax](../core/typecheck.ax)
 conservatively refuses counted captures and opaque thunk shapes with
 `AX3064`. `MM-PAR-6b` permits an explicit immutable borrow while the
 parent keeps the graph live and counts remain frozen.
@@ -187,11 +187,11 @@ or linked archive changes the code you trust.
 
 | Boundary | Source and enforcement | Obligation beyond the type checker |
 |---|---|---|
-| Compiler semantic decisions | [typecheck.ax](../self_host/typecheck.ax); the [checked handoff](../self_host/checked.ax) seals final-check admission | Accepted types and effect facts must agree with emitted layouts and calls. Declaration membership and order are checked; nested AST payloads remain mutable |
-| Compiler raw storage | [raw.ax](../self_host/raw.ax) and the compiler's unsafe bodies | Word offsets, typed views, maps and explicit ownership must agree with their writers. The compiler's own raw layer is part of its trusted implementation |
+| Compiler semantic decisions | [typecheck.ax](../core/typecheck.ax); the [checked handoff](../core/checked.ax) seals final-check admission | Accepted types and effect facts must agree with emitted layouts and calls. Declaration membership and order are checked; nested AST payloads remain mutable |
+| Compiler raw storage | [raw.ax](../core/raw.ax) and the compiler's unsafe bodies | Word offsets, typed views, maps and explicit ownership must agree with their writers. The compiler's own raw layer is part of its trusted implementation |
 | Library raw storage | [Internal.Raw](../stdlib/Internal/Raw.ax), [Internal.RawVec](../stdlib/Internal/RawVec.ax); `AX5002` limits import and name access | Addresses must be live and aligned; reads must be initialised; copies must obey overlap rules; typed views and maps must match stored values |
 | Typed library wrappers | [Vec.ax](../stdlib/Vec.ax), [Str.ax](../stdlib/Str.ax), [IO.ax](../stdlib/IO.ax) and other trusted wrappers | Range arithmetic must avoid overflow, references must stay live, and construction, mutation and release must preserve layout and shares |
-| Emitted runtime | [codegen.ax](../self_host/codegen.ax), including `emitArenaHelpers` | Allocation, reuse, reference maps, overflow checks, traps and cleanup must preserve the memory model on the selected target |
+| Emitted runtime | [codegen.ax](../core/codegen.ax), including `emitArenaHelpers` | Allocation, reuse, reference maps, overflow checks, traps and cleanup must preserve the memory model on the selected target |
 | Public address-taking calls | [Sys.ax](../stdlib/Sys.ax): `sysRandomBytes`, `sysUnmapShared`, `sysWaitWord` | An `Int` must identify the required live extent with the right access and synchronisation. These interfaces do not prove that precondition |
 | Foreign ownership helpers | [Ffi.ax](../stdlib/Ffi.ax): `ffiHandleNew`, `ffiCellWord`, `ffiCellFree` | Destructors must match their pointers; cells must have the declared extent and remain live until foreign access ends; freeing must spend exactly the owned share |
 | External implementations | [Ffi.ax](../stdlib/Ffi.ax), [Sys/Platform.windows.ax](../stdlib/Sys/Platform.windows.ax), and linked archives | Symbol grounding and ABI checks cannot prove pointer validity, foreign destruction, aliasing or synchronisation. Review the external implementation and its ABI |

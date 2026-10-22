@@ -105,7 +105,7 @@ class NativeSeedTests(unittest.TestCase):
             'wrong PE machine': lambda run: run.replace('IMAGE_FILE_MACHINE_', 'OTHER_MACHINE_'),
             'host compiler execution': lambda run: run.replace('"$seeded/axiom.exe" --diagnostic', 'axiom --diagnostic'),
             'wrong emission target': lambda run: run.replace('--target="$target"', '--target=linux-x86_64'),
-            'wrong current source': lambda run: run.replace('self_host/main.ax', 'examples/hello.ax'),
+            'wrong current source': lambda run: run.replace('core/main.ax', 'examples/hello.ax'),
             'wrong emission path': lambda run: run.replace('-o "$seeded/current.ll"', '-o other.ll'),
             'wrong compared emission': lambda run: run.replace('cmp "$seeded/current.ll"', 'cmp other.ll'),
             'wrong cross target': lambda run: run.replace('axiom-$target.ll', 'axiom-linux-x86_64.ll'),

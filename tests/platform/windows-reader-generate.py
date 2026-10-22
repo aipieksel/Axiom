@@ -11,7 +11,7 @@ BEGIN = "; BEGIN GENERATED WINDOWS READER"
 END = "; END GENERATED WINDOWS READER"
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "tests/platform/windows-reader.c"
-TARGET = ROOT / "self_host/codegen.ax"
+TARGET = ROOT / "core/codegen.ax"
 
 
 def digest(data):

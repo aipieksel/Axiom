@@ -152,7 +152,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# The driver's pipeline, by hand (self_host/driver.ax runOpt and
+# The driver's pipeline, by hand (core/driver.ax runOpt and
 # assembleAndLink): opt -O<n> -S, llc -filetype=obj -O<n>
 # -relocation-model=pic, cc. `$link_entry` is gate.sh's.
 hand_build() {  # <ll> <out> <level>

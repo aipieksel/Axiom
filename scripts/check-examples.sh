@@ -55,7 +55,7 @@ status=0
 # ---------------------------------------------------------------
 # examples/ HOLDS SOURCES, NOT BUILD OUTPUT.
 #
-# `axiom run` builds into the WORKING DIRECTORY - self_host/main.ax
+# `axiom run` builds into the WORKING DIRECTORY - core/main.ax
 # names the scratch executable `axiom_temp_output.<pid>` - and the
 # `removeFile` that removes it is reached only after the child RETURNS.
 # Reproduced 2026-09-03 against the web example this directory then

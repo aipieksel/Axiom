@@ -129,10 +129,13 @@ if [[ -z "$commit" ]]; then
 fi
 echo "ok   the $target_count seeds were last written by ${commit:0:7}"
 
-extract() {
-  local sha="$1" dest="$2"
+extract() {  # <commit> <dir>: its compiler at `<dir>/core`, as the
+  # commits before the rename kept it in `self_host`
+  local sha="$1" dest="$2" src=core
+  git -C "$repo_root" cat-file -e "$sha:core" 2>/dev/null || src=self_host
   rm -rf "$dest"; mkdir -p "$dest"
-  ( cd "$repo_root" && git archive "$sha" self_host stdlib ) | tar -x -C "$dest"
+  ( cd "$repo_root" && git archive "$sha" "$src" stdlib ) | tar -x -C "$dest"
+  if [[ "$src" != core ]]; then mv "$dest/$src" "$dest/core"; fi
 }
 
 tree="$work/tree"
@@ -159,7 +162,7 @@ if ! llc -filetype=obj -relocation-model=pic "$seed_in" -o "$seedc_dir/seed.o" 2
 fi
 seedc="$seedc_dir/axc"
 got_stamp="$(gate_seed_source_stamp "$tree")"
-got_files="$(cd "$tree" && find self_host stdlib -name '*.ax' -type f | wc -l | tr -d ' ')"
+got_files="$(cd "$tree" && find core stdlib -name '*.ax' -type f | wc -l | tr -d ' ')"
 if [[ "$got_stamp" == "$want_stamp" ]] && [[ "$got_files" == "$want_files" ]]; then
   echo "ok   its sources hash to what STAMP says ($got_files files)"
 else
@@ -177,18 +180,18 @@ echo "== regenerating all $target_count seeds from those sources =="
 # `reseed.sh`'s procedure, reproduced rather than invoked because that
 # script writes into `bootstrap/` and this one must not touch the tree.
 # It builds a compiler from the named sources and emits
-# `self_host/main.ax` once per target.
+# `core/main.ax` once per target.
 #
 # `AXIOM_STDLIB` is set for both steps, and the emit is the one that
 # matters. `gate_init` exports this checkout's `stdlib/`, so an emit that
-# inherited it would compile the seed commit's self_host against today's
+# inherited it would compile the seed commit's core against today's
 # standard library. That is not the source STAMP names, and it may not
 # even compile.
 regenerate() {
   local src="$1" out="$2" log="$3"
   rm -rf "$out"; mkdir -p "$out"
   if ! AXIOM_STDLIB="$src/stdlib" "$seedc" build \
-         --input "$src/self_host/main.ax" --output "$out/gen" >"$log" 2>&1; then
+         --input "$src/core/main.ax" --output "$out/gen" >"$log" 2>&1; then
     return 1
   fi
   # The emit runs from a directory holding `in.ax` beside links to the
@@ -196,12 +199,12 @@ regenerate() {
   # reaches the output, so it must be `in.ax` here too. The command line
   # is the one the seed's commit emitted with (`seed_emit_argv`).
   ln -s "$src/stdlib"    "$out/stdlib"
-  ln -s "$src/self_host" "$out/self_host"
-  cp "$src/self_host/main.ax" "$out/in.ax"
+  ln -s "$src/core" "$out/core"
+  cp "$src/core/main.ax" "$out/in.ax"
   local t
   for t in $targets; do
     seed_emit_argv "$repo_root" "$commit" "$t"
-    if ! ( cd "$out" && AXIOM_STDLIB="$src/stdlib" AXIOM_PATH=self_host ./gen "${seed_argv[@]}" \
+    if ! ( cd "$out" && AXIOM_STDLIB="$src/stdlib" AXIOM_PATH=core ./gen "${seed_argv[@]}" \
              >"$out/axiom-$t.ll" 2>"$out/$t.err" ); then
       echo "     the $t emit failed:" >&2
       head -5 "$out/$t.err" | sed 's/^/       /' >&2
@@ -264,17 +267,17 @@ victim="$probe/stdlib/Path.ax"
 seed_probe_path "$victim" || { echo "FAIL: the Path provenance probe could not be applied"; exit 1; }
 probe_out="$work/probe-out"
 if ! AXIOM_STDLIB="$probe/stdlib" "$seedc" build \
-       --input "$probe/self_host/main.ax" --output "$work/probe-gen" >"$work/probe.log" 2>&1; then
+       --input "$probe/core/main.ax" --output "$work/probe-gen" >"$work/probe.log" 2>&1; then
   fail "the probe tree does not build - the probe is measuring itself"
   tail -10 "$work/probe.log" | sed 's/^/     /'
 else
   mkdir -p "$probe_out"
   ln -s "$probe/stdlib"    "$probe_out/stdlib"
-  ln -s "$probe/self_host" "$probe_out/self_host"
-  cp "$probe/self_host/main.ax" "$probe_out/in.ax"
+  ln -s "$probe/core" "$probe_out/core"
+  cp "$probe/core/main.ax" "$probe_out/in.ax"
   cp "$work/probe-gen" "$probe_out/gen"
   seed_emit_argv "$repo_root" "$commit" darwin-aarch64
-  ( cd "$probe_out" && AXIOM_STDLIB="$probe/stdlib" AXIOM_PATH=self_host ./gen "${seed_argv[@]}" \
+  ( cd "$probe_out" && AXIOM_STDLIB="$probe/stdlib" AXIOM_PATH=core ./gen "${seed_argv[@]}" \
       >"$probe_out/out.ll" 2>"$probe_out/err" ) || true
   # The probe must produce a different emission, not an empty one, or it
   # would pass on a zero-line file.
@@ -314,7 +317,7 @@ echo "== negative probe: the wrong commit must be reported wrong =="
 # must hash the same: STAMP identifies trees, and two commits with one
 # tree are one tree.
 parent="$(git -C "$repo_root" rev-parse --verify "${commit}^" 2>/dev/null || true)"
-moved="$(git -C "$repo_root" log -1 --format=%H "$commit" -- 'self_host/*.ax' 'stdlib/*.ax' 2>/dev/null || true)"
+moved="$(git -C "$repo_root" log -1 --format=%H "$commit" -- 'self_host/*.ax' 'core/*.ax' 'stdlib/*.ax' 2>/dev/null || true)"
 before="$(git -C "$repo_root" rev-parse --verify "${moved}^" 2>/dev/null || true)"
 if [[ -z "$parent" || -z "$moved" || -z "$before" ]]; then
   echo "warn: ${commit:0:7} has no ancestor before its sources last moved - the wrong-commit probe cannot run here"

@@ -3,7 +3,7 @@
 # A type name means what its own module says it means, and finding that
 # declaration does not cost a scan of the program.
 #
-# `mangleDecl` (self_host/namespace.ax) renames `fn` and `::`
+# `mangleDecl` (core/namespace.ax) renames `fn` and `::`
 # declarations to `Mod$name` and nothing else, so `data`, `struct` and
 # `type` names reach the merged declaration list as their module wrote
 # them. A lookup that took the first match by name would depend on
@@ -54,7 +54,7 @@
 # The in-gate controls cannot show this gate red against a compiler
 # with the defect, because that needs a second compiler build. To run
 # that ablation by hand, revert the module-aware type lookup in
-# `self_host/typecheck.ax` and `self_host/explain.ax` in a copy of the
+# `core/typecheck.ax` and `core/explain.ax` in a copy of the
 # tree and run this script from that copy. `gate_build_axc` builds the
 # copy's compiler (a shared `AXIOM_AXC` is skipped, as its stamp no
 # longer matches), and sections 1, 2, 4 and 5 should fail.
@@ -412,7 +412,7 @@ print('%.2f' % (b / a), 1 if (a < $FLOOR or b < $FLOOR) else 0)")"
   elif (( $(python3 -c "print(1 if $ratio >= $BOUND else 0)") )); then
     echo "FAIL scale: naming the LAST type in the table now costs ${ratio}x what"
     echo "     naming the first one costs, so some type lookup has gone back to"
-    echo "     scanning. See the type namespace section in self_host/typecheck.ax:"
+    echo "     scanning. See the type namespace section in core/typecheck.ax:"
     echo "     module-aware resolution CANNOT exit on the first match, so without"
     echo "     the index it is a full scan of the program's types per reference."
     failed=$((failed + 1))

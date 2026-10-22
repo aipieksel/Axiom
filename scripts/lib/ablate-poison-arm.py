@@ -12,7 +12,7 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 # The anchor follows the formatter's layout of the arm. If the formatter
-# moves it, re-derive the anchor from self_host/typecheck.ax.
+# moves it, re-derive the anchor from core/typecheck.ax.
 old = '        {\n          (setNodeBinderTyText arg "")\n          0\n        }'
 new = '        {\n          (setNodeBinderTyText arg now)\n          0\n        }'
 if s.count(old) != 1:

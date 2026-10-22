@@ -2,7 +2,7 @@
 # Assert that this repository's two tables of syscall numbers agree,
 # on every target. They are two copies of one fact:
 #
-#   1. `self_host/codegen.ax` (`targetMmapNum`, `targetExitNum`,
+#   1. `core/codegen.ax` (`targetMmapNum`, `targetExitNum`,
 #      `targetWriteNum`) holds the numbers the emitted runtime uses. The
 #      allocator and the arena map their chunks with one, and three
 #      abort paths (allocator OOM, division by zero, an unhandled effect)
@@ -55,7 +55,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
-# The subject is `self_host/codegen.ax`'s table, so the probe's compiler
+# The subject is `core/codegen.ax`'s table, so the probe's compiler
 # is built from this tree. `$axiom` may be an older seed-descended
 # binary, which would hide an edit to the codegen table.
 gate_build_axc axc
@@ -64,7 +64,7 @@ targets=(darwin-aarch64 darwin-x86_64 linux-aarch64 linux-x86_64 freebsd-x86_64 
 
 # Which platform module serves a target, for the failure message to
 # name. The mapping is `targetOsArchSuffix` then `targetOsSuffix` in
-# `self_host/codegen.ax`: `.{os}-{arch}.ax` if it exists, otherwise
+# `core/codegen.ax`: `.{os}-{arch}.ax` if it exists, otherwise
 # `.{os}.ax`. Only the linux modules are split by arch; Darwin and
 # FreeBSD each serve both architectures from one file.
 platform_file() {
@@ -137,7 +137,7 @@ platform_table_report() {
   awk -v target="$target" -v platfile="$platfile" -v guarded="$guarded" '
     BEGIN {
       # syscall -> the `Sys.Platform` constant it must equal, and the
-      # `self_host/codegen.ax` function carrying the emitted copy.
+      # `core/codegen.ax` function carrying the emitted copy.
       # A "-" counterpart means emitted-only; the END block guards that.
       std_of["exit"]  = "sysExitNum";  cg_of["exit"]  = "targetExitNum"
       std_of["write"] = "sysWriteNum"; cg_of["write"] = "targetWriteNum"
@@ -344,7 +344,7 @@ platform_table_report() {
           else if (p[1] != first) {
             printf "FAIL [%s] %s: the emitted runtime uses %s in @%s and %s elsewhere;\n", \
                    target, name, p[1], p[2], first
-            printf "     %s in self_host/codegen.ax answers one number per target.\n", cg_of[name]
+            printf "     %s in core/codegen.ax answers one number per target.\n", cg_of[name]
             split_ok = 0
           }
         }
@@ -385,7 +385,7 @@ platform_table_report() {
           if (p[1] != stdval[sn]) {
             printf "FAIL [%s] %s: the emitted runtime uses %s in @%s, Sys.Platform.%s is %s\n", \
                    target, name, p[1], p[2], sn, stdval[sn]
-            printf "     %s in self_host/codegen.ax vs %s - one fact, two copies,\n", \
+            printf "     %s in core/codegen.ax vs %s - one fact, two copies,\n", \
                    cg_of[name], platfile
             printf "     and they now disagree the way `exit` and `exit_group` once did.\n"
             disagreed = 1
@@ -492,7 +492,7 @@ par_table_report() {
         }
         if (num[name] != stdval[sn]) {
           printf "FAIL [%s] %s: the parallel runtime uses %s, Sys.Platform.%s is %s\n", target, name, num[name], sn, stdval[sn]
-          printf "     %s in self_host/codegen.ax vs %s - one fact, two copies, and they disagree.\n", cg_of[name], platfile
+          printf "     %s in core/codegen.ax vs %s - one fact, two copies, and they disagree.\n", cg_of[name], platfile
           continue
         }
         if (name == "fork") {
@@ -1057,11 +1057,11 @@ if "$axc" --diagnostic-format=ai --target=windows-x86_64 emit-llvm \
   # The exact emitted callback, queue, reader and lifetime operations
   # execute against host mocks. Windows binaries are cross-linked only.
   if ! python3 "$repo_root/tests/platform/windows-console-runtime.py" \
-      "$repo_root/self_host/codegen.ax" "$work/windows-console-runtime" --module "$runtime_ir"; then
+      "$repo_root/core/codegen.ax" "$work/windows-console-runtime" --module "$runtime_ir"; then
     status=1
   fi
   if ! python3 "$repo_root/tests/platform/windows-reader-runtime.py" \
-      "$repo_root/self_host/codegen.ax" "$work/windows-reader-runtime" --module "$runtime_ir"; then
+      "$repo_root/core/codegen.ax" "$work/windows-reader-runtime" --module "$runtime_ir"; then
     status=1
   fi
 else

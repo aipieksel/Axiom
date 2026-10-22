@@ -4,8 +4,8 @@
 #   seed    bootstrap/axiom-<target>.ll - a previous compiler, as LLVM
 #           IR, committed and hash-pinned. The only rung of this ladder
 #           that is not built from the tree in front of you.
-#   stage1  the current self_host/, compiled by the seed
-#   stage2  the current self_host/, compiled by stage1 through stage1's
+#   stage1  the current core/, compiled by the seed
+#   stage2  the current core/, compiled by stage1 through stage1's
 #           OWN driver
 #   stage3  the same source again, compiled by stage2
 #
@@ -17,7 +17,7 @@
 # classic criterion starts one stage later.
 #
 # WHAT THIS USED TO PIN. The first rung was `"$axiom" build --input
-# self_host/main.ax` with `$axiom` defaulting to target/release/axiom,
+# core/main.ax` with `$axiom` defaulting to target/release/axiom,
 # and `cargo build --release` when that was missing: stage0, the Rust
 # compiler, built stage1, and every rung above it was climbed on its
 # credit. That compiler is being deleted, and the hazard is that a
@@ -31,7 +31,7 @@
 #
 # WHAT IT PINS NOW, and what each half fails for.
 #
-#   the ladder    the seed compiles self_host/ into stage1 with `llc`
+#   the ladder    the seed compiles core/ into stage1 with `llc`
 #                 and `cc` (NOT at -O0 - see the comment on the
 #                 invocation), and from there the compiler builds
 #                 itself twice THROUGH ITS OWN DRIVER. stage2 and
@@ -39,7 +39,7 @@
 #                 each driver run kept (`--emit-llvm`) byte-identical
 #                 too. Nothing here is stored, so there is nothing to
 #                 re-bless: every byte compared is recomputed from
-#                 self_host/ on the run.
+#                 core/ on the run.
 #
 #   the corpus    the cases of tests/selfhost/ (179 today, floor 135),
 #                 built end to end by
@@ -101,7 +101,7 @@
 # above, and a clone that needs to bootstrap does not have one.
 #
 # THE DRILL, run rather than assumed. The tree was copied and ONE token
-# changed in the copy: `fbinopToLLVM` in self_host/codegen.ax mapping
+# changed in the copy: `fbinopToLLVM` in core/codegen.ax mapping
 # `*` to `fadd` instead of `fmul`, so float multiplication adds. The
 # compiler never multiplies floats itself, so the mutation is invisible
 # to everything except a program that does - which is the interesting
@@ -146,7 +146,7 @@ command -v cc  >/dev/null || fail "cc is not on PATH"
 # instruction selection and its own backend passes; it does not do the
 # middle end, and nothing here ran `opt`, so every stage was built
 # without it. Measured on one emitted compiler, 67,029 lines, built two
-# ways and each then asked to compile self_host/main.ax: 16.52s with
+# ways and each then asked to compile core/main.ax: 16.52s with
 # `llc` alone against 1.72s with `opt -O1` in front of it. This gate
 # builds three stages and runs two of them over the whole compiler and
 # 99 conformance cases, so it paid that 9.6x several times over.
@@ -174,7 +174,7 @@ optimised() {
 
 # Every stage receives the module roots explicitly.
 export AXIOM_STDLIB="$repo_root/stdlib"
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 
 # ---------------------------------------------------------------
 # The seed, and the fact that it is the seed.
@@ -248,9 +248,9 @@ echo "ok   seed built for $target from $seed_ll (no Rust, no cargo)"
 # own entry point.
 build_next() {
   local from="$1" out_ll="$2" out_bin="$3"
-  cp "$repo_root/self_host/main.ax" "$work/in.ax"
+  cp "$repo_root/core/main.ax" "$work/in.ax"
   (cd "$work" && "./$from" emit-llvm in.ax >"$out_ll" 2>"$out_ll.err") \
-    || { head -5 "$work/$out_ll.err" >&2; fail "$from could not compile self_host/main.ax"; }
+    || { head -5 "$work/$out_ll.err" >&2; fail "$from could not compile core/main.ax"; }
   # Blame the stage that produced the garbage, not the tool that chokes
   # on it: without these two lines a seed that was a valid Axiom
   # program but not a compiler failed as "llc rejected the IR", which
@@ -291,12 +291,12 @@ CASE
 # ---------------------------------------------------------------
 # The seed compiles the tree. This is also the staleness check, and it
 # is the whole reason the seed is allowed to lag the source: if
-# self_host/ starts using a construct the committed seed cannot
+# core/ starts using a construct the committed seed cannot
 # compile, it fails HERE, naming the construct, and scripts/reseed.sh
 # is the fix.
 # ---------------------------------------------------------------
 build_next seed stage1.ll stage1
-echo "ok   the seed compiled the current self_host/ into stage1"
+echo "ok   the seed compiled the current core/ into stage1"
 check_runs stage1
 
 # ---------------------------------------------------------------
@@ -324,14 +324,14 @@ check_runs stage1
 # ---------------------------------------------------------------
 mkdir -p "$work/d2" "$work/d3"
 
-if ! "$work/stage1" build --input "$repo_root/self_host/main.ax" \
+if ! "$work/stage1" build --input "$repo_root/core/main.ax" \
      --output "$work/d2/axc" --emit-llvm >"$work/drv2.log" 2>&1; then
   sed 's/^/    /' "$work/drv2.log" | head -5 >&2
   fail "stage1 could not build stage2 through its own driver"
 fi
 echo "ok   stage2 built by stage1's own driver - no llc or cc from this script"
 
-if ! "$work/d2/axc" build --input "$repo_root/self_host/main.ax" \
+if ! "$work/d2/axc" build --input "$repo_root/core/main.ax" \
      --output "$work/d3/axc" --emit-llvm >"$work/drv3.log" 2>&1; then
   sed 's/^/    /' "$work/drv3.log" | head -5 >&2
   fail "stage2 could not build its own successor"
@@ -578,14 +578,14 @@ peak_rss_kb() {
   fi
 }
 
-cp "$repo_root/self_host/main.ax" "$work/in.ax"
-peak="$(cd "$work" && peak_rss_kb ./d2/axc emit-llvm "$repo_root/self_host/main.ax")"
+cp "$repo_root/core/main.ax" "$work/in.ax"
+peak="$(cd "$work" && peak_rss_kb ./d2/axc emit-llvm "$repo_root/core/main.ax")"
 if [[ -z "$peak" ]]; then
   fail "could not measure the self-compile's peak memory (no usable /usr/bin/time)"
 fi
 # The path the compiler embeds in its line-table filename globals comes
 # from the input it was given, and `d3/axc.ll` above was built with
-# `--input $repo_root/self_host/main.ax`. A copy under `$work` would
+# `--input $repo_root/core/main.ax`. A copy under `$work` would
 # pass a different path and the two IRs would diverge on the filename
 # bytes alone - so the run measured here is given the same path.
 if ! cmp -s "$work/peak.ll" "$work/d3/axc.ll"; then
@@ -593,7 +593,7 @@ if ! cmp -s "$work/peak.ll" "$work/d3/axc.ll"; then
 fi
 floor=8192       # 8 MiB
 # 400 -> 460 MiB on 2026-08-15, measured before moved: the evidence
-# slice (MM-LIFE-2d) grew self_host by 969 lines and the peak from
+# slice (MM-LIFE-2d) grew core by 969 lines and the peak from
 # 392 to 414 MiB - 14.24 -> 14.37 KiB per source line, i.e. the
 # LINEAR shape this ceiling exists to protect, held flat; the same
 # source under the pre-evidence compiler peaks within 4 MiB of the
@@ -708,7 +708,7 @@ floor=8192       # 8 MiB
 # Nothing here copies.
 #
 # WHAT ACTUALLY MOVED IS THE COMPILER'S OWN SIZE, and it moved a long
-# way. `self_host/` was 64,490 lines on 2026-08-25, when 323 MiB was
+# way. `core/` was 64,490 lines on 2026-08-25, when 323 MiB was
 # measured and 384 was set to leave 15% over it; it is 81,138 lines on
 # trunk today. That is +25.8% of source against +18.9% of peak, so the
 # cost per source line FELL - 5.13 KiB/line then, 4.85 KiB/line now -
@@ -743,7 +743,7 @@ floor=8192       # 8 MiB
 # peaks at 444.7 MiB under this gate's own compiler - 0.7% under the
 # ceiling, eaten by the slices between 2026-08-30 and here, exactly
 # the way the 540 -> 420 entry describes. The regions stage (S3 of
-# docs/memory-model.md) added 2,005 lines to self_host/ and
+# docs/memory-model.md) added 2,005 lines to core/ and
 # crossed it at 454 MiB. Priced the way the two entries above price a
 # move, on `axiom build`-produced binaries, in KiB:
 #
@@ -764,9 +764,9 @@ floor=8192       # 8 MiB
 # NOT MOVED on 2026-09-04, and the number is here because the entries
 # above all end by telling the next reader to watch the margin. The
 # `.axir` record file started writing block bodies, which put
-# `self_host/mir.ax` inside `self_host/main.ax`'s import closure - 1,824
+# `core/mir.ax` inside `core/main.ax`'s import closure - 1,824
 # more source lines for a self-compile to read. Priced the same way, on
-# `emit-llvm self_host/main.ax`, in KiB:
+# `emit-llvm core/main.ax`, in KiB:
 #
 #   HEAD's compiler on HEAD's source          496,560
 #   the NEW compiler on HEAD's source         496,560   +0.00%
@@ -792,14 +792,14 @@ floor=8192       # 8 MiB
 #   run 3   562,332 KiB
 #
 # The three-way split the entries above run, on `emit-llvm
-# self_host/main.ax`, in KiB:
+# core/main.ax`, in KiB:
 #
 #   the OLD compiler on HEAD's source         521,128
 #   the NEW compiler on HEAD's source         562,140   +7.87%
 #   the OLD compiler on the NEW source        521,128   +0.00%
 #   the NEW compiler on the NEW source        562,140   +7.87%
 #
-# The compiler CHANGE - the 918 net insertions to `self_host/codegen.ax`
+# The compiler CHANGE - the 918 net insertions to `core/codegen.ax`
 # that add the markers, the table, the resolver and the path emitter
 # - costs +7.87% on identical input, against the +0.00% to +2.18% the
 # earlier entries reported. The cost per source line is no longer the
@@ -817,7 +817,7 @@ floor=8192       # 8 MiB
 #
 # 608 -> 672 MiB on 2026-09-22, at the repeat-import union. The gate
 # failed at 609 against the 608 ceiling, so the split the 09-07 entry
-# runs was re-run on `emit-llvm self_host/main.ax`, in KiB, three runs
+# runs was re-run on `emit-llvm core/main.ax`, in KiB, three runs
 # each (peak varies ~2 MiB run to run, which dwarfs the delta below):
 #
 #   the PRISTINE compiler on HEAD's source      624,512
@@ -839,7 +839,7 @@ floor=8192       # 8 MiB
 # time, and one earlier baseline read 568 and did not reproduce on the
 # re-run or on either direct measurement, so it is recorded here as
 # mis-measurement rather than as the margin. The split the 09-22
-# entry runs, on `emit-llvm self_host/main.ax`, in KiB. The branch
+# entry runs, on `emit-llvm core/main.ax`, in KiB. The branch
 # input repeats within 1 MiB across three runs (two gate runs at 676
 # and the direct run below); the trunk input repeats at 670-671 the
 # same way once the 568 is set aside:
@@ -862,7 +862,7 @@ floor=8192       # 8 MiB
 # growth, a walk that repeats itself. CI failed at 1072 MiB (Linux,
 # d47998b0) and darwin read 1073. Bisected over 560d45bb..d47998b0 on
 # stage2 binaries (each tree's source built by its own stage1), on
-# `emit-llvm self_host/main.ax`, in KiB, each repeating to within
+# `emit-llvm core/main.ax`, in KiB, each repeating to within
 # 16 KiB across two runs:
 #
 #   65a35e07 (Http)                          695,584
@@ -885,7 +885,7 @@ floor=8192       # 8 MiB
 #
 # `mutFlag` is memoised now (its comment says why that is sound), and
 # its answers are unchanged: IR byte-identical on 716 files (tests/,
-# examples/, stdlib/, self_host/), and on the self-compile of four
+# examples/, stdlib/, core/), and on the self-compile of four
 # trees. On identical input, in KiB:
 #
 #   trunk's compiler on the fixed tree         1,100,208
@@ -933,7 +933,7 @@ floor=8192       # 8 MiB
 # 800 leaves 12% over the measured 714, the margin these entries
 # keep, and the `ok` line still prints it.
 # 800 -> 920 MiB on 2026-10-13. The doc-comment work added the lexicon
-# (`self_host/lexicon.ax`, string tables for every word of the
+# (`core/lexicon.ax`, string tables for every word of the
 # language), the nolint reading, the server's semantic-tokens section
 # and a `;;` line on every public library name: CI measured 803 MiB
 # on the first of those commits, 0.4% over the ceiling, and the tree
@@ -982,7 +982,7 @@ deep="$(cd "$work/nest" && peak_rss_kb "$work/d2/axc" emit-llvm n14.ax)"
 grep -q '^define i64 @f(' "$work/peak.ll" || fail "stage2 emitted no \`f\` for the 14-deep mut nest - the difference below would be of something else"
 [[ -n "$shallow" && -n "$deep" ]] || fail "could not measure the mut nests' peak memory"
 if (( deep - shallow > 16384 )); then
-  fail "a 14-deep mut nest peaked $(( (deep - shallow) / 1024 )) MiB above a 6-deep one, over 16 MiB - the flow walk is repeating itself per enclosing \`mut\` again (see \`mutFlag\`, self_host/codegen.ax)"
+  fail "a 14-deep mut nest peaked $(( (deep - shallow) / 1024 )) MiB above a 6-deep one, over 16 MiB - the flow walk is repeating itself per enclosing \`mut\` again (see \`mutFlag\`, core/codegen.ax)"
 fi
 echo "ok   a 14-deep mut nest peaks $(( deep - shallow )) KiB above a 6-deep one (under 16 MiB: the flow walk is not exponential in nesting)"
 

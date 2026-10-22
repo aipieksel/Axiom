@@ -136,7 +136,7 @@ def cases():
 
 
 def fixture(root, raw_source, guard_mutation=False):
-    source = (root / 'self_host/codegen.ax').read_text()
+    source = (root / 'core/codegen.ax').read_text()
     candidate = ''.join(definition(source, name) for name in
                         ('linesCallSym', 'asmLineNamesSym', 'strHasSegments'))
     if guard_mutation:
@@ -217,7 +217,7 @@ def main():
     work = (args.work or Path(temporary.name)).resolve()
     work.mkdir(parents=True, exist_ok=True)
     stdlib = (args.stdlib or args.root / 'stdlib').resolve()
-    raw = args.raw_source or args.root / 'self_host/raw.ax'
+    raw = args.raw_source or args.root / 'core/raw.ax'
     env = dict(os.environ, AXIOM_STDLIB=str(stdlib))
     env.pop('AXIOM_PATH', None)
     source, segments, lines = fixture(args.root, raw)

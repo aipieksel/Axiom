@@ -9,8 +9,8 @@ emitter is the other witness: a definition either contains a
 `call i64 @axiom_alloc` or it does not. This holds every function
 whose row lacks `Alloc` to a definition with no such call - over the
 whole self-compile, so the checker's register-pair mirror
-(`self_host/typecheck.ax`, `tcPairFnOK` and its neighbours) is held to
-the emitter's predicate (`self_host/codegen.ax`, `pairFnOK`) on every
+(`core/typecheck.ax`, `tcPairFnOK` and its neighbours) is held to
+the emitter's predicate (`core/codegen.ax`, `pairFnOK`) on every
 function the compiler compiles into itself, and not only on a
 fixture.
 
@@ -69,7 +69,7 @@ def main(argv):
 
     def module_of(loc):
         p = loc.split(":")[0]
-        p = re.sub(r"^.*?(stdlib|self_host)/", "", p)
+        p = re.sub(r"^.*?(stdlib|core)/", "", p)
         return p[:-3] if p.endswith(".ax") else p
 
     held = 0

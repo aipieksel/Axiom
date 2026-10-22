@@ -145,7 +145,7 @@ def private_stdlib(directory, source_root, intern_source):
 
 def private_modules(directory, source_root, codegen_source):
     directory.mkdir(parents=True, exist_ok=True)
-    for item in (source_root / 'self_host').iterdir():
+    for item in (source_root / 'core').iterdir():
         target = directory / item.name
         if item.name == 'codegen.ax':
             target.write_text(codegen_source + BRIDGES)
@@ -272,8 +272,8 @@ def check(axiom, repo, source_root, work):
     if expected != [f'{i} true' for i in range(1, 105)]:
         raise RuntimeError('update the explicit 104-case assertion count')
     current = (source_root / 'stdlib/Intern.ax').read_text()
-    codegen = (source_root / 'self_host/codegen.ax').read_text()
-    env = dict(os.environ, AXIOM_PATH=str(source_root / 'self_host'))
+    codegen = (source_root / 'core/codegen.ax').read_text()
+    env = dict(os.environ, AXIOM_PATH=str(source_root / 'core'))
     env['PATH'] = '/opt/homebrew/opt/llvm/bin:' + env.get('PATH', '')
     report = {'source_root': str(source_root), 'builder': str(axiom), 'positive': [], 'negative': []}
     run_checked([str(axiom), '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],

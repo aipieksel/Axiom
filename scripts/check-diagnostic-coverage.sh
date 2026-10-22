@@ -8,7 +8,7 @@
 # This gate closes that hole the way `compat/UNCOVERED` closed the
 # symbol-stream one: as a SET, not a count.
 #
-#   constructed (81, from self_host/*.ax outside explain.ax)
+#   constructed (81, from core/*.ax outside explain.ax)
 #     == primary .axdl codes + tests/diagnostics/UNCOVERED
 #
 # A new diagnostic code without a primary golden fails here until it
@@ -25,7 +25,7 @@ checks=0
 ok()  { echo "ok   $*"; checks=$((checks + 1)); }
 bad() { echo "FAIL $*"; failed=$((failed + 1)); }
 
-constructed="$(sed 's/;.*$//' self_host/*.ax | grep -ohE '"AX[0-9]{4}"' | tr -d '"' | sort -u)"
+constructed="$(sed 's/;.*$//' core/*.ax | grep -ohE '"AX[0-9]{4}"' | tr -d '"' | sort -u)"
 primary="$(grep -hoE '^[EWNH] AX[0-9]{4}' tests/diagnostics/*.axdl | grep -oE 'AX[0-9]{4}' | sort -u)"
 uncovered="$(grep -oE '^AX[0-9]{4}$' tests/diagnostics/UNCOVERED | sort -u)"
 

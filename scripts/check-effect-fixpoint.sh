@@ -14,7 +14,7 @@
 #
 #   1. A ratio: `swap / fwd <= 3`. A ratio holds under unknown load; an
 #      absolute time only shows the machine was idle.
-#   2. The same answer. `symbols --calls` over `self_host/main.ax` must
+#   2. The same answer. `symbols --calls` over `core/main.ax` must
 #      match byte for byte between the tree's compiler and one with the
 #      frontier ablated. A wrong frontier shows up as a missing effect
 #      on one row, with no crash.
@@ -131,18 +131,18 @@ echo "== 2. and answers the same thing =="
 # silently ablating nothing.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/"
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/"
 # The formatter puts the body on its own line, so the seam is the whole
 # two-line definition, counted exactly.
 seam_old='(pub fn (nextFrontier next decls)
   next)'
 seam_new='(pub fn (nextFrontier next decls)
   (allIndexes (vecLen decls)))'
-n_seam="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().count(sys.argv[2]))' "$abl/self_host/typecheck.ax" "$seam_old" || true)"
+n_seam="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().count(sys.argv[2]))' "$abl/core/typecheck.ax" "$seam_old" || true)"
 if [[ "$n_seam" != 1 ]]; then
-  bad "self_host/typecheck.ax holds $n_seam copies of the ablation seam; this gate expects exactly 1"
+  bad "core/typecheck.ax holds $n_seam copies of the ablation seam; this gate expects exactly 1"
 else
-  python3 - "$abl/self_host/typecheck.ax" "$seam_old" "$seam_new" <<'PY'
+  python3 - "$abl/core/typecheck.ax" "$seam_old" "$seam_new" <<'PY'
 import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p, encoding="utf-8").read()
@@ -154,11 +154,11 @@ PY
     bad "the ablated compiler would not build"
     sed 's/^/     /' "$work/abl.build.log" | head -10
   else
-    "$axc"            --diagnostic-format=ai symbols --calls "$repo_root/self_host/main.ax" > "$work/sym.tree" 2>&1
-    "$work/axc-abl"   --diagnostic-format=ai symbols --calls "$repo_root/self_host/main.ax" > "$work/sym.abl"  2>&1
+    "$axc"            --diagnostic-format=ai symbols --calls "$repo_root/core/main.ax" > "$work/sym.tree" 2>&1
+    "$work/axc-abl"   --diagnostic-format=ai symbols --calls "$repo_root/core/main.ax" > "$work/sym.abl"  2>&1
     rows="$(wc -l <"$work/sym.tree" | tr -d ' ')"
     if [[ "$rows" -lt 3000 ]]; then
-      bad "only $rows AXSYM rows for self_host/main.ax; the floor is 3000 (3495 today) - the comparison below would be of nothing"
+      bad "only $rows AXSYM rows for core/main.ax; the floor is 3000 (3495 today) - the comparison below would be of nothing"
     elif cmp -s "$work/sym.tree" "$work/sym.abl"; then
       ok "the worklist changes no row of $rows: --calls is byte-identical to the ablated compiler's"
     else

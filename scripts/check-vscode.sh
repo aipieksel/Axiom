@@ -7,8 +7,8 @@
 # them restate facts the compiler owns:
 #
 #   - the grammar's head-keyword alternation is a COPY of the set
-#     `self_host/parser.ax` dispatches on (its `kwEq name ...` call
-#     sites) and `self_host/lsp.ax` offers (`lspKeywords`).
+#     `core/parser.ax` dispatches on (its `kwEq name ...` call
+#     sites) and `core/lsp.ax` offers (`lspKeywords`).
 #     `editors/vscode/scripts/sync-keywords.mjs` writes that copy; this
 #     gate derives the set again, by its own extraction, and requires
 #     the grammar to carry exactly it. A keyword the parser learns and
@@ -45,8 +45,8 @@ cd "$repo_root" || { echo "FAIL: no repository root at $repo_root" >&2; exit 1; 
 
 ext="$repo_root/editors/vscode"
 grammar="$ext/syntaxes/axiom.tmLanguage.json"
-parser_ax="$repo_root/self_host/parser.ax"
-lsp_ax="$repo_root/self_host/lsp.ax"
+parser_ax="$repo_root/core/parser.ax"
+lsp_ax="$repo_root/core/lsp.ax"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -260,7 +260,7 @@ legend_from() { # legend_from <function name>
 if grep -q '(pub fn (lspSemanticTypes)' "$lsp_ax" && grep -q '(pub fn (lspSemanticModifiers)' "$lsp_ax"; then
   legend_types="$(legend_from lspSemanticTypes)"
   legend_mods="$(legend_from lspSemanticModifiers)"
-  legend_source="self_host/lsp.ax"
+  legend_source="core/lsp.ax"
 else
   # The agreed legend, until the server side lands. When it does, the
   # branch above reads the real one and this list stops mattering.

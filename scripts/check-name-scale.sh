@@ -11,7 +11,7 @@
 #   2. N against 2N. Doubling the declarations must cost under DBL_BOUND
 #      times the time, on each side. Recording a declaration asks
 #      `bares` whether the name is claimed. `bares` answers from an
-#      index (`MangleIdx`, self_host/namespace.ax). A scan is quadratic.
+#      index (`MangleIdx`, core/namespace.ax). A scan is quadratic.
 #   3. One `let`'s bindings, N against 2N, under LET_BOUND (AN-54). See
 #      that arm's section near the end.
 #
@@ -44,14 +44,14 @@
 #
 # Each arm carries its negative, which must fail on the ratio the arm
 # asserts, not on the floor. Each ablates one cause in its own scratch
-# copy of self_host/, since a compiler carrying two defects proves
+# copy of core/, since a compiler carrying two defects proves
 # neither arm:
-#   arm 1: `fnEntVisibleExact` (self_host/typecheck.ax) branches on
+#   arm 1: `fnEntVisibleExact` (core/typecheck.ax) branches on
 #          `memGetWord tc 20`. Forcing the zero branch makes every
 #          lookup fall to `findFnEntVisibleExact`, a scan of every entry
 #          filtered by `privBlocks`. The suffix index (`memGetWord tc
 #          26`) is left alone: the exact pass dominates
-#          `check self_host/main.ax`, so one seam is enough.
+#          `check core/main.ax`, so one seam is enough.
 #   arm 2: `mangleIdxHas` put back to a scan of `bares`. This is arm 2's
 #          cause, not arm 1's: arm 1 passes on that compiler.
 #   arm 3: the per-call scan of the `let`'s binders put back.
@@ -202,7 +202,7 @@ if (( $(python3 -c "print(1 if $ratio >= $BOUND else 0)") )); then
   echo "FAIL: resolving a module's PRIVATE names now costs ${ratio}x what its" >&2
   echo "      public ones cost. Some lookup on the visibility path has gone" >&2
   echo "      back to scanning the function table - see \`findFnEnt\` and the" >&2
-  echo "      index sections in self_host/typecheck.ax, and the note at the" >&2
+  echo "      index sections in core/typecheck.ax, and the note at the" >&2
   echo "      top of this file for how that happened the first time." >&2
   failed=1
 fi
@@ -215,7 +215,7 @@ case $? in
     echo "FAIL: doubling the module's declarations costs more than ${DBL_BOUND}x" >&2
     echo "      on at least one side. Recording a declaration has gone back to" >&2
     echo "      scanning \`bares\` - see \`MangleIdx\` and the writers below it in" >&2
-    echo "      self_host/namespace.ax, and this file's header for what the" >&2
+    echo "      core/namespace.ax, and this file's header for what the" >&2
     echo "      scan cost before it was indexed." >&2
     failed=1 ;;
   2)
@@ -232,7 +232,7 @@ esac
 # restoring it leaves an ablation behind for every later gate to build.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
 # Anchored on the whole function: a `match` on `internFind` is a shape
@@ -246,7 +246,7 @@ cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
 # `check-contracts.sh`'s `guard-restored` ablation uses the same shape.
 # The restored scan carries no tag: `vecGetStr` is a trusted
 # encapsulation (R-B6), so the scan performs nothing unsafe itself.
-if ! python3 - "$abl/self_host/namespace.ax" <<'PY'
+if ! python3 - "$abl/core/namespace.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -317,13 +317,13 @@ esac
 # for the other's.
 abl1="$work/tree1"
 mkdir -p "$abl1"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl1/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl1/" || {
   echo "FAIL: could not copy the tree to ablate for arm 1" >&2; exit 1; }
 
 # Anchored on the whole function. `fnEntVisibleSuffix` reads slot 26
 # with the same two-branch shape, so a substitution anchored on the `if`
 # alone would edit whichever came first.
-if ! python3 - "$abl1/self_host/typecheck.ax" <<'PY_ABL'
+if ! python3 - "$abl1/core/typecheck.ax" <<'PY_ABL'
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -391,7 +391,7 @@ fi
 # by walking the whole root (`boundWithin`) and scanning the symbols
 # (`lookupSym`) is cubic. Instead the walk reads a summary of the root's
 # binders, built once per binding, and memoises each head's answer
-# (`binderSummary`, `headIsLocal` in self_host/codegen.ax). What is left
+# (`binderSummary`, `headIsLocal` in core/codegen.ax). What is left
 # is quadratic: a doubling ratio tending to 4, where cubic tends to 8.
 # Each binding makes two calls, `(Cell (strDup "none"))`, which doubles
 # the cubic term and leaves the memoised walk as it is. From 500 to
@@ -442,7 +442,7 @@ case $? in
   1)
     echo "FAIL: doubling one \`let\`'s bindings costs ${LET_BOUND}x or more to emit." >&2
     echo "      The escape walk has gone back to a per-call scan - see" >&2
-    echo "      \`binderSummary\` and \`headIsLocal\` in self_host/codegen.ax." >&2
+    echo "      \`binderSummary\` and \`headIsLocal\` in core/codegen.ax." >&2
     failed=1 ;;
   2)
     echo "FAIL: the small side is under ${FLOOR}s, so the ratio is noise." >&2
@@ -456,9 +456,9 @@ esac
 # binders' scan is what makes the per-call walk expensive.
 abl3="$work/tree3"
 mkdir -p "$abl3"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl3/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl3/" || {
   echo "FAIL: could not copy the tree to ablate for arm 3" >&2; exit 1; }
-if ! python3 - "$abl3/self_host/codegen.ax" <<'PY_LET'
+if ! python3 - "$abl3/core/codegen.ax" <<'PY_LET'
 import sys
 p = sys.argv[1]
 s = open(p).read()

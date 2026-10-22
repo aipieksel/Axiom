@@ -2,10 +2,10 @@
 # The mid-level IR: what it prints, what it means, and how much of the
 # tree lowers into it.
 #
-# `self_host/mir.ax` is an analysis IR over the checked AST: a
+# `core/mir.ax` is an analysis IR over the checked AST: a
 # representation, a lowering, a printer and a verifier. `symbols --mir`
 # and `--axir` read it through `axir.ax`; no build emits from it.
-# `self_host/mireval.ax` is a reference evaluator over it, used only by
+# `core/mireval.ax` is a reference evaluator over it, used only by
 # tests.
 #
 # Goldens pin the form of the IR, not its meaning: `AXIOM_BLESS=1`
@@ -18,7 +18,7 @@
 # The sections:
 #
 #   1. The driver builds. `tests/mir/mirtool.ax` imports `mir`, `mireval`
-#      and the frontend. `mireval` is outside `self_host/main.ax`'s import
+#      and the frontend. `mireval` is outside `core/main.ax`'s import
 #      graph, so this build is the only thing that notices it breaking.
 #   2. The printer, against `tests/mir/NAME.mir`, byte for byte. It is the
 #      only check that sees the text, which the `.mir` tooling reads.
@@ -29,7 +29,7 @@
 #   5. Positive controls, so §4 cannot pass on empty or identical outputs.
 #   6. Who imports the IR: `axir.ax` and `mireval.ax`, and not
 #      `codegen.ax`, so no build emits from it.
-#   6b. The coverage floor: how much of `self_host/` and `stdlib/` lowers.
+#   6b. The coverage floor: how much of `core/` and `stdlib/` lowers.
 #   7. The operator table, against `codegen.ax`'s. `mir.ax` carries its
 #      own copy of `binopToLLVM` and `cmpToLLVM` rather than importing the
 #      code generator into an analysis IR.
@@ -76,7 +76,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
 # The tool imports compiler modules through an explicit search root.
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 gate_build_axc axc
 
 failed=0
@@ -106,7 +106,7 @@ fi
 
 tool="$work/mirtool"
 if "$axc" build --input tests/mir/mirtool.ax --output "$tool" > "$work/tool.log" 2>&1; then
-  ok "tests/mir/mirtool.ax builds against self_host/mir.ax and self_host/mireval.ax"
+  ok "tests/mir/mirtool.ax builds against core/mir.ax and core/mireval.ax"
 else
   bad "tests/mir/mirtool.ax would not build - the IR modules do not compile"
   sed 's/^/     /' "$work/tool.log" | head -20
@@ -270,13 +270,13 @@ echo "--- 6. who reads the IR, and that no build does ---"
 # `codegen.ax` is not on the list: no build emits from this IR, and a
 # build path that imported it again would be a second code generator.
 want_mir="axir.ax mireval.ax"
-got_mir="$(grep -l -E '^\(import mir\)$' self_host/*.ax | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+got_mir="$(grep -l -E '^\(import mir\)$' core/*.ax | xargs -n1 basename | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
 if [[ "$got_mir" == "$want_mir" ]]; then
   ok "exactly two modules import mir: $got_mir"
 else
   bad "the importers of mir have moved: want [$want_mir], got [$got_mir]"
 fi
-if grep -q -E '^\(import mir\)$' self_host/codegen.ax; then
+if grep -q -E '^\(import mir\)$' core/codegen.ax; then
   bad "codegen.ax imports mir: the build path has a second code generator again"
 else
   ok "codegen.ax does not import mir - every build emits by the one walk"
@@ -284,7 +284,7 @@ fi
 
 # `mireval` stays test-only: §4 compares the compiler against it, and a
 # compiler that imported its own reference would be compared with itself.
-ev_importers="$(grep -l -E '^\(import mireval\)' self_host/*.ax | grep -v '^self_host/mireval\.ax$' | tr '\n' ' ')"
+ev_importers="$(grep -l -E '^\(import mireval\)' core/*.ax | grep -v '^core/mireval\.ax$' | tr '\n' ' ')"
 if [[ -z "$ev_importers" ]]; then
   ok "no compiler module imports mireval - §4's reference is still independent"
 else
@@ -297,7 +297,7 @@ echo "--- 6b. the coverage floor: how much of the corpus lowers ---"
 # ---------------------------------------------------------------
 # The lowering handles a subset and refuses everything else, so a rule
 # that narrowed itself to keep §4 green would leave every other check
-# passing. This lowers every module in `self_host/` and `stdlib/`,
+# passing. This lowers every module in `core/` and `stdlib/`,
 # prints the live count so drift shows early, and fails below FLOOR.
 # The count must stay a strict subset of the corpus: "everything
 # lowered" would mean the counter changed, not the lowering.
@@ -306,7 +306,7 @@ CORPUS_FLOOR=4700
 tot_l=0
 tot_t=0
 n_mod=0
-for m in self_host/*.ax stdlib/*.ax stdlib/*/*.ax; do
+for m in core/*.ax stdlib/*.ax stdlib/*/*.ax; do
   read -r l t <<<"$("$tool" count "$m" 2>/dev/null)"
   [[ -n "${t:-}" ]] || continue
   tot_l=$((tot_l + l))
@@ -382,10 +382,10 @@ ablate() {
   local which="$1" root="$work/abl$1"
   rm -rf "$root"
   mkdir -p "$root"
-  cp -R "$repo_root/self_host" "$repo_root/stdlib" "$root/"
+  cp -R "$repo_root/core" "$repo_root/stdlib" "$root/"
   mkdir -p "$root/tests"
   cp -R "$repo_root/tests/mir" "$root/tests/"
-  python3 - "$root/self_host/mir.ax" "$which" <<'PY'
+  python3 - "$root/core/mir.ax" "$which" <<'PY'
 import re, sys
 p, which = sys.argv[1], sys.argv[2]
 s = open(p, encoding="utf-8").read()
@@ -452,7 +452,7 @@ PY
   if [[ $? -ne 0 ]]; then
     return 1
   fi
-  ( cd "$root" && AXIOM_PATH="$root/self_host${AXIOM_PATH:+:$AXIOM_PATH}" \
+  ( cd "$root" && AXIOM_PATH="$root/core${AXIOM_PATH:+:$AXIOM_PATH}" \
     "$axc" build --input tests/mir/mirtool.ax --output "$root/mirtool" ) \
     > "$root/build.log" 2>&1
 }
@@ -570,7 +570,7 @@ echo "--- 9. the guard, at the emitted bytes ---"
 # replace a -1 divisor with 1, keeping LLVM's INT_MIN % -1 case defined.
 # The verifier checks the exact comparison, selection and consumed operand,
 # and refuses six independent corruptions of the emitted text.
-"$axc" emit-llvm --input self_host/main.ax > "$work/self.ll" 2>"$work/self.ll.err" || {
+"$axc" emit-llvm --input core/main.ax > "$work/self.ll" 2>"$work/self.ll.err" || {
   bad "could not emit the compiler's own IR"
 }
 if [[ -s "$work/self.ll" ]]; then

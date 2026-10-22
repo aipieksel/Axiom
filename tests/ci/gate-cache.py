@@ -31,9 +31,9 @@ try:
     with tempfile.TemporaryDirectory(prefix='axiom-ci-cache-') as scratch:
         root = Path(scratch)
         subprocess.run(['git', 'init', '-q', str(root)], check=True)
-        for d in ('scripts/lib', 'self_host', 'stdlib', 'tests/selfhost', 'tests/stdlib'):
+        for d in ('scripts/lib', 'core', 'stdlib', 'tests/selfhost', 'tests/stdlib'):
             (root / d).mkdir(parents=True)
-        files = {'.gitignore': '.results/\ncount\nfailure\n', 'self_host/main.ax': 'compiler\n',
+        files = {'.gitignore': '.results/\ncount\nfailure\n', 'core/main.ax': 'compiler\n',
                  'scripts/lib/gate.sh': 'helper\n', 'stdlib/Pre.ax': 'stdlib\n',
                  '/'.join(('tests', 'selfhost', 'input.ax')): 'completion input\n',
                  '/'.join(('tests', 'stdlib', 'unrelated.ax')): 'unrelated fixture\n'}
@@ -70,7 +70,7 @@ try:
         expect(run() == 0 and count() == 1, 'unrelated prose and gate scripts should preserve reuse')
         (root / '/'.join(('tests', 'stdlib', 'unrelated.ax'))).write_text('changed unrelated fixture\n')
         expect(run() == 0 and count() == 1, 'unrelated fixtures should preserve reuse')
-        for p in ('/'.join(('tests', 'selfhost', 'input.ax')), 'self_host/main.ax', 'stdlib/Pre.ax', 'scripts/lib/gate.sh'):
+        for p in ('/'.join(('tests', 'selfhost', 'input.ax')), 'core/main.ax', 'stdlib/Pre.ax', 'scripts/lib/gate.sh'):
             (root / p).write_text((root / p).read_text() + 'changed\n')
             before = count()
             expect(run() == 0 and count() == before + 1, f'{p} must invalidate a pass')
@@ -130,7 +130,7 @@ try:
         before = count()
         expect(run() == 0 and count() == before + 1, 'gate-specific environment switches must invalidate')
         os.environ.pop('SELF_TEST')
-        gate.write_text(body.replace('exit ', 'echo changed >> self_host/main.ax\nexit '))
+        gate.write_text(body.replace('exit ', 'echo changed >> core/main.ax\nexit '))
         before = len(list((root / '.results').glob('*.json')))
         expect(run() == 0 and len(list((root / '.results').glob('*.json'))) == before,
                'a gate that mutates its inputs must not earn a success record')

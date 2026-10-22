@@ -23,10 +23,10 @@ status=0
 # The stdlib cases cover the emitter's everyday shapes. The compiler's
 # own entry file covers self-host scale, where a nondeterminism keyed on
 # table size would hide from the smaller cases.
-for case_file in tests/stdlib/*.ax self_host/main.ax; do
+for case_file in tests/stdlib/*.ax core/main.ax; do
   # `main.ax` would collide with a stdlib case of the same name in
   # `$work`, so its pair is prefixed.
-  if [[ "$case_file" == self_host/* ]]; then
+  if [[ "$case_file" == core/* ]]; then
     name="selfhost-$(basename "$case_file" .ax)"
   else
     name="$(basename "$case_file" .ax)"

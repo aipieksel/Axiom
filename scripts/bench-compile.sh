@@ -24,7 +24,7 @@
 # The stages overlap. `emit-llvm` repeats everything `check` does, so the
 # difference between them is printed as its own row: lowering and the
 # write. `check` returns before any IR exists (the `doEmit` test in
-# `compileFile`, `self_host/main.ax`). That matters because `axiom lsp`
+# `compileFile`, `core/main.ax`). That matters because `axiom lsp`
 # runs `check` on every keystroke.
 #
 # It prints a table and never fails on a threshold: a wall-clock bound on
@@ -47,7 +47,7 @@ gate_init
 
 REPS="${REPS:-5}"
 opt=1
-input="self_host/main.ax"
+input="core/main.ax"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --opt)   opt="${2:-1}"; shift 2 ;;

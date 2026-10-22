@@ -95,10 +95,10 @@ DRIVER = r'''import os, pathlib, sys
 args = sys.argv[1:]
 assert '--diagnostic-format=ai' in args, args
 if 'emit-llvm' in args:
-    assert os.environ['AXIOM_PATH'] == 'self_host'
+    assert os.environ['AXIOM_PATH'] == 'core'
     assert os.environ['AXIOM_STDLIB'].startswith('C:/'), os.environ['AXIOM_STDLIB']
     assert args[-1].startswith('C:/'), args
-    assert pathlib.Path('self_host/main.ax').is_file()
+    assert pathlib.Path('core/main.ax').is_file()
     triple = 'x86_64-pc-windows-msvc' if os.environ['SEED_TEST_ARCH'] == 'x86_64' else 'aarch64-pc-windows-msvc'
     print('target triple = "' + triple + '"')
     print('; compiler mock line\n' * 10001, end='')
@@ -121,8 +121,8 @@ def mock_cases(work):
         shutil.copyfile(ROOT / "scripts" / name, dest)
     shutil.copyfile(ROOT / "scripts/platform-allow.windows.txt", repo / "scripts/platform-allow.windows.txt")
     (repo / "stdlib").mkdir()
-    (repo / "self_host").mkdir()
-    (repo / "self_host/main.ax").write_text("; this is a mock compiler source\n")
+    (repo / "core").mkdir()
+    (repo / "core/main.ax").write_text("; this is a mock compiler source\n")
     seeds = repo / "bootstrap"
     seeds.mkdir()
     for arch, triple in TRIPLES.items():

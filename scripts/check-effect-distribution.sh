@@ -17,7 +17,7 @@
 # "Ambient" is a claim about a population, so the gate pins every bucket
 # of exact effect rows in two views:
 #
-#   compiler  `symbols --calls self_host/main.ax`: the compiler and the
+#   compiler  `symbols --calls core/main.ax`: the compiler and the
 #             stdlib it reaches.
 #   stdlib    one probe importing every stdlib module.
 #
@@ -56,8 +56,8 @@ have() { # have <got> <want> <what>
 # A same-compiler source comparison moves collectMods, resolveModMarks and
 # srcLineIndex from Alloc,Mut,Unsafe to Alloc,Mut after removing raw views.
 # No other existing row, including any IO-bearing row, changes effects.
-# RE-DERIVED 2026-10-13: the lexicon (`self_host/lexicon.ax`), the
-# nolint reading (`self_host/nolint.ax`) and the server's semantic
+# RE-DERIVED 2026-10-13: the lexicon (`core/lexicon.ax`), the
+# nolint reading (`core/nolint.ax`) and the server's semantic
 # tokens section arrived, all of them string-building and
 # vector-walking code with no IO: pure 1872 -> 1980, Alloc,Mut 2496 ->
 # 2566, Alloc,IO,Mut 365 -> 367, Mut 141 -> 144, Alloc 141 -> 142. Every
@@ -320,9 +320,9 @@ have() { # have <got> <want> <what>
 # Unsafe to pure. Deleting tyRenderApp and tyRenderJoin (Alloc,Mut),
 # rgnFirstBit and rgnFirstBitFrom (pure) and nodeCText (Unsafe) removes
 # five rows. A same-compiler comparison moves no other row.
-echo "== compiler view: symbols --calls self_host/main.ax =="
-"$axc" --diagnostic-format=ai symbols --calls self_host/main.ax > "$work/main.axsym" 2>"$work/main.err" \
-  || { fail "could not read symbols over self_host/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
+echo "== compiler view: symbols --calls core/main.ax =="
+"$axc" --diagnostic-format=ai symbols --calls core/main.ax > "$work/main.axsym" 2>"$work/main.err" \
+  || { fail "could not read symbols over core/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
 rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 (( rows >= 4000 )) && ok "$rows functions listed (floor 4000)" \
   || fail "only $rows functions listed; the floor is 4000 (the corpus moved or the read broke)"

@@ -43,7 +43,7 @@ def main():
         raise AssertionError(f"packet checks failed: {packet_check}")
     # Full packet hashes cover every parsed field, including labels,
     # annotations and rule metadata, after each child has been reaped.
-    files = sorted((ROOT / "self_host").glob("*.ax"))
+    files = sorted((ROOT / "core").glob("*.ax"))
     files += sorted((ROOT / "stdlib").glob("*.ax"))
     files += sorted((ROOT / "tests/selfhost").glob("*.ax"))
     expected = run([transfer, "1", "verify", *map(str, files)])

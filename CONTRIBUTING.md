@@ -48,7 +48,7 @@ one the same way, so you can also just run a gate. That logic is
 The compiler is written in Axiom, so building it needs a compiler.
 `bootstrap/` holds the compiler's own LLVM IR, one committed file per
 target. The script turns the file for your host into a *seed* with
-the native LLVM toolchain, compiles `self_host/` with the seed, and repeats until
+the native LLVM toolchain, compiles `core/` with the seed, and repeats until
 two successive compilers are byte-identical.
 [bootstrap/README.md](bootstrap/README.md) explains why the seed may lag
 the source, and what stops it drifting.
@@ -77,7 +77,7 @@ published one.
 
 ```text
 axiom/
-├── self_host/          the compiler, written in Axiom
+├── core/          the compiler, written in Axiom
 │   ├── core.ax           tokens and spans
 │   ├── lexer.ax          tokenizer
 │   ├── parser.ax         S-expression parser, AST
@@ -183,25 +183,25 @@ Every Axiom program goes through this pipeline:
 Source (.ax) → Lexer → Parser → Imports → Macro expansion → Type checker → LLVM IR text → llc → cc → Executable
 ```
 
-1. **Lexer** (`self_host/lexer.ax`) turns source text into tokens.
-2. **Parser** (`self_host/parser.ax`) turns tokens into an AST, an
+1. **Lexer** (`core/lexer.ax`) turns source text into tokens.
+2. **Parser** (`core/parser.ax`) turns tokens into an AST, an
    S-expression tree.
-3. **Imports** (`self_host/codegen.ax`) resolves each `(import M)` to a
+3. **Imports** (`core/codegen.ax`) resolves each `(import M)` to a
    file, merges the declarations it exports, and mangles them to
    `M$name`.
-4. **Expander** (`self_host/expand.ax`) rewrites every macro invocation
+4. **Expander** (`core/expand.ax`) rewrites every macro invocation
    into its template. It renames the binders the template introduces,
    so they can't capture a caller's names. It runs before the type
    checker, so to every later stage, whatever a macro generates is
    ordinary code.
-5. **Type checker** (`self_host/typecheck.ax`) works in two passes: it
+5. **Type checker** (`core/typecheck.ax`) works in two passes: it
    collects declarations, then checks bodies. After a mismatch it
    propagates a poison type, so one mistake draws one diagnostic.
-6. **Emitter** (`self_host/codegen.ax`) mangles names and writes LLVM
+6. **Emitter** (`core/codegen.ax`) mangles names and writes LLVM
    IR text straight from the checked AST. A function whose whole body
    is one basic block of arithmetic can instead be emitted from the
    mid-level IR in `mir.ax`.
-7. **Driver** (`self_host/driver.ax`) runs `opt`, `llc` and `cc`, and
+7. **Driver** (`core/driver.ax`) runs `opt`, `llc` and `cc`, and
    reports which of them failed rather than passing their errors
    through.
 
@@ -280,23 +280,23 @@ expected output need separate review.
 
 ### Where to make changes
 
-The compiler lives in `self_host/` and is written in Axiom.
+The compiler lives in `core/` and is written in Axiom.
 
 | What you want to do | Where to look |
 |---|---|
-| Add a new token | `self_host/core.ax` (the `TokenKind` list) and `self_host/lexer.ax` |
-| Change lexing rules | `self_host/lexer.ax` |
-| Add a new AST node | `self_host/parser.ax` (the `TAG_*` constants and `ASTNode`) |
-| Change parsing rules | `self_host/parser.ax` |
-| Change what a macro expands to, or add a template form | `self_host/expand.ax` |
-| Change how a bare name reaches a declaration, or what `pub` lets out | `self_host/namespace.ax`, which both `expand.ax` and `codegen.ax` ask |
-| Add a type-checking rule | `self_host/typecheck.ax` |
-| Change LLVM emission | `self_host/codegen.ax` |
-| Add a CLI command | `self_host/main.ax`, and `self_host/driver.ax` for `build` |
-| Add a diagnostic code | `mkDiag` at the site that detects it: `parser.ax`, `typecheck.ax`, `expand.ax`, `codegen.ax` or `driver.ax` (the lexer reports through the parser). Add its long-form text to `self_host/explain.ax`. See [Adding a diagnostic code](#adding-a-diagnostic-code) |
-| Change how diagnostics look | `self_host/render.ax` for the human report and `self_host/style.ax` for its palette. AXDL and JSON are in `self_host/diag.ax` |
-| Work on the formatter, REPL, `symbols` or the language server | `self_host/{format,repl,symbols,lsp}.ax` |
-| Work on the Rust FFI | `self_host/rustbind.ax` and the crates under `rust/`. See [docs/ffi.md](docs/ffi.md) |
+| Add a new token | `core/core.ax` (the `TokenKind` list) and `core/lexer.ax` |
+| Change lexing rules | `core/lexer.ax` |
+| Add a new AST node | `core/parser.ax` (the `TAG_*` constants and `ASTNode`) |
+| Change parsing rules | `core/parser.ax` |
+| Change what a macro expands to, or add a template form | `core/expand.ax` |
+| Change how a bare name reaches a declaration, or what `pub` lets out | `core/namespace.ax`, which both `expand.ax` and `codegen.ax` ask |
+| Add a type-checking rule | `core/typecheck.ax` |
+| Change LLVM emission | `core/codegen.ax` |
+| Add a CLI command | `core/main.ax`, and `core/driver.ax` for `build` |
+| Add a diagnostic code | `mkDiag` at the site that detects it: `parser.ax`, `typecheck.ax`, `expand.ax`, `codegen.ax` or `driver.ax` (the lexer reports through the parser). Add its long-form text to `core/explain.ax`. See [Adding a diagnostic code](#adding-a-diagnostic-code) |
+| Change how diagnostics look | `core/render.ax` for the human report and `core/style.ax` for its palette. AXDL and JSON are in `core/diag.ax` |
+| Work on the formatter, REPL, `symbols` or the language server | `core/{format,repl,symbols,lsp}.ax` |
+| Work on the Rust FFI | `core/rustbind.ax` and the crates under `rust/`. See [docs/ffi.md](docs/ffi.md) |
 | Add a stdlib function | `stdlib/`: `Pre`, `Mem`, `Str`, `Utf8`, `Vec`, `Map`, `Fmt`, `Err`, `Fallible`, `Intern`, `Sys`, `Path`, `IO`, `Ffi`, `Cereal`, `Rpc`, `Task`, `Chan`, `Http`, `Test`, `Agent.Tags`, `Tui.Keys`, `Tui.Edit`, `Tui.Term` |
 | Add a new syntax feature | `tree-sitter-axiom/grammar.js`, plus the lexer and the parser and its AST |
 
@@ -364,7 +364,7 @@ other one:
   executable, otherwise `.axiom-bin/axiom`, bootstrapped from
   `bootstrap/` if it isn't there yet.
 - `$work` is a temporary directory, removed on exit.
-- `$axc` is the compiler under test, built from `self_host/`.
+- `$axc` is the compiler under test, built from `core/`.
 
 `scripts/lib/gate.sh` holds nothing that runs the compiler on test
 cases, counts cases or reports results. Those differ per gate for real
@@ -405,7 +405,7 @@ shows the check can fail at all.
 | Script | What it checks |
 |---|---|
 | `check-tree-sitter.sh` | The checked-in grammar parses every `.ax` file in the repository, and the Axiom blocks in the documentation balance their delimiters. `check-tools-selfhost.sh` checks whole programs and verifies displayed output where a `doc-gate:run` marker opts in. It needs the tree-sitter CLI (`npm install --prefix tree-sitter-axiom tree-sitter-cli`) and fails without it. Set `AXIOM_TREE_SITTER_OPTIONAL=1` to skip it instead (`tree-sitter-axiom/README.md`) |
-| `check-vscode.sh` | The VS Code extension in `editors/vscode/` agrees with the compiler: its grammar's head-keyword alternation equals the set derived from `self_host/parser.ax`'s `kwEq` sites and `self_host/lsp.ax`'s `lspKeywords`, every semantic token type and modifier it maps is in the server's legend and every legend type is mapped, `package.json` states `VERSION`, the three JSON files parse, `extension.js` is JavaScript and `scripts/sync-keywords.mjs` is a fixed point. Needs `node` and no compiler. One ablation, required: a grammar missing `while` |
+| `check-vscode.sh` | The VS Code extension in `editors/vscode/` agrees with the compiler: its grammar's head-keyword alternation equals the set derived from `core/parser.ax`'s `kwEq` sites and `core/lsp.ax`'s `lspKeywords`, every semantic token type and modifier it maps is in the server's legend and every legend type is mapped, `package.json` states `VERSION`, the three JSON files parse, `extension.js` is JavaScript and `scripts/sync-keywords.mjs` is a fixed point. Needs `node` and no compiler. One ablation, required: a grammar missing `while` |
 | `check-ci-coverage.sh` | Every `scripts/check-*.sh` in the tree is named on a `run:` line in `.github/workflows/ci.yml`, and every gate a step names exists. It reads `run:` lines rather than the whole file, because the workflow's comments name gates too, including deleted ones. It runs no compiler. Three ablations, all required: a step deleted, a step naming a script that isn't there, and an uncovered gate named only in a comment |
 | `run-stdlib-tests.sh` | Every case in `tests/stdlib` compiles, runs with its `.in` file as standard input (`/dev/null` when it has none), prints its `.out` file and exits with the status its `.exit` file gives |
 | `check-freestanding.sh` | Generated code needs no C library. On windows-x86_64 and windows-aarch64, where the runtime must import kernel32, every symbol the IR declares must be on `scripts/platform-allow.windows.txt`, a reviewed list that may not hold a libc name |
@@ -433,7 +433,7 @@ shows the check can fail at all.
 | `check-fmt.sh` | Every `.ax` file outside the fixtures is already in `axiom fmt`'s normal form, and formatting doesn't change what a file means: the tree is formatted on a copy, and the suites are re-run against it. The bindings in `rust/examples/*/axiom/*.ax` must also be fixed points of `axiom fmt`, because `rust/axiom-bindgen/src/sexp.rs` restates the formatter's layout in Rust and `check-ffi.sh` only compares bindgen with itself. One ablation per binding adds two spaces to one indented line and must turn that check red |
 | `check-fmt-selfhost.sh` | The self-hosted formatter's bytes, exit statuses and refusals, over the corpus and a bank of refusal cases |
 | `check-tools-selfhost.sh` | `explain` and `symbols`, including that every code the corpus emits has an `explain` entry. It also compiles the Axiom programs in the documentation |
-| `check-render-selfhost.sh` | The human and JSON renderers, cross-checked against the AXDL goldens and against the palette `self_host/style.ax` declares |
+| `check-render-selfhost.sh` | The human and JSON renderers, cross-checked against the AXDL goldens and against the palette `core/style.ax` declares |
 | `check-repl-selfhost.sh` | The REPL, one piped session at a time. The `150-axtag-shape` session checks that `;@axiom:` tag lines typed at the prompt are read, not dropped as comments, and that redefining a tagged function drops its old tag lines too. A `restrict(no-io)` typed at the prompt must then refuse a function that performs IO |
 | `check-lsp-selfhost.sh` | The language server's framed session bytes, with every published position converted into LSP's 0-based UTF-16 and every answer derived from documents the driver writes itself. A sweep sends every advertised request at every kind of position, over a real module, a truncated one and an empty one |
 | `check-stdlib-api.sh` | `docs/stdlib-api.md` is generated by `examples/axdoc/axdoc.ax`, an Axiom program, and this gate regenerates it and requires identical bytes. Every `(pub` name in `stdlib/` must appear there exactly once, the `Sys/Platform.*.ax` files must declare the same names, and a documentation-coverage ratchet applies. The module table in `docs/reference.md` and the Standard library row in `docs/status.md` must match the library too, names and spelled-out count together. The negative probes add a public name to a copy of the library, which the regenerated page must show, and drop a module from a copy of each document, which must turn that list red |
@@ -459,7 +459,7 @@ shows the check can fail at all.
 | `check-net.sh` | A request handler bracketed as an arena scope holds worker RSS flat across ten thousand connections. The same binary without the scope must use at least 50 times as much |
 | `check-examples.sh` | `examples/` holds only sources and static assets, none of them executable, and every program is named in `examples/README.md`, which `README.md` links to. Five ablations, all required: a planted build artefact, an `.ax` tracked as 100755, an empty file list, a program the table doesn't name, and a row naming a program that's gone. It runs no Axiom program and builds no compiler |
 | `check-agent-calls.sh` | `symbols --calls`: no callee's effect escapes its caller, every inferred effect row carries a call edge, and every `IO` reaches a syscall or an `extern` |
-| `check-mir-roundtrip.sh` | The `.axir` record file survives its own reader: emit, read back and emit again gives identical bytes over the stdlib corpus and `self_host/main.ax`, with no golden that could be re-blessed. A file written with doubled spaces must come back normalised, and the normal form must be a fixed point, which shows the reader decomposes lines rather than passing them through. Each `tests/axir/*.bad` fixture must be refused with a message, and the magic first line, not the file name, selects the reader in both directions. Its ablations include a writer that drops the nid, a reader that keeps raw lines, and an arm deleted from the kind table |
+| `check-mir-roundtrip.sh` | The `.axir` record file survives its own reader: emit, read back and emit again gives identical bytes over the stdlib corpus and `core/main.ax`, with no golden that could be re-blessed. A file written with doubled spaces must come back normalised, and the normal form must be a fixed point, which shows the reader decomposes lines rather than passing them through. Each `tests/axir/*.bad` fixture must be refused with a message, and the magic first line, not the file name, selects the reader in both directions. Its ablations include a writer that drops the nid, a reader that keeps raw lines, and an arm deleted from the kind table |
 | `check-mir-projection.sh` | `symbols --mir`: the gate re-derives every `#mir-*` key itself from the raw region words of the matching `.axir` record, so it compares two independent derivations. Rows and records are matched in order on the whole header tuple, because the nid isn't unique across modules. Without `--mir` no row carries the key, and deleting every `#mir-*` token from the `--mir` stream gives the default stream byte for byte. `#mir-truncated` must be absent at call-chain depth 5 and at depth 60, where the escape must reach the first function's row; this is the one check in the tree that watches `rgnRounds`' round cap. Four ablations, all required. The silence ablation removes both guards, because the facts fixpoint runs only on demand |
 | `check-restrictions.sh` | `;@axiom:restrict(...)` is a check, never a transformation. Restricting every `fn` of every accepted corpus program without an `extern` changes no emitted IR byte and no AXSYM row beyond `#restrict=`. It draws `AX3051` only on rows marked `#effects-incomplete`, `#effects-overapprox` or `#effect-params=` (a body that calls its own parameter leaves the answer to its caller). Satisfied restrictions are silent on every control, and each restriction goes red when its violation is planted in a copy (the `no-cast` plant at the cast's own span). A compiler whose `checkRestricts` answers nothing fails the fixtures, and every restricted declaration in the tree is on `tests/agent/restrictions.allow` with the compiler's verdict |
 | `check-contracts.sh` | `;@axiom:pre(...)` and `;@axiom:post(...)` are checked. A violated contract exits 80, its own status among the trap statuses `MM-EXEC-16` reserves in `docs/memory-model.md`, and writes a line naming the kind, the function and the contract as written, at every `--opt` level. A satisfied contract answers what the same program with the tags deleted answers, and only modules that call `@__axiom_contract_fail` define it. `tests/diagnostics/385-contract-malformed.ax` draws seven `AX3050`s and nothing on its controls. A `pre` keeps the tail-call rewrite and a `post` spends it. Three ablations, each required: a compiler whose `expandProgram` lowers no contract, one whose `tcCheckFn` checks none, and one that lets a program's own `__contract` switch its contract off |
@@ -475,9 +475,9 @@ shows the check can fail at all.
 | `check-arena-reset-rate.sh` | What an arena reset costs. Timing gates here assert ratios so that a slow runner can't fail them, so this one turns a rate into a ratio. One program in three spellings a word apart (reset, mark, neither) attributes the cost, and the emitted IR is read with no clock in the assertion. The negative probe deletes the `slabclear` block from the IR and rebuilds, so the two binaries differ only in the scrub |
 | `check-steady-state.sh` | A long-running job reaches a measured steady state (P3 of the readiness plan): a bounded live set has bounded memory in a process that frees no container and resets no arena. It measures three magnitudes, because a plateau is what tells a steady state from a slope |
 | `check-reclaim-soak.sh` | Reclamation and reuse under stress. A million-deep list, tree and closure chain are released whole under a 64 KiB stack; a reset-free soak of random sizes up to 60,000 bytes must plateau across three magnitudes; a dropped two-node cycle must cost exactly 64 bytes, and nothing inside an arena scope; resets across every size class, nested chunks and four threads must leave no stale list head; a trap inside a recovery point must leave its descriptors to the program and its children to the sweep. Five ablations, each required red: a recursive release walk, no size-class rounding, no list scrub on reset, one set of lists for every thread, and the recovery record back in the arena. `--long` adds ten million replacements |
-| `check-fallible-reclaim.sh` | The block a call returning `Result` answers is reclaimed (ERR-MEM-4). Term 32 of `tests/stdlib/370-error-propagation.ax` is the flat line. This gate makes it evidence: it ablates `binderIsScalar` in `self_host/codegen.ax`, rebuilds the compiler from the ablated tree, and requires the fixture to fail at term 32 and at no other term |
-| `check-static-release.sh` | No `axiom_release` is emitted for a static string literal: its `@strhdr_*` count word is the sentinel -1, so the call could never free anything. `isStaticSentinelNode` guards the two sites that release the literal itself, an argument position and a block-construction field store. `valueOwnedRef` still answers 1 for `TAG_E_STR`, so in `(if c "lit" (mkStr))` the other branch's share is still released, and the second assertion checks that. The compiler's own IR (`emit-llvm self_host/main.ax`) must hold no static releases. The ablation turns the predicate off for `TAG_E_STR`, rebuilds the compiler, and requires the count back in the thousands |
-| `check-simd.sh` | What LLVM's vectorizer does with an Axiom loop, counted in the IR. `opt -O2` vectorizes a `for` over a `(Vec Int)` that only reads and a byte scan over a `String`, the driver's default `--opt 1` runs no vectorizer, and a Collatz `while` is the control that must not vectorize. The emitter change it holds is the trap runtime marked `noreturn cold` (`trapFnAttrs`), which keeps inlined copies of `vecGet`'s trap out of hot loops so the vectorizer accepts them. The ablation blanks the attributes, rebuilds the compiler and requires the copies back in the fixture's loop. A census over `self_host/main.ax` holds a ceiling of 2 trap copies and a floor on vectorized loops |
+| `check-fallible-reclaim.sh` | The block a call returning `Result` answers is reclaimed (ERR-MEM-4). Term 32 of `tests/stdlib/370-error-propagation.ax` is the flat line. This gate makes it evidence: it ablates `binderIsScalar` in `core/codegen.ax`, rebuilds the compiler from the ablated tree, and requires the fixture to fail at term 32 and at no other term |
+| `check-static-release.sh` | No `axiom_release` is emitted for a static string literal: its `@strhdr_*` count word is the sentinel -1, so the call could never free anything. `isStaticSentinelNode` guards the two sites that release the literal itself, an argument position and a block-construction field store. `valueOwnedRef` still answers 1 for `TAG_E_STR`, so in `(if c "lit" (mkStr))` the other branch's share is still released, and the second assertion checks that. The compiler's own IR (`emit-llvm core/main.ax`) must hold no static releases. The ablation turns the predicate off for `TAG_E_STR`, rebuilds the compiler, and requires the count back in the thousands |
+| `check-simd.sh` | What LLVM's vectorizer does with an Axiom loop, counted in the IR. `opt -O2` vectorizes a `for` over a `(Vec Int)` that only reads and a byte scan over a `String`, the driver's default `--opt 1` runs no vectorizer, and a Collatz `while` is the control that must not vectorize. The emitter change it holds is the trap runtime marked `noreturn cold` (`trapFnAttrs`), which keeps inlined copies of `vecGet`'s trap out of hot loops so the vectorizer accepts them. The ablation blanks the attributes, rebuilds the compiler and requires the copies back in the fixture's loop. A census over `core/main.ax` holds a ceiling of 2 trap copies and a floor on vectorized loops |
 | `check-effect-fixpoint.sh` | The effect fixpoint's worklist: after the first round, only the callers of what grew are walked again, so an order that defeats both passes (`f2 f1 f4 f3 ...`, as a generator writes) doesn't cost a full walk per round. The check is a ratio (`swap/fwd <= 3`), so a slow runner can't fail it, and `symbols --calls` must match the ablated compiler byte for byte, since a wrong frontier shows up as a missing effect. The ablation makes `nextFrontier` mark every declaration dirty and must push the ratio back over 10 |
 | `check-effect-argpos.sh` | `#effects-incomplete` marks an effect row as a lower bound, so a claim of absence over it draws a warning (`AX3037`, `AX3038`, `AX3051`) rather than a verdict. The mark follows the callee's declared argument position, not the argument's shape, because a value passed to an `Int` position can hide no effect. Generic `vecSortBy` and `vecSiftDownBy` retain `Mut` and `cmp` transparency while carrying the mark; the same bodies specialised to `Int` have complete rows. Four of the eight probe declarations are controls that must keep the mark: a type variable, an arrow position, a callee with one position of each, and a head that isn't a name. The ablation drops the type test from `escapeArgs`; the two rows must become lower bounds again, and the controls must not move |
 | `check-thread-local.sh` | The emitted runtime's mutable globals (the allocator's words, the slab array, `@__axiom_recover_top`, one evidence slot per effect, and the `parallel` runtime's bookkeeping words) move to `thread_local(localexec)` in a program that spawns a thread by naming `__thread_spawn`, and in no other. `@__axiom_argc` and `@__axiom_argv` stay shared, because `@main`'s prologue writes them once. A program that spawns nothing gets no `thread_local` and imports no TLS or thread symbol, which matters on Darwin, where a thread-local access is an indirect call through `__tlv_bootstrap`. Assertion 5 requires no dynamic TLS resolver on either Linux target, and assertion 6 drops `(localexec)` and requires the resolver to appear (`__tls_get_addr` on x86-64, `tlsdesc` on AArch64) |
@@ -487,8 +487,8 @@ shows the check can fail at all.
 | `check-protocol-model.sh` | Explores the channel, mutex and Task pool protocols at bounded sizes: exclusion, ordered delivery, deadlines, cancellation and checked spawn-refusal cleanup must hold, with every started child reaped. Planted defects must be detected with schedules. Source citations are checked against `stdlib/`, and recorded channel operations replay through the model. `tests/litmus/liveness.ax` measures starvation and distinguishes timed calls from untimed deadlock |
 | `check-metamorphic.sh` | A declaration nothing uses changes nothing else. For every program the compiler accepts in `tests/stdlib`, `tests/selfhost` and `examples`, it appends unused functions named `a` to `z` and requires the same verdict, the same `symbols` row for every original declaration and the same IR for every original function (`scripts/lib/metamorphic.py`). Three compilers rebuilt with one name-resolution fix taken out must fail it. `--long` adds the compiler and the stdlib modules as entry files |
 | `check-surface-agreement.sh` | The compiler's four doors agree about every diagnostics fixture: `check`'s diagnostics equal the language server's published ones (lints set aside), `build` refuses what `check` refuses with the same codes, and the REPL reports the same codes for every fixture small enough to type in. |
-| `check-assurance-controls.sh` | The rule tables in `docs/assurance.md`, every table headed `Area`, `Refused as`, `A refusal` and `An acceptance`, are checked claims: each refusal path draws one of its row's codes, each acceptance path checks clean, and a missing path or a table with no rows fails. Three negative controls rebuild the compiler from a copy of `self_host/` with one enforcement removed, `AX3042`, `AX3010` and `AX3005` in turn, and require the refusal fixtures that name the code to be accepted by it. Every seam is counted before it is edited, so a reformatted seam fails rather than ablating nothing |
-| `check-mir.sh` | The mid-level IR in `self_host/mir.ax`: SSA with block parameters instead of phis, a printer, and a verifier (one terminator per block, single assignment, branch arity, dominance). Goldens hold the printer, and a differential holds the meaning: each fixture, run by the real compiler and lowered and run by `self_host/mireval.ax`, must print the same bytes. No build emits from the IR: `axir.ax` and `mireval.ax` are its only importers, and `codegen.ax` must not import it. A floor on how much of `self_host/` and `stdlib/` lowers catches a subset that narrows itself. Each ablation must fire its own check; one breaks only dominance, so that rule is shown to fail |
+| `check-assurance-controls.sh` | The rule tables in `docs/assurance.md`, every table headed `Area`, `Refused as`, `A refusal` and `An acceptance`, are checked claims: each refusal path draws one of its row's codes, each acceptance path checks clean, and a missing path or a table with no rows fails. Three negative controls rebuild the compiler from a copy of `core/` with one enforcement removed, `AX3042`, `AX3010` and `AX3005` in turn, and require the refusal fixtures that name the code to be accepted by it. Every seam is counted before it is edited, so a reformatted seam fails rather than ablating nothing |
+| `check-mir.sh` | The mid-level IR in `core/mir.ax`: SSA with block parameters instead of phis, a printer, and a verifier (one terminator per block, single assignment, branch arity, dominance). Goldens hold the printer, and a differential holds the meaning: each fixture, run by the real compiler and lowered and run by `core/mireval.ax`, must print the same bytes. No build emits from the IR: `axir.ax` and `mireval.ax` are its only importers, and `codegen.ax` must not import it. A floor on how much of `core/` and `stdlib/` lowers catches a subset that narrows itself. Each ablation must fire its own check; one breaks only dominance, so that rule is shown to fail |
 
 The rest of `scripts/` doesn't run in CI. `.github/workflows/ci.yml` is
 the authority on which scripts do, so check it rather than this table.
@@ -684,7 +684,7 @@ does not change the release matrix or the supported-target list.
 - Format a new file before you commit it. The gates need it to
   round-trip either way, but an unformatted file shows up as churn in
   whichever commit next touches it.
-- Match the surrounding code. `self_host/` puts long explanatory
+- Match the surrounding code. `core/` puts long explanatory
   comments above anything non-obvious, and they record the measurement
   that justified the code. That's how the project avoids arguing the
   same decision twice.
@@ -723,7 +723,7 @@ to keep up to date.
 - `#| ... |#` block comments exist and nest
   (`tests/selfhost/170-block-comment.ax`,
   `tests/diagnostics/335-axtag-in-block-comment.ax`), but no file in
-  `self_host/` or `stdlib/` uses one. A commented-out region is code no
+  `core/` or `stdlib/` uses one. A commented-out region is code no
   gate compiles, and it's usually code that should be deleted.
 - Document public APIs with comments that explain *why*, not just
   *what*.
@@ -739,7 +739,7 @@ In short:
 1. Pick the next free number in the stage's range.
 2. Construct the diagnostic with `mkDiag` (or `mkDiagFix` when the help
    is machine-applicable) at the site that detects the condition.
-3. Write its long-form text into `self_host/explain.ax`.
+3. Write its long-form text into `core/explain.ax`.
 4. Poison rather than cascade.
 5. Add a `tests/diagnostics/` case with its `.axdl` and `.human`
    goldens.
@@ -754,9 +754,9 @@ Three things worth knowing before you start:
   real test is that a compiler built from *before* your change fails
   the case.
 - The construction site isn't always the frontend. `AX4001` is
-  constructed in `self_host/main.ax`, `AX4002` in
-  `self_host/codegen.ax`, `AX4003`–`AX4005` in `self_host/driver.ax`,
-  and the macro codes `AX3018`–`AX3035` in `self_host/expand.ax`.
+  constructed in `core/main.ax`, `AX4002` in
+  `core/codegen.ax`, `AX4003`–`AX4005` in `core/driver.ax`,
+  and the macro codes `AX3018`–`AX3035` in `core/expand.ax`.
 
 ---
 
@@ -878,12 +878,12 @@ The grammars, worked examples and reasoning for each are in
 
 When you change the compiler:
 
-- Send every compiler message through `self_host/diag.ax`'s `Diag`,
+- Send every compiler message through `core/diag.ax`'s `Diag`,
   with a stable code, slug, severity, span and message. Never print a
   raw string from a compiler phase, because no output format can render
   it.
 - Prefer poison propagation over ad hoc cascade suppression.
-- Give a new diagnostic its long-form text in `self_host/explain.ax`
+- Give a new diagnostic its long-form text in `core/explain.ax`
   before it ships. `scripts/check-tools-selfhost.sh` fails otherwise.
 
 ---

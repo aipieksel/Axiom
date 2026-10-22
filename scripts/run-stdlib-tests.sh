@@ -52,9 +52,9 @@
 #
 # The alternative was to advance the seed, and `scripts/reseed.sh`
 # states the rule that rules it out: the seed moves when it can no
-# longer compile `self_host/`, "and it is the only routine reason to
+# longer compile `core/`, "and it is the only routine reason to
 # move it. Advancing it otherwise is optional and costs 8.4 MB of
-# generated text in the diff". The seed compiles `self_host/` fine.
+# generated text in the diff". The seed compiles `core/` fine.
 # What was wrong was this script's choice of compiler, and the shared
 # artifact makes the right one free - `gate_build_axc` is the same one
 # every other gate here uses, and in CI it is a cache hit.

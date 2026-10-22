@@ -121,7 +121,7 @@ def main():
     if args.entry:
         graph_profile(args, widths)
         return
-    files = args.input or sorted(Path("self_host").glob("*.ax"))
+    files = args.input or sorted(Path("core").glob("*.ax"))
     if not files or any(not file.is_file() for file in files):
         parser.error("every input must be an existing source file")
     verify(args.probe, widths, args.ast_transfer)

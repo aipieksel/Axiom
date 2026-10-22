@@ -61,7 +61,7 @@ const BUILTIN_TYPES = new Set([
   'Float', 'Bool', 'Char', 'String', 'Foreign', 'Handle', 'Spawn',
 ])
 
-// Built-in effects from self_host/lexicon.ax.
+// Built-in effects from core/lexicon.ax.
 const BUILTIN_EFFECTS = new Set(['Pure', 'IO', 'Alloc', 'Mut', 'Div', 'Unsafe', 'Spawn', 'Block', 'Entropy'])
 
 const KEYWORD_FUNCTION = new Set(['fn', 'lambda'])

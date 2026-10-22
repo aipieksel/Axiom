@@ -78,7 +78,7 @@
 #   7. The examples under examples/concurrency/ build and run, in both
 #      lowerings, each checking its own answers and ending `ok`.
 #   8. The runtime's half, ablated in the COMPILER: a copy of
-#      `self_host/` with the abort's kill-list sweep deleted must leave
+#      `core/` with the abort's kill-list sweep deleted must leave
 #      the sibling-trap task alive; one whose arena reset no longer runs
 #      the cleanup of the owners made since its mark must leave a guard
 #      a trap abandoned holding its lock; and on Darwin a copy forking with
@@ -703,14 +703,14 @@ done
 # ---------------------------------------------------------------------
 echo "== 8. the runtime's half, ablated in the compiler =="
 # ablate_cc <tag> <python old> <python new>: a compiler built from a copy
-# of self_host/ with one exact string replaced - aborting when the
+# of core/ with one exact string replaced - aborting when the
 # string is not there, so a drill that silently did not apply cannot
 # pass as one that could not fail.
 ablate_cc() {
   local tag="$1" old="$2" new="$3" dir="$work/cc-$1"
   rm -rf "$dir"; mkdir -p "$dir"
-  cp -R "$repo_root/self_host" "$dir/self_host"
-  python3 - "$dir/self_host/codegen.ax" "$old" "$new" <<'PY' || return 1
+  cp -R "$repo_root/core" "$dir/core"
+  python3 - "$dir/core/codegen.ax" "$old" "$new" <<'PY' || return 1
 import sys
 p, old, new = sys.argv[1], sys.argv[2].encode().decode("unicode_escape"), sys.argv[3].encode().decode("unicode_escape")
 s = open(p, encoding="utf-8").read()

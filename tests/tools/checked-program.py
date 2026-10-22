@@ -11,7 +11,7 @@ import tempfile
 
 def handoff_lifetime(compiler, root, env, work):
     """Observe snapshot retirement through the real sealed handoff API."""
-    source = (root / 'self_host/checked.ax').read_text()
+    source = (root / 'core/checked.ax').read_text()
     getter = '''
 (pub :: checkedSnapshotCount (-> CheckedProgram Int))
 (pub fn (checkedSnapshotCount program) (vecLen program.syntax))
@@ -23,7 +23,7 @@ def handoff_lifetime(compiler, root, env, work):
         directory.mkdir(exist_ok=True)
         (directory / 'checked.ax').write_text(checked + getter)
         environment = dict(env, AXIOM_PATH=os.pathsep.join(
-            (str(directory), str(root / 'self_host'), str(root / 'tests/selfhost'))))
+            (str(directory), str(root / 'core'), str(root / 'tests/selfhost'))))
         output = directory / ('lifetime-O' + level)
         built = subprocess.run(
             [compiler, '--diagnostic-format=ai', 'build',
@@ -150,7 +150,7 @@ def main():
         # Compiler clients may retain the mutable merged declaration vector.
         # Edits must invalidate its handoff, while an unchanged list and a
         # freshly checked edit remain usable. These exercise the real API.
-        probe_env = dict(env, AXIOM_PATH=str(root / 'self_host'))
+        probe_env = dict(env, AXIOM_PATH=str(root / 'core'))
 
         def build_probe(name, output, environment):
             result = subprocess.run(
@@ -175,11 +175,11 @@ def main():
         # proving that its status-80 assertion depends on this enforcement.
         control = work / 'control'
         control.mkdir()
-        source = (root / 'self_host/checked.ax').read_text()
+        source = (root / 'core/checked.ax').read_text()
         seam = ';@axiom:pre((checkedDeclarationsUnchanged program))\n'
         assert source.count(seam) == 1, 'missing declaration-list enforcement seam'
         (control / 'checked.ax').write_text(source.replace(seam, ''))
-        control_env = dict(env, AXIOM_PATH=os.pathsep.join((str(control), str(root / 'self_host'))))
+        control_env = dict(env, AXIOM_PATH=os.pathsep.join((str(control), str(root / 'core'))))
         executable = work / 'unchecked-control'
         build_probe('1034-checked-declarations-stale.ax', executable, control_env)
         result = subprocess.run([str(executable)], cwd=work,
@@ -209,7 +209,7 @@ def main():
         seam = '(checkedFunctionTypes program.functions)'
         assert source.count(seam) == 1, 'missing checked function-type handoff seam'
         numeric_control = work / 'numeric-control-source'
-        shutil.copytree(root / 'self_host', numeric_control)
+        shutil.copytree(root / 'core', numeric_control)
         (numeric_control / 'checked.ax').write_text(source.replace(seam, 'vecNew'))
         control_compiler = work / 'numeric-control-compiler'
         built = subprocess.run(
@@ -258,7 +258,7 @@ def main():
         # Every current AST tag has an explicit traversal decision. A new
         # tag must update the checked handoff's schema rather than silently
         # inheriting the leaf fallback.
-        parser = (root / 'self_host/parser.ax').read_text()
+        parser = (root / 'core/parser.ax').read_text()
         tags = {int(value) for value in re.findall(
             r'\(pub fn \(TAG_\w+\)\s+(\d+)\)', parser)}
         shape = source.split('(fn (checkedSyntaxShape tag)', 1)[1].split(
@@ -273,7 +273,7 @@ def main():
         # gone. A new caller must take the sealed value, so it cannot
         # emit what the check refused.
         callers = {}
-        for source in sorted((root / 'self_host').glob('*.ax')):
+        for source in sorted((root / 'core').glob('*.ax')):
             for lineno, line in enumerate(source.read_text().split('\n'), 1):
                 code = line.split(';', 1)[0]
                 if '(emitResolvedMode ' in code:
@@ -283,7 +283,7 @@ def main():
         assert set(callers) == {'checked.ax', 'codegen.ax'}, callers
         assert len(callers['checked.ax']) == 1, callers
         # codegen's own occurrence is the declaration, not a call site
-        definition = (root / 'self_host' / 'codegen.ax').read_text()
+        definition = (root / 'core' / 'codegen.ax').read_text()
         assert definition.count('(pub fn (emitResolvedMode ') == 1
         assert callers['codegen.ax'] == [
             lineno for lineno, line in enumerate(definition.split('\n'), 1)

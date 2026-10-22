@@ -145,7 +145,7 @@ def raw_metadata(source):
 
 
 def check(axiom, repo, work, positive_only):
-    source = (repo / 'self_host/codegen.ax').read_text()
+    source = (repo / 'core/codegen.ax').read_text()
     original_fixture = (Path(__file__).with_suffix('.ax')).read_text()
     expected = Path(__file__).with_suffix('.out').read_text().splitlines()
     if expected != [f'{i} true' for i in range(1, 21)]:
@@ -155,7 +155,7 @@ def check(axiom, repo, work, positive_only):
     def build(label, level, codegen, fixture):
         modules = work / (label + '-modules')
         modules.mkdir(exist_ok=True)
-        for path in (repo / 'self_host').iterdir():
+        for path in (repo / 'core').iterdir():
             destination = modules / path.name
             if path.name == 'codegen.ax':
                 destination.write_text(codegen)

@@ -22,7 +22,7 @@ than the compiler's - so a lexer bug cannot hide behind itself:
                   those two files as destroyed; comparing decoded values
                   reports a changed string, which is what matters.
                   The seven escapes are stage0's set, `n t r \\ " ' 0`
-                  (self_host/lexer.ax:isEscapeChar); an escape outside
+                  (core/lexer.ax:isEscapeChar); an escape outside
                   it is left as written, which is also what the lexer
                   does before refusing the file.
 
@@ -62,7 +62,7 @@ import sys
 
 DELIMS = set('(){}[],')
 OPENERS, CLOSERS = '([{', ')]}'
-# stage0's seven, self_host/lexer.ax:isEscapeChar.
+# stage0's seven, core/lexer.ax:isEscapeChar.
 ESC = {'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', "'": "'", '0': '\0'}
 CHARLIT = re.compile(r"^'(\\.|[^\\'])'$", re.S)
 # A whole atom that is a FLOAT literal: an optional fused minus, digits
@@ -264,7 +264,7 @@ def indent_problems(text, delims, delim_lines, orig):
     the printer's own rule and inherit its bugs. It asserts the much
     weaker thing a re-bless cannot supply: that a file with real nesting
     comes out with a real variety of indentation. Measured over
-    `self_host/` and `stdlib/`, every file with structural depth >= 3
+    `core/` and `stdlib/`, every file with structural depth >= 3
     and more than 20 code lines has at least SIX distinct indentation
     levels. Flush left has exactly one. The floor is three.
 

@@ -50,7 +50,7 @@ WANT_DEMAND=4
 echo "== population: every #generated= row over the corpus =="
 swept=0
 population=0
-for src in tests/selfhost/*.ax tests/frontend/*.ax self_host/main.ax; do
+for src in tests/selfhost/*.ax tests/frontend/*.ax core/main.ax; do
   [[ -e "$src" ]] || continue
   swept=$((swept + 1))
   n="$("$axc" --diagnostic-format=ai symbols "$src" 2>/dev/null | grep -c '#generated=' || true)"

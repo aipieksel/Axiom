@@ -14,7 +14,7 @@ The Windows link path uses Git Bash, `llc`, `llvm-dlltool`, `lld-link`
 and `llvm-readobj`. Neither path needs Rust or a Windows SDK.
 
 The script picks the seed that matches your host and assembles and
-links it to get a `seed` compiler. That compiler builds `self_host/`
+links it to get a `seed` compiler. That compiler builds `core/`
 into `stage1`. Then the usual ladder runs, `stage1 -> stage2 ->
 stage3`, and `stage2` and `stage3` must be byte-identical.
 
@@ -97,7 +97,7 @@ fresh clone doesn't need "the seed is exactly this source".
 
 A clone needs "the seed can build this source", and the script checks
 that by building it. If the seed falls far enough behind that it can't
-compile `self_host/`, the build fails and names the stage that
+compile `core/`, the build fails and names the stage that
 couldn't. `scripts/reseed.sh` then moves the seed forward. Go and Rust
 treat their bootstrap toolchains the same way, for the same reason.
 
@@ -166,7 +166,7 @@ per seed ever committed, and each row names the seed it reproduces from
 and how.
 
 The first row is the root, and it isn't an Axiom seed. The Rust
-compiler at `bb730db` compiles the `self_host/` tree of the first seed
+compiler at `bb730db` compiles the `core/` tree of the first seed
 commit, `60445dc`, into a `stage1`. That `stage1`'s emission of the
 same tree is byte-identical to the first seed. This is Wheeler's
 diverse double-compile. The Rust codegen's own IR (93,471 lines)
@@ -235,7 +235,7 @@ list:
   pins, which build the root;
 - the 28,082 lines of Rust at `bb730db`.
 
-That Rust shares an author with `self_host/`. This is a weakness of
+That Rust shares an author with `core/`. This is a weakness of
 "diverse" in the social sense, not the technical one.
 
 No Axiom binary runs before the comparison, and the gate reads its own
@@ -297,7 +297,7 @@ which is what the compiler writes itself now. Every other byte decides,
 the file's own name included, and the gate's negative probes show both
 halves.
 
-`scripts/reseed.sh` refuses to run while `self_host/` or `stdlib/` has
+`scripts/reseed.sh` refuses to run while `core/` or `stdlib/` has
 uncommitted changes, so a seed is always some commit's emission.
 `check-seed-lineage.sh --replay-seed-link FROM SEED` replays one link on
 its own, which is how a new row's stage and time are measured.

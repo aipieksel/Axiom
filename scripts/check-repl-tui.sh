@@ -90,7 +90,7 @@ done
 # every expected grid below depend on. It is read from the source, so a
 # prompt that changes width fails here with its own message rather than
 # as a timeout.
-pcols="$(python3 - "$repo_root/self_host/repl.ax" <<'PYX'
+pcols="$(python3 - "$repo_root/core/repl.ax" <<'PYX'
 import re, sys
 src = open(sys.argv[1]).read()
 # The normal form puts the single body form on its own line, so
@@ -460,7 +460,7 @@ fi
 tty_lines="$(printf '%s' "$tty_calls" | LC_ALL=C grep -c . || true)"
 tty_sites="$(printf '%s' "$tty_calls" | LC_ALL=C cut -d: -f1 | LC_ALL=C sort -u | LC_ALL=C grep -c . || true)"
 if [[ "$tty_lines" == 1 && "$tty_sites" == 1 ]]; then
-  ok "the tty predicate is called on EXACTLY one line across self_host/ (1 line, 1 file)"
+  ok "the tty predicate is called on EXACTLY one line across core/ (1 line, 1 file)"
 else
   bad "isTerminal is called on $tty_lines line(s) in $tty_sites file(s), want exactly 1 and 1."
   echo "     A second test downstream is how the two surfaces start diverging in places"
@@ -493,11 +493,11 @@ else
 fi
 
 # And the inverse: the REPL uses the library rather than a private copy.
-tui_imports="$(LC_ALL=C grep -cE '^\(import Tui\.(Keys|Edit|Term)\)' "$repo_root/self_host/repl.ax" | tr -d ' ')"
+tui_imports="$(LC_ALL=C grep -cE '^\(import Tui\.(Keys|Edit|Term)\)' "$repo_root/core/repl.ax" | tr -d ' ')"
 if [[ "$tui_imports" == 3 ]]; then
-  ok "self_host/repl.ax imports all 3 Tui modules - one implementation, not two"
+  ok "core/repl.ax imports all 3 Tui modules - one implementation, not two"
 else
-  bad "self_host/repl.ax imports $tui_imports of the 3 Tui modules"
+  bad "core/repl.ax imports $tui_imports of the 3 Tui modules"
 fi
 python3 - "$repo_root" <<'PYX' > "$work/restrict.log" 2>&1
 import sys, os

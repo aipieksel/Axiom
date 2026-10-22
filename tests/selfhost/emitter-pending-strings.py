@@ -81,7 +81,7 @@ def check(axiom, repo, work):
     expected = source.with_suffix('.out').read_text().splitlines()
     if expected != [f'{i} true' for i in range(1, 46)]:
         raise RuntimeError('update the explicit 45-case assertion count')
-    original = (repo / 'self_host/codegen.ax').read_text()
+    original = (repo / 'core/codegen.ax').read_text()
     env = dict(os.environ, AXIOM_STDLIB=str(repo / 'stdlib'))
 
     run_checked([str(axiom), "--diagnostic-format=ai", "fmt", "--check", str(fixture)],
@@ -90,7 +90,7 @@ def check(axiom, repo, work):
     def build_run(label, level, source, negative=()):
         modules = work / f'{label}-modules'
         modules.mkdir(exist_ok=True)
-        for path in (repo / 'self_host').iterdir():
+        for path in (repo / 'core').iterdir():
             destination = modules / path.name
             if path.name == 'codegen.ax':
                 destination.write_text(source + BRIDGES)

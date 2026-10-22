@@ -26,10 +26,10 @@
 # editing session, so the last section drives the language server too.
 #
 # The bank is wider than any one defect. Code in `tests/` and
-# `self_host/` is written to solve problems and holds no empty forms, so
+# `core/` is written to solve problems and holds no empty forms, so
 # a sweep over it cannot find what these small adversarial inputs do.
 #
-# Requires: a compiler. Builds the one under test from `self_host/`, so
+# Requires: a compiler. Builds the one under test from `core/`, so
 # `AXIOM=<any working compiler>` tests the tree, not the binary.
 
 set -uo pipefail
@@ -38,7 +38,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
 # Build the compiler under test from the tree, so an ablation of
-# `self_host/` shows here. `AXIOM` only supplies a compiler to build with.
+# `core/` shows here. `AXIOM` only supplies a compiler to build with.
 gate_build_axc axc "$work/axiom"
 
 cases=0; failed=0; signals=0; accepted=0; refused=0; codes=""

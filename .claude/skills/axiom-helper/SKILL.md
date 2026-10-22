@@ -67,7 +67,7 @@ Read it rather than guessing.
 
 ```
 axiom/
-├── self_host/     # THE COMPILER, written in Axiom
+├── core/     # THE COMPILER, written in Axiom
 ├── stdlib/        # the standard library, also written in Axiom
 ├── bootstrap/     # the compiler's own LLVM IR, per target - the seed
 ├── tests/         # the corpus: selfhost, diagnostics, stdlib, fmt,
@@ -80,7 +80,7 @@ axiom/
 ```
 
 CONTRIBUTING.md's *Project Structure* table is the normative per-module
-description of `self_host/`; read it rather than re-deriving one. It
+description of `core/`; read it rather than re-deriving one. It
 covers `expand.ax` (macro expansion, its own pass, between import
 resolution and the checker), `namespace.ax` (how a bare name reaches
 a definition and which names may leave a module), `style.ax` (the ANSI
@@ -202,7 +202,7 @@ Two details worth knowing before you add a diagnostic site:
 - **Spanlessness is the second suppression, and it is exercised.** A node
   with no span suppresses its diagnostic rather than pointing it
   somewhere wrong. There are ten `span == 0` guards in
-  `self_host/typecheck.ax`, and they are why a diagnostic never lands on
+  `core/typecheck.ax`, and they are why a diagnostic never lands on
   line 1 column 1 by accident.
 
 There is no dedup pass and no diagnostic grouping. AXDL has no `group`
@@ -214,11 +214,11 @@ call site, rather than ahead of one.
 
 ### 3.5 Never duplicate diagnostic logic across renderers
 
-All compiler messages go through `mkDiag` (`self_host/diag.ax`) with a
+All compiler messages go through `mkDiag` (`core/diag.ax`) with a
 stable code, severity, span, and message. Never print raw strings from
 compiler phases. When adding a new diagnostic, construct it at the site
 that detects the condition and write its long-form text into
-`self_host/explain.ax`: `scripts/check-tools-selfhost.sh` fails if a code
+`core/explain.ax`: `scripts/check-tools-selfhost.sh` fails if a code
 the corpus emits has no entry, and `scripts/check-doc-drift.sh` fails in
 the other direction too.
 
@@ -560,7 +560,7 @@ sessions, completion, highlighting) and not on a pipe: piped input
 reads plain lines, so arrow keys and in-place editing do not exist
 there and nothing is saved between piped sessions. The `:help` text
 says which surface it is talking about. The editor-grade interface is
-the LSP's job (`self_host/lsp.ax`, `axiom lsp`).
+the LSP's job (`core/lsp.ax`, `axiom lsp`).
 
 ### 5.6 Diagnostic code lookup workflow
 

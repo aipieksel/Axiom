@@ -162,9 +162,9 @@ grep -q 'x86_64-unknown-linux-gnu' emit_t.ll \
   && ok "emit-llvm --target selects a target" || bad "emit-llvm --target"
 
 # Working-directory trees are searched only when explicitly configured.
-mkdir -p "$work/cwd/stdlib" "$work/cwd/self_host" "$work/cwd/entry"
+mkdir -p "$work/cwd/stdlib" "$work/cwd/core" "$work/cwd/entry"
 printf '(pub :: cwdStd Int)\n(pub fn (cwdStd) 20)\n' >"$work/cwd/stdlib/CwdStd.ax"
-printf '(pub :: cwdHost Int)\n(pub fn (cwdHost) 22)\n' >"$work/cwd/self_host/CwdHost.ax"
+printf '(pub :: cwdHost Int)\n(pub fn (cwdHost) 22)\n' >"$work/cwd/core/CwdHost.ax"
 printf '(import CwdStd)\n(import CwdHost)\n(fn (main) (+ cwdStd cwdHost))\n' >"$work/cwd/entry/Main.ax"
 (
   cd "$work/cwd"
@@ -174,7 +174,7 @@ printf '(import CwdStd)\n(import CwdHost)\n(fn (main) (+ cwdStd cwdHost))\n' >"$
   && ok "unconfigured CWD module trees are refused" || bad "CWD fallback survived"
 (
   cd "$work/cwd"
-  AXIOM_PATH="$work/cwd/stdlib:$work/cwd/self_host" "$s1" --diagnostic-format=ai check entry/Main.ax
+  AXIOM_PATH="$work/cwd/stdlib:$work/cwd/core" "$s1" --diagnostic-format=ai check entry/Main.ax
 ) >"$work/cwd-configured.log" 2>&1
 [[ $? == 0 ]] && grep -q '^OK' "$work/cwd-configured.log" \
   && ok "explicit AXIOM_PATH resolves the same module trees" || bad "explicit module roots"
@@ -496,7 +496,7 @@ grep -Fq 'add `(:: main ())` and `(fn (main) ...)`' nm.err \
 # ...and it must NOT over-fire. These three surfaces analyse a module
 # without producing an executable, so a library with no entry point is
 # perfectly well-formed to them. `emit-llvm` is the load-bearing one:
-# check-diagnostics.sh sweeps every file in self_host/, stdlib/,
+# check-diagnostics.sh sweeps every file in core/, stdlib/,
 # stdlib/Sys/, tests/stdlib/ and tests/selfhost/ through it and
 # requires exit 0, and most of those modules have no `main` at all.
 "$s1" check nomain.ax >/dev/null 2>&1 \
@@ -835,8 +835,8 @@ PY
 # All source reads are rooted at the checkout: this gate is in $work.
 # Extraction errors must fail the check rather than comparing two empty
 # command substitutions, or counting an unreadable ablation as a mismatch.
-if ! drv_chain="$(argv_chain "$repo_root/self_host/driver.ax" flagArity '
-    1')" || ! code_chain="$(argv_chain "$repo_root/self_host/codegen.ax" valueFlag)"; then
+if ! drv_chain="$(argv_chain "$repo_root/core/driver.ax" flagArity '
+    1')" || ! code_chain="$(argv_chain "$repo_root/core/codegen.ax" valueFlag)"; then
   bad "could not extract both value-flag chains"
 else
   # flagArity has an outer (if wrapper; valueFlag carries its condition.
@@ -848,8 +848,8 @@ else
     ok "codegen's valueFlag mirrors driver's value flags exactly"
   fi
 fi
-if ! drv_commands="$(argv_chain "$repo_root/self_host/driver.ax" isSubcommand)" \
-    || ! code_commands="$(argv_chain "$repo_root/self_host/codegen.ax" cgSubcommand)"; then
+if ! drv_commands="$(argv_chain "$repo_root/core/driver.ax" isSubcommand)" \
+    || ! code_commands="$(argv_chain "$repo_root/core/codegen.ax" cgSubcommand)"; then
   bad "could not extract both subcommand chains"
 elif [[ "$drv_commands" != "$code_commands" ]]; then
   bad "cgSubcommand in codegen.ax differs from isSubcommand in driver.ax:"
@@ -859,19 +859,19 @@ else
 fi
 # Rename one member while keeping the definition intact. Apply the
 # same normalisation as the positive comparison to the value-flag arm.
-if cp "$repo_root/self_host/driver.ax" "$work/driver-abl.ax" \
+if cp "$repo_root/core/driver.ax" "$work/driver-abl.ax" \
     && sed 's/"--heap-ceiling"/"--no-such-flag"/' "$work/driver-abl.ax" > "$work/driver-abl2.ax" \
     && ablated_chain="$(argv_chain "$work/driver-abl2.ax" flagArity '
     1')" \
-    && code_chain="$(argv_chain "$repo_root/self_host/codegen.ax" valueFlag)" \
+    && code_chain="$(argv_chain "$repo_root/core/codegen.ax" valueFlag)" \
     && [[ "${ablated_chain#(if}" != "$code_chain" ]]; then
   ok "ablation: a value flag renamed on the driver's side is refused"
 else
   bad "ablation: could not compare renamed --heap-ceiling, or it still matched codegen's list"
 fi
-if cp "$repo_root/self_host/codegen.ax" "$work/codegen-abl.ax" \
+if cp "$repo_root/core/codegen.ax" "$work/codegen-abl.ax" \
     && sed 's/("lsp" true)/("xyzzy" true)/' "$work/codegen-abl.ax" > "$work/codegen-abl2.ax" \
-    && drv_commands="$(argv_chain "$repo_root/self_host/driver.ax" isSubcommand)" \
+    && drv_commands="$(argv_chain "$repo_root/core/driver.ax" isSubcommand)" \
     && ablated_commands="$(argv_chain "$work/codegen-abl2.ax" cgSubcommand)" \
     && [[ "$drv_commands" != "$ablated_commands" ]]; then
   ok "ablation: a subcommand renamed on codegen's side is refused"
@@ -883,7 +883,7 @@ if argv_chain "$work/no-argv-source.ax" flagArity > "$work/no-argv-source.out" 2
 else
   ok "an absent argv-chain source is refused"
 fi
-if argv_chain "$repo_root/self_host/driver.ax" noSuchArgvDefinition > "$work/no-argv-definition.out" 2>&1; then
+if argv_chain "$repo_root/core/driver.ax" noSuchArgvDefinition > "$work/no-argv-definition.out" 2>&1; then
   bad "an absent argv-chain definition was accepted"
 else
   ok "an absent argv-chain definition is refused"
@@ -1132,7 +1132,7 @@ LC_ALL=C grep -q '^E AX1001 midbom.ax:2:12' midbom.axdl \
 #
 # `version prints a version` above greps for the word `axiom` and would
 # pass on `axiom 9.9.9`. The number itself lives in
-# `self_host/main.ax`, `self_host/repl.ax` and `self_host/lsp.ax` as
+# `core/main.ax`, `core/repl.ax` and `core/lsp.ax` as
 # three independent string literals, in `rust/Cargo.toml` four more
 # times, and in eight `tests/lsp/*.golden` files that pin what the
 # language server reports over the wire. They agree today. Nothing was
@@ -1171,10 +1171,10 @@ else
   # the first grep: GNU grep drops `-A` context under `-o` while BSD
   # keeps it, so the version on the NEXT line was invisible on Linux
   # and the check failed there while green here (measured 2026-09-19).
-  ver_check "the version literal" "self_host/build.ax" \
-    "$(grep -A1 -F '(pub fn (axiomVersion)' "$repo_root/self_host/build.ax" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-  ver_check "the LSP serverInfo" "self_host/lsp.ax" \
-    "$(grep -oE '"version" \(jsonStr "[0-9]+\.[0-9]+\.[0-9]+"' "$repo_root/self_host/lsp.ax" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  ver_check "the version literal" "core/build.ax" \
+    "$(grep -A1 -F '(pub fn (axiomVersion)' "$repo_root/core/build.ax" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  ver_check "the LSP serverInfo" "core/lsp.ax" \
+    "$(grep -oE '"version" \(jsonStr "[0-9]+\.[0-9]+\.[0-9]+"' "$repo_root/core/lsp.ax" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   ver_check "the crate version" "rust/Cargo.toml" \
     "$(awk '/^\[(workspace\.)?package\]/{p=1;next} /^\[/{p=0} p&&/^version *=/{print;exit}' "$repo_root/rust/Cargo.toml" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 

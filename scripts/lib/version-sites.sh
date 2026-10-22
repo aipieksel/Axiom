@@ -151,8 +151,8 @@ web/src/data/site.ts|1|web_version|web_replace
 web/src/data/bench.ts|1|webbench_version|webbench_replace
 web/package.json|1|json_version|json_replace
 web/package-lock.json|2|npmlock_version|npmlock_replace
-self_host/build.ax|1|axv_version|axv_replace
-self_host/lsp.ax|1|lsp_version|lsp_replace
+core/build.ax|1|axv_version|axv_replace
+core/lsp.ax|1|lsp_version|lsp_replace
 rust/Cargo.toml|4|toml_version|toml_replace
 rust/Cargo.lock|7|lock_version|lock_replace
 rust/examples/nostd/Cargo.lock|4|lock_version|lock_replace

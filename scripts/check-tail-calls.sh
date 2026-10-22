@@ -10,7 +10,7 @@
 #   * a self tail call in a `let` body, a `cond` arm, a `match` arm and
 #     the tail of a `{ }` block ran ten million iterations at `--opt 0`
 #     - `emitTailJump`'s loop reaches every one of them, and has since
-#     2026-08-22 (`self_host/codegen.ax`, the comment under
+#     2026-08-22 (`core/codegen.ax`, the comment under
 #     `tailCallsSelf`). `docs/reference.md`'s Optimisation section and
 #     this gate's sibling `check-stack-depth.sh` still said a `let`
 #     body was not a tail position. Nothing measured it.
@@ -170,15 +170,15 @@ fi
 
 echo "== 4. the compiler's own IR =="
 floor=300
-if "$axc" emit-llvm self_host/main.ax > "$work/self.ll" 2>"$work/self.err"; then
+if "$axc" emit-llvm core/main.ax > "$work/self.ll" 2>"$work/self.err"; then
   n="$(grep -c 'musttail call' "$work/self.ll")"
   if (( n >= floor )); then
-    ok "self_host/main.ax carries $n musttail sites (floor $floor)"
+    ok "core/main.ax carries $n musttail sites (floor $floor)"
   else
-    bad "self_host/main.ax carries $n musttail sites, under the floor of $floor"
+    bad "core/main.ax carries $n musttail sites, under the floor of $floor"
   fi
 else
-  bad "emit-llvm self_host/main.ax failed"; head -5 "$work/self.err" | sed 's/^/     /'
+  bad "emit-llvm core/main.ax failed"; head -5 "$work/self.err" | sed 's/^/     /'
 fi
 
 echo

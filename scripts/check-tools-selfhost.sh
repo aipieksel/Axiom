@@ -85,7 +85,7 @@ failed=0
 # `stdlib/010-hello.ax` - a file that does not exist, which the
 # position verifier then reported as 191 unreadable files. The
 # normaliser has to name the thing it is normalising.
-norm() { sed -E -e "s|[^ ]*\.\./stdlib/|stdlib/|g" -e "s|[^ ]*\.\./self_host/|self_host/|g" -e "s|$repo_root/||g"; }
+norm() { sed -E -e "s|[^ ]*\.\./stdlib/|stdlib/|g" -e "s|[^ ]*\.\./core/|core/|g" -e "s|$repo_root/||g"; }
 
 # Every invocation runs from `$neutral`, a directory containing
 # nothing. Explicit relative roots resolve against that directory,
@@ -94,11 +94,11 @@ neutral="$work/neutral"
 mkdir -p "$neutral"
 
 # The compiler under test is the one built FROM SOURCE by `$axiom`, not
-# `$axiom` itself: this gate exists to test self_host/, and `$axiom` may
+# `$axiom` itself: this gate exists to test core/, and `$axiom` may
 # be an older seed-descended binary that predates the change being
 # tested.
 #
-# There are no stdlib/self_host symlinks in the work directory.
+# There are no stdlib/core symlinks in the work directory.
 gate_build_axc axc
 
 # ---------------------------------------------------------------
@@ -339,7 +339,7 @@ fi
 # Row for row against the AXSYM the same run produced.
 tbl_bad="$(python3 - "$work/zoo.out" "$work/zoo.tbl" <<'PY'
 import re, sys
-# One entry per arm of `symKindWord` in self_host/symbols.ax, and no
+# One entry per arm of `symKindWord` in core/symbols.ax, and no
 # more: `X` (foreign binding) was retired with the FFI, and leaving it
 # here would have this rule spell a kind the compiler prints raw.
 # This table is the SECOND implementation of `symKindWord`, and it is
@@ -487,7 +487,7 @@ while read -r f; do
       failed=$((failed + 1))
     fi
   fi
-done < <(find stdlib self_host tests -name '*.ax' | sort)
+done < <(find stdlib core tests -name '*.ax' | sort)
 
 # Re-derived 2026-08-16 against 390 files; it was 150, set when the
 # tree held ~194.
@@ -557,16 +557,16 @@ fi
 # explain: the lexicon
 #
 # `axiom explain WORD` answers a keyword, a builtin type, an effect, an
-# operator or a literal from `self_host/lexicon.ax`, and `explain @KEY`
+# operator or a literal from `core/lexicon.ax`, and `explain @KEY`
 # an AXTAG key. The lexicon is a hand-written table of another
 # module's vocabulary, which is the shape that drifts, so it is held
 # to the sources it mirrors:
 #
 #   * every head keyword the parser dispatches on (`kwEq name "..."` in
-#     self_host/parser.ax) and every word the server's completion menu
-#     offers (`lspKeywords` in self_host/lsp.ax) has an entry;
+#     core/parser.ax) and every word the server's completion menu
+#     offers (`lspKeywords` in core/lsp.ax) has an entry;
 #   * every AXTAG key the checker knows (`axtagKnownKey` in
-#     self_host/typecheck.ax) has an entry;
+#     core/typecheck.ax) has an entry;
 #   * every word the lexicon's own index lists answers, and the
 #     `Reference:` line each answer ends with names a heading or an
 #     `<a id>` that docs/reference.md has;
@@ -577,10 +577,10 @@ if python3 - "$work/axc" <<'PY_LEX'
 import re, subprocess, sys
 from pathlib import Path
 axc = sys.argv[1]
-parser = Path("self_host/parser.ax").read_text()
-lsp = Path("self_host/lsp.ax").read_text()
-tc = Path("self_host/typecheck.ax").read_text()
-lexicon = Path("self_host/lexicon.ax").read_text()
+parser = Path("core/parser.ax").read_text()
+lsp = Path("core/lsp.ax").read_text()
+tc = Path("core/typecheck.ax").read_text()
+lexicon = Path("core/lexicon.ax").read_text()
 ref = Path("docs/reference.md").read_text()
 
 def block(src, head):
@@ -661,7 +661,7 @@ fi
 #   3. `--missing` names exactly the declarations whose Summary cell in
 #      docs/stdlib-api.md is blank, and exits 1 iff there are any. The
 #      two are different readers of the same doc comments
-#      (`self_host/doccomment.ax` and `examples/axdoc/axdoc.ax`), so a
+#      (`core/doccomment.ax` and `examples/axdoc/axdoc.ax`), so a
 #      drift between them shows here;
 #   4. tests/tools/doc-render.md, one of every construct the renderer
 #      knows, renders byte for byte to tests/tools/doc-render.golden -
@@ -743,7 +743,7 @@ for m in mods:
 if len(mods) < 40 or names < 500:
     bad.append(f"{len(mods)} modules and {names} public names found; the floors are 40 and 500")
 
-lexicon = open(os.path.join(root, "self_host", "lexicon.ax"), encoding="utf-8").read()
+lexicon = open(os.path.join(root, "core", "lexicon.ax"), encoding="utf-8").read()
 def block(src, head):
     i = src.index(head)
     return src[i:src.index("\n(pub ::", i + 1)]

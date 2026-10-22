@@ -15,7 +15,7 @@
 #   3. `@__axiom_backtrace`, which walks the chain and resolves each
 #      return address. Checked in §1-§4.
 # `-g` is never passed and there is no `!dbg` anywhere. The whole
-# mechanism is emitted text, so the committed seed compiles `self_host/`
+# mechanism is emitted text, so the committed seed compiles `core/`
 # unchanged.
 #
 # A five-deep chain cannot name five functions at every optimisation

@@ -142,7 +142,7 @@ gate_link_entry() {
 # gate_source_stamp
 #
 # A hash of everything the compiler under test is built from: every
-# `.ax` the build reads (`self_host/` and the stdlib), the builder
+# `.ax` the build reads (`core/` and the stdlib), the builder
 # binary, the toolchain and the environment the compiler reads. It is
 # cheap next to a build.
 #
@@ -160,8 +160,8 @@ gate_source_stamp() {
 }
 
 # The environment the compiler reads while it builds: the `sysEnv`
-# reads in `self_host/` and `stdlib/` that can change what a build of
-# `self_host/main.ax` produces. AXIOM_STDLIB and AXIOM_PATH choose which
+# reads in `core/` and `stdlib/` that can change what a build of
+# `core/main.ax` produces. AXIOM_STDLIB and AXIOM_PATH choose which
 # module files an import resolves to, and AXIOM_LINK_SEARCH what the
 # link line finds. The rest
 # (HOME, XDG_CONFIG_HOME, TMPDIR, AXIOM_REPL_HISTORY) are read only by
@@ -204,7 +204,7 @@ gate_toolchain_stamp() {
 # gate_seed_source_stamp <root>
 #
 # The source part of that hash, without the builder: a function of the
-# paths and bytes of every `.ax` under `<root>/self_host` and
+# paths and bytes of every `.ax` under `<root>/core` and
 # `<root>/stdlib`.
 #
 # It takes a root because `check-seed-provenance.sh` also computes it
@@ -222,10 +222,15 @@ gate_seed_source_stamp() {
   #
   # Relative paths and `LC_ALL=C sort`: the stamp is a property of the
   # tree, not of where it was checked out or of the runner's locale.
-  list="$( cd "$root" && find self_host stdlib -name '*.ax' -type f 2>/dev/null \
+  list="$( cd "$root" && find core stdlib -name '*.ax' -type f 2>/dev/null \
              | LC_ALL=C sort )"
+  #
+  # The list spells the compiler's directory `self_host/`, its name when
+  # this recipe was fixed, so every stamp written before the move to
+  # `core/` still describes its tree. Both names sort before `stdlib/`,
+  # so the order of the bytes is the same either way.
   {
-    printf '%s\n' "$list"
+    printf '%s\n' "$list" | sed 's#^core/#self_host/#'
     while IFS= read -r f; do
       [[ -n "$f" ]] && cat "$root/$f"
     done <<< "$list"
@@ -263,19 +268,19 @@ gate_axdl_unknown_kind() {
 
 # gate_build_axc <varname> [output-path]
 #
-# Builds the compiler under test from the current `self_host/` sources
+# Builds the compiler under test from the current `core/` sources
 # and assigns its path to <varname>, defaulting to `$work/<varname>`.
 #
 # `$axiom` may be an older seed-descended binary that predates the
 # change being tested. A gate whose subject is the compiler builds one
-# from the tree first, which is what makes an ablation of `self_host/`
+# from the tree first, which is what makes an ablation of `core/`
 # visible to it.
 #
 # Ninety-seven gates call this, so `$AXIOM_AXC` lets one CI step build
 # the compiler once (`scripts/build-shared-axc.sh`). That cache is
 # content-addressed: the binary is used only when `$AXIOM_AXC.stamp`
 # equals `gate_source_stamp` for the tree as it is now. Change a byte
-# the build reads and the stamp moves, so an ablation of `self_host/`
+# the build reads and the stamp moves, so an ablation of `core/`
 # stays visible with nothing to invalidate by hand.
 #
 # A stale stamp and an absent one mean different things:
@@ -333,9 +338,9 @@ gate_build_axc() {
     fi
   fi
 
-  echo "== building the compiler under test from self_host/ =="
-  if ! "$axiom" build --input self_host/main.ax --output "$out" >"$log" 2>&1; then
-    echo "FAIL: could not build the compiler under test from self_host/" >&2
+  echo "== building the compiler under test from core/ =="
+  if ! "$axiom" build --input core/main.ax --output "$out" >"$log" 2>&1; then
+    echo "FAIL: could not build the compiler under test from core/" >&2
     sed 's/^/    /' "$log" | head -20 >&2
     exit 1
   fi
@@ -345,17 +350,17 @@ gate_build_axc() {
 
 # gate_build_tree <builder> <root> <stdlib> <out> [build flag ...]
 #
-# Builds `<root>/self_host/main.ax` with <builder> into <out>, reading
+# Builds `<root>/core/main.ax` with <builder> into <out>, reading
 # the standard library at <stdlib>: the compiler of an ablated tree,
 # which is how most negative controls in this battery prove their gate
 # can fail. The stdlib is an argument because call sites differ: some
 # ablate a module in the copy and must read it, others build the copied
-# `self_host/` against the gate's `$AXIOM_STDLIB`. <out> must be
+# `core/` against the gate's `$AXIOM_STDLIB`. <out> must be
 # absolute.
 #
 # Results are cached, since the battery repeats many of these builds
 # with unchanged inputs. The key hashes everything the result depends
-# on: every `.ax` under `<root>/self_host` and in <stdlib> (paths and
+# on: every `.ax` under `<root>/core` and in <stdlib> (paths and
 # bytes, `gate_ax_tree_stamp`), the builder binary, the toolchain, the
 # compiler-read environment and the flags. The tree's own directory is
 # not an input: compilers built from two copies of one tree at
@@ -377,7 +382,7 @@ gate_build_tree() {
   if [[ "$cache" != off ]]; then
     key="$( {
       printf '%s\n' 'gate-tree-v1' "flags=$*"
-      gate_ax_tree_stamp "$root" self_host
+      gate_ax_tree_stamp "$root" core
       gate_ax_tree_stamp "$lib" .
       gate_sha "$builder"
       gate_toolchain_stamp
@@ -397,7 +402,7 @@ gate_build_tree() {
       rm -f "$out" "$entry" "$entry.sha"
     fi
   fi
-  ( cd "$root" && AXIOM_STDLIB="$lib" "$builder" build --input self_host/main.ax --output "$out" "$@" ) || rc=$?
+  ( cd "$root" && AXIOM_STDLIB="$lib" "$builder" build --input core/main.ax --output "$out" "$@" ) || rc=$?
   (( rc == 0 )) || return "$rc"
   if [[ "$cache" != off ]] && mkdir -p "$cache" 2>/dev/null; then
     tmp="$(mktemp "$cache/.tmp.XXXXXX")" || return 0

@@ -53,7 +53,7 @@ use core::ffi::{c_char, c_int, c_void};
 
 // ---------------------------------------------------------------------
 // Raw syscalls. The numbers and the calling sequences are the ones
-// `self_host/codegen.ax` (`targetSyscallAsm`, `targetWriteNum`,
+// `core/codegen.ax` (`targetSyscallAsm`, `targetWriteNum`,
 // `targetExitNum`) emits for the runtime's own traps.
 // ---------------------------------------------------------------------
 

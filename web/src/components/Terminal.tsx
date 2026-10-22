@@ -5,7 +5,7 @@ import { Fragment, type ReactNode } from 'react'
  *
  * README.md says the real report is coloured — "severity and carets in
  * the severity's colour, the gutter blue, the `= help:` marker green" —
- * and that the palette is one table in `self_host/style.ax`. The text
+ * and that the palette is one table in `core/style.ax`. The text
  * here is quoted exactly; the colour is applied by this file, because a
  * web page is not a terminal any more than a markdown fence is.
  */

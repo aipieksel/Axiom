@@ -183,7 +183,7 @@ done
 echo "== 3. a compiler with a fix taken out fails the relation =="
 trio=(tests/stdlib/020-fmt.ax tests/stdlib/070-vec.ax tests/stdlib/210-struct-variants.ax)
 # `ablate <name> <file> <from> <to> [relation [program]]`: rebuild from
-# a copy of self_host/ with one exact span replaced, and require the
+# a copy of core/ with one exact span replaced, and require the
 # relation (section 2's `run` unless named) to fail on the three
 # programs above, or on the one program named. A span that no longer
 # matches exactly once fails the gate.
@@ -193,9 +193,9 @@ ablate() {
   [[ -n "${6:-}" ]] && progs=("$6")
   local dir="$work/ablate-$name"
   rm -rf "$dir"; mkdir -p "$dir"
-  cp -R "$repo_root/self_host" "$dir/self_host"
+  cp -R "$repo_root/core" "$dir/core"
   cp -R "$repo_root/stdlib" "$dir/stdlib"
-  if ! python3 - "$dir/self_host/$file" "$from" "$to" <<'PY'
+  if ! python3 - "$dir/core/$file" "$from" "$to" <<'PY'
 import sys
 p, a, b = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p).read()
@@ -204,7 +204,7 @@ if s.count(a) != 1:
 open(p, 'w').write(s.replace(a, b))
 PY
   then
-    bad "ablation \`$name\`: its span is not in self_host/$file exactly once, so it watches nothing"
+    bad "ablation \`$name\`: its span is not in core/$file exactly once, so it watches nothing"
     return
   fi
   if ! gate_build_tree "$axc" "$dir" "$dir/stdlib" "$dir/axc" >"$dir/build.log" 2>&1; then
@@ -268,7 +268,7 @@ if (( long )); then
   rc=0
   mods=()
   while IFS= read -r f; do mods+=("$f"); done < <(cd "$repo_root" && find stdlib -name '*.ax' | LC_ALL=C sort)
-  ( cd "$repo_root" && python3 "$lib" run --axiom "$axc" --jobs "$jobs" self_host/main.ax "${mods[@]}" ) \
+  ( cd "$repo_root" && python3 "$lib" run --axiom "$axc" --jobs "$jobs" core/main.ax "${mods[@]}" ) \
     >"$work/long.log" 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then
     ok "$(grep '^swept ' "$work/long.log")"

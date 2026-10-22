@@ -11,7 +11,7 @@
 #
 # The second implementation is `scripts/lib/ddc-interp.py`, in Python
 # with only its standard library, written from `docs/reference.md` and
-# never ported from `self_host/*.ax`. It interprets a frozen subset
+# never ported from `core/*.ax`. It interprets a frozen subset
 # (integers, comparisons, `if`, `let`, calls, recursion) and exits with
 # the program's answer. For each `tests/ddc/*.ax` three numbers must
 # agree: the fixture's `; expect N`, the exit of the seed-built binary,

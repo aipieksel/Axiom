@@ -3,7 +3,7 @@
 #
 # `__atomic_load`, `__atomic_store`, `__atomic_add`, `__atomic_cas` and
 # `__fence` lower to sequentially consistent LLVM atomics with no target
-# arm (`emitPrimAtomic`, self_host/codegen.ax). `check-freestanding.sh`
+# arm (`emitPrimAtomic`, core/codegen.ax). `check-freestanding.sh`
 # checks they lower inline and `check-cross-targets.sh` that the objects
 # relocate. This gate checks the instructions, then runs them.
 #

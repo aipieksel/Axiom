@@ -428,7 +428,7 @@ def verify(source, work, module=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path, nargs='?', help="self_host/codegen.ax")
+    parser.add_argument("source", type=Path, nargs='?', help="core/codegen.ax")
     parser.add_argument("work", type=Path, nargs='?', help="isolated output directory")
     parser.add_argument("--module", type=Path, help="also verify the actual emitted LLVM module")
     parser.add_argument("--selftest", action='store_true', help="test the static source reader without a toolchain")

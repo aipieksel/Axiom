@@ -4,7 +4,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 "$axiom" --diagnostic-format=ai build \
   --input tests/frontend/parallel/parse.ax --output "$work/frontend-probe" >"$work/build.log" 2>&1 \
   || { cat "$work/build.log" >&2; exit 1; }

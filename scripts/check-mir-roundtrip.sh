@@ -14,10 +14,10 @@
 # normalised form must be a fixed point.
 #
 # The corpus is a probe importing every stdlib module, plus the
-# compiler's own `self_host/` entry. Each is emitted twice, as `--axir`
+# compiler's own `core/` entry. Each is emitted twice, as `--axir`
 # and as `--axir --mir`, because only the second carries bodies: `blk`,
 # `op` and `term` lines for every function that `mLowerFn` in
-# `self_host/mir.ax` lowers and `mirVerify` passes.
+# `core/mir.ax` lowers and `mirVerify` passes.
 #
 # `--mir` must not cost a multiple of what the plain stream costs: its
 # peak memory is held to four times the plain stream's, for each input.
@@ -138,7 +138,7 @@ bodies=0
 # Both streams, because they are different files: `--mir` adds the
 # `region` line and the whole body. `--mir` is the slow one, because it
 # forces the region-facts fixpoint.
-for src in "$work/probe.ax" self_host/main.ax; do
+for src in "$work/probe.ax" core/main.ax; do
   name="$(basename "$src" .ax)"
   ( cd "$(dirname "$src")" && export AXIOM_STDLIB="$repo_root/stdlib" && \
       peak_kb "$work/$name.a.kb" "$axc" symbols --axir "$(basename "$src")" ) > "$work/$name.a.axir"
@@ -234,11 +234,11 @@ fi
 # spelling of an Axiom binary operator on its own line; `axirOpLine`
 # spells the two non-operator opcodes and `axirTermLine` the five
 # terminators. The corpus must reach every spelling they produce.
-opwords="$(sed -n '/^(pub fn (mBinOp nm)/,/^)$/p' self_host/mir.ax \
+opwords="$(sed -n '/^(pub fn (mBinOp nm)/,/^)$/p' core/mir.ax \
   | grep -oE '^ *"[a-z]+"$' | tr -d ' "' | LC_ALL=C sort -u)"
 opwords="$opwords
-$(grep -oE '" (const|call) "' self_host/axir.ax | tr -d ' "' | LC_ALL=C sort -u)"
-termwords="$(grep -oE '"term [a-z]+ ' self_host/axir.ax | awk '{print $2}' | LC_ALL=C sort -u)"
+$(grep -oE '" (const|call) "' core/axir.ax | tr -d ' "' | LC_ALL=C sort -u)"
+termwords="$(grep -oE '"term [a-z]+ ' core/axir.ax | awk '{print $2}' | LC_ALL=C sort -u)"
 nop=$(printf '%s\n' "$opwords" | grep -c . || true)
 nterm=$(printf '%s\n' "$termwords" | grep -c . || true)
 if (( nop < 13 || nterm < 5 )); then

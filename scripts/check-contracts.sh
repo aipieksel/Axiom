@@ -391,20 +391,20 @@ section6 "$axc" || true
 echo "== 7. a compiler that stops answering fails sections 1, 4 and 6 =="
 # ---------------------------------------------------------------
 # `ablate <name> <file> <from> <to> <section>`: build a compiler from a
-# copy of `self_host/` with `from` replaced by `to` in `file`, and
+# copy of `core/` with `from` replaced by `to` in `file`, and
 # require the named section to fail against it. Nothing here touches
 # the tree.
 ablate() {
   local name="$1" file="$2" from="$3" to="$4" section="$5"
   local dir="$work/ablate-$name"
   rm -rf "$dir"; mkdir -p "$dir"
-  cp -R "$repo_root/self_host" "$dir/self_host"
+  cp -R "$repo_root/core" "$dir/core"
   cp -R "$repo_root/stdlib" "$dir/stdlib"
-  if ! grep -qF "$from" "$dir/self_host/$file"; then
-    bad "ablation \`$name\`: \`$from\` is not in self_host/$file any more, so this probe watches nothing"
+  if ! grep -qF "$from" "$dir/core/$file"; then
+    bad "ablation \`$name\`: \`$from\` is not in core/$file any more, so this probe watches nothing"
     return
   fi
-  python3 - "$dir/self_host/$file" "$from" "$to" <<'PY'
+  python3 - "$dir/core/$file" "$from" "$to" <<'PY'
 import sys
 p, a, b = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p).read()

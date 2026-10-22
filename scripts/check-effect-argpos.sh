@@ -285,20 +285,20 @@ echo "== 4. and the type test is what does it (ablation) =="
 # the rule, update both strings to the new spelling.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/"
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/"
 # The condition as the formatter lays it out, then the same block with
 # the callable conjunct removed.
 seam_old='      (if (&& (== (escapeValue bound (vecGet args i)) 0)
             (&& (!= (as acc Int) 0) (== (tyIsCallable (arrowParamTy cty i)) 1)))'
 seam_new='      (if (&& (== (escapeValue bound (vecGet args i)) 0)
             (!= (as acc Int) 0))'
-n_seam="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().count(sys.argv[2]))' "$abl/self_host/typecheck.ax" "$seam_old" || true)"
+n_seam="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().count(sys.argv[2]))' "$abl/core/typecheck.ax" "$seam_old" || true)"
 checks=$((checks + 1))
 if [[ "$n_seam" != 1 ]]; then
-  echo "FAIL: self_host/typecheck.ax holds $n_seam copies of the ablation seam; this gate expects exactly 1"
+  echo "FAIL: core/typecheck.ax holds $n_seam copies of the ablation seam; this gate expects exactly 1"
   failed=$((failed + 1))
 else
-  python3 - "$abl/self_host/typecheck.ax" "$seam_old" "$seam_new" <<'PY'
+  python3 - "$abl/core/typecheck.ax" "$seam_old" "$seam_new" <<'PY'
 import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p, encoding="utf-8").read()

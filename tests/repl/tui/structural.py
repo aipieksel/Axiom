@@ -62,7 +62,7 @@ if __name__ == '__main__':
         unittest.main(argv=[sys.argv[0]])
     else:
         root = Path(sys.argv[1])
-        for path in sorted((root / 'self_host').glob('*.ax')):
+        for path in sorted((root / 'core').glob('*.ax')):
             # The gate counts decision lines: stdin and stdout may be
             # tested together in the same expression on one line.
             for line in sorted(set(call_lines(path.read_text()))):

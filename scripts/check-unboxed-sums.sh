@@ -644,8 +644,8 @@ echo "== 6. the checker's mirror against the emitter, over the compiler itself =
 # without `axiom_alloc`. The two predicates that decide which functions
 # are unboxed live in two files (`pairFnOK`, `tcPairFnOK`), and this
 # checks they have not drifted.
-if "$axc" emit-llvm --input "$repo_root/self_host/main.ax" -o "$work/us/self.ll" > "$work/us/self.log" 2>&1 \
-   && "$axc" --diagnostic-format=ai symbols "$repo_root/self_host/main.ax" > "$work/us/self.syms" 2>/dev/null; then
+if "$axc" emit-llvm --input "$repo_root/core/main.ax" -o "$work/us/self.ll" > "$work/us/self.log" 2>&1 \
+   && "$axc" --diagnostic-format=ai symbols "$repo_root/core/main.ax" > "$work/us/self.syms" 2>/dev/null; then
   if out="$(python3 "$repo_root/scripts/lib/alloc-rows.py" "$work/us/self.syms" "$work/us/self.ll" 2>&1)"; then
     ok "self-compile: $out"
   else
@@ -653,7 +653,7 @@ if "$axc" emit-llvm --input "$repo_root/self_host/main.ax" -o "$work/us/self.ll"
     echo "$out" | sed 's/^/     /' | head -12
   fi
 else
-  bad "could not emit IR and rows for self_host/main.ax"
+  bad "could not emit IR and rows for core/main.ax"
 fi
 
 echo

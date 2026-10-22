@@ -6,7 +6,7 @@
 # is read when the body starts and rolled back when it ends, so
 # everything the body allocated is reclaimed in one pointer move:
 # MM-RGN-1 over the runtime MM-ALLOC-15/16 already specify, with the
-# mark cell on the STACK (`emitRegion`, self_host/codegen.ax) so that a
+# mark cell on the STACK (`emitRegion`, core/codegen.ax) so that a
 # region per loop iteration leaks nothing. And the checker refuses the
 # two ways a reference could leave one that need no region TYPES to
 # see - the region's own value, and a `set` on a binding bound outside
@@ -41,7 +41,7 @@
 #      to agree with the silence.
 #
 #   4. THE ABLATION. The tree is copied, `rgTyScalar` in
-#      self_host/typecheck.ax is made to answer 1 for every type - the
+#      core/typecheck.ax is made to answer 1 for every type - the
 #      refusal still exists, still runs, and never fires - and S3's
 #      region-form reporting is silenced the same way (its report
 #      flag back to 0 on the region-form branch, the rule still
@@ -284,10 +284,10 @@ fi
 
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 checks=$((checks + 1))
-if ! python3 - "$abl/self_host/typecheck.ax" <<'PY'
+if ! python3 - "$abl/core/typecheck.ax" <<'PY'
 import sys, re
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()

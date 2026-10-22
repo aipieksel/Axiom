@@ -83,7 +83,7 @@
 #      compared BadBody.ax's line 2 against the case file's. 101 rows
 #      over the corpus.
 #
-#   5. THE ESCAPE STREAM, AGAINST THE PALETTE self_host/style.ax
+#   5. THE ESCAPE STREAM, AGAINST THE PALETTE core/style.ax
 #      DECLARES. The human surface is coloured and neither of the
 #      artifacts checks 3 and 4 read has any colour in it, so those two
 #      compare a STRIPPED copy of the golden and say nothing about the
@@ -95,7 +95,7 @@
 #      snippet's gutter bar or anywhere on the trailer - the source text
 #      a snippet quotes is the fixture's bytes, and the trailer is
 #      printed in the machine formats too. AXIOM_BLESS writes
-#      NAME.human; it cannot write self_host/style.ax.
+#      NAME.human; it cannot write core/style.ax.
 #
 #   6. THE JSON RENDERING, in the same two halves. 6a is a `cmp`
 #      against NAME.json, minus the trailer, which is not JSON and is
@@ -164,8 +164,8 @@
 #      statement.
 #
 # RE-RUN AGAINST THOSE SAME THREE BUILDS with this version in place, in
-# a mirror tree (self_host a patchable copy, tests/diagnostics a
-# writable copy, stdlib and .axiom-bin symlinked) so neither self_host/
+# a mirror tree (core a patchable copy, tests/diagnostics a
+# writable copy, stdlib and .axiom-bin symlinked) so neither core/
 # nor tests/ in the real tree was touched. `AXIOM_BLESS=1` still writes
 # all 52 goldens - it has to, it is only writing down what the compiler
 # said - and is then REFUSED; running the gate again over those freshly
@@ -254,7 +254,7 @@ bless="${AXIOM_BLESS:-0}"
 # `NAME.ax`, and the helper modules for multi-file cases are copied flat
 # because a module name is its filename stem.
 ln -s "$repo_root/stdlib" "$work/stdlib"
-ln -s "$repo_root/self_host" "$work/self_host"
+ln -s "$repo_root/core" "$work/core"
 ln -s "$repo_root/tests" "$work/tests"
 
 # A RELATIVE stdlib root, overriding the absolute one `gate_init`
@@ -268,11 +268,11 @@ ln -s "$repo_root/tests" "$work/tests"
 # repository names it. `verify-axdl-spans.py` refuses an absolute path
 # outright, so this cannot go wrong quietly.
 export AXIOM_STDLIB="stdlib"
-export AXIOM_PATH="self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="core${AXIOM_PATH:+:$AXIOM_PATH}"
 cp "$repo_root"/tests/diagnostics/mods/*.ax "$work/" 2>/dev/null || true
 
 # The renderer under test is the one built FROM SOURCE by `$axiom`, not
-# `$axiom` itself: this gate exists to test self_host/, and `$axiom` may
+# `$axiom` itself: this gate exists to test core/, and `$axiom` may
 # be an older seed-descended binary that predates the change being
 # tested.
 gate_build_axc axc
@@ -343,7 +343,7 @@ LEFT_CTX=20
 # the same loop count characters and copy them intact.
 #
 # Two more rules since 2026-09-27, when the renderer stopped echoing a
-# source line's CONTROL BYTES raw to the terminal (self_host/render.ax
+# source line's CONTROL BYTES raw to the terminal (core/render.ax
 # `dispUnitText`; tests/diagnostics/1017-control-bytes-in-source.ax):
 #
 #   * a control byte other than the tab - below 0x20, or DEL - is drawn
@@ -437,7 +437,7 @@ trunc_window() {
 # derived from those two artifacts, so they read a STRIPPED copy of the
 # golden - while check 1's `cmp` stays a raw byte comparison, which is
 # what keeps the escape stream itself pinned. Check 5 then asserts the
-# escapes are the ones self_host/style.ax declares.
+# escapes are the ones core/style.ax declares.
 #
 # Stripping in the comparator rather than in the renderer is deliberate:
 # a gate that asked the compiler for uncolored output would be checking
@@ -1225,14 +1225,14 @@ source_rows() {
 # the shape of defect this script's header was written about.
 #
 # The right-hand side is therefore a THIRD artifact: the palette declared
-# in self_host/style.ax. AXIOM_BLESS rewrites NAME.human; it cannot write
+# in core/style.ax. AXIOM_BLESS rewrites NAME.human; it cannot write
 # the compiler's own palette table, so an escape sequence nothing
 # declares fails with a freshly blessed golden in the tree.
 #
 # Before the color layer exists there is no style.ax, the declared
 # alphabet is empty, and the only stream that passes is the empty one -
 # which is exactly today's contract, asserted rather than assumed.
-palette_file="self_host/style.ax"
+palette_file="core/style.ax"
 PALETTE=""
 if [[ -f "$palette_file" ]]; then
   PALETTE="$(grep -oE '"[0-9;]+"' "$palette_file" | tr -d '"' | sort -u)"
@@ -1795,7 +1795,7 @@ else
   fi
 
   # (h3) an SGR the palette does not declare. The one drill a re-bless
-  # cannot get out from under: the alphabet lives in self_host/style.ax.
+  # cannot get out from under: the alphabet lives in core/style.ax.
   sed "1s/^/${esc}[5;35m/; 1s/\$/${esc}[0m/" "$drill_plain" > "$work/palbad.human"
   if cmp -s "$drill_plain" "$work/palbad.human"; then
     echo "FAIL drill(ansi-palette): the corruption changed nothing"

@@ -92,7 +92,7 @@
 #
 # DRILLED, TWICE, RATHER THAN ASSUMED
 #
-# At conversion time: a compiler built from a copy of self_host/ with
+# At conversion time: a compiler built from a copy of core/ with
 # `>>` lowered to `lshr` instead of `ashr` was used to re-bless the whole
 # corpus, so every `cmp` in this script passed - "37 of 37 cases match
 # their golden" - and the gate still exited 1, twice: once on the goldens
@@ -165,7 +165,7 @@
 # line - is exactly what `check-self-host.sh` already does. Running it
 # here a second time would be repetition, not coverage. The 13 cases the
 # old script listed under STAGE0_CANNOT were skipped only because stage0
-# could not resolve `self_host/` imports; that list is now meaningless
+# could not resolve `core/` imports; that list is now meaningless
 # and is deleted rather than left to rot.
 #
 # `llc` carries an explicit relocation model, which the project requires
@@ -347,7 +347,7 @@ fi
 # Cases keep their real paths so sibling imports resolve beside them.
 # Compiler-internal modules use AXIOM_PATH; gate_init supplies AXIOM_STDLIB.
 echo "== building the compiler under test =="
-export AXIOM_PATH="$repo_root/self_host${AXIOM_PATH:+:$AXIOM_PATH}"
+export AXIOM_PATH="$repo_root/core${AXIOM_PATH:+:$AXIOM_PATH}"
 ln -s "$repo_root/tests" "$work/tests"
 gate_build_axc axc
 

@@ -29,7 +29,7 @@ const CLAIMS = [
     what: 'lines of Axiom in the compiler',
     prose: /(\d[\d,]*)\s+lines of Axiom/g,
     // Whole thousands, so an ordinary compiler change moves no claim.
-    derive: () => sh("cat self_host/*.ax | wc -l"),
+    derive: () => sh("cat core/*.ax | wc -l"),
     format: (n) => (Math.floor(Number(n) / 1000) * 1000).toLocaleString('en-US'),
   },
   {
@@ -41,7 +41,7 @@ const CLAIMS = [
     derive: () =>
       String(
         new Set(
-          (sh("sed -n '22p' self_host/explain.ax").match(/AX\d{4}/g) ?? []),
+          (sh("sed -n '22p' core/explain.ax").match(/AX\d{4}/g) ?? []),
         ).size,
       ),
     format: (n) => String(Number(n)),

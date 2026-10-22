@@ -15,7 +15,7 @@
 # cannot satisfy another:
 #
 #   1. The emitter's census: every `emitRuntimeExit cg "<n>"` in
-#      `self_host/codegen.ax` with a numeric operand is exactly
+#      `core/codegen.ax` with a numeric operand is exactly
 #      70 71 72 74 75 76 77 78 79 80 82 83 84 85 86, each once. `0`
 #      (normal exit) and `%status` (the parallel join re-raising a
 #      child's status) are dynamic sites, not traps, and are named
@@ -78,7 +78,7 @@ emitter_trap_list() {
 
 echo "== 1. the emitter's trap census is exactly the fifteen reserved statuses =="
 census="$work/census.txt"
-emitter_trap_list "$repo_root/self_host/codegen.ax" > "$census"
+emitter_trap_list "$repo_root/core/codegen.ax" > "$census"
 # Distinctness first: a reused status shows up here as a missing one,
 # because `uniq -c` collapses the pair and the count drops below fifteen.
 got_n="$(wc -l < "$census" | tr -d ' ')"
@@ -94,8 +94,8 @@ else
   fi
 fi
 # The two dynamic sites exist and are not counted as traps.
-if grep -q 'emitRuntimeExit cg "0"' "$repo_root/self_host/codegen.ax" \
-&& grep -q 'emitRuntimeExit cg "%status"' "$repo_root/self_host/codegen.ax"; then
+if grep -q 'emitRuntimeExit cg "0"' "$repo_root/core/codegen.ax" \
+&& grep -q 'emitRuntimeExit cg "%status"' "$repo_root/core/codegen.ax"; then
   ok "dynamic sites 0 and %status present and excluded from the trap set"
 else
   bad "dynamic emitRuntimeExit sites 0 / %status missing from codegen.ax"
@@ -253,7 +253,7 @@ fi
 
 echo "== 4. the emitted-only traps still have their emit sites =="
 for sym in __axiom_no_syscall __axiom_par_spawn_failed __axiom_par_unsupported; do
-  if grep -q "define internal i64 @$sym" "$repo_root/self_host/codegen.ax"; then
+  if grep -q "define internal i64 @$sym" "$repo_root/core/codegen.ax"; then
     ok "$sym defined in codegen.ax (74/78/79 emitted, not executed)"
   else
     bad "$sym missing from codegen.ax"
@@ -263,7 +263,7 @@ done
 echo "== ablations: a reused status must be refused =="
 # A. the emitter reuses 77 for the contract trap: 80 vanishes, 77
 # appears twice, the distinct census drops to fourteen.
-cp "$repo_root/self_host/codegen.ax" "$work/abl-codegen.ax"
+cp "$repo_root/core/codegen.ax" "$work/abl-codegen.ax"
 sed -i.bak 's/emitRuntimeExit cg "80"/emitRuntimeExit cg "77"/' "$work/abl-codegen.ax"
 emitter_trap_list "$work/abl-codegen.ax" > "$work/abl-census.txt"
 if [[ "$(wc -l < "$work/abl-census.txt" | tr -d ' ')" == 14 ]] \

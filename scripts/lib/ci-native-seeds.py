@@ -158,7 +158,7 @@ def prove_recipe(run, target, machine):
         ['export', 'AXIOM_STDLIB=$(cygpath -m $PWD/stdlib)'],
         ['unset', 'AXIOM_PATH'],
         ['$seeded/axiom.exe', '--diagnostic-format=ai', '--target=$target', 'emit-llvm',
-         'self_host/main.ax', '-o', '$seeded/current.ll'],
+         'core/main.ax', '-o', '$seeded/current.ll'],
         ['cmp', '$seeded/current.ll', 'windows-hello/selfhost/axiom-$target.ll'],
     ]
     exports_compiler = actual == expected + [COMPILER_OUTPUT]

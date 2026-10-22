@@ -53,7 +53,7 @@ The three names are spelled exactly as in the table. Any other value
 is refused like a bad flag, with exit status 2.
 
 Every diagnostic is one `Diag` value, defined in
-[`self_host/diag.ax`](../self_host/diag.ax). It's built by whichever
+[`core/diag.ax`](../core/diag.ax). It's built by whichever
 stage refuses the program: the parser, the macro expander, the type
 checker, or the codegen and driver stages that lower and link. The
 parser raises the lexer's errors too, with `lexErrDiag` reading the
@@ -161,8 +161,8 @@ Macro expansion runs as part of semantic analysis, so its refusals are
 | `AX3035` | `macro-binder-target` | a binder parameter given something that isn't a variable |
 | `AX3066` | `macro-literal` | a literal a rule declares and never uses |
 
-All twelve are raised in `self_host/expand.ax`, and `AX3028` in
-`self_host/typecheck.ax` as well. See
+All twelve are raised in `core/expand.ax`, and `AX3028` in
+`core/typecheck.ax` as well. See
 [macro-system.md](macro-system.md) for the rules behind them.
 
 ### Names from other modules
@@ -193,7 +193,7 @@ Tested by `scripts/check-type-namespace.sh` and `tests/selfhost/491`-`494`.
 ### Strings the compiler hands on
 
 Two codes check a string that the source hands straight to something
-outside the compiler. Both are raised in `self_host/parser.ax`, though
+outside the compiler. Both are raised in `core/parser.ax`, though
 only `AX2006` is numbered as a syntax error.
 
 `AX2006` (`module-path-segment`) refuses a module-path segment that
@@ -250,14 +250,14 @@ Two mechanisms keep the follow-on errors away.
 The first is a poison type. After reporting a failure, the type
 checker gives the failing expression the type `TAG_T_ERR`. Every later
 check treats a poisoned type as already explained, and doesn't check it
-again. `tyIsErr` guards every site in `self_host/typecheck.ax` that
+again. `tyIsErr` guards every site in `core/typecheck.ax` that
 builds a type mismatch, and `tyCompat` tests for poison before it tests
 for type variables. Above, the poison flows into `+` and back out to
 `main`'s declared `Int`, and neither comparison reports a second time.
 
 The second is spanlessness. A node with no span suppresses its
 diagnostic rather than pointing it somewhere wrong. The `(== span 0)`
-guards in `self_host/typecheck.ax`, with `(!= span 0)` emission guards
+guards in `core/typecheck.ax`, with `(!= span 0)` emission guards
 and `spanOf` checks, are why a diagnostic never lands on line 1,
 column 1 by accident.
 
@@ -277,7 +277,7 @@ shows one.
 The real report is coloured: the severity and carets in the severity's
 colour, the gutter blue and the `= help:` marker green. It's coloured
 even when stderr is redirected to a file or a pipe. This page shows it
-plain. The palette is one table in `self_host/style.ax`.
+plain. The palette is one table in `core/style.ax`.
 
 The layout follows these rules:
 
@@ -513,7 +513,7 @@ array, so output can be streamed. The program from
 `char_start` and `char_end` are character offsets, not byte offsets.
 The compiler's own spans count bytes, because the lexer walks the
 source a byte at a time. The JSON renderer converts them (`jsonSpan` in
-`self_host/render.ax`), so the two fields count characters whatever the
+`core/render.ax`), so the two fields count characters whatever the
 representation behind them. For ASCII source, characters and bytes
 agree. For source with multi-byte UTF-8 characters, don't use these
 fields as byte indices into the file.
@@ -552,7 +552,7 @@ AXSYM writes `-`. The example below shows both renderings.
 `--diagnostic-format=ai` gives you AXSYM: the same facts, plus the nid
 (a stable ID for each declaration) and the metadata the table has no
 column for. The table is built by re-reading the AXSYM text
-(`symbolsHumanTable` in `self_host/symbols.ax`), so the two can't
+(`symbolsHumanTable` in `core/symbols.ax`), so the two can't
 disagree about what the symbols are.
 
 `symbols --diagnostic-format=json` exits with status 2 and prints guidance
@@ -569,7 +569,7 @@ The refusal also applies to `symbols --axir`.
 |---|---|
 | `KIND` | One letter: `F` function, `D` data type, `C` constructor, `S` struct, `A` type alias, `E` effect declaration, `M` macro. `T` was a trait. Traits were removed in 0.6.0 and `trait` is now `AX2004`, so no row carries it |
 | `NAME` | The declared name, exactly as written |
-| `FILE:LOC` | The same `file:line:col[-col\|:line:col]` addressing as AXDL, from the same source map in [`self_host/diag.ax`](../self_host/diag.ax). With `(import ...)`, `FILE` is the file that declared the symbol, which may be an imported module rather than the entry file, just as AXDL attributes diagnostics across files |
+| `FILE:LOC` | The same `file:line:col[-col\|:line:col]` addressing as AXDL, from the same source map in [`core/diag.ax`](../core/diag.ax). With `(import ...)`, `FILE` is the file that declared the symbol, which may be an imported module rather than the entry file, just as AXDL attributes diagnostics across files |
 | `-` | Replaces `FILE:LOC` for a name with no source span: the built-in operators (`+`, `==`, `&&`, ...), the primitives (`__syscall0`, `__alloc`, ...), an effect's operations, and the built-in types `Option` (with its two constructors) and `Vec`. The operators and primitives never change, so they appear only with `--builtins`. `Option` and `Vec` are always listed |
 | `"TYPE"` | The type as the checker writes it, curried and quoted: `(-> Int Int Int)` in source is `"(Int -> (Int -> Int))"` here. A type can contain `->` and parentheses, so the quotes keep field boundaries clear, the same way AXDL quotes messages |
 | `@NID` | The stable node ID (see [below](#stable-node-ids-and-source-embedded-tags)). Constructors and builtins have none |
@@ -783,13 +783,13 @@ Tested by `tests/diagnostics/645-region-escape-store.ax` and
 2. Construct it at the site that detects the condition, with `mkDiag`,
    or `mkDiagFix` when the help is machine-applicable and should render
    as `?LOC:"msg"~>"replacement"`. That site is in
-   `self_host/parser.ax` (which raises the lexer's errors too),
-   `self_host/expand.ax`, `self_host/typecheck.ax`,
-   `self_host/codegen.ax` or `self_host/driver.ax`. It takes a
+   `core/parser.ax` (which raises the lexer's errors too),
+   `core/expand.ax`, `core/typecheck.ax`,
+   `core/codegen.ax` or `core/driver.ax`. It takes a
    severity, the code, a kebab-case slug, a span, a message, a related
    span with its message, and a help. Pass `0` for a related span or a
    help you don't have.
-3. Write its long-form text in `self_host/explain.ax`, so
+3. Write its long-form text in `core/explain.ax`, so
    `axiom explain AX....` answers. `scripts/check-doc-drift.sh` fails a
    code that is constructed but has no entry, and the reverse.
    `scripts/check-diagnostic-coverage.sh` requires either a primary

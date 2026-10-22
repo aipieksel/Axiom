@@ -7,7 +7,7 @@
 #      byte for byte, and its imports must stay within
 #      `scripts/platform-allow.windows.txt`.
 #   2. The compiler itself, emitted for each target and linked with
-#      an 8 MB stack. It emits `self_host/main.ax` again byte for byte,
+#      an 8 MB stack. It emits `core/main.ax` again byte for byte,
 #      builds and runs the hello case through its own driver, and
 #      reports `tests/testrunner/mixed-tests.ax` to its golden.
 #   3. `examples/tree-audit/tree-audit.ax`, built and run by that
@@ -234,7 +234,7 @@ AX
     sh="$dir/selfhost"
     mkdir -p "$sh"
     for t in "${win_targets[@]}"; do
-      "$axc" --target="$t" emit-llvm self_host/main.ax -o "$sh/axiom-$t.ll"
+      "$axc" --target="$t" emit-llvm core/main.ax -o "$sh/axiom-$t.ll"
       if [[ "$(head -1 "$sh/axiom-$t.ll")" != "target triple = \"$(triple_of "$t")\"" ]]; then
         echo "FAIL --emit: the compiler's IR for $t opens with '$(head -1 "$sh/axiom-$t.ll")', not the $(triple_of "$t") triple"
         exit 1
@@ -519,9 +519,9 @@ AX
       unset AXIOM_STDLIB AXIOM_PATH
 
       # 2a. It emits itself as the host's compiler emitted it.
-      if ( cd "$repo_root" && "$ax" --target="$run_target" emit-llvm self_host/main.ax -o "$w/native.ll" ) > "$w/native.log" 2>&1 \
+      if ( cd "$repo_root" && "$ax" --target="$run_target" emit-llvm core/main.ax -o "$w/native.ll" ) > "$w/native.log" 2>&1 \
          && cmp -s "$w/native.ll" "$sh/axiom-$run_target.ll"; then
-        echo "ok   axiom.exe EXECUTED: its emission of self_host/main.ax is the host's, byte for byte ($(wc -l < "$w/native.ll" | tr -d ' ') lines)"
+        echo "ok   axiom.exe EXECUTED: its emission of core/main.ax is the host's, byte for byte ($(wc -l < "$w/native.ll" | tr -d ' ') lines)"
         { cat "$sh/axiom-$run_target.ll"; printf 'x'; } > "$w/axiom.ll.corrupt"
         if cmp -s "$w/native.ll" "$w/axiom.ll.corrupt"; then
           echo "FAIL negative probe [compiler]: a corrupted emission still matched"
@@ -530,7 +530,7 @@ AX
           echo "ok   negative probe [compiler]: a corrupted emission does not match"
         fi
       else
-        echo "FAIL axiom.exe did not emit self_host/main.ax as the host did"
+        echo "FAIL axiom.exe did not emit core/main.ax as the host did"
         sed 's/^/    /' "$w/native.log" | head -5
         [[ -s "$w/native.ll" ]] && { diff "$sh/axiom-$run_target.ll" "$w/native.ll" || true; } | head -10 | sed 's/^/    /'
         status=1

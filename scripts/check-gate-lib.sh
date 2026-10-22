@@ -5,8 +5,8 @@
 # is the preamble ninety-seven gates share, and `gate_build_axc` is the
 # line in it that makes those twenty-six test the compiler in the
 # WORKING TREE rather than whatever binary happens to be on disk. Its
-# own comment says so: building from `self_host/` "is also what makes
-# an ablation of `self_host/` visible to that gate rather than
+# own comment says so: building from `core/` "is also what makes
+# an ablation of `core/` visible to that gate rather than
 # invisible."
 #
 # Then a cache was added to it, because twenty-six rebuilds of the same
@@ -30,7 +30,7 @@
 # NOTHING HERE TOUCHES THE REAL TREE. `gate_source_stamp` hashes
 # `$repo_root`, so the probes point `repo_root` at a sandbox holding
 # two fake `.ax` files. That is what lets the ablation probe modify a
-# source file at all: the interesting case is "a byte of `self_host/`
+# source file at all: the interesting case is "a byte of `core/`
 # changed", and doing that to the actual checkout to test a cache would
 # be its own kind of wrong.
 
@@ -43,8 +43,8 @@ failed=0
 checks=0
 
 sandbox="$work/tree"
-mkdir -p "$sandbox/self_host" "$sandbox/stdlib"
-printf '(:: main Int)\n\n(fn (main) 0)\n'  > "$sandbox/self_host/main.ax"
+mkdir -p "$sandbox/core" "$sandbox/stdlib"
+printf '(:: main Int)\n\n(fn (main) 0)\n'  > "$sandbox/core/main.ax"
 printf '(pub :: helper Int)\n\n(fn (helper) 1)\n' > "$sandbox/stdlib/Mem.ax"
 
 # A builder that cannot build. Its presence in the output is the signal
@@ -115,15 +115,15 @@ echo "== the cache is used when, and only when, the stamp matches =="
 stamp_of_sandbox > "$planted.stamp"
 AXIOM_AXC="$planted" run_probe reuse "a matching stamp reuses the artifact"
 
-# 2. THE LOAD-BEARING ONE. A byte of the sandbox's `self_host/` moves
+# 2. THE LOAD-BEARING ONE. A byte of the sandbox's `core/` moves
 #    AFTER the stamp was taken. This is the property `gate_build_axc`
 #    exists for, and the one an env-var cache would have deleted.
-printf '\n; an ablation\n' >> "$sandbox/self_host/main.ax"
-AXIOM_AXC="$planted" run_probe rebuild "a changed self_host/ invalidates it"
+printf '\n; an ablation\n' >> "$sandbox/core/main.ax"
+AXIOM_AXC="$planted" run_probe rebuild "a changed core/ invalidates it"
 
 # 3. The same for the standard library, which the compiler build also
-#    reads - `self_host/` imports Fmt, Intern, Cereal, Mem, Path and Rpc,
-#    so a stamp over `self_host/` alone would hide six modules.
+#    reads - `core/` imports Fmt, Intern, Cereal, Mem, Path and Rpc,
+#    so a stamp over `core/` alone would hide six modules.
 stamp_of_sandbox > "$planted.stamp"
 printf '\n; an ablation\n' >> "$sandbox/stdlib/Mem.ax"
 AXIOM_AXC="$planted" run_probe rebuild "a changed stdlib/ invalidates it"
@@ -197,7 +197,7 @@ echo "== the stamp covers every file the build reads =="
 # modules count, and the stamp takes ALL of them rather than tracking
 # that list - so this check is that the glob still reaches both trees
 # and finds the volume it found on 2026-08-24.
-n_ax=$(ls "$repo_root"/self_host/*.ax "$repo_root"/stdlib/*.ax \
+n_ax=$(ls "$repo_root"/core/*.ax "$repo_root"/stdlib/*.ax \
           "$repo_root"/stdlib/*/*.ax 2>/dev/null | wc -l | tr -d ' ')
 checks=$((checks + 1))
 if (( n_ax < 35 )); then
@@ -243,7 +243,7 @@ export PATH="$original_path"
 # module search path can change which file an import resolves to.
 stamp_of_sandbox > "$planted.stamp"
 AXIOM_PATH="$work/elsewhere" AXIOM_AXC="$planted" run_probe rebuild "a changed AXIOM_PATH invalidates it"
-AXIOM_STDLIB="$sandbox/self_host" AXIOM_AXC="$planted" run_probe rebuild "a build reading another stdlib does not reuse it"
+AXIOM_STDLIB="$sandbox/core" AXIOM_AXC="$planted" run_probe rebuild "a build reading another stdlib does not reuse it"
 AXIOM_AXC="$planted" run_probe reuse "and the unchanged environment still reuses it"
 
 # Exercise the actual publisher and runner without expensive compiler
@@ -252,10 +252,10 @@ AXIOM_AXC="$planted" run_probe reuse "and the unchanged environment still reuses
 echo
 echo "== publication and runner accounting =="
 runner_tree="$work/runner-tree"
-mkdir -p "$runner_tree/scripts/lib" "$runner_tree/self_host" "$runner_tree/stdlib" "$runner_tree/.axiom-bin"
+mkdir -p "$runner_tree/scripts/lib" "$runner_tree/core" "$runner_tree/stdlib" "$runner_tree/.axiom-bin"
 cp "$repo_root/scripts/lib/gate.sh" "$runner_tree/scripts/lib/"
 cp "$repo_root/scripts/build-shared-axc.sh" "$repo_root/scripts/run-gates.sh" "$runner_tree/scripts/"
-printf '; input\n' > "$runner_tree/self_host/main.ax"
+printf '; input\n' > "$runner_tree/core/main.ax"
 cat > "$runner_tree/.axiom-bin/axiom" <<'BUILDER'
 #!/usr/bin/env bash
 case "$1" in
@@ -311,7 +311,7 @@ fi
 checks=$((checks + 1))
 old_artifact="$(gate_sha "$runner_tree/.axiom-shared/axc")"
 old_stamp="$(cat "$runner_tree/.axiom-shared/axc.stamp")"
-printf '; changed source\n' >> "$runner_tree/self_host/main.ax"
+printf '; changed source\n' >> "$runner_tree/core/main.ax"
 if FAIL_BUILD=1 runner pass > "$work/runner-build-fail.log" 2>&1; then
   echo "FAIL a failed rebuild passed"; failed=$((failed + 1))
 elif [[ "$(gate_sha "$runner_tree/.axiom-shared/axc")" == "$old_artifact" &&
@@ -345,7 +345,7 @@ while (( $# )); do
   if [[ "$1" == --output ]]; then out="$2"; shift; fi
   shift
 done
-digest="$(cat self_host/*.ax "$AXIOM_STDLIB"/*.ax | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-64)"
+digest="$(cat core/*.ax "$AXIOM_STDLIB"/*.ax | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-64)"
 printf '#!/usr/bin/env bash\necho %s\n' "$digest" > "$out"
 chmod +x "$out"
 BUILDER
@@ -353,14 +353,14 @@ chmod +x "$tree_builder"
 export TREE_RECORD="$work/tree-record"
 : > "$TREE_RECORD"
 tree_cache="$work/tree-cache"
-mk_tree() {  # mk_tree <dir>: a small tree with a self_host and a stdlib
-  mkdir -p "$1/self_host" "$1/stdlib"
-  printf '(fn (main) 0)\n' > "$1/self_host/main.ax"
+mk_tree() {  # mk_tree <dir>: a small tree with a core and a stdlib
+  mkdir -p "$1/core" "$1/stdlib"
+  printf '(fn (main) 0)\n' > "$1/core/main.ax"
   printf '(pub fn (helper) 1)\n' > "$1/stdlib/Mem.ax"
 }
 mk_tree "$work/ta"; mk_tree "$work/tb"
 builds() { wc -l < "$TREE_RECORD" | tr -d ' '; }
-digest_of() { ( cd "$1" && cat self_host/*.ax "$2"/*.ax | gate_sha ); }
+digest_of() { ( cd "$1" && cat core/*.ax "$2"/*.ax | gate_sha ); }
 # tree_probe <expected builds after> <label> <builder> <root> <stdlib> <out> [flags]
 tree_probe() {
   local want="$1" label="$2" rc=0; shift 2
@@ -377,8 +377,8 @@ tree_probe() {
 }
 tree_probe 1 "a cold tree is built" "$tree_builder" "$work/ta" "$work/ta/stdlib" "$work/o1"
 tree_probe 1 "the same sources at another path reuse it" "$tree_builder" "$work/tb" "$work/tb/stdlib" "$work/o2"
-printf '; ablated\n' >> "$work/tb/self_host/main.ax"
-tree_probe 2 "one changed byte of self_host/ is a fresh build" "$tree_builder" "$work/tb" "$work/tb/stdlib" "$work/o3"
+printf '; ablated\n' >> "$work/tb/core/main.ax"
+tree_probe 2 "one changed byte of core/ is a fresh build" "$tree_builder" "$work/tb" "$work/tb/stdlib" "$work/o3"
 printf '; changed\n' >> "$work/tb/stdlib/Mem.ax"
 tree_probe 3 "one changed byte of the stdlib read is a fresh build" "$tree_builder" "$work/tb" "$work/tb/stdlib" "$work/o4"
 cp "$tree_builder" "$work/tree-builder2"; printf '# another builder\n' >> "$work/tree-builder2"
@@ -389,7 +389,7 @@ tree_probe 6 "a damaged entry is rebuilt, not trusted" "$tree_builder" "$work/ta
 PROBE_CACHE=off tree_probe 7 "AXIOM_GATE_CACHE=off builds every time" "$tree_builder" "$work/ta" "$work/ta/stdlib" "$work/o8"
 checks=$((checks + 1))
 before="$(ls "$tree_cache" | wc -l | tr -d ' ')"
-mk_tree "$work/tc"; printf '; new\n' >> "$work/tc/self_host/main.ax"
+mk_tree "$work/tc"; printf '; new\n' >> "$work/tc/core/main.ax"
 if ( AXIOM_GATE_CACHE="$tree_cache"; FAIL_TREE_BUILD=1 gate_build_tree "$tree_builder" "$work/tc" "$work/tc/stdlib" "$work/o9" ) >/dev/null 2>&1; then
   echo "FAIL a failing tree build answered success"; failed=$((failed + 1))
 elif [[ "$(ls "$tree_cache" | wc -l | tr -d ' ')" != "$before" ]]; then
@@ -740,6 +740,6 @@ if (( failed > 0 )); then
 fi
 echo "check-gate-lib: $checks checks - the shared artifact is used only when it"
 echo "                was built from the tree as it stands, so ninety-seven gates"
-echo "                still see an ablation of self_host/, and a path that names"
+echo "                still see an ablation of core/, and a path that names"
 echo "                no build product is refused rather than ignored"
 

@@ -47,7 +47,7 @@ formatted scratch copy. Avoid unrelated formatting changes in a fix.
 
 Audit the thing that exists, not a generic compiler:
 
-- **The compiler is `self_host/`, written in Axiom.** The pipeline is
+- **The compiler is `core/`, written in Axiom.** The pipeline is
   `lexer.ax` → `parser.ax` → `expand.ax` (macro expansion, its own pass,
   after import resolution and before the checker) → `typecheck.ax` →
   `codegen.ax`, which is an **LLVM IR text emitter**: the BUILD path has
@@ -82,7 +82,7 @@ Audit the thing that exists, not a generic compiler:
 ## Scope
 
 - **Project structure.** Directory layout, module boundaries, naming
-  consistency. The `(import ...)` lines in `self_host/` are the real
+  consistency. The `(import ...)` lines in `core/` are the real
   dependency graph; check them rather than inferring one.
 - **Compiler pipeline.** Lexing, parsing, macro expansion, import
   resolution and namespacing, type and effect checking, name mangling,

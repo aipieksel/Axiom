@@ -189,7 +189,7 @@ def char_off(lines, line, col):
     """The character offset of 1-based (line, col), from the fixture's text.
 
     Every earlier line contributes its characters plus its newline. This
-    is the count `charsToIx` (self_host/diag.ax) makes over the bytes:
+    is the count `charsToIx` (core/diag.ax) makes over the bytes:
     characters, not the bytes a byte offset would count.
     """
     if line - 1 > len(lines):

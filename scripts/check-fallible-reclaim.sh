@@ -18,7 +18,7 @@
 # rebuilds the compiler from the ablated tree, and requires the fixture
 # to go red - at term 32 exactly, and at no other term.
 #
-#   `binderIsScalar` in self_host/codegen.ax answers whether the
+#   `binderIsScalar` in core/codegen.ax answers whether the
 #   checker stamped a match arm's binder with a machine-scalar type.
 #   The ablation is `(if (== t 0)` -> `(if (>= t 0)`: every binder
 #   answers "not a scalar", which is what the compiler believed before
@@ -86,15 +86,15 @@ echo "== and one word is what does it =="
 # --------------------------------------------------------------------
 # The ablation is applied to a COPY of the tree, so a gate that dies
 # half way through cannot leave the repository holding it. That is not
-# hypothetical tidiness: `gate_source_stamp` hashes `self_host/`, so an
+# hypothetical tidiness: `gate_source_stamp` hashes `core/`, so an
 # ablation left behind would silently become the tree every later gate
 # builds from.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
-target="$abl/self_host/codegen.ax"
+target="$abl/core/codegen.ax"
 before="$(grep -c '(if (== t 0)' "$target")"
 if (( before < 1 )); then
   bad "binderIsScalar's guard is not where this gate expects it"
@@ -174,7 +174,7 @@ echo "== and nothing in the tree reaches the disagreeing stamp =="
 #
 #   278 fixtures under tests/stdlib, tests/selfhost, tests/frontend
 #   every module in stdlib/
-#   self_host/main.ax - the whole 60k-line compiler
+#   core/main.ax - the whole 60k-line compiler
 #
 # BYTE-IDENTICAL, all of it. Nothing Axiom can currently express
 # checks one pattern binder twice at two types, so the old assertion
@@ -189,16 +189,16 @@ echo "== and nothing in the tree reaches the disagreeing stamp =="
 # RED, and whoever did it decides deliberately whether the arm is
 # load-bearing again rather than finding out from a use-after-free.
 #
-# The subject is `self_host/main.ax` rather than a fixture on purpose:
+# The subject is `core/main.ax` rather than a fixture on purpose:
 # it is the largest and most varied Axiom program in existence, and a
 # fixture written to reach a path nothing reaches would be a fixture
 # written to pass.
 abl2="$work/tree2"
 mkdir -p "$abl2"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl2/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl2/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
-if python3 "$repo_root/scripts/lib/ablate-poison-arm.py" "$abl2/self_host/typecheck.ax"; then
+if python3 "$repo_root/scripts/lib/ablate-poison-arm.py" "$abl2/core/typecheck.ax"; then
   echo "-- rebuilding the compiler with a last-write-wins stamp --"
   if gate_build_tree "$axiom" "$abl2" "$abl2/stdlib" \
        "$work/axc-lww" >"$work/lww.build.log" 2>&1; then
@@ -207,7 +207,7 @@ if python3 "$repo_root/scripts/lib/ablate-poison-arm.py" "$abl2/self_host/typech
     # what the checker handed codegen and not of anything the linker
     # chose.
     differ=0; swept=0; empty=0
-    for f in "$repo_root"/self_host/main.ax "$repo_root"/stdlib/*.ax; do
+    for f in "$repo_root"/core/main.ax "$repo_root"/stdlib/*.ax; do
       swept=$((swept + 1))
       : > "$work/baseline.ll"
       : > "$work/lww.ll"

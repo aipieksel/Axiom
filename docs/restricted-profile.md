@@ -227,7 +227,7 @@ Both worst paths end in the out-of-memory trap's backtrace, which is
 the point of reading machine code: the deepest stack either program
 can reach is on its failure path, in code the source never mentions.
 The linker script reserves 8 KiB of stack (`baremetalLinkScript`,
-`self_host/driver.ax`).
+`core/driver.ax`).
 
 ### What the bound assumes
 

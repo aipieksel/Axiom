@@ -8,11 +8,11 @@ from the committed LLVM seed, so a defect in the seed is invisible to
 all of them: each one asks the suspect to grade its own work. The
 lineage gate (`check-seed-lineage.sh`) replays the seed back to a Rust
 compiler no Axiom seed touched, but that anchor shares an author with
-`self_host/` and covers the first seed, not the current tree. This
+`core/` and covers the first seed, not the current tree. This
 file is the deliberately simple checker the roadmap's item 01 calls
 for: a different language (Python, standard library only), independent
 logic (derived from `docs/reference.md`'s described behaviour, never
-ported from `self_host/*.ax`), a subset (below), compiling the same
+ported from `core/*.ax`), a subset (below), compiling the same
 `sources (tests/ddc/*.ax)` to a comparable artefact (the program's
 exit status). The gate requires the seed-descended binary and this
 interpreter to agree with each other and with the `; expect N` the

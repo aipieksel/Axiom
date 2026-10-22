@@ -34,7 +34,7 @@
 # THREE WORKLOADS, §1.1's three columns (peak RSS, binary, output):
 #
 #   W1. THE §1.1 WORKLOAD ITSELF. Both compilers emit
-#       `self_host/main.ax`: the ablated IR carries thousands more
+#       `core/main.ax`: the ablated IR carries thousands more
 #       releases, every restored one on a `@strhdr_*` literal (the
 #       region kills are inert in this workload), the IR
 #       diff is release traffic and dependent ownership guards. The
@@ -73,7 +73,7 @@
 # on the seven files' aggregate, where padding cannot absorb every
 # file at once.
 #
-# Cost: one extra compiler build plus two emits of `self_host`, the
+# Cost: one extra compiler build plus two emits of `core`, the
 # same shape every slice gate already pays once.
 #
 # Usage:
@@ -139,14 +139,14 @@ PY
 echo "== 0. the full ablation: three rule-kills, one compiler =="
 # ---------------------------------------------------------------
 # Ablated on a COPY of the tree: `gate_source_stamp` hashes
-# `self_host/`, so an ablation left behind would silently become the
+# `core/`, so an ablation left behind would silently become the
 # tree every later gate builds from.
 abl="$work/tree"
 mkdir -p "$abl"
-cp -R "$repo_root/self_host" "$repo_root/stdlib" "$abl/" || {
+cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/" || {
   echo "FAIL: could not copy the tree to ablate" >&2; exit 1; }
 
-if ! python3 - "$abl/self_host/codegen.ax" "$abl/self_host/typecheck.ax" <<'PY'
+if ! python3 - "$abl/core/codegen.ax" "$abl/core/typecheck.ax" <<'PY'
 import re, sys
 cgp, tcp = sys.argv[1], sys.argv[2]
 cg = open(cgp, encoding="utf-8").read()
@@ -195,19 +195,19 @@ fi
 
 # ---------------------------------------------------------------
 echo
-echo "== W1. the §1.1 workload: emit self_host both ways =="
+echo "== W1. the §1.1 workload: emit core both ways =="
 # ---------------------------------------------------------------
 if [[ -f "$work/axc-ablated" ]]; then
-  if "$axc" emit-llvm "$repo_root/self_host/main.ax" -o "$work/host.ll" >"$work/w1.log" 2>&1 \
-     && "$work/axc-ablated" emit-llvm "$repo_root/self_host/main.ax" -o "$work/host-abl.ll" >>"$work/w1.log" 2>&1; then
+  if "$axc" emit-llvm "$repo_root/core/main.ax" -o "$work/host.ll" >"$work/w1.log" 2>&1 \
+     && "$work/axc-ablated" emit-llvm "$repo_root/core/main.ax" -o "$work/host-abl.ll" >>"$work/w1.log" 2>&1; then
     n_new="$(releases_in "$work/host.ll")"
     n_abl="$(releases_in "$work/host-abl.ll")"
     read -r st_new tot_new hd <<<"$(count_static_releases "$work/host.ll")"
     read -r st_abl tot_abl hd_abl <<<"$(count_static_releases "$work/host-abl.ll")"
     if (( n_abl - n_new < 1000 )); then
-      bad "self_host release delta is $((n_abl - n_new)) ($n_abl ablated, $n_new under test), wanted thousands"
+      bad "core release delta is $((n_abl - n_new)) ($n_abl ablated, $n_new under test), wanted thousands"
     elif (( st_abl - st_new != n_abl - n_new )); then
-      bad "self_host delta is $((n_abl - n_new)) releases but only $((st_abl - st_new)) on literals - a region optimisation changed a nonliteral release in this workload"
+      bad "core delta is $((n_abl - n_new)) releases but only $((st_abl - st_new)) on literals - a region optimisation changed a nonliteral release in this workload"
     else
       # Restored releases flip `musttail` decisions downstream (a
       # pending release kills the jump, so the ablated arm branches
@@ -396,16 +396,16 @@ PY
 )" || other_rc=$?
       other_n="$(echo "$other" | sed -n 's/^COUNT: //p')"
       if (( other_rc != 0 )) || [[ ! "$other_n" =~ ^[0-9]+$ ]]; then
-        bad "the self_host IR comparison did not produce a verdict"
+        bad "the core IR comparison did not produce a verdict"
       elif (( other_n != 0 )); then
-        bad "the two self_host IRs differ by $other_n line(s) outside the release+flip vocabulary"
+        bad "the two core IRs differ by $other_n line(s) outside the release+flip vocabulary"
         echo "$other" | grep '^RESID: ' | head -10 | sed 's/^/     /'
       else
-        ok "self_host: $((n_abl - n_new)) releases restored, every one on a literal ($hd_abl headers), other changes depend on those releases"
+        ok "core: $((n_abl - n_new)) releases restored, every one on a literal ($hd_abl headers), other changes depend on those releases"
       fi
     fi
-    rss_new="$(max_rss_kb "$axc" emit-llvm "$repo_root/self_host/main.ax" -o "$work/host.rss.ll")" || rss_new=""
-    rss_abl="$(max_rss_kb "$work/axc-ablated" emit-llvm "$repo_root/self_host/main.ax" -o "$work/host-abl.rss.ll")" || rss_abl=""
+    rss_new="$(max_rss_kb "$axc" emit-llvm "$repo_root/core/main.ax" -o "$work/host.rss.ll")" || rss_new=""
+    rss_abl="$(max_rss_kb "$work/axc-ablated" emit-llvm "$repo_root/core/main.ax" -o "$work/host-abl.rss.ll")" || rss_abl=""
     if [[ -z "$rss_new" || -z "$rss_abl" ]]; then
       bad "could not measure emit peak RSS on this host"
     elif (( rss_abl == 0 )); then
@@ -415,11 +415,11 @@ PY
       if (( ratio > 150 )); then
         bad "emit peak RSS ratio ${ratio}% (${rss_new} KiB against ${rss_abl} KiB) - the elisions cost memory"
       else
-        ok "emitting self_host peaks ${rss_new} KiB against ${rss_abl} KiB ablated (${ratio}%) - the RSS win intact"
+        ok "emitting core peaks ${rss_new} KiB against ${rss_abl} KiB ablated (${ratio}%) - the RSS win intact"
       fi
     fi
   else
-    bad "could not emit self_host under one or both compilers"
+    bad "could not emit core under one or both compilers"
     sed 's/^/     /' "$work/w1.log" | head -10
   fi
 else

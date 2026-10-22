@@ -42,7 +42,7 @@ way in CI. See `CONTRIBUTING.md` and `bootstrap/README.md`.
 
 ## In scope
 
-- **The compiler** (`self_host/`) and **the standard library**
+- **The compiler** (`core/`) and **the standard library**
   (`stdlib/`). For example, a program that compiles to something other
   than what its source says, or a library function that reads or writes
   memory it wasn't given.
@@ -121,7 +121,7 @@ The answer is a root that isn't an Axiom seed at all.
 
 The Rust implementation this repository deleted (`430a138`) is still
 in its history at `bb730db`, and still builds with `cargo`. It compiles
-the first seed commit's `self_host/` into a compiler whose output is
+the first seed commit's `core/` into a compiler whose output is
 the first seed, byte for byte. Every seed since then reproduces from
 the one before it. `bootstrap/CHAIN` records that lineage, and
 `scripts/check-seed-lineage.sh` replays it:
@@ -143,7 +143,7 @@ that nothing reproduces are listed there as orphans and bypassed, and
 
 The replay trusts `git`, `llc`, `cc`, `cargo`, `rustc`, the crates
 pinned by `bb730db`'s `Cargo.lock`, and the Rust source at `bb730db`,
-which shares an author with `self_host/`. No Axiom binary runs before
+which shares an author with `core/`. No Axiom binary runs before
 the comparison. Removing `llc` and `cc` from that list is separate work,
 and isn't claimed here.
 
@@ -152,6 +152,6 @@ Three more things are checked:
 - the seed reproduces byte for byte from a named source hash
   (`bootstrap/STAMP`);
 - every release binary carries a build id computed over every `.ax`
-  byte under `self_host/` and `stdlib/`;
+  byte under `core/` and `stdlib/`;
 - the release workflow refuses to publish a binary that reports
   `(build unstamped)`.
