@@ -35,6 +35,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
+python3 tests/tools/checker-extern-refusal-options.py "$axiom"
+
 # Cargo is required HERE and nowhere else. `bootstrap-from-seed.sh` still
 # goes from committed LLVM IR through llc and cc with no Rust toolchain,
 # which is what lets a checkout with no cargo still produce a compiler.
