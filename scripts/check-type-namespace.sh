@@ -70,6 +70,8 @@ gate_init
 
 gate_build_axc axc
 
+python3 tests/tools/namespace-option-imports.py "$axc" || exit 1
+
 failed=0
 checks=0
 

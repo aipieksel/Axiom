@@ -19,12 +19,10 @@
 ; resolver threads (`bares` / `fulls`), the index it keeps beside them
 ; (`MangleIdx`, below), the import filters it records, and the AST
 ; nodes it renames.
-(import Mem)
 (import Str)
 (import Vec)
 (import Intern)
 (import parser)
-(import raw)
 
 ; ------------------------------------------------------------------
 ; The name index.
@@ -75,27 +73,26 @@
 ;   done  — entries of `bares` absorbed so far
 ; ------------------------------------------------------------------
 (pub struct MangleIdx
-  (names : Int)
+  (names : InternState)
   (pos : (Vec Int))
   (mut done : Int))
 
-(pub :: mangleIdxNew Int)
+(pub :: mangleIdxNew MangleIdx)
 (pub fn (mangleIdxNew)
-  (as (MangleIdx :names internNew :pos vecNew :done 0) Int))
+  (MangleIdx :names internNewTyped :pos vecNew :done 0))
 
 ; Absorb every entry of `bares` from `done` to its end. Answers the
 ; new `done`.
-(pub :: mangleIdxSync (-> Int Strings Int))
-;@axiom:effect(unsafe)
+(pub :: mangleIdxSync (-> MangleIdx Strings Int))
 (pub fn (mangleIdxSync idx bares)
   {
-    (let m (as idx MangleIdx))
+    (let m idx)
     (let mut i m.done)
     {
       (while (< i (vecLen bares))
         {
           {
-            (let id (internIntern m.names (vecGetStr bares i)))
+            (let id (internIntern (internWordOf m.names) (vecGetStr bares i)))
             (if (== id (vecLen m.pos))
               (vecPush m.pos i))
           }
@@ -108,13 +105,12 @@
 
 ; Is `name` in `bares`? The indexed form of `mangleHasIn`, and the
 ; one every writer here asks.
-(pub :: mangleIdxHas (-> Int Strings String Bool))
-;@axiom:effect(unsafe)
+(pub :: mangleIdxHas (-> MangleIdx Strings String Bool))
 (pub fn (mangleIdxHas idx bares name)
   {
-    (let m (as idx MangleIdx))
+    (let m idx)
     (mangleIdxSync idx bares)
-    (if (let (Some _) (internFind m.names name))
+    (if (let (Some _) (internFind (internWordOf m.names) name))
       true
       false)
   })
@@ -124,13 +120,12 @@
 ; `Option` rather than -1: `mangleRecordEntry` reads the answer as
 ; `(vecSet fulls i name)`, so a miss that reached the index is a wild
 ; WRITE - it would store into the word before the vector's first.
-(pub :: mangleIdxIndexOf (-> Int Strings String (Option Int)))
-;@axiom:effect(unsafe)
+(pub :: mangleIdxIndexOf (-> MangleIdx Strings String (Option Int)))
 (pub fn (mangleIdxIndexOf idx bares name)
   {
-    (let m (as idx MangleIdx))
+    (let m idx)
     (mangleIdxSync idx bares)
-    (if (let (Some id) (internFind m.names name))
+    (if (let (Some id) (internFind (internWordOf m.names) name))
       (Some (vecGet m.pos id))
       None)
   })
@@ -139,7 +134,7 @@
 ; already claimed. First-writer-wins is what makes the entry file win:
 ; `resolveImports` records every entry-file function before any import
 ; is read.
-(pub :: mangleRecord (-> Int Strings Strings String String Int))
+(pub :: mangleRecord (-> MangleIdx Strings Strings String String Int))
 (pub fn (mangleRecord idx bares fulls bare full)
   ; The mangled name maps to itself, recorded whether or not the bare
   ; name was already claimed - which it usually is, by the entry
@@ -178,7 +173,7 @@
 ; name to itself; foreign entries carry a separate `$entry$bare` marker,
 ; because their linker symbols can differ from their Axiom names.
 ; Two public imported definitions still require qualification (AX3014).
-(pub :: mangleRecordModuleView (-> Int Strings Strings String String Int))
+(pub :: mangleRecordModuleView (-> MangleIdx Strings Strings String String Int))
 (pub fn (mangleRecordModuleView idx bares fulls bare full)
   (if (let (Some i) (mangleIdxIndexOf idx bares bare))
     (if (|| (strEq (vecGet fulls i) bare) (mangleIdxHas idx bares (concat "$entry$" bare)))
@@ -208,7 +203,7 @@
 ; Without it, an entry file generating a `tagShape` that answers 42,
 ; importing a module that generates its own `tagShape` answering 7,
 ; would check clean and answer 7.
-(pub :: mangleRecordEntry (-> Int Strings Strings String Int))
+(pub :: mangleRecordEntry (-> MangleIdx Strings Strings String Int))
 (pub fn (mangleRecordEntry idx bares fulls name)
   (if (let (Some i) (mangleIdxIndexOf idx bares name))
     {
@@ -265,7 +260,7 @@
 ; reference that gets past it lands here as a name this map does not
 ; hold and is emitted unchanged - an undefined symbol reported by
 ; `opt` against generated code.
-(pub :: mangleDecl (-> ASTNode String Int Strings Strings Int Int))
+(pub :: mangleDecl (-> ASTNode String MangleIdx Strings Strings Int Int))
 (pub fn (mangleDecl node modName idx bares fulls exported)
   (if (== (as modName Int) 0)
     0
@@ -306,7 +301,7 @@
 
 ; Record qualified identities for every item and bare names for the
 ; exported items. A private binding remains callable within its module.
-(pub :: mangleExternItems (-> (Vec ASTNode) Int Int Strings Strings String Int))
+(pub :: mangleExternItems (-> (Vec ASTNode) Int MangleIdx Strings Strings String Int))
 (pub fn (mangleExternItems items i idx bares fulls modName)
   (if (== (as items Int) 0)
     0
@@ -334,7 +329,7 @@
 
 ; Apply the import filter to declaration names, or to individual extern
 ; items. Preserve the written public surface for repeat-import unions.
-(pub :: moduleDeclExport (-> ASTNode String Ints Strings Int))
+(pub :: moduleDeclExport (-> ASTNode String ModuleImports (Option Names) Int))
 (pub fn (moduleDeclExport d mod mods filter)
   (if (== (nodeTag d) TAG_D_EXTERN)
     (moduleExternExport (nodeCChildren d) mod mods filter
@@ -350,7 +345,7 @@
         0)
     }))
 
-(pub :: moduleExternExport (-> (Vec ASTNode) String Ints Strings Int Int Int Int))
+(pub :: moduleExternExport (-> (Vec ASTNode) String ModuleImports (Option Names) Int Int Int Int))
 (pub fn (moduleExternExport items mod mods filter writtenPub i visible)
   (if (>= i (vecLen items))
     visible
@@ -376,7 +371,7 @@
 ; The half of `mangleRecord` that a private declaration gets: the
 ; mangled name maps to itself, and the bare slot is left for whoever
 ; can legitimately claim it.
-(pub :: mangleRecordSelf (-> Int Strings Strings String Int))
+(pub :: mangleRecordSelf (-> MangleIdx Strings Strings String Int))
 (pub fn (mangleRecordSelf idx bares fulls full)
   (if (mangleIdxHas idx bares full)
     0
@@ -398,142 +393,73 @@
       true
       (seenHasIn seen name (+ i 1)))))
 
-(pub :: filterKeeps (-> Strings String Bool))
+(pub :: filterKeeps (-> (Option Names) String Bool))
 (pub fn (filterKeeps filter name)
-  (if (== (as filter Int) 0)
-    true
-    (seenHasIn filter name 0)))
+  (if (let (Some names) filter)
+    (seenHasIn names name 0)
+    true))
 
-; `mods` is a vector of (module name, filter) pairs, one per module
-; resolution merged. It exists for one reader: phase D, which
-; instantiates declaration macros AFTER this pass and so has to apply
-; a module's import filter to names that did not exist while the pass
-; was running (MAC-EXP-16). A pair rather than two parallel vectors,
-; because a parallel pair is one push away from desyncing and this
-; table is written in exactly one place.
-(pub :: modFilterRecord (-> Ints String Int Int))
+; One imported module owns its filter and written public names. `None`
+; means an unrestricted import; `Some` keeps exactly its named surface.
+(pub struct ModuleImport
+  (name : String)
+  (mut filter : (Option Names))
+  (pubs : Names))
+
+(pub type ModuleImports (Vec ModuleImport))
+
+; Record the module once, before its declarations are spliced. Later
+; imports widen the filter through the same row.
+(pub :: modFilterRecord (-> ModuleImports String (Option Names) Int))
 (pub fn (modFilterRecord mods name filter)
-  (if (== (as mods Int) 0)
+  {
+    (vecPush mods (ModuleImport :name name :filter filter :pubs vecNew))
     0
+  })
+
+(:: modImportFor (-> ModuleImports String Int (Option ModuleImport)))
+(fn (modImportFor mods name i)
+  (if (>= i (vecLen mods))
+    None
     {
-      (let pair vecNew)
-      {
-        (vecPush pair (as name Int))
-        (vecPush pair filter)
-        ; The module's `pub` names, filled in as its declarations are
-        ; spliced (see `modPubsAdd`). A pair rather than a second
-        ; table, because the two answers belong to the same module
-        ; and a parallel pair is one push away from desyncing.
-        (vecPush pair (as vecNew Int))
-        (vecPush mods (as pair Int))
-        0
-      }
+      (let entry (vecGet mods i))
+      (if (strEq entry.name name)
+        (Some entry)
+        (modImportFor mods name (+ i 1)))
     }))
 
-; The filter recorded for `name`, or 0 - which `filterKeeps` reads as
-; "the import named nothing, so everything is kept". The entry file
-; (module 0) has no import and therefore no filter, which is the same
-; answer.
-(pub :: modFilterFor (-> IntRows String Strings))
-;@axiom:effect(unsafe)
+; The entry file has no imported row and therefore no restriction.
+(pub :: modFilterFor (-> ModuleImports String (Option Names)))
 (pub fn (modFilterFor mods name)
-  (as (if (== (as mods Int) 0)
-    0
-    (modFilterForIn mods name 0)) (Vec String)))
+  (if (let (Some entry) (modImportFor mods name 0))
+    entry.filter
+    None))
 
-(pub :: modFilterForIn (-> IntRows String Int Int))
-;@axiom:effect(unsafe)
-(pub fn (modFilterForIn mods name i)
-  (if (>= i (vecLen mods))
-    0
-    {
-      (let pair (vecGet mods i))
-      (if (strEq (as (vecGet pair 0) String) name)
-        (vecGet pair 1)
-        (modFilterForIn mods name (+ i 1)))
-    }))
-
-; The module's `pub` names, in declaration order - the third element
-; of its `mods` pair. The resolver reads `nodeVis` BEFORE it
-; overwrites word 5 with the import's verdict (codegen.ax,
-; `resolveDeclsPhase`), so without this the written `pub` is gone by
-; the time anyone asks who is public and who was merely filtered out:
-; the checker's `exportedFromModule` for a repeat import's list, and
-; the repeat import itself when it widens what the module exports.
-(pub :: modPubsFor (-> Ints String Strings))
-;@axiom:effect(unsafe)
+; Preserve written `pub` names before the resolver replaces nodeVis
+; with the import's visibility verdict. Repeat imports use this list.
+(pub :: modPubsFor (-> ModuleImports String Names))
 (pub fn (modPubsFor mods name)
-  (if (== (as mods Int) 0)
-    (as 0 (Vec String))
-    (modPubsForIn mods name 0)))
+  (if (let (Some entry) (modImportFor mods name 0))
+    entry.pubs
+    vecNew))
 
-(pub :: modPubsForIn (-> Ints String Int Strings))
-;@axiom:effect(unsafe)
-(pub fn (modPubsForIn mods name i)
-  (if (>= i (vecLen mods))
-    (as 0 (Vec String))
-    ; The pair travels as a handle (`modFilterRecord` stores it
-    ; `cast Int`), so it is cast back to a Vec to read, exactly as
-    ; `expModsVec` retypes the same table for expansion.
-    {
-      (let pair (as (vecGet mods i) (Vec Int)))
-      (if (strEq (as (vecGet pair 0) String) name)
-        (as (vecGet pair 2) (Vec String))
-        (modPubsForIn mods name (+ i 1)))
-    }))
-
-; Record one written-`pub` name against its module. Called while the
-; module's declarations are spliced, when `nodeVis` still answers the
-; question (see above) - afterwards word 5 is the import's verdict
-; and the answer is unrecoverable. No-op when the module has no pair,
-; which is the entry file: module 0 is never imported, so nothing
-; ever unions against it.
-(pub :: modPubsAdd (-> Ints String String Int))
+(pub :: modPubsAdd (-> ModuleImports String String Int))
 (pub fn (modPubsAdd mods name pubName)
-  (if (== (as mods Int) 0)
+  {
+    (if (let (Some entry) (modImportFor mods name 0))
+      (vecPush entry.pubs pubName))
     0
-    (modPubsAddIn mods name pubName 0)))
+  })
 
-(pub :: modPubsAddIn (-> Ints String String Int Int))
-;@axiom:effect(unsafe)
-(pub fn (modPubsAddIn mods name pubName i)
-  (if (>= i (vecLen mods))
-    0
-    {
-      (let pair (as (vecGet mods i) (Vec Int)))
-      (if (strEq (as (vecGet pair 0) String) name)
-        {
-          (vecPush (as (vecGet pair 2) (Vec String)) pubName)
-          0
-        }
-        (modPubsAddIn mods name pubName (+ i 1)))
-    }))
-
-; Replace the module's recorded filter with its widening. A repeat
-; import names names the first import did not, and phase D applies
-; this filter to declarations that did not exist while either import
-; ran (MAC-EXP-16) - so the recorded answer has to be the UNION,
-; not the first import's list.
-(pub :: modFilterWiden (-> Ints String Strings Int))
+; Phase D applies the union of all import filters to declarations that
+; macros generate after import resolution has finished.
+(pub :: modFilterWiden (-> ModuleImports String (Option Names) Int))
 (pub fn (modFilterWiden mods name widened)
-  (if (== (as mods Int) 0)
+  {
+    (if (let (Some entry) (modImportFor mods name 0))
+      (set entry.filter widened))
     0
-    (modFilterWidenIn mods name widened 0)))
-
-(pub :: modFilterWidenIn (-> Ints String Strings Int Int))
-;@axiom:effect(unsafe)
-(pub fn (modFilterWidenIn mods name widened i)
-  (if (>= i (vecLen mods))
-    0
-    {
-      (let pair (as (vecGet mods i) (Vec Int)))
-      (if (strEq (as (vecGet pair 0) String) name)
-        {
-          (memSetWord (as pair Int) 1 (as widened Int))
-          0
-        }
-        (modFilterWidenIn mods name widened (+ i 1)))
-    }))
+  })
 
 (pub :: repeatExportExtern (-> (Vec ASTNode) Strings Int Int))
 (pub fn (repeatExportExtern items delta i)
