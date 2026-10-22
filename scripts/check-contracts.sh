@@ -35,6 +35,7 @@ gate_init
 gate_build_axc axc
 
 python3 tests/tools/format-option-specifiers.py "$axc"
+python3 tests/tools/expansion-option-frames.py "$axc"
 
 failed=0
 checks=0
