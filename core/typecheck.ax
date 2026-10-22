@@ -885,9 +885,9 @@
   (if (>= i (vecLen acc))
     0
     {
-      (let ent (scopeFindFrame tc (nodeAName (vecGet acc i))))
-      (if (!= ent 0)
-        (if (nodeSame (sEntTy ent) node)
+      (let found (scopeFindFrame tc (nodeAName (vecGet acc i))))
+      (if (let (Some ent) found)
+        (if (nodeSame ent.ty node)
           (if (== (groundNameInPrefix prefix (nodeAName (vecGet acc i)) 0) 1)
             1
             2)
@@ -992,16 +992,16 @@
   (if (>= i (vecLen acc))
     0
     {
-      (let ent (scopeFindFrame tc (nodeAName (vecGet acc i))))
+      (let found (scopeFindFrame tc (nodeAName (vecGet acc i))))
       {
-        (if (!= ent 0)
+        (if (let (Some ent) found)
           (vecPush ents
             (as (SEnt
-                  :name (sEntName ent)
-                  :mutable (sEntMutable ent)
-                  :bsp (sEntBsp ent)
-                  :ty (sEntTy ent)
-                  :used (sEntUsed ent)) Int)))
+                  :name ent.name
+                  :mutable ent.mutable
+                  :bsp ent.bsp
+                  :ty ent.ty
+                  :used ent.used) Int)))
         (deferResolveCaps tc acc ents (+ i 1))
       }
     }))
@@ -10818,7 +10818,7 @@
   (mutable : Int)
   (bsp : Int)
   (ty : ASTNode)
-  (used : Int))
+  (mut used : Int))
 
 (pub :: sEntName (-> Int String))
 ;@axiom:effect(unsafe)
@@ -10914,40 +10914,45 @@
     e.ty
   })
 
-; The innermost entry's INDEX, or -1. `checkSet` needs the position,
+; The innermost entry's index, when present. `checkSet` needs the position,
 ; not just the entry: whether the target sits below the innermost
 ; lambda's boundary is what decides the capture refusal (MM-MUT-1a).
 (pub :: scopeFindIdx (-> Ints String (Option Int)))
 (pub fn (scopeFindIdx scope name)
-  {
-    (let i (scopeFindIdxFrom scope name (- (vecLen scope) 1)))
-    (if (< i 0)
-      None
-      (Some i))
-  })
+  (scopeFindIdxFrom scope name (- (vecLen scope) 1)))
 
-(pub :: scopeFindIdxFrom (-> Ints String Int Int))
+(pub :: scopeFindIdxFrom (-> Ints String Int (Option Int)))
 (pub fn (scopeFindIdxFrom scope name i)
   (if (< i 0)
-    (- 0 1)
-    (if (strEq (memGetWordStr (vecGet scope i) 0) name)
-      i
+    None
+    (if (strEq (sEntName (vecGet scope i)) name)
+      (Some i)
       (scopeFindIdxFrom scope name (- i 1)))))
 
 ; The innermost FRAME entry - value resolution reads only the current
 ; function's bindings; module-level names resolve through the
 ; function table (same types, stage0's route).
-(pub :: scopeFindFrame (-> Int String Int))
+(pub :: scopeFindFrame (-> Int String (Option SEnt)))
 (pub fn (scopeFindFrame tc name)
   (scopeFindFrameFrom (tcScopeVec tc) name (- (vecLen (tcScopeVec tc)) 1) (tcFrameBase tc)))
 
-(pub :: scopeFindFrameFrom (-> Ints String Int Int Int))
+; Scope storage is still word-backed; only this read crosses into a
+; typed entry. Every successful lookup and its callers retain that type.
+(:: scopeEntryAt (-> Ints Int SEnt))
+;@axiom:effect(unsafe)
+(fn (scopeEntryAt scope i)
+  (as (vecGet scope i) SEnt))
+
+(pub :: scopeFindFrameFrom (-> Ints String Int Int (Option SEnt)))
 (pub fn (scopeFindFrameFrom scope name i base)
   (if (< i base)
-    0
-    (if (strEq (memGetWordStr (vecGet scope i) 0) name)
-      (vecGet scope i)
-      (scopeFindFrameFrom scope name (- i 1) base))))
+    None
+    {
+      (let entry (scopeEntryAt scope i))
+      (if (strEq entry.name name)
+        (Some entry)
+        (scopeFindFrameFrom scope name (- i 1) base))
+    }))
 
 (pub :: scopeTrunc (-> (Vec a) Int Int))
 (pub fn (scopeTrunc scope n)
@@ -13092,7 +13097,7 @@
   {
     (let name (nodeAName e))
     (if (&& (!= (tcContractTag tc) 0)
-          (&& (strEq name "result") (== (scopeFindFrame tc "result") 0)))
+          (&& (strEq name "result") (isNone (scopeFindFrame tc "result"))))
       {
         (emitContractResult tc e)
         (nodeBuildTErrPlain 0 0 0)
@@ -13103,11 +13108,11 @@
         ; template was written, which is top level, so the local scope
         ; is not consulted for it at all (MAC-HYG-9 / MAC-HYG-8.1).
         {
-          (let fr
-            (if (== (nodeDefScope e) 1)
-              0
-              (scopeFindFrame tc name)))
-          (if (!= fr 0)
+          (let found
+            (if (!= (nodeDefScope e) 1)
+              (scopeFindFrame tc name)
+              None))
+          (if (let (Some fr) found)
             ; A pending lambda answers through its STAMP: grounded
             ; reads the arrow, broken reads poison quietly (its
             ; diagnostics are out), in-progress names the too-early
@@ -13115,8 +13120,8 @@
             ; honest self-recursion), and anything else answers the
             ; node itself - the use grounds it.
             {
-              (memSetWord fr 4 1)
-              (let ety (sEntTy fr))
+              (set fr.used 1)
+              (let ety fr.ty)
               (if (== (isPendingNode ety) 0)
                 ety
                 {
@@ -13754,19 +13759,16 @@
 (pub fn (capThunkVar tc e bound)
   (if (>= (strVecIdx bound (nodeAName e)) 0)
     0
-    {
-      (let ent (scopeFindFrame tc (nodeAName e)))
-      (if (== ent 0)
-        0
-        {
-          (let ty (sEntTy ent))
-          (if (|| (== (tyIsErr ty) 1) (== (tyIsSilentWild ty) 1))
-            0
-            (if (== (tyIsArrow ty) 1)
-              (emitSpawnIndirection tc (nodeAName e) ty (nodeSpan e))
-              0))
-        })
-    }))
+    (if (let (Some ent) (scopeFindFrame tc (nodeAName e)))
+      {
+        (let ty ent.ty)
+        (if (|| (== (tyIsErr ty) 1) (== (tyIsSilentWild ty) 1))
+          0
+          (if (== (tyIsArrow ty) 1)
+            (emitSpawnIndirection tc (nodeAName e) ty (nodeSpan e))
+            0))
+      }
+      0)))
 
 ; The opaque half of AX3064: the thunk is a shape whose captures no
 ; walk can see through - a call result, a field - so the spawn is
@@ -14200,8 +14202,8 @@
           (let name (nodeAName v))
           (if (! (>= (strVecIdx seen name) 0))
             {
-              (let ent (scopeFindFrame tc name))
-              (if (! (== ent 0))
+              (let found (scopeFindFrame tc name))
+              (if (let (Some ent) found)
                 ; POISON AND THE SILENT WILDCARD SAY NOTHING, and a
                 ; check that reported them would break the cascade
                 ; rule this file keeps everywhere else - `rgCheckStore`
@@ -14212,7 +14214,7 @@
                 ; unrelated earlier error would grow an AX3064 of its
                 ; own on top of it.
                 {
-                  (let ty (sEntTy ent))
+                  (let ty ent.ty)
                   (if (! (|| (== (tyIsErr ty) 1) (== (tyIsSilentWild ty) 1)))
                     ; EVERYTHING BUT CLASS 0. `evClassOf` answers 0
                     ; for a value that takes no share of a count -
@@ -14507,9 +14509,9 @@
             })
         }
         {
-          (let fr (scopeFindFrame tc name))
-          (if (!= fr 0)
-            (sEntTy fr)
+          (let found (scopeFindFrame tc name))
+          (if (let (Some fr) found)
+            fr.ty
             {
               (let ent (findFnEnt tc name))
               (if (!= ent 0)
@@ -14824,7 +14826,8 @@
                           mkSilentWild
                         }
                         (if (&& (== headIsVar 1)
-                              (&& (|| (== (nodeDefScope head) 1) (== (scopeFindFrame tc hname) 0))
+                              (&&
+                                (|| (== (nodeDefScope head) 1) (isNone (scopeFindFrame tc hname)))
                                 (! (== (findStructIfConstruct tc hname) 0))))
                           (checkStructCon tc e (findStructIfConstruct tc hname))
                           ; MM-LIFE-2d: this level's argument witnesses the callee's
@@ -17408,7 +17411,7 @@
 
 (pub :: checkSaturation (-> Int ASTNode ASTNode String Int))
 (pub fn (checkSaturation tc e head hname)
-  (if (!= (scopeFindFrame tc hname) 0)
+  (if (isSome (scopeFindFrame tc hname))
     0
     (if (== (isCastLike hname) 1)
       0
@@ -24499,7 +24502,7 @@
       0
       {
         (let name (nodeAName d))
-        (if (!= (scopeFindFrame tc name) 0)
+        (if (isSome (scopeFindFrame tc name))
           0
           {
             (let found
@@ -30659,7 +30662,7 @@
 ; type keeps AX3004.
 (pub :: signatureNeeded (-> Int String Int Int))
 (pub fn (signatureNeeded tc hname headIsVar)
-  (if (|| (!= headIsVar 1) (!= (scopeFindFrame tc hname) 0))
+  (if (|| (!= headIsVar 1) (isSome (scopeFindFrame tc hname)))
     0
     {
       (let ent (findFnEnt tc hname))
@@ -35252,15 +35255,16 @@
       {
         (let pos (strVecIdx (nodeBNames d) (nodeAName e)))
         (let ent (findFnEntAnywhere tc (nodeAName d)))
-        (let frame (scopeFindFrame tc (nodeAName e)))
-        (if (|| (< pos 0) (|| (== ent 0) (== frame 0)))
+        (if (|| (< pos 0) (== ent 0))
           false
-          {
-            (let index (+ (tcFrameBase tc) pos))
-            (&& (< index (vecLen (tcScopeVec tc)))
-              (&& (== frame (vecGet (tcScopeVec tc) index))
-                (== (intInVec (fnEntCompute ent) pos 0) 1)))
-          })
+          (if (let (Some frame) (scopeFindFrame tc (nodeAName e)))
+            {
+              (let index (+ (tcFrameBase tc) pos))
+              (&& (< index (vecLen (tcScopeVec tc)))
+                (&& (== (as frame Int) (vecGet (tcScopeVec tc) index))
+                  (== (intInVec (fnEntCompute ent) pos 0) 1)))
+            }
+            false))
       })
   })
 
@@ -35274,18 +35278,16 @@
         {
           (let v (vecGet occ i))
           (let name (nodeAName (vecGet occ i)))
-          {
-            (let entry (scopeFindFrame tc name))
-            (if (&& (!= entry 0) (< (strVecIdx names name) 0))
-              (if (computePrimitive tc (sEntTy entry))
+          (if (let (Some entry) (scopeFindFrame tc name))
+            (if (< (strVecIdx names name) 0)
+              (if (computePrimitive tc entry.ty)
                 (vecPushStr names name)
                 {
                   (emitCompute tc (nodeSpan v)
                     (concat "compute callback captures non-primitive `"
-                      (concat name (concat "` of type " (tyRender (tyResolve (sEntTy entry)))))))
+                      (concat name (concat "` of type " (tyRender (tyResolve entry.ty))))))
                   (set valid false)
-                }))
-          }
+                })))
         })
       valid
     }
@@ -35325,7 +35327,7 @@
             }
             0)
         }
-        (if (&& (== (nodeTag e) TAG_E_VAR) (== (scopeFindFrame tc (nodeAName e)) 0))
+        (if (&& (== (nodeTag e) TAG_E_VAR) (isNone (scopeFindFrame tc (nodeAName e))))
           {
             (let ent (findFnEnt tc (nodeAName e)))
             (if (if (== ent 0)
@@ -35354,7 +35356,7 @@
         (if (== (nodeTag e) TAG_E_APP)
           (spineHead e)
           e))
-      (if (|| (!= (nodeTag head) TAG_E_VAR) (!= (scopeFindFrame tc (nodeAName head)) 0))
+      (if (|| (!= (nodeTag head) TAG_E_VAR) (isSome (scopeFindFrame tc (nodeAName head))))
         0
         {
           (let ent (findFnEnt tc (nodeAName head)))

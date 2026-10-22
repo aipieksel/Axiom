@@ -1,0 +1,42 @@
+; expect 42
+; Index zero is a successful lookup. Frame lookup respects its lower
+; boundary and returns the innermost binding, while missing names have
+; no entry. The typed entry keeps mutations on the stored binding.
+(import core)
+(import parser)
+(import typecheck)
+(import Vec)
+(import Str)
+
+(:: main Int)
+(fn (main)
+  {
+    (let scope vecNew)
+    (pushScope scope "outer" 0 11 mkIntTy)
+    (pushScope scope "local" 1 12 mkStringTy)
+    (pushScope scope "local" 0 13 mkBoolTy)
+    (if (let (Some zero) (scopeFindIdx scope "outer"))
+      (if (&& (== zero 0)
+            (&& (isNone (scopeFindIdx scope "missing"))
+              (&& (isNone (scopeFindFrameFrom scope "outer" 2 1))
+                (isNone (scopeFindFrameFrom scope "missing" 2 1)))))
+        (if (let (Some entry) (scopeFindFrameFrom scope "local" 2 1))
+          {
+            (set entry.used 1)
+            (if (&& (strEq entry.name "local")
+                  (&& (== entry.bsp 13)
+                    (&& (strEq (tyRender entry.ty) "Bool") (== (sEntUsed (vecGet scope 2)) 1))))
+              {
+                (scopeTrunc scope 2)
+                (if (let (Some previous) (scopeFindFrameFrom scope "local" 1 1))
+                  (if (&& (== previous.bsp 12) (strEq (tyRender previous.ty) "String"))
+                    42
+                    5)
+                  4)
+              }
+              3)
+          }
+          2)
+        1)
+      6)
+  })
