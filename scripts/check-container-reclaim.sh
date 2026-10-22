@@ -55,6 +55,14 @@
 #   chain/held   the SAME program with the map kept alive by one extra
 #                share and the interner's free removed.
 #
+#   link/freed   a 64-element ring whose links are stored with
+#                `linkTo`, dropped each iteration (MM-VAL-10b). Storing
+#                a number computed from the vector into a word field
+#                once counted as the vector escaping, and every ring
+#                stayed alive; this arm holds that it does not.
+#   link/held    the SAME program with the vector kept alive by one
+#                extra share.
+#
 # Usage:
 #   scripts/check-container-reclaim.sh           # gate (the default)
 #   scripts/check-container-reclaim.sh --report  # print the table too
@@ -234,6 +242,60 @@ AX
   })
 AX
       ;;
+    link)
+      # The ablation is one statement: `vecHeld` takes a share nobody
+      # hands back, in the position `vecLen` stands in the live arm.
+      local keepVec='(vecLen v)'
+      [[ "$variant" == held ]] && keepVec='(vecHeld v)'
+      cat > "$out" <<AX
+; $n iterations, each building a 64-element ring whose links are set
+; from the vector and dropping it. Variant: $variant.
+(import IO)
+(import Vec)
+(import Link)
+
+(struct Ring
+  (val : Int)
+  (mut next : (Link Ring UInt16)))
+
+; One share of the vector that nothing hands back.
+(:: vecHeld (-> (Vec Ring) Int))
+;@axiom:effect(unsafe)
+(fn (vecHeld v)
+  {
+    (__retain (as v Int))
+    (vecLen v)
+  })
+
+(:: ring (-> Int Int))
+(fn (ring k)
+  {
+    (let v (:: vecNew (Vec Ring)))
+    (for i in 0..k
+      (vecPush v (Ring :val i :next linkNone)))
+    (for i in 0..k
+      {
+        (let r (vecGet v i))
+        (set r.next (linkTo v (% (+ i 1) k)))
+      })
+    (let first (vecGet v 0))
+    (let r (linkGet v first.next))
+    (+ r.val (* 0 $keepVec))
+  })
+
+(:: loop (-> Int Int Int))
+(fn (loop n acc)
+  (if (== n 0) acc (loop (- n 1) (+ acc (ring 64)))))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (println (loop $n 0))
+    0
+  })
+AX
+      ;;
   esac
 }
 
@@ -288,7 +350,7 @@ large=20000
 setv() { eval "V_$1=\"\$2\""; }
 getv() { eval "printf '%s' \"\${V_$1-}\""; }
 
-for probe in vec chain pop; do
+for probe in vec chain pop link; do
   if [[ "$probe" == vec ]]; then variants="mapped leaf"; elif [[ "$probe" == pop ]]; then variants="live kept"; else variants="freed held"; fi
   for variant in $variants; do
     for n in "$small" "$large"; do
@@ -338,7 +400,7 @@ rssof() {
 if [[ "$report" == 1 ]]; then
   echo
   printf '%-18s %8s %8s  %s\n' "probe/variant" "n=$small" "n=$large" "growth"
-  for k in vec_mapped vec_leaf chain_freed chain_held pop_live pop_kept; do
+  for k in vec_mapped vec_leaf chain_freed chain_held pop_live pop_kept link_freed link_held; do
     a="$(rssof "${k}_${small}")"; b="$(rssof "${k}_${large}")"
     printf '%-18s %8s %8s  %sx\n' "$k" "$a" "$b" "$(( a > 0 ? b / a : 0 ))"
   done
@@ -366,7 +428,7 @@ ratio_at_least() {
   fi
 }
 
-for probe in vec chain pop; do
+for probe in vec chain pop link; do
   if [[ "$probe" == vec ]]; then live=mapped; dead=leaf; elif [[ "$probe" == pop ]]; then live=live; dead=kept; else live=freed; dead=held; fi
 
   # 1. THE COMPUTATION IS THE SAME ONE. Both spellings must print the
@@ -419,7 +481,7 @@ done
 #    measurement standing in for a portable bound, and a Linux binary
 #    is freestanding with no dyld behind it. What a floor can honestly
 #    assert is that the instrument answered at all.
-for k in vec_mapped chain_freed; do
+for k in vec_mapped chain_freed link_freed; do
   r="$(rssof "${k}_${large}")"
   if [[ "$r" -lt 64 ]]; then
     echo "FAIL: $k measured ${r} KiB at n=$large, under the 64 KiB floor - that is not a running program"
@@ -520,6 +582,73 @@ fi
 #       big_mapped            16304
 #       big_leaf             168704
 # ---------------------------------------------------------------
+
+# 6. A READ NOTHING CAN OVERWRITE TAKES NO SHARE (MM-LIFE-2c). An element
+#    bound by a `let` whose scope writes nothing is borrowed, so the
+#    cheapest reclamation is the count never taken. `reads` calls a
+#    function that only compares, and must emit no retain; `writes`
+#    calls one that sets a field, and must keep its share, which is
+#    what shows the count below can see one at all. A comparison once
+#    counted as a write, and every scope that called one took a share.
+cat > "$work/borrow.ax" <<'AX'
+(import Vec)
+
+(struct R
+  (val : Int)
+  (mut other : Int))
+
+(:: below (-> (Vec R) Int Bool))
+(fn (below v i)
+  (< i (vecLen v)))
+
+(:: bump (-> (Vec R) Int Int))
+(fn (bump v i)
+  {
+    (let r (vecGet v i))
+    (set r.other 1)
+    0
+  })
+
+(:: reads (-> (Vec R) Int Int))
+(fn (reads v i)
+  {
+    (let r (vecGet v i))
+    (if (below v i)
+      r.val
+      0)
+  })
+
+(:: writes (-> (Vec R) Int Int))
+(fn (writes v i)
+  {
+    (let r (vecGet v i))
+    (+ r.val (bump v i))
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let v (:: vecNew (Vec R)))
+    (vecPush v (R :val 3 :other 0))
+    (+ (reads v 0) (writes v 0))
+  })
+AX
+retains_in() { awk "/^define .*@$1\\(/,/^}/" "$2" | grep -c 'axiom_retain' || true; }
+if "$axc" emit-llvm "$work/borrow.ax" -o "$work/borrow.ll" >"$work/borrow.log" 2>&1; then
+  n_reads="$(retains_in reads "$work/borrow.ll")"; n_writes="$(retains_in writes "$work/borrow.ll")"
+  if [[ "$n_writes" -lt 1 ]]; then
+    echo "FAIL: writes took no share of an element a callee overwrites - or the count saw no function"
+    failed=1
+  elif [[ "$n_reads" -ne 0 ]]; then
+    echo "FAIL: reads took $n_reads share(s) though nothing in its scope writes"
+    failed=1
+  else
+    echo "ok   a read under a comparing callee is borrowed; one under a writing callee keeps its share ($n_writes)"
+  fi
+else
+  echo "FAIL: could not emit the borrowed-read probe"; sed 's/^/     /' "$work/borrow.log" | head -10
+  failed=1
+fi
 
 if [[ "$failed" == 0 ]]; then
   echo "check-container-reclaim: gate passed"

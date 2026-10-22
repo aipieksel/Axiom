@@ -1,0 +1,137 @@
+; Links: an index into a vector that takes no share, stored in a struct
+; field in the width its type names (docs/memory-model.md MM-VAL-10b).
+; A search tree with 2-byte links, a ring whose links form a cycle, a
+; vector of links, a generic function over the width, an alias width,
+; and a link that leaves the region its vector lived in.
+(import IO)
+(import Vec)
+(import Link)
+
+(struct Node
+  (key : Int)
+  (mut left : (Link Node UInt16))
+  (mut right : (Link Node UInt16)))
+
+(type Wide UInt32)
+
+(struct Ring
+  (val : Int)
+  (mut prev : (Link Ring Wide))
+  (mut next : (Link Ring Wide)))
+
+(:: insert (-> (Vec Node) (Link Node UInt16) Int ()))
+(fn (insert nodes at key)
+  {
+    (let n (linkGet nodes at))
+    (let next
+      (if (< key n.key)
+        n.left
+        n.right))
+    (if (linkIsSome next)
+      (insert nodes next key)
+      {
+        (vecPush nodes (Node :key key :left linkNone :right linkNone))
+        (let fresh (linkTo nodes (- (vecLen nodes) 1)))
+        (if (< key n.key)
+          (set n.left fresh)
+          (set n.right fresh))
+      })
+  })
+
+(:: inOrder (-> (Vec Node) (Link Node UInt16) (Vec Int) ()))
+(fn (inOrder nodes at out)
+  (if (linkIsSome at)
+    {
+      (let n (linkGet nodes at))
+      (inOrder nodes n.left out)
+      (vecPush out n.key)
+      (inOrder nodes n.right out)
+    }))
+
+; Every element linked to its neighbours both ways, so the links form
+; a cycle: the vector still owns each element once.
+(:: ringWalk (-> Int Int))
+(fn (ringWalk n)
+  {
+    (let v (:: vecNew (Vec Ring)))
+    (for i in 0..n
+      (vecPush v (Ring :val i :prev linkNone :next linkNone)))
+    (for i in 0..n
+      {
+        (let r (vecGet v i))
+        (set r.next (linkTo v (% (+ i 1) n)))
+        (set r.prev (linkTo v (% (+ i (- n 1)) n)))
+      })
+    (let mut at (linkTo v 0))
+    (let mut sum 0)
+    (for i in 0..(* 2 n)
+      {
+        (let r (linkGet v at))
+        (set sum (+ sum r.val))
+        (set at r.next)
+      })
+    (for i in 0..n
+      {
+        (let r (linkGet v at))
+        (set sum (- sum r.val))
+        (set at r.prev)
+      })
+    sum
+  })
+
+; A function that only passes links on can leave the width open.
+(:: countSome (-> (Vec (Link t w)) Int))
+(fn (countSome links)
+  {
+    (let mut k 0)
+    (for l in links
+      (if (linkIsSome l)
+        (set k (+ k 1))))
+    k
+  })
+
+; A link is an index, not an address, so it leaves the region whose
+; vector it named.
+(:: lastOf (-> Int (Link Ring Wide)))
+(fn (lastOf n)
+  (region scratch
+    {
+      (let v (:: vecNew (Vec Ring)))
+      (for i in 0..n
+        (vecPush v (Ring :val i :prev linkNone :next linkNone)))
+      (linkTo v (- n 1))
+    }))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let nodes (:: vecNew (Vec Node)))
+    (vecPush nodes (Node :key 50 :left linkNone :right linkNone))
+    (let root (linkTo nodes 0))
+    (insert nodes root 30)
+    (insert nodes root 70)
+    (insert nodes root 20)
+    (insert nodes root 40)
+    (insert nodes root 60)
+    (insert nodes root 80)
+    (let keys (:: vecNew (Vec Int)))
+    (inOrder nodes root keys)
+    (for k in keys
+      (println "key {k}"))
+    (let rootNode (linkGet nodes root))
+    (let left (linkIndex rootNode.left))
+    (println "left of the root: {left}")
+    (let links (:: vecNew (Vec (Link Node UInt16))))
+    (vecPush links root)
+    (vecPush links linkNone)
+    (vecPush links rootNode.right)
+    (let named (countSome links))
+    (println "links that name an element: {named}")
+    (let mut total 0)
+    (for round in 0..100
+      (set total (+ total (ringWalk 1000))))
+    (println "ring sum: {total}")
+    (let last (linkIndex (lastOf 10)))
+    (println "last index: {last}")
+  })

@@ -960,6 +960,97 @@ only when its operations are safe across concurrent bindings.
 handle: a `parallel` form lends it to its bindings, and it can't have a
 `mut` field.
 
+### Link the elements of a vector
+
+```scheme
+(import IO)
+(import Vec)
+(import Link)
+
+(struct Node
+  (key : Int)
+  (mut left : (Link Node UInt16))
+  (mut right : (Link Node UInt16)))
+
+(:: insert (-> (Vec Node) (Link Node UInt16) Int ()))
+(fn (insert nodes at key)
+  {
+    (let n (linkGet nodes at))
+    (let next
+      (if (< key n.key)
+        n.left
+        n.right))
+    (if (linkIsSome next)
+      (insert nodes next key)
+      {
+        (vecPush nodes (Node :key key :left linkNone :right linkNone))
+        (let fresh (linkTo nodes (- (vecLen nodes) 1)))
+        (if (< key n.key)
+          (set n.left fresh)
+          (set n.right fresh))
+      })
+  })
+
+(:: total (-> (Vec Node) (Link Node UInt16) Int))
+(fn (total nodes at)
+  (if (linkIsSome at)
+    {
+      (let n (linkGet nodes at))
+      (+ n.key (+ (total nodes n.left) (total nodes n.right)))
+    }
+    0))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let nodes (:: vecNew (Vec Node)))
+    (vecPush nodes (Node :key 50 :left linkNone :right linkNone))
+    (let root (linkTo nodes 0))
+    (insert nodes root 30)
+    (insert nodes root 70)
+    (insert nodes root 60)
+    (let sum (total nodes root))
+    (println "sum {sum}")
+  })
+```
+
+```text
+sum 210
+```
+
+A link names one element of a vector. `(Link Node UInt16)` is an index
+into a `(Vec Node)` that a struct field stores in two bytes, so each
+node above spends four bytes on its children where two references
+would spend sixteen. `UInt8` and `UInt32` take one and four bytes. Any
+other width is `AX3145`.
+
+A link takes no share. The vector owns each element once, so following
+a link changes no count and releasing the vector walks no links. Links
+may form cycles, such as a ring or links back to a parent, and the
+whole structure is still freed with its vector. Use a reference when
+one value owns another, and a link when values share one owner.
+
+`Link` has five operations:
+
+- `(linkTo v i)` links to element `i`, and stops with status 77 when
+  `v` has none.
+- `(linkGet v l)` reads the element, as `vecGet` does.
+- `linkNone` links to nothing. A zeroed field holds it.
+- `(linkIsSome l)` asks whether a link names an element.
+- `(linkIndex l)` answers the index.
+
+Following `linkNone` stops the program with status 77. A link is a
+word everywhere but a struct field, and storing one in a field it
+doesn't fit stops the program with status 80.
+
+A link carries its element type but not its vector. Following it
+checks the index against the vector you pass, so after you remove
+elements a kept link can name a different one, as any index can.
+
+Tested by `tests/stdlib/997-links.ax` and
+`tests/stdlib/998-link-width-trap.ax`.
+
 ## Capability records
 
 ```scheme
@@ -1578,8 +1669,10 @@ tracing collector or `--gc` mode.
 | Arena-hybrid | Region resets reclaim their extent regardless of counts, including cycles within that extent. Counting also operates inside regions where releases remain necessary. |
 | Predictable reclamation | Ownership events and explicit reset boundaries determine reclamation. This gives defined reclamation points, without promising constant-time destruction or reset. |
 
-Reference counting does not collect unreachable cycles. Larger dead
-blocks wait for an arena reset. Automatic reclamation is incomplete:
+Reference counting does not collect unreachable cycles. A structure
+built with [links](#link-the-elements-of-a-vector) can hold cycles and
+is still freed with its vector. Larger dead blocks wait for an arena
+reset. Automatic reclamation is incomplete:
 some mutable slots and closure paths retain shares. Registered resource
 owners receive cleanup during region reset and recovery; raw foreign
 resources remain your responsibility. The
@@ -2376,7 +2469,7 @@ Tested by `tests/stdlib/841-net-ip.ax` and `tests/stdlib/843-net-stream.ax`.
 
 ### Modules at a Glance
 
-Sixty-three modules, all of them Axiom source under `stdlib/`, plus the six
+Sixty-four modules, all of them Axiom source under `stdlib/`, plus the six
 `Sys.Platform.*` target files covered by `Sys`. Only names marked `pub`
 are exported.
 
@@ -2388,6 +2481,7 @@ are exported.
 | `Utf8` | [API](stdlib-api.md#utf8) |
 | `Uuid` | [API](stdlib-api.md#uuid) |
 | `Vec` | [API](stdlib-api.md#vec) |
+| `Link` | [API](stdlib-api.md#link) |
 | `Map` | [API](stdlib-api.md#map) |
 | `Fmt` | [API](stdlib-api.md#fmt) |
 | `Float` | [API](stdlib-api.md#float) |

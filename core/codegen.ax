@@ -22827,6 +22827,7 @@
 ; Its nodeTy preserves the declared storage type. Generic fields remain
 ; words even when their instantiated value type is a narrow integer.
 ; Ordinary structs store explicit integer widths at natural alignment.
+; A link with a width is stored as that unsigned integer (MM-VAL-10b).
 ; Every other field occupies an aligned machine word, including references.
 ; These are payload offsets, independent of the one-word value/call ABI.
 (pub :: fieldIntegerCode (-> ASTNode Int))
@@ -22834,7 +22835,9 @@
   (if (nodeSame ty nilNode)
     0
     (if (== (nodeTag ty) TAG_T_CON)
-      (integerTypeCode (nodeAName ty))
+      (if (> (linkWidthCode ty) 0)
+        (linkWidthCode ty)
+        (integerTypeCode (nodeAName ty)))
       0)))
 
 (pub :: fieldStorageBytes (-> ASTNode Int))
@@ -22908,6 +22911,8 @@
     (if (== bytes 8)
       (storeWordAt cg base (/ offset 8) value)
       {
+        (if (> (linkWidthCode ty) 0)
+          (emitLinkFits cg value bytes))
         (let narrow (emitIntegerNarrow cg value (* bytes 8)))
         (let ptr (regStr (allocReg cg)))
         (let at (regStr (allocReg cg)))
@@ -22929,6 +22934,44 @@
           cg
         }
       })
+  })
+
+; A link is a word everywhere but a field with a width, so the store is
+; where it must fit: index + 1 no larger than the width's largest value.
+; One that doesn't fails as a violated contract does, status 80, since
+; the field's type states a range the way a subtype does (MM-VAL-10b).
+(pub :: emitLinkFits (-> Int String Int Int))
+(pub fn (emitLinkFits cg value bytes)
+  {
+    (let most
+      (if (== bytes 1)
+        "255"
+        (if (== bytes 2)
+          "65535"
+          "4294967295")))
+    (let wide (regStr (allocReg cg)))
+    (let badL (labelStr (allocReg cg)))
+    (let okL (labelStr (allocReg cg)))
+    (let msg (regStr (allocReg cg)))
+    (let id (internString cg "\"axiom: link does not fit its field\\n\""))
+    {
+      (emitLine cg
+        (concat "  " (concat wide (concat " = icmp ugt i64 " (concat value (concat ", " most))))))
+      (emitLine cg
+        (concat "  br i1 "
+          (concat wide (concat ", label %" (concat badL (concat ", label %" okL))))))
+      (emitLabel cg badL)
+      (emitLine cg
+        (concat "  "
+          (concat msg
+            (concat
+              " = ptrtoint ptr getelementptr inbounds ({ i64, i64, i64, ptr, i64 }, ptr @strhdr_"
+              (concat (fmtInt id) ", i64 0, i32 2) to i64")))))
+      (emitLine cg (concat "  call i64 @__axiom_contract_fail(i64 " (concat msg ")")))
+      (emitLine cg "  unreachable")
+      (emitLabel cg okL)
+      cg
+    }
   })
 
 (pub :: structFieldOf (-> Int String ASTNode))
@@ -27331,7 +27374,10 @@
         (let n (nodeAName head))
         (if (|| (writesNameIn n bound) (&& (== mode 1) (isLocalValue cg n)))
           true
-          (if (|| (isBinop n) (|| (isAndOr n) (isCastName n)))
+          ; a comparison reads its operands as `+` does: without it,
+          ; every function that compared counted as writing, and every
+          ; scope calling one took a share it never needed
+          (if (|| (isBinop n) (|| (isCmpOp n) (|| (isAndOr n) (isCastName n))))
             argsWrite
             (if (isPrimName n)
               (|| argsWrite (! (writesReadOnlyPrim n)))
@@ -27354,22 +27400,24 @@
 
 ; The primitives that read and never write: arithmetic and comparison
 ; on words, loads, a fresh allocation, taking a share, an address, the
-; float conversions, the arguments, and the index trap.
+; float conversions, the arguments, string comparison, and the two
+; traps, which stop the program rather than change what it holds.
 (:: writesReadOnlyPrim (-> String Bool))
 (fn (writesReadOnlyPrim n)
   (|| (isIntegerWordName n)
-    (|| (strEq n "__load64")
-      (|| (strEq n "__load8")
-        (|| (strEq n "__alloc")
-          (|| (strEq n "__retain")
-            (|| (strEq n "__retainref")
-              (|| (strEq n "__addr")
-                (|| (strEq n "__floatToBits")
-                  (|| (strEq n "__floatFromBits")
-                    (|| (strEq n "__intToFloat")
-                      (|| (strEq n "__floatToInt")
-                        (|| (strEq n "__argc")
-                          (|| (strEq n "__argv") (strEq n "__indexTrap")))))))))))))))
+    (|| (sizedTyIn n "__streq __strne __contract")
+      (|| (strEq n "__load64")
+        (|| (strEq n "__load8")
+          (|| (strEq n "__alloc")
+            (|| (strEq n "__retain")
+              (|| (strEq n "__retainref")
+                (|| (strEq n "__addr")
+                  (|| (strEq n "__floatToBits")
+                    (|| (strEq n "__floatFromBits")
+                      (|| (strEq n "__intToFloat")
+                        (|| (strEq n "__floatToInt")
+                          (|| (strEq n "__argc")
+                            (|| (strEq n "__argv") (strEq n "__indexTrap"))))))))))))))))
 
 (:: writesNameIn (-> String Names Bool))
 (fn (writesNameIn n bound)
@@ -28102,7 +28150,9 @@
 (pub fn (scalarTyName n)
   (if (|| (> (integerTypeCode n) 0)
         (|| (strEq n "Bool")
-          (|| (strEq n "Char") (|| (strEq n "Float") (|| (strEq n "Foreign") (strEq n "Spawn"))))))
+          (|| (strEq n "Char")
+            (|| (strEq n "Float")
+              (|| (strEq n "Foreign") (|| (strEq n "Spawn") (strEq n "Link")))))))
     1
     0))
 
@@ -30519,12 +30569,17 @@
                               (if (== tg TAG_E_SETF)
                                 ; `(set b.f v)` retains v into a REFERENCE field (event 5),
                                 ; so the base is a borrow and the value walks in argument
-                                ; position; a WORD field takes a `cast`, which parks the
-                                ; value uncounted - that mention escapes
+                                ; position. A WORD field takes no share of what REACHES
+                                ; it, as a slot store takes none: the binding as a word,
+                                ; through a `cast` or a callee that answers one, escapes,
+                                ; and a number computed from it does not - `(set n.left
+                                ; (linkTo nodes i))` kept every node vector alive. The
+                                ; value walks in argument position for what it parks
                                 (if (== (escapes cg name (nodeAChild e) 0 bound) 1)
                                   1
-                                  (if (== (fieldReadIsScalar cg e) 1)
-                                    (mentions name (nodeCChild e))
+                                  (if (&& (== (fieldReadIsScalar cg e) 1)
+                                        (!= (bindingFlow cg name (nodeCChild e)) 0))
+                                    1
                                     (escapes cg name (nodeCChild e) 0 bound)))
                                 (mentions name e)))))))))))))
       })))

@@ -16,6 +16,35 @@ its changelog too.
 
 ## Unreleased
 
+- Links. `(Link T W)` is an index into a `(Vec T)` that takes no share,
+  and a struct field stores it in the bytes `W` names: `UInt8`, `UInt16`
+  or `UInt32`. `linkTo`, `linkGet`, `linkNone`, `linkIsSome` and
+  `linkIndex` in the new `Link` module make and follow one. The vector
+  owns every element once, so following a link changes no count,
+  releasing the vector walks no links, and links that form a cycle are
+  freed with it. A tree of 8.4 M nodes with `UInt32` links builds in
+  0.13 s and 338 MB, where the same `data` tree takes 0.16 s and
+  404 MB; eight walks of it take 0.35 s against 0.32 s. Storing a link
+  in a field it doesn't fit stops the program with status 80, and any
+  other width is `AX3145`. Tested by `tests/stdlib/997-links.ax`,
+  `tests/stdlib/998-link-width-trap.ax` and
+  `tests/diagnostics/1509-link-width.ax`.
+
+- A comparison no longer makes a function count as writing. Borrowed
+  reads skipped every scope that called a function using `<`, `==` or
+  any other comparison, which is most of them, and took a share they
+  didn't need. The string comparisons and the contract check read
+  likewise. Tested by `scripts/check-container-reclaim.sh`.
+
+- A struct field `set` of a number computed from a local no longer
+  keeps the local alive. `(set n.left (linkTo nodes i))` stored an
+  index, and the vector it came from was never released: a ring of
+  10,000 linked elements built 200 times held 85 MB, and holds 2.2 MB
+  now. A word of the local itself, such as `(as v Int)`, still keeps
+  it. Tested by `scripts/check-container-reclaim.sh`. `AX3124` on a
+  struct or `data` field is reported once, where it was reported
+  twice.
+
 - A vector that grows past a megabyte grows in place. The runtime gives
   each block of that size its own address reservation, so a growing
   `Vec` raises its capacity instead of copying everything into a block

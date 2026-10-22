@@ -76,15 +76,15 @@
 ; builtin words (`I64`, `Double`, ...) are ordinary type names to the
 ; compiler.
 ((builtin_type) @type.builtin
-  (#match? @type.builtin "^(Int|Int8|Int16|Int32|UInt8|UInt16|UInt32|UInt64|Float|Bool|Char|String|Foreign|Handle|Vec|Option|Result|Addr)$"))
+  (#match? @type.builtin "^(Int|Int8|Int16|Int32|UInt8|UInt16|UInt32|UInt64|Float|Bool|Char|String|Foreign|Handle|Vec|Link|Option|Result|Addr)$"))
 ((builtin_type) @type
-  (#not-match? @type "^(Int|Int8|Int16|Int32|UInt8|UInt16|UInt32|UInt64|Float|Bool|Char|String|Foreign|Handle|Vec|Option|Result|Addr)$"))
+  (#not-match? @type "^(Int|Int8|Int16|Int32|UInt8|UInt16|UInt32|UInt64|Float|Bool|Char|String|Foreign|Handle|Vec|Link|Option|Result|Addr)$"))
 (unit_type) @type.builtin
 
 ((type_constructor (constructor_identifier) @type.builtin)
-  (#match? @type.builtin "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Option|Result|Addr)$"))
+  (#match? @type.builtin "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Link|Option|Result|Addr)$"))
 ((type_constructor (constructor_identifier) @type)
-  (#not-match? @type "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Option|Result|Addr)$"))
+  (#not-match? @type "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Link|Option|Result|Addr)$"))
 
 (type_variable) @type.parameter
 ; `(data Tree a ...)`: one parameter, written without its parens.
@@ -95,9 +95,9 @@
 (qualified_type module: (_) @module)
 (qualified_type submodule: (_) @module)
 ((qualified_type name: (constructor_identifier) @type.builtin)
-  (#match? @type.builtin "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Option|Result|Addr)$"))
+  (#match? @type.builtin "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Link|Option|Result|Addr)$"))
 ((qualified_type name: (constructor_identifier) @type)
-  (#not-match? @type "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Option|Result|Addr)$"))
+  (#not-match? @type "^(Int|Float|Bool|Char|String|Foreign|Handle|Vec|Link|Option|Result|Addr)$"))
 
 ; Effects take the type colours, as VS Code paints them: a builtin
 ; effect the library's, a declared one a type's.

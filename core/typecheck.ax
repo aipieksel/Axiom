@@ -1873,11 +1873,13 @@
 ; `externTypeRefusal` admits every name on this list to an `extern`
 ; signature, and a Rust function answering a handle would forge one.
 ; `evClassOf` answers them in an arm of its own (`tcWordTyName`).
+; `Link` is here: an index holds no address, and a link always has type
+; arguments, which `externTypeRefusal` refuses on their own account.
 (pub :: evScalarName (-> String Int))
 (pub fn (evScalarName n)
   (if (|| (> (integerTypeCode n) 0)
         (|| (strEq n "Bool")
-          (|| (strEq n "Char") (|| (strEq n "Float") (|| (strEq n "Foreign") false)))))
+          (|| (strEq n "Char") (|| (strEq n "Float") (|| (strEq n "Foreign") (strEq n "Link"))))))
     1
     0))
 
@@ -1908,7 +1910,7 @@
         {
           (let n (nodeAName t))
           (if (|| (> (integerTypeCode n) 0)
-                (|| (strEq n "Float") (|| (strEq n "Bool") (strEq n "Char"))))
+                (|| (strEq n "Float") (|| (strEq n "Bool") (|| (strEq n "Char") (strEq n "Link")))))
             1
             0)
         }
@@ -5302,6 +5304,11 @@
           ; from the reference-class question - `fldClass` answers for
           ; `Vec` exactly what it answered for the `Int` it replaces.
           (vecPush datas (as (DataEnt :name "Vec" :ctors vecNew :module 0 :arity 1) Int))
+          ; `(Link T W)`, abstract like `Vec`: an index into a `(Vec T)`
+          ; that a struct field stores in `W` bytes (MM-VAL-10b). The
+          ; entry gives it its two parameters; `stdlib/Link.ax` makes
+          ; and follows one, and every classifier answers "word".
+          (vecPush datas (as (DataEnt :name "Link" :ctors vecNew :module 0 :arity 2) Int))
         }
       }
       ; The exact-name index, before collection rather than after:
@@ -7243,7 +7250,7 @@
 (:: tyBuiltinEntry (-> Int Int))
 (fn (tyBuiltinEntry te)
   (if (== (memGetWord te 1) TY_DATA)
-    (if (|| (strEq (memGetWordStr te 0) "Option") (strEq (memGetWordStr te 0) "Vec"))
+    (if (sizedTyIn (memGetWordStr te 0) "Option Vec Link")
       1
       0)
     (if (== (memGetWord te 1) TY_CTOR)
@@ -8687,13 +8694,28 @@
 ; Check written uses before expansion erases their alias names.
 (pub :: tyCheckAliasArity (-> Int ASTNode Int Int))
 (pub fn (tyCheckAliasArity tc t span)
+  (tyCheckArityIn tc t span false))
+
+; A declaration's field types as written, before expansion: only the
+; alias heads, which expansion is about to erase. Every other head is
+; checked once, after collection (`tcCheckDeclaredTypeUses`), so a
+; `(Vec Int Int)` field is one report and not two.
+(pub :: tyCheckWrittenAliases (-> Int ASTNode Int Int))
+(pub fn (tyCheckWrittenAliases tc t span)
+  (tyCheckArityIn tc t span true))
+
+(pub :: tyCheckArityIn (-> Int ASTNode Int Bool Int))
+(pub fn (tyCheckArityIn tc t span aliasesOnly)
   (if (nodeSame t nilNode)
     1
     {
       (let tg (nodeTag t))
       (if (== tg TAG_T_CON)
         {
-          (let arity (tyDeclaredArity tc (nodeAName t)))
+          (let arity
+            (if (&& aliasesOnly (nodeSame (tcAliasFind tc (nodeAName t)) nilNode))
+              (- 0 1)
+              (tyDeclaredArity tc (nodeAName t))))
           (if (&& (>= arity 0) (!= (vecLen (nodeBChildren t)) arity))
             {
               (if (!= span 0)
@@ -8705,20 +8727,47 @@
                     0 0 "supply exactly the declared number of type arguments")))
               0
             }
-            (tyCheckAliasArityVec tc (nodeBChildren t) span 0))
+            (if (&& (! aliasesOnly) (== (tyLinkWidthOk tc t span) 0))
+              0
+              (tyCheckArityVecIn tc (nodeBChildren t) span 0 aliasesOnly)))
         }
         (if (== tg TAG_T_ARR)
           {
-            (let left (tyCheckAliasArity tc (nodeAChild t) span))
+            (let left (tyCheckArityIn tc (nodeAChild t) span aliasesOnly))
             (if (== left 0)
               0
-              (tyCheckAliasArity tc (nodeBChild t) span))
+              (tyCheckArityIn tc (nodeBChild t) span aliasesOnly))
           }
           (if (== tg TAG_T_TUP)
-            (tyCheckAliasArityVec tc (nodeAChildren t) span 0)
+            (tyCheckArityVecIn tc (nodeAChildren t) span 0 aliasesOnly)
             (if (== tg TAG_T_PTR)
-              (tyCheckAliasArity tc (nodeAChild t) span)
+              (tyCheckArityIn tc (nodeAChild t) span aliasesOnly)
               1))))
+    }))
+
+; AX3145: a link's width is `UInt8`, `UInt16` or `UInt32`, or a type
+; variable a caller fills in (MM-VAL-10b). Asked after the arity, so a
+; two-argument `Link` is the only shape it reads. An alias of a width
+; is the width: field types are expanded before the emitter sizes them.
+(pub :: tyLinkWidthOk (-> Int ASTNode Int Int))
+(pub fn (tyLinkWidthOk tc t span)
+  (if (|| (! (strEq (nodeAName t) "Link")) (!= (vecLen (nodeBChildren t)) 2))
+    1
+    {
+      (let w (tyExpandAliases tc (vecGet (nodeBChildren t) 1) 0))
+      (if (|| (== (nodeTag w) TAG_T_VAR)
+            (&& (== (nodeTag w) TAG_T_CON) (sizedTyIn (nodeAName w) "UInt8 UInt16 UInt32")))
+        1
+        {
+          (if (!= span 0)
+            (emitDiag tc
+              (mkDiag SEV_ERROR "AX3145" "link-width" span
+                (concat "a link's width is `UInt8`, `UInt16` or `UInt32`, found `"
+                  (concat (tyRender w) "`"))
+                0 0
+                "write the narrowest of the three that counts the vector's elements plus one: `(Link Node UInt16)` reaches 65,535 elements")))
+          0
+        })
     }))
 
 ; Declared arity, including empty data types and abstract builtins.
@@ -8749,13 +8798,17 @@
 
 (pub :: tyCheckAliasArityVec (-> Int (Vec ASTNode) Int Int Int))
 (pub fn (tyCheckAliasArityVec tc xs span i)
+  (tyCheckArityVecIn tc xs span i false))
+
+(pub :: tyCheckArityVecIn (-> Int (Vec ASTNode) Int Int Bool Int))
+(pub fn (tyCheckArityVecIn tc xs span i aliasesOnly)
   (if (== (as xs Int) 0)
     1
     (if (>= i (vecLen xs))
       1
-      (if (== (tyCheckAliasArity tc (vecGet xs i) span) 0)
+      (if (== (tyCheckArityIn tc (vecGet xs i) span aliasesOnly) 0)
         0
-        (tyCheckAliasArityVec tc xs span (+ i 1))))))
+        (tyCheckArityVecIn tc xs span (+ i 1) aliasesOnly)))))
 
 ; Preserve arrow shape while poisoning an invalid type use. Its
 ; parameters then suppress downstream mismatches at each call.
@@ -9070,7 +9123,7 @@
         (let c (vecGet ctors i))
         (if (! (== (nodeTy c) 0))
           {
-            (tyCheckAliasArityVec tc (nodeTyChildren c) (nodeSpan c) 0)
+            (tyCheckArityVecIn tc (nodeTyChildren c) (nodeSpan c) 0 true)
             (tcExpandTyVecAliases tc (nodeTyChildren c) 0)
           })
       }
@@ -9102,7 +9155,7 @@
         (let f (vecGet fields i))
         (if (! (== (nodeTy f) 0))
           {
-            (tyCheckAliasArity tc (nodeTyChild f) (nodeSpan f))
+            (tyCheckWrittenAliases tc (nodeTyChild f) (nodeSpan f))
             (if (! (== (tyHasAliasCon tc (nodeTyChild f)) 0))
               (setNodeTyChild f (tyExpandAliases tc (nodeTyChild f) 0)))
           })
@@ -10441,7 +10494,12 @@
               ; survives a reset by value as an `Int` does.
               (tcWordTyName tc n))
           }
-          0)
+          ; A link is an index, not an address (MM-VAL-10b): it
+          ; outlives a reset, and reaching the element again needs
+          ; the vector, which the region still holds to its scope.
+          (if (strEq (nodeAName ty) "Link")
+            1
+            0))
         (if (== (nodeTag ty) TAG_T_TUP)
           (if (== (vecLen (nodeAChildren ty)) 0)
             1
@@ -17079,7 +17137,7 @@
 (pub fn (tcScalarTyName n)
   (if (|| (> (integerTypeCode n) 0)
         (|| (strEq n "Bool")
-          (|| (strEq n "Char") (|| (strEq n "Float") (|| (strEq n "Foreign") false)))))
+          (|| (strEq n "Char") (|| (strEq n "Float") (|| (strEq n "Foreign") (strEq n "Link"))))))
     1
     0))
 
@@ -26223,7 +26281,7 @@
 (pub fn (checkBuiltinTypeDefinition tc d)
   (if (&& (== (declNamespace (nodeTag d)) NS_TYPE)
         (|| (!= (as (typeKeywordCanon (nodeAName d)) Int) 0)
-          (sizedTyIn (nodeAName d) "Vec Option")))
+          (sizedTyIn (nodeAName d) "Vec Option Link")))
     (emitDiag tc
       (mkDiag SEV_ERROR "AX3006" "duplicate-definition" (nodeSpan d)
         (concat "cannot redefine built-in type `" (concat (nodeAName d) "`")) 0 0

@@ -1064,7 +1064,7 @@ statuses. A program **MUST NOT** reuse them as a normal result:
 | 77 | an index out of range, raised by `(__indexTrap)`: `vecGet` and its kin, and `IO`'s range checks on `writeSlice` and `fileRead` | measured: `tests/stdlib/464-index-trap.ax` prints `axiom: vector index out of range` to fd 2 and exits 77; `tests/stdlib/610-typed-io-bounds.ax` refuses each typed call's out-of-range argument before its syscall |
 | 78 | `parallel`: the kernel refused the fork or the pthread (`__axiom_par_spawn_failed`) | measured by `scripts/check-parallel.sh` §12d: under a per-user process limit of 1 a `parallel` form's fork answers EAGAIN, a recovery point armed around it answers 78, and the unrecovered spawn prints `axiom: parallel: could not spawn the binding` and exits 78 (processes on every non-root runner, threads too on Linux, where the limit counts threads) |
 | 79 | a process spawn on a target with no `fork` (windows-x86_64, windows-aarch64, where `parallel` runs on threads) | emitted, not executed: `__proc_spawn` and its joins compile there to `__axiom_par_unsupported`, which prints `axiom: parallel is not available on this target` and exits 79. The program builds for every target and says at its first process spawn what it can't do (`scripts/check-parallel.sh` reads the IR) |
-| 80 | a violated `;@axiom:pre(...)`/`post(...)` contract | measured by `scripts/check-contracts.sh` §1: a violated `pre`/`post` prints ``axiom: precondition failed in `half`: (> n 0)`` to fd 2, prints the backtrace, and exits 80 at every `--opt` level. Inside `__axiom_recover` it answers 80 to the arming call |
+| 80 | a violated `;@axiom:pre(...)`/`post(...)` contract | measured by `scripts/check-contracts.sh` §1: a violated `pre`/`post` prints ``axiom: precondition failed in `half`: (> n 0)`` to fd 2, prints the backtrace, and exits 80 at every `--opt` level. Inside `__axiom_recover` it answers 80 to the arming call. A link stored in a field it doesn't fit exits 80 with `axiom: link does not fit its field` (`MM-VAL-10b`): measured by `tests/stdlib/998-link-width-trap.ax` |
 | 81 | an unhandled CPU exception on `baremetal-aarch64` | measured under QEMU (TCG): `tests/embedded/fault.ax` takes an alignment fault; the vector table writes the vector offset, ESR, ELR and FAR to the UART and exits 81 (`MM-EXEC-18`, `scripts/check-embedded.sh` A12). A stack overflow is one too, reported with a line naming the guard (`tests/embedded/overflow.ax`, A17). Not recoverable: no armed recovery point is jumped to. With an `isr(fault)` hook bound, the hook's answer is the status instead, for this row and for every trap above (`MM-EXEC-19`) |
 | 82 | an atomic whose address is not 8-byte aligned (`emitAtomicAlignGuard`, `MM-PAR-9`) | measured: `tests/stdlib/544-misaligned-atomic.ax` hands each of the four atomics an address 4 bytes into a word inside a recovery point, which answers 82 each time, then prints `axiom: misaligned atomic access` to fd 2 and exits 82, at every `--opt` level |
 | 83 | `INT_MIN / -1`, raised by the division guard (`emitDivGuardWidth`): `sdiv` overflow has no representable answer. `INT_MIN % -1` is not this row: a remainder by -1 is 0, and the emitter rewrites that divisor to 1 (`tests/stdlib/971-intmin-rem.ax`) | measured: `tests/stdlib/695-intmin-div-trap.ax` divides inside a recovery point, which answers 83, then prints `axiom: division overflow` to fd 2 and exits 83, at every `--opt` level |
@@ -1653,7 +1653,8 @@ measured why), and having both is exhaustive.
 
 **MM-VAL-10 (H).** An ordinary `struct` is a heap block without a tag.
 Fields stay in declaration order. Explicit fixed-width integer fields occupy
-1, 2, 4 or 8 bytes and start at a multiple of their size. Every other
+1, 2, 4 or 8 bytes and start at a multiple of their size, and so does a
+link with a width, stored as that unsigned integer (`MM-VAL-10b`). Every other
 field occupies an aligned 8-byte word, including a reference, a type variable
 and a nested struct handle. Padding fills each alignment gap. Loads restore
 a narrow integer's canonical signed or unsigned word; stores touch its declared
@@ -1707,6 +1708,32 @@ Tested by `tests/diagnostics/1062-handle-sealed-build.ax`,
 `tests/diagnostics/1065-struct-marker.ax`. `scripts/check-handles.sh`
 compares the shape word of a record holding a handle with the same
 record holding an `Int`.
+
+**MM-VAL-10b (H). A link is an index into a vector, stored in the width
+its type names.** `(Link T W)` names one element of a `(Vec T)` as its
+index plus one, and 0 names none. `W` is `UInt8`, `UInt16`, `UInt32` or
+a type variable, and any other width is refused (`AX3145`).
+
+A link is a machine word. It takes no share, has no bit in any reference
+map and costs a polymorphic call no evidence. It holds no address, so it
+survives a region reset by value and may leave a region. A struct field
+whose link has a width occupies that many bytes under `MM-VAL-10`'s
+layout and reads back zero-extended. Every other link is a word: a
+local, an argument, a vector slot, a generic field or a `data` field.
+
+The store into a field with a width is where a link must fit. A link
+whose index plus one exceeds the width's largest value stops the program
+with status 80 and `axiom: link does not fit its field`.
+
+`stdlib/Link.ax` makes and follows links. `linkTo` checks the index
+against the vector, and `linkGet` reads the element as `vecGet` does;
+both trap with status 77. Because no link takes a share, the vector owns
+each element once: following a link changes no count, releasing the
+vector walks no link, and links that form a cycle keep nothing alive.
+
+Tested by `tests/stdlib/997-links.ax`,
+`tests/stdlib/998-link-width-trap.ax` and
+`tests/diagnostics/1509-link-width.ax`.
 
 **MM-VAL-11 (H).** A struct variant such as `(Circle { r : Int })` is
 an ordinary constructor block under `MM-VAL-8`. The field names are a

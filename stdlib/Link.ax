@@ -1,0 +1,61 @@
+;;! Link - a typed index into a vector, stored in the bytes you choose.
+;
+; A `(Link T W)` names one element of a `(Vec T)`. It is an index, not
+; a reference: it takes no share, following it takes no share, and the
+; vector owns every element once. So a structure whose nodes point at
+; each other through links is freed when its vector is, cycles and all,
+; and releasing the vector walks no link.
+;
+; `W` is the width a struct field spends on the link: `UInt8`, `UInt16`
+; or `UInt32` (`AX3145`). A link is the index plus one, so 0 is the
+; link to nothing, `linkNone`, and a zeroed field holds it. Everywhere
+; but a struct field a link is a word; storing one in a field it does
+; not fit stops the program with status 80 (docs/memory-model.md
+; MM-VAL-10b).
+;
+; The link carries the element type, so a link into a `(Vec Node)`
+; can't be followed into a `(Vec Edge)`. It doesn't carry the vector:
+; following it checks the index against the vector you pass, and a
+; link kept after its element is removed reaches whatever then holds
+; that index, as any index does.
+(import Vec)
+
+;; A link to the element at `i`. An index outside `0 .. (vecLen v) - 1`
+;; stops the program with status 77, as `vecGet` does.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: linkTo (-> (Vec t) Int (Link t w)))
+(pub fn (linkTo v i)
+  (if (< i 0)
+    __indexTrap
+    (if (>= i (vecLen v))
+      __indexTrap
+      (as (+ i 1) (Link t w)))))
+
+;; The link to nothing: what `linkIsSome` answers `false` for, and
+;; what a zeroed field holds.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: linkNone (Link t w))
+(pub fn (linkNone)
+  (as 0 (Link t w)))
+
+;; Whether the link names an element.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: linkIsSome (-> (Link t w) Bool))
+(pub fn (linkIsSome l)
+  (!= (as l Int) 0))
+
+;; The index the link names. `linkNone` names none and stops the program
+;; with status 77.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: linkIndex (-> (Link t w) Int))
+(pub fn (linkIndex l)
+  (if (== (as l Int) 0)
+    __indexTrap
+    (- (as l Int) 1)))
+
+;; The element the link names in `v`. `linkNone`, or an index `v` no
+;; longer holds, stops the program with status 77.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: linkGet (-> (Vec t) (Link t w) t))
+(pub fn (linkGet v l)
+  (vecGet v (- (as l Int) 1)))
