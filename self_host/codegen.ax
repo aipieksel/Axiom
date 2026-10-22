@@ -4845,17 +4845,24 @@
 ; in `isIdentChar`, so neither is reachable from a source name today;
 ; they are handled because the quoting rule belongs to LLVM and must
 ; not depend on where Axiom's set happens to stop.
-(pub :: llvmSymBody (-> String Int Int String String))
-(pub fn (llvmSymBody s i n acc)
-  (if (>= i n)
-    acc
+(pub :: llvmSymBody (-> String String))
+(pub fn (llvmSymBody s)
+  {
+    (let b (strBuilderWithCapacity (strLen s)))
     {
-      (let c (strByte s i))
-      (llvmSymBody s (+ i 1) n
-        (if (|| (== c 34) (== c 92))
-          (concat acc (concat "\\" (hex2 c)))
-          (concat acc (concat (strSlice s i 1) ""))))
-    }))
+      (for i in 0..(strLen s)
+        {
+          (let c (strByte s i))
+          (if (|| (== c 34) (== c 92))
+            {
+              (strBuilderPushByte b 92)
+              (strBuilderPush b (hex2 c))
+            }
+            (strBuilderPushByte b c))
+        })
+      (strBuilderFinish b)
+    }
+  })
 
 ; The empty name quotes rather than emitting a bare sigil: `@` alone is
 ; not an identifier, and `@""` is.
@@ -4865,7 +4872,7 @@
     (let n (strLen name))
     (if (&& (> n 0) (llvmSymIsPlain name 0 n))
       name
-      (concat "\"" (concat (llvmSymBody name 0 n "") "\"")))
+      (concat "\"" (concat (llvmSymBody name) "\"")))
   })
 
 ; Every byte became exactly three characters, so the byte count is the
@@ -10045,25 +10052,32 @@
   (concat
     (concat
       "\"movq %rbx, 48($0)\\0Amovq %r12, 56($0)\\0Amovq %r13, 64($0)\\0Amovq %r14, 72($0)\\0Amovq %r15, 80($0)\\0Amovq %rdi, 88($0)\\0Amovq %rsi, 96($0)\\0A"
-      (win64XmmMoves xmmOff 6 "" true))
+      (win64XmmMoves xmmOff 6 true))
     (concat
       "movq %rsp, ($0)\\0Amovq %rbp, 8($0)\\0Aleaq 1f(%rip), %rax\\0Amovq %rax, 16($0)\\0Ajmp 2f\\0A1:\\0Amovq 48(%rax), %rbx\\0Amovq 56(%rax), %r12\\0Amovq 64(%rax), %r13\\0Amovq 72(%rax), %r14\\0Amovq 80(%rax), %r15\\0Amovq 88(%rax), %rdi\\0Amovq 96(%rax), %rsi\\0A"
-      (concat (win64XmmMoves xmmOff 6 "" false)
+      (concat (win64XmmMoves xmmOff 6 false)
         "2:\", \"r,~{rax},~{rcx},~{rdx},~{r8},~{r9},~{r10},~{r11},~{xmm0},~{xmm1},~{xmm2},~{xmm3},~{xmm4},~{xmm5},~{memory},~{cc}\""))))
 
 ; `movups %xmmN, off($0)` for xmm6 to xmm15 when `saving`, sixteen bytes
 ; apart from `off`; the landing's `movups off(%rax), %xmmN` otherwise.
-(:: win64XmmMoves (-> Int Int String Bool String))
-(fn (win64XmmMoves off n acc saving)
-  (if (> n 15)
-    acc
-    (win64XmmMoves (+ off 16) (+ n 1)
-      (concat acc
-        (if saving
-          (concat "movups %xmm" (concat (fmtInt n) (concat ", " (concat (fmtInt off) "($0)\\0A"))))
-          (concat "movups "
-            (concat (fmtInt off) (concat "(%rax), %xmm" (concat (fmtInt n) "\\0A"))))))
-      saving)))
+(:: win64XmmMoves (-> Int Int Bool String))
+(fn (win64XmmMoves off first saving)
+  {
+    (let b strBuilderNew)
+    {
+      (for n in first..16
+        {
+          (let at (+ off (* 16 (- n first))))
+          (strBuilderPush b
+            (if saving
+              (concat "movups %xmm"
+                (concat (fmtInt n) (concat ", " (concat (fmtInt at) "($0)\\0A"))))
+              (concat "movups "
+                (concat (fmtInt at) (concat "(%rax), %xmm" (concat (fmtInt n) "\\0A"))))))
+        })
+      (strBuilderFinish b)
+    }
+  })
 
 ; The setjmp half of `__axiom_recover`, per architecture, in the shape
 ; `targetSyscallAsm` uses: the `"body", "constraints"` middle of an
@@ -16219,11 +16233,19 @@
 ; Every byte as `\XX`, so a path with a backslash or a quote cannot
 ; close the constant early. String literals do this per byte already;
 ; filenames take the same road rather than a second quoting rule.
-(pub :: llvmBytes (-> String Int String String))
-(pub fn (llvmBytes s i acc)
-  (if (>= i (strLen s))
-    acc
-    (llvmBytes s (+ i 1) (concat acc (concat "\\" (hex2 (strByte s i)))))))
+(pub :: llvmBytes (-> String String))
+(pub fn (llvmBytes s)
+  {
+    (let b (strBuilderWithCapacity (* 3 (strLen s))))
+    {
+      (for i in 0..(strLen s)
+        {
+          (strBuilderPushByte b 92)
+          (strBuilderPush b (hex2 (strByte s i)))
+        })
+      (strBuilderFinish b)
+    }
+  })
 
 ; `; @@line <module> <spanstart>`, or `; @@line <spanstart>` for the
 ; entry file. A marker whose preceding line is not a label, or that
@@ -16577,7 +16599,7 @@
           {
             (let open (concat sized " x i8] c\""))
             {
-              (let body (concat open (llvmBytes p 0 "")))
+              (let body (concat open (llvmBytes p)))
               {
                 (emitLine cg (concat body "\""))
                 (emitFilenGlobals files (+ i 1) cg)
@@ -18333,8 +18355,7 @@
                 (emitLine cg
                   (concat "declare i64 @"
                     (concat (llvmSym (strDup sym))
-                      (concat
-                        (concat "(" (concat (externParams (arrowArity (nodeBChild f)) 0) ")"))
+                      (concat (concat "(" (concat (externParams (arrowArity (nodeBChild f))) ")"))
                         " #0"))))
               })
             (+ i 1)
@@ -18433,13 +18454,16 @@
 ; IS `(-> Int (-> Int Int))` and the depth is 2.
 ; `i64, i64` for arity 2; the empty string for arity 0, which is the
 ; shape a nullary extern needs - `@f()` and never `@f(i64 )`.
-(pub :: externParams (-> Int Int String))
-(pub fn (externParams n i)
-  (if (>= i n)
-    ""
-    (if (== i (- n 1))
-      "i64"
-      (concat "i64, " (externParams n (+ i 1))))))
+(pub :: externParams (-> Int String))
+(pub fn (externParams n)
+  {
+    (let words vecNew)
+    {
+      (for i in 0..n
+        (vecPush words "i64"))
+      (strJoin words ", ")
+    }
+  })
 
 ; ------------------------------------------------------------------
 ; Declaration emission.
@@ -20625,7 +20649,7 @@
         (emitLine cg
           (concat
             (concat "define i64 @_thunk_"
-              (concat (fmtInt i) (concat "(i64 %.env" (thunkParamStr ar 0))))
+              (concat (fmtInt i) (concat "(i64 %.env" (thunkParamStr ar))))
             ", i64 %__evwa.h) #0 {")))
       {
         (let evTail
@@ -20640,7 +20664,7 @@
               (concat
                 (concat
                   (concat "  %.r = call i64 @"
-                    (concat (llvmSym (strDup full)) (concat "(" (thunkArgStr ar 0))))
+                    (concat (llvmSym (strDup full)) (concat "(" (thunkArgStr ar))))
                   (concat evTail ""))
                 ")")))
           {
@@ -20655,25 +20679,27 @@
     }
   })
 
-(pub :: thunkParamStr (-> Int Int String))
-(pub fn (thunkParamStr ar j)
-  (if (>= j ar)
-    ""
-    (concat (concat ", i64 %.a" (fmtInt j)) (concat (thunkParamStr ar (+ j 1)) ""))))
-
-(pub :: thunkArgStr (-> Int Int String))
-(pub fn (thunkArgStr ar j)
-  (if (>= j ar)
-    ""
+(pub :: thunkParamStr (-> Int String))
+(pub fn (thunkParamStr ar)
+  {
+    (let b strBuilderNew)
     {
-      (let rest (thunkArgStr ar (+ j 1)))
-      (concat (concat "i64 %.a" (fmtInt j))
-        (concat
-          (if (== (strLen rest) 0)
-            ""
-            (concat ", " rest))
-          ""))
-    }))
+      (for j in 0..ar
+        (strBuilderPush b (concat ", i64 %.a" (fmtInt j))))
+      (strBuilderFinish b)
+    }
+  })
+
+(pub :: thunkArgStr (-> Int String))
+(pub fn (thunkArgStr ar)
+  {
+    (let args vecNew)
+    {
+      (for j in 0..ar
+        (vecPush args (concat "i64 %.a" (fmtInt j))))
+      (strJoin args ", ")
+    }
+  })
 
 ; ------------------------------------------------------------------
 ; `match`.
@@ -25140,33 +25166,20 @@
 (pub fn (asmInputArgs ins args cg)
   {
     (let items (asmSplit ins))
-    (let mut acc "")
-    (let mut i 0)
+    (let parts vecNew)
     {
-      (while (< i (vecLen items))
-        {
-          (let it (vecGetStr items i))
-          {
+      (for it in items
+        (vecPush parts
+          (if (== (strByte it 0) 115)
             {
-              (let one
-                (if (== (strByte it 0) 115)
-                  {
-                    (let node (vecGet args (+ (asmDigits it 0 (strLen it)) 1)))
-                    (concat "ptr @"
-                      (llvmSym (strDup (mangledForCg cg (nodeAName (nodeBChild node))))))
-                  }
-                  {
-                    (let cgV (emitExpr (vecGet args (+ (asmDigits it (- 0 1) (strLen it)) 1)) cg))
-                    (concat "i64 " (strDup (memGetWordStr cgV 2)))
-                  }))
-              (set acc (if (== (strLen acc) 0)
-                one
-                (concat (concat acc ", ") one)))
+              (let node (vecGet args (+ (asmDigits it 0 (strLen it)) 1)))
+              (concat "ptr @" (llvmSym (strDup (mangledForCg cg (nodeAName (nodeBChild node))))))
             }
-            (set i (+ i 1))
-          }
-        })
-      acc
+            {
+              (let cgV (emitExpr (vecGet args (+ (asmDigits it (- 0 1) (strLen it)) 1)) cg))
+              (concat "i64 " (strDup (memGetWordStr cgV 2)))
+            })))
+      (strJoin parts ", ")
     }
   })
 
@@ -25194,32 +25207,26 @@
           (concat "rax rcx rdx r8 r9 r10 r11 " (asmRegRun "xmm" 0 5))
           (concat "rax rcx rdx rsi rdi r8 r9 r10 r11 " (asmRegRun "xmm" 0 15)))))
     (let names (asmSplitSpace regs))
-    (let mut acc "")
-    (let mut i 0)
+    (let kept vecNew)
     {
-      (while (< i (vecLen names))
-        {
-          (let r (vecGetStr names i))
-          {
-            (if (! (asmConsNames cons r))
-              (set acc (if (== (strLen acc) 0)
-                (concat (concat "~{" r) "}")
-                (concat acc (concat (concat ",~{" r) "}")))))
-            (set i (+ i 1))
-          }
-        })
-      acc
+      (for r in names
+        (if (! (asmConsNames cons r))
+          (vecPush kept (concat (concat "~{" r) "}"))))
+      (strJoin kept ",")
     }
   })
 
 ; `prefix` numbered from `lo` to `hi`, space-separated.
 (pub :: asmRegRun (-> String Int Int String))
 (pub fn (asmRegRun prefix lo hi)
-  (if (> lo hi)
-    ""
-    (if (== lo hi)
-      (concat prefix (fmtInt lo))
-      (concat (concat (concat prefix (fmtInt lo)) " ") (asmRegRun prefix (+ lo 1) hi)))))
+  {
+    (let names vecNew)
+    {
+      (for r in lo..(+ hi 1)
+        (vecPush names (concat prefix (fmtInt r))))
+      (strJoin names " ")
+    }
+  })
 
 (pub :: asmSplitSpace (-> String Strings))
 (pub fn (asmSplitSpace s)
@@ -25301,23 +25308,20 @@
 (pub :: asmQuoteName (-> String String))
 (pub fn (asmQuoteName s)
   {
-    (let mut out "")
-    (let mut i 0)
+    (let out (strBuilderWithCapacity (strLen s)))
     {
-      (while (< i (strLen s))
+      (for i in 0..(strLen s)
         {
           (let c (strByte s i))
-          {
-            (set out (concat out
-                       (if (|| (< c 32) (|| (> c 126) (|| (== c 34) (== c 92))))
-                         (concat "\\"
-                           (concat (strSlice "0123456789ABCDEF" (/ c 16) 1)
-                             (strSlice "0123456789ABCDEF" (% c 16) 1)))
-                         (strSlice s i 1))))
-            (set i (+ i 1))
-          }
+          (if (|| (< c 32) (|| (> c 126) (|| (== c 34) (== c 92))))
+            {
+              (strBuilderPushByte out 92)
+              (strBuilderPush out (strSlice "0123456789ABCDEF" (/ c 16) 1))
+              (strBuilderPush out (strSlice "0123456789ABCDEF" (% c 16) 1))
+            }
+            (strBuilderPushByte out c))
         })
-      out
+      (strBuilderFinish out)
     }
   })
 
@@ -25428,26 +25432,15 @@
       {
         (let first (+ (pairSlot cg 20) 1))
         (let k (asmFileIndex cg file))
-        (let mut node "")
-        (let mut ranges "")
-        (let mut i 0)
+        (let cookies vecNew)
         {
           (pairSetSlot cg 20 (+ (pairSlot cg 20) (vecLen items)))
-          (while (< i (vecLen items))
-            {
-              (set node (concat node
-                          (concat
-                            (if (== i 0)
-                              "i64 "
-                              ", i64 ")
-                            (fmtInt (+ first i)))))
-              (set ranges (concat ranges (concat " " (vecGetStr items i))))
-              (set i (+ i 1))
-            })
+          (for i in 0..(vecLen items)
+            (vecPush cookies (concat "i64 " (fmtInt (+ first i)))))
           (vecPush out
             (concat (concat (concat "  ; axiom-asm-site " (fmtInt first)) (concat " " (fmtInt k)))
-              ranges))
-          (vecPush out (concat (concat ", !srcloc !{" node) "}"))
+              (concat " " (strJoin items " "))))
+          (vecPush out (concat (concat ", !srcloc !{" (strJoin cookies ", ")) "}"))
           out
         }
       })
@@ -25540,9 +25533,18 @@
 
 (pub :: asmWords (-> Int String))
 (pub fn (asmWords n)
-  (if (<= n 1)
-    "i64"
-    (concat "i64, " (asmWords (- n 1)))))
+  {
+    (let words vecNew)
+    (let count
+      (if (<= n 1)
+        1
+        n))
+    {
+      (for k in 0..count
+        (vecPush words "i64"))
+      (strJoin words ", ")
+    }
+  })
 
 ; Output `k` of the call whose result is `r`: `r` itself when it is the
 ; only one, else an `extractvalue`.
@@ -25609,7 +25611,7 @@
   {
     (let cg1 (emitArgsList args cg 0))
     (let at (memGetWordStr cg1 9))
-    (let pad (padZeros (- 7 (vecLen args)) ""))
+    (let pad (padZeros (- 7 (vecLen args))))
     (let rn (allocReg cg1))
     {
       (let r (regStr rn))
@@ -25639,11 +25641,16 @@
     }
   })
 
-(pub :: padZeros (-> Int String String))
-(pub fn (padZeros n acc)
-  (if (<= n 0)
-    acc
-    (padZeros (- n 1) (concat acc ", i64 0"))))
+(pub :: padZeros (-> Int String))
+(pub fn (padZeros n)
+  {
+    (let b strBuilderNew)
+    {
+      (for k in 0..n
+        (strBuilderPush b ", i64 0"))
+      (strBuilderFinish b)
+    }
+  })
 
 (pub :: emitPrimAlloc (-> Nodes Int Int))
 ;@axiom:effect(io)
