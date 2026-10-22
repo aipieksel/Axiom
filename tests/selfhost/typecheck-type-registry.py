@@ -16,12 +16,13 @@ def main():
     env = dict(os.environ, AXIOM_PATH=str(repo / "core"), AXIOM_STDLIB=str(repo / "stdlib"))
     fixtures = [repo / "tests/selfhost" / name for name in [
         "typecheck-type-registry.ax", "typecheck-module-options.ax",
-        "typecheck-function-registry.ax",
+        "typecheck-function-registry.ax", "typecheck-private-state.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
         ("typecheck-graph-options-exhaustive.axp", "AX3005", ("None",)),
         ("typecheck-context-refusal.axp", "AX3004", ("TC", "Int")),
+        ("typecheck-private-context-refusal.axp", "AX3004", ("ContractContext", "Int")),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -47,7 +48,7 @@ def main():
                 raise SystemExit(f"{name}: status={checked.returncode}\n{checked.stdout}{checked.stderr}")
             if any(expected not in errors[0] for expected in expected_names):
                 raise SystemExit(f"{name}: unexpected refusal: {errors[0]}")
-    print("typed registry: lookup/order and module runtime 42; mismatched payload AX3004; graph missing None AX3005; invalid context AX3004")
+    print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 
 if __name__ == "__main__":

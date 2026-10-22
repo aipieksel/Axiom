@@ -1933,8 +1933,8 @@
 (pub fn (EV_LAMARG)
   (- 0 2))
 
-; How many lambdas out the parameter named `n` is, or -1 if it is not
-; one. 0 is the lambda being checked; 1 is the one enclosing it, whose
+; How many lambdas out the parameter named `n` is, or None if it is
+; not a lambda parameter. 0 is the lambda being checked; 1 is the one enclosing it, whose
 ; parameter the PARSER has already turned into a capture - `(lambda (a
 ; b) ..)` is `(lambda (a) (lambda (b) ..))`, so a store of `a` runs
 ; inside the inner lambda with `a` read out of the closure record.
@@ -1944,25 +1944,19 @@
 ; Witness `EV_LAMARG - d` carries the depth, and codegen reads
 ; `"__evwa."` at depth 0 and `"__evwa.<d>"` above it - the enclosing
 ; lambda's own word, captured into this one's record.
-(pub :: lamVarDepth (-> TC String Int))
+(pub :: lamVarDepth (-> TC String (Option Int)))
 (pub fn (lamVarDepth tc n)
   {
-    (let st (tcLamVars tc))
-    (if (== (as st Int) 0)
-      (- 0 1)
+    (let st tc.lamVars)
+    (let mut i (- (vecLen st) 1))
+    (let mut found None)
+    (while (>= i 0)
       {
-        (let mut i (- (vecLen st) 1))
-        (let mut found (- 0 1))
-        {
-          (while (>= i 0)
-            {
-              (if (&& (< found 0) (strEq (vecGetStr st i) n))
-                (set found (- (- (vecLen st) 1) i)))
-              (set i (- i 1))
-            })
-          found
-        }
+        (if (&& (isNone found) (strEq (vecGet st i) n))
+          (set found (Some (- (- (vecLen st) 1) i))))
+        (set i (- i 1))
       })
+    found
   })
 
 ; Enter a lambda: push its parameter's name, or the empty string for a
@@ -1970,31 +1964,16 @@
 ; type). The empty string still occupies a level, because DEPTH is
 ; counted in lambdas and not in words - a ground parameter between two
 ; variable ones must not renumber them.
-(pub :: lamVarPush (-> TC Int Int))
+(pub :: lamVarPush (-> TC String Int))
 (pub fn (lamVarPush tc n)
   {
-    (let st (tcLamVars tc))
-    {
-      (let v
-        (if (== (as st Int) 0)
-          vecNew
-          st))
-      {
-        (tcSetLamVars tc v)
-        (vecPush v (as n Int))
-        (vecLen v)
-      }
-    }
+    (vecPush tc.lamVars n)
+    (vecLen tc.lamVars)
   })
 
 (pub :: lamVarTrunc (-> TC Int Int))
 (pub fn (lamVarTrunc tc n)
-  {
-    (let st (tcLamVars tc))
-    (if (== (as st Int) 0)
-      0
-      (scopeTrunc st n))
-  })
+  (scopeTrunc tc.lamVars n))
 
 (pub :: evClassOf (-> TC ASTNode Int))
 (pub fn (evClassOf tc t)
@@ -2034,14 +2013,14 @@
         ; every link: a captured vector's element pinned to the
         ; enclosing lambda's own parameter is that parameter, whatever
         ; the parameter is later pinned to.
-        (if (>= (lamVarDepth tc (nodeAName t)) 0)
-          (- EV_LAMARG (lamVarDepth tc (nodeAName t)))
+        (if (let (Some depth) (lamVarDepth tc (nodeAName t)))
+          (- EV_LAMARG depth)
           (if (&& (== (tyIsMintedVar t) 1) (!= (nodeB t) 0))
             (evClassOf tc (nodeBChild t))
             (if (== (tyIsSrcVar t) 1)
               {
-                (let sv (tcCurSigVarsVec tc))
-                (if (== (as sv Int) 0)
+                (let sv (tcCurSigVars tc))
+                (if (== (vecLen sv) 0)
                   0
                   {
                     (let k (strVecIdx sv (nodeAName t)))
@@ -2300,7 +2279,7 @@
                 (let early
                   (&& (== late 0)
                     (&& (== castArg 0)
-                      (&& (== (tyIsMintedVar at) 1) (< (lamVarDepth tc (nodeAName at)) 0)))))
+                      (&& (== (tyIsMintedVar at) 1) (isNone (lamVarDepth tc (nodeAName at)))))))
                 (if early
                   (evNotePending tc st pt at nilNode)
                   {
@@ -2795,12 +2774,7 @@
 ; what keeps it from becoming an undefined symbol at link time.
 (pub :: isDefined (-> StringRows String Int))
 (pub fn (isDefined bs name)
-  {
-    (let v (vecGetVec bs (% (fnIdxHash name) (vecLen bs))))
-    (if (== (as v Int) 0)
-      0
-      (defIdxHas v name 0))
-  })
+  (defIdxHas (vecGet bs (% (fnIdxHash name) (vecLen bs))) name 0))
 
 (pub :: defIdxHas (-> Strings String Int Int))
 (pub fn (defIdxHas v name k)
@@ -2823,7 +2797,6 @@
 ; suffix would invent a definition. `Mod$f` answers to `Mod$f` and to
 ; `f`; `$f` answers only to itself.
 (pub :: defIdxBuild (-> (Vec ASTNode) StringRows))
-;@axiom:effect(unsafe)
 (pub fn (defIdxBuild allDecls)
   {
     (let nb (fnIdxBuckets (vecLen allDecls)))
@@ -2832,7 +2805,7 @@
     {
       (while (< i nb)
         {
-          (vecPush bs (as 0 (Vec String)))
+          (vecPush bs vecNew)
           (set i (+ i 1))
         })
       (for i in 0..(vecLen allDecls)
@@ -2887,20 +2860,8 @@
 (pub :: defIdxPut (-> StringRows String Int))
 (pub fn (defIdxPut bs name)
   {
-    (let b (% (fnIdxHash name) (vecLen bs)))
-    (if (== (as (vecGet bs b) Int) 0)
-      {
-        (let v vecNew)
-        {
-          (vecPush v name)
-          (vecSet bs b v)
-          0
-        }
-      }
-      {
-        (vecPush (vecGet bs b) name)
-        0
-      })
+    (vecPush (vecGet bs (% (fnIdxHash name) (vecLen bs))) name)
+    0
   })
 
 ; ------------------------------------------------------------------
@@ -3019,7 +2980,7 @@
     }
     (strEq (bareOf (nodeAName d)) name)))
 
-(pub :: checkMissingDefs (-> StringRows (Vec ASTNode) Diags Int Ints Diags))
+(pub :: checkMissingDefs (-> StringRows (Vec ASTNode) Diags Int Names Diags))
 (pub fn (checkMissingDefs bs entryDecls out i missing)
   (if (>= i (vecLen entryDecls))
     out
@@ -3380,7 +3341,17 @@
   (computeRequests : (Vec ComputeRequest))
   (mut computeEnabled : Int)
   (mut validatingEffects : Bool)
+  (mut restrictionsStrict : Bool)
   (mut unsignedParams : Nodes))
+
+(pub data ContractContext
+  (ContractPre)
+  (ContractPost))
+
+(pub data CtResult
+  (CtUnseen)
+  (CtWalking)
+  (CtKnown Int))
 
 (pub struct TC
   (fns : (Vec FnEnt))
@@ -3402,11 +3373,11 @@
   (mut curModule : (Option String))
   (aliases : Nodes)
   (mut pairFns : Names)
-  (privates : Int)
+  (privates : (Option Names))
   (mut fnIdx : (Option FnIndex))
   (mut ambIdx : (Option AmbIndex))
   (mut lamBase : Int)
-  (mut curSigVars : Int)
+  (mut curSigVars : Names)
   (mut curDeclNode : ASTNode)
   (mut sigTags : Nodes)
   (mut fnSufIdx : (Option FnIndex))
@@ -3415,9 +3386,9 @@
   (mut curCalls : (Option Names))
   (mut tyIdx : (Option TypeIndex))
   (mut deprecated : Nodes)
-  (mut curLamVar : Int)
+  (lamVars : Names)
   (mut rgnGaveUp : Int)
-  (mut contractTag : Int)
+  (mut contractTag : (Option ContractContext))
   (regions : (Vec Int))
   (mut pairSites : Nodes)
   (floatOps : (Vec ASTNode))
@@ -3525,8 +3496,8 @@
   (mut forgeSites : Nodes)
   (forgeDecls : (Vec FnEnt))
   (unsafePending : (Vec ASTNode))
-  (mut ctClaimed : Nodes)
-  (mut ctResults : Int)
+  (mut ctClaimed : (Option Nodes))
+  (mut ctResults : (Vec CtResult))
   (evPending : (Vec EvPend))
   (mut eraseSites : Nodes)
   (eraseCounts : (Vec EraseCount))
@@ -3534,7 +3505,7 @@
   (mut mayCalls : (Option Names))
   (walkCtx : (Vec BCtx))
   (mut discard : Int)
-  (unknownCallees : (Vec Int))
+  (unknownCallees : Names)
   (mut regionWalkCtx : (Option RgnCtx))
   (fieldDecls : (Vec FieldDecl))
   (fieldDeclNames : (Vec FieldDeclName))
@@ -3552,7 +3523,7 @@
   (pt : ASTNode)
   (at : ASTNode)
   (node : ASTNode)
-  (sigVars : Int))
+  (sigVars : Names))
 
 ; Word 18 was `traits`, the `trait` declaration nodes `symbols`
 ; walked, and word 28 was `implIdx`, every `impl` declaration
@@ -3881,16 +3852,10 @@
     tc
   })
 
-; The private-name set: a word that is 0 when the program has none, and
-; its vector view.
-(:: tcPrivates (-> TC Int))
+; Private names, absent when no privacy or library visibility key is needed.
+(:: tcPrivates (-> TC (Option Names)))
 (fn (tcPrivates tc)
   tc.privates)
-
-(:: tcPrivatesVec (-> TC Strings))
-;@axiom:effect(unsafe)
-(fn (tcPrivatesVec tc)
-  (as tc.privates Strings))
 
 ; The exact-name index, absent until `tcNew` builds its typed buckets.
 (:: tcFnIdx (-> TC (Option FnIndex)))
@@ -3926,18 +3891,12 @@
     tc
   })
 
-; The signature's type-variable names as a word, 0 outside a body or
-; for a signature with none, and their vector view.
-(:: tcCurSigVars (-> TC Int))
+; The signature's type-variable names, empty outside its body.
+(:: tcCurSigVars (-> TC Names))
 (fn (tcCurSigVars tc)
   tc.curSigVars)
 
-(:: tcCurSigVarsVec (-> TC (Vec a)))
-;@axiom:effect(unsafe)
-(fn (tcCurSigVarsVec tc)
-  (as tc.curSigVars (Vec a)))
-
-(:: tcSetCurSigVars (-> TC Int TC))
+(:: tcSetCurSigVars (-> TC Names TC))
 (fn (tcSetCurSigVars tc v)
   {
     (set tc.curSigVars v)
@@ -4033,28 +3992,18 @@
     tc
   })
 
-(:: tcLamVars (-> TC Ints))
-;@axiom:effect(unsafe)
+(:: tcLamVars (-> TC Names))
 (fn (tcLamVars tc)
-  (as tc.curLamVar Ints))
+  tc.lamVars)
 
-(:: tcLamWord (-> TC Int))
-(fn (tcLamWord tc)
-  tc.curLamVar)
+(:: tcRestrictionsStrict (-> TC Bool))
+(fn (tcRestrictionsStrict tc)
+  tc.exprChecks.restrictionsStrict)
 
-(:: tcSetLamWord (-> TC Int TC))
-(fn (tcSetLamWord tc v)
+(:: tcSetRestrictionsStrict (-> TC Bool TC))
+(fn (tcSetRestrictionsStrict tc v)
   {
-    (set tc.curLamVar v)
-    tc
-  })
-
-(:: tcSetLamVars (-> TC Ints TC))
-(fn (tcSetLamVars tc v)
-  {
-    (__retainref v)
-    (let t tc)
-    (set t.curLamVar (as v Int))
+    (set tc.exprChecks.restrictionsStrict v)
     tc
   })
 
@@ -4069,11 +4018,11 @@
     tc
   })
 
-(:: tcContractTag (-> TC Int))
+(:: tcContractTag (-> TC (Option ContractContext)))
 (fn (tcContractTag tc)
   tc.contractTag)
 
-(:: tcSetContractTag (-> TC Int TC))
+(:: tcSetContractTag (-> TC (Option ContractContext) TC))
 (fn (tcSetContractTag tc v)
   {
     (set tc.contractTag v)
@@ -4192,18 +4141,18 @@
 (fn (tcUnsafePending tc)
   tc.unsafe.unsafePending)
 
-(:: tcCtClaimed (-> TC Nodes))
+(:: tcCtClaimed (-> TC (Option Nodes)))
 (fn (tcCtClaimed tc)
   tc.unsafe.ctClaimed)
 
 (:: tcSetCtClaimed (-> TC Nodes TC))
 (fn (tcSetCtClaimed tc v)
   {
-    (set tc.unsafe.ctClaimed v)
+    (set tc.unsafe.ctClaimed (Some v))
     tc
   })
 
-(:: tcSetCtResults (-> TC Int TC))
+(:: tcSetCtResults (-> TC (Vec CtResult) TC))
 (fn (tcSetCtResults tc v)
   {
     (set tc.unsafe.ctResults v)
@@ -4490,8 +4439,7 @@
 ; own, is the bare `library ` marker. A marker holds a space, which no
 ; key or module name can. A program that reaches no internal module
 ; keeps the set it had.
-(pub :: withInternalVisibility (-> (Vec ASTNode) Units Int Int))
-;@axiom:effect(unsafe)
+(pub :: withInternalVisibility (-> Nodes Units (Option Names) (Option Names)))
 (pub fn (withInternalVisibility decls units privs)
   {
     (let internals (internalUnitNames units 0 vecNew))
@@ -4499,12 +4447,12 @@
       privs
       {
         (let out
-          (if (== privs 0)
-            vecNew
-            (as privs Strings)))
+          (match privs
+            ((None) vecNew)
+            ((Some names) names)))
         (internalKeysInto decls internals out 0)
         (libraryMarksInto units out 0)
-        (as out Int)
+        (Some out)
       })
   })
 
@@ -4613,12 +4561,12 @@
         (unitNamedInternal units name (+ i 1)))
     }))
 
-(pub :: collectPrivates (-> (Vec ASTNode) Strings Int Int))
+(pub :: collectPrivates (-> Nodes Names Int (Option Names)))
 (pub fn (collectPrivates decls out i)
   {
     (let n (countPrivates decls 0 0))
     (if (== n 0)
-      0
+      None
       (collectPrivatesSeen decls out (privSetNew n) i))
   })
 
@@ -4654,12 +4602,12 @@
               acc))))
     }))
 
-(pub :: collectPrivatesSeen (-> (Vec ASTNode) Strings StringRows Int Int))
+(pub :: collectPrivatesSeen (-> Nodes Names StringRows Int (Option Names)))
 (pub fn (collectPrivatesSeen decls out seen i)
   (if (>= i (vecLen decls))
     (if (== (vecLen out) 0)
-      0
-      (as out Int))
+      None
+      (Some out))
     {
       (let d (vecGet decls i))
       {
@@ -5183,7 +5131,7 @@
             :fnIdx None
             :ambIdx None
             :lamBase 0
-            :curSigVars 0
+            :curSigVars vecNew
             :curDeclNode nilNode
             :sigTags nilNodes
             :fnSufIdx None
@@ -5192,9 +5140,9 @@
             :curCalls None
             :tyIdx None
             :deprecated nilNodes
-            :curLamVar 0
+            :lamVars vecNew
             :rgnGaveUp 0
-            :contractTag 0
+            :contractTag None
             :regions vecNew
             :pairSites nilNodes
             :floatOps vecNew
@@ -5210,8 +5158,8 @@
                 :forgeSites nilNodes
                 :forgeDecls vecNew
                 :unsafePending vecNew
-                :ctClaimed nilNodes
-                :ctResults 0
+                :ctClaimed None
+                :ctResults vecNew
                 :evPending vecNew
                 :eraseSites nilNodes
                 :eraseCounts vecNew
@@ -5231,6 +5179,7 @@
                 :computeRequests vecNew
                 :computeEnabled 0
                 :validatingEffects false
+                :restrictionsStrict false
                 :unsignedParams nilNodes)))
         {
           (tcSetTyIdx tc (tyIdxNew (vecLen allDecls)))
@@ -5243,7 +5192,7 @@
           ; reason: a lookup that falls through the exact pass during
           ; collection would otherwise scan the whole table.
           (tcSetFnSufIdx tc (fnSufIdxBuildSized (tcFnsVec tc) (vecLen allDecls)))
-          (tcSetPrivIdx tc (privIdxBuild (tcPrivatesVec tc)))
+          (tcSetPrivIdx tc (privIdxBuild (tcPrivates tc)))
           ; Aliases first, then record fields, then everything else.
           ; `tcCollect` precomputes each constructor's field vector AND
           ; its arrow from the field types AS WRITTEN, so an expansion
@@ -6180,41 +6129,31 @@
 ; The private-name set. 0 when nothing is private, so every guard that
 ; compares word 19 against 0 reads the same of word 27.
 (pub :: privSetNew (-> Int StringRows))
-;@axiom:effect(unsafe)
 (pub fn (privSetNew n)
   {
     (let nb (fnIdxBuckets n))
     (let bs vecNew)
     {
       (for i in 0..nb
-        (vecPush bs (as 0 (Vec String))))
+        (vecPush bs vecNew))
       bs
     }
   })
 
-(pub :: privIdxBuild (-> Strings (Option StringRows)))
+(pub :: privIdxBuild (-> (Option Names) (Option StringRows)))
 (pub fn (privIdxBuild privs)
-  (if (== (as privs Int) 0)
-    None
+  (if (let (Some names) privs)
     {
-      (let bs (privSetNew (vecLen privs)))
-      {
-        (for i in 0..(vecLen privs)
-          (defIdxPut bs (vecGetStr privs i)))
-        (Some bs)
-      }
-    }))
+      (let bs (privSetNew (vecLen names)))
+      (for name in names
+        (defIdxPut bs name))
+      (Some bs)
+    }
+    None))
 
 (pub :: privIdxHas (-> StringRows String Int))
 (pub fn (privIdxHas bs key)
-  (if (== (as bs Int) 0)
-    0
-    {
-      (let v (vecGet bs (% (fnIdxHash key) (vecLen bs))))
-      (if (== (as v Int) 0)
-        0
-        (defIdxHas v key 0))
-    }))
+  (defIdxHas (vecGet bs (% (fnIdxHash key) (vecLen bs))) key 0))
 
 (pub :: findFnEntVisibleExact
   (-> (Option StringRows) (Vec FnEnt) String (Option String) (Option FnEnt)))
@@ -6311,7 +6250,7 @@
         None))
     (if (let (Some entry) local)
         (Some entry)
-      (== (tcPrivates tc) 0)
+      (isNone (tcPrivates tc))
         (if (let (Some entry) (fnEntExact tc name))
           (if (== (fnEntOutOfModuleScope tc m name entry) 0)
             (Some entry)
@@ -11650,7 +11589,7 @@
   tc.unsafe.discard)
 
 ; The unknown callees (`UState` word 13).
-(pub :: tcUnknownCallees (-> TC Ints))
+(pub :: tcUnknownCallees (-> TC Names))
 (pub fn (tcUnknownCallees tc)
   tc.unsafe.unknownCallees)
 
@@ -11963,7 +11902,7 @@
       ; captured (by value, MM-VAL-16), and assigning one is refused.
       ; Saved and restored so nesting keeps the innermost boundary.
       ;
-      ; `curLamVar` rides the same save/restore, and for the same
+      ; The lambda-name stack rides the same save/restore, for the same
       ; reason: it names THIS lambda's parameter placeholder so that
       ; `evClassOf` can answer `EV_LAMARG` for it, and a nested lambda
       ; must shadow rather than inherit it. Set only for a
@@ -11975,8 +11914,8 @@
         (let lamMark
           (lamVarPush tc
             (if (== (vecLen ptys) 1)
-              (as (nodeAName (vecGet ptys 0)) Int)
-              (as "" Int))))
+              (nodeAName (vecGet ptys 0))
+              "")))
         {
           (tcSetLamBase tc mark)
           ; A pending body (a lambda nested in this one) is
@@ -12068,7 +12007,7 @@
           ; The lambda boundary for `checkSet`, saved and restored
           ; exactly as `checkLam` does it.
           ;
-          ; `curLamVar` names this lambda's parameter when the author
+          ; The lambda-name stack records this parameter when the author
           ; wrote a TYPE VARIABLE for it, and is cleared when the
           ; author wrote a ground type.
           ;
@@ -12093,8 +12032,8 @@
             (let lamMark
               (lamVarPush tc
                 (if (== (nodeTag (nodeAChild arrow)) TAG_T_VAR)
-                  (as (nodeAName (nodeAChild arrow)) Int)
-                  (as "" Int))))
+                  (nodeAName (nodeAChild arrow))
+                  "")))
             {
               (tcSetLamBase tc mark)
               ; A pending body THROUGH A WRAPPER (the direct
@@ -12477,7 +12416,7 @@
   ; costs one load.
   {
     (let name (nodeAName e))
-    (if (&& (!= (tcContractTag tc) 0)
+    (if (&& (isSome (tcContractTag tc))
           (&& (strEq name "result") (isNone (scopeFindFrame tc "result"))))
       {
         (emitContractResult tc e)
@@ -12750,9 +12689,9 @@
   ; not "undefined" about a name that plainly exists.
   {
     (let hidden
-      (if (!= (tcPrivates tc) 0)
+      (if (let (Some privateNames) (tcPrivates tc))
         (if (let (Some entry) (findFnEntAnywhere tc name))
-          (if (== (strInVec (tcPrivatesVec tc) entry.name 0) 1)
+          (if (== (strInVec privateNames entry.name 0) 1)
             (Some entry.name)
             None)
           None)
@@ -12781,7 +12720,7 @@
 ; does not exist when it plainly does.
 (pub :: ctorHiddenModule (-> TC String (Option String)))
 (pub fn (ctorHiddenModule tc name)
-  (if (== (tcPrivates tc) 0)
+  (if (isNone (tcPrivates tc))
     None
     (ctorHiddenIn (tcDatasVec tc) (tcPrivIdx tc) (tcCurModule tc) name 0)))
 
@@ -26462,9 +26401,9 @@
         })
       ; `strict` is read off the whole SET, before any name in it is
       ; checked, because it modifies how every one of them answers.
-      (tcSetLamWord tc (restrictHasStrict rs 0))
+      (tcSetRestrictionsStrict tc (== (restrictHasStrict rs 0) 1))
       (checkRestrictsFrom tc d rs 0 eff)
-      (tcSetLamWord tc 0)
+      (tcSetRestrictionsStrict tc false)
     }
     0
   })
@@ -28447,7 +28386,7 @@
     ; for THIS declaration: on a sensitive operation, "the compiler
     ; could not tell" is not the guarantee that was asked for, and a
     ; guarantee that might not hold is worth less than no claim at all.
-    (if (== (tcLamWord tc) 1)
+    (if (tcRestrictionsStrict tc)
       (emitDiag tc
         (restrictPathSecs tc path 1
           (mkDiag SEV_ERROR "AX3057" "restriction-unproven" (nodeSpan d)
@@ -28600,11 +28539,15 @@
           (if (&& (strEq (contractKeyOf t) "post") (! (nodeSame resTy nilNode)))
             (pushScope (tcScopeVec tc) "result" 0 (contractSpanOf t) resTy)
             0))
-        (let _i (tcSetContractTag tc t))
+        (let _i
+          (tcSetContractTag tc
+            (if (strEq (contractKeyOf t) "pre")
+              (Some ContractPre)
+              (Some ContractPost))))
         {
           (let ty (checkExprH tc p 0))
           {
-            (tcSetContractTag tc 0)
+            (tcSetContractTag tc None)
             (scopeTrunc (tcScopeVec tc) mark)
             (if (== (tyCompat tc mkBoolTy ty) 0)
               (emitContractMalformed tc t (contractSpanOf t)
@@ -28723,18 +28666,22 @@
 ; the question is total - see the `inContract` field's own note.
 (pub :: emitContractResult (-> TC ASTNode Int))
 (pub fn (emitContractResult tc e)
-  {
-    (let t (tcContractTag tc))
-    (if (== (nodeSpan e) 0)
-      0
-      (emitDiag tc
-        (mkDiag SEV_ERROR "AX3050" "contract-malformed" (nodeSpan e)
-          (if (strEq (contractKeyOf t) "pre")
-            "`result` names nothing in a `pre`: a precondition is checked BEFORE the body runs, so there is no result yet"
-            "`result` names nothing here: this declaration has no `::` signature, so it declares no result type for `result` to have")
-          0 0
-          "a `;@axiom:pre(...)` or `;@axiom:post(...)` is a claim the COMPILER cannot decide - there is no value analysis here - so it is compiled into the body and checked at run time, on every call, and a failure writes `axiom: precondition failed in `f`: ...` on fd 2 and exits 80. That is why the expression has to parse, has to be `Bool`, and has to PERFORM nothing: a contract that allocates or writes changes the program by being stated. Comparison, indexing, `strEq`, `strLen`, `vecLen` and `vecGet` are allocation-free and are what a predicate is written from; `concat`, `fmtInt` and `vecNew` are not. `result` names the declared result of a `post` and nothing anywhere else")))
-  })
+  (if (let (Some contract) (tcContractTag tc))
+    {
+      (let context contract)
+      (if (== (nodeSpan e) 0)
+        0
+        (emitDiag tc
+          (mkDiag SEV_ERROR "AX3050" "contract-malformed" (nodeSpan e)
+            (if (match context
+              ((ContractPre) true)
+              ((ContractPost) false))
+              "`result` names nothing in a `pre`: a precondition is checked BEFORE the body runs, so there is no result yet"
+              "`result` names nothing here: this declaration has no `::` signature, so it declares no result type for `result` to have")
+            0 0
+            "a `;@axiom:pre(...)` or `;@axiom:post(...)` is a claim the COMPILER cannot decide - there is no value analysis here - so it is compiled into the body and checked at run time, on every call, and a failure writes `axiom: precondition failed in `f`: ...` on fd 2 and exits 80. That is why the expression has to parse, has to be `Bool`, and has to PERFORM nothing: a contract that allocates or writes changes the program by being stated. Comparison, indexing, `strEq`, `strLen`, `vecLen` and `vecGet` are allocation-free and are what a predicate is written from; `concat`, `fmtInt` and `vecNew` are not. `result` names the declared result of a `post` and nothing anywhere else")))
+    }
+    0))
 
 ; AX3042 for the three effects that refine `IO` (`isConcEntropyEffect`).
 ; A purity claim is answered by AX3010 instead, as it is for IO, so one
@@ -31036,11 +30983,11 @@
                 (sigTyVarsInto sigTy sv)
                 (tcSetCurSigVars tc
                   (if (== (tyHasPoison sigTy) 1)
-                    0
-                    (as sv Int)))
+                    vecNew
+                    sv))
               }
             }
-            (tcSetCurSigVars tc 0))
+            (tcSetCurSigVars tc vecNew))
           (refuseReservedParams tc params (nodeSpan d) 0)
           (checkDupParams tc d params 1)
           (bindFnParams tc params ptys sigTy 0)
@@ -31143,7 +31090,7 @@
                 ; Every pin this body makes has been made.
                 (evSettle tc)
                 (tcSetCurModule tc None)
-                (tcSetCurSigVars tc 0)
+                (tcSetCurSigVars tc vecNew)
                 (tcSetCurDeclNode tc nilNode)
               }
             }
@@ -33631,38 +33578,31 @@
   })
 
 ; The declarations that make a claim, found once per compilation and
-; kept in the unsafe record's word 4, beside their result taints in
-; word 5: -1 until asked, 3 while being found.
+; cached beside typed result states: unseen, being walked, or a known
+; result taint. A recursive walk answers the conservative secret taint.
 (pub :: ctTable (-> TC (Vec ASTNode)))
 (pub fn (ctTable tc)
-  {
-    (if (vecIsNull (tcCtClaimed tc))
-      {
-        (let decls (tcAllDeclsVec tc))
-        (let tab vecNew)
-        (let sums vecNew)
-        {
-          (for i in 0..(vecLen decls)
+  (if (let (Some table) (tcCtClaimed tc))
+    table
+    {
+      (let decls (tcAllDeclsVec tc))
+      (let tab vecNew)
+      (let sums vecNew)
+      (for dd in decls
+        (if (== (nodeTag dd) TAG_D_FN)
+          (if (> (vecLen (ctClaimOf tc dd)) 0)
             {
-              (let dd (vecGet decls i))
-              (if (== (nodeTag dd) TAG_D_FN)
-                (if (> (vecLen (ctClaimOf tc dd)) 0)
-                  {
-                    (vecPush tab dd)
-                    (vecPush sums (- 0 1))
-                  }))
-            })
-          (tcSetCtResults tc (as sums Int))
-          (tcSetCtClaimed tc tab)
-        }
-      })
-    (tcCtClaimed tc)
-  })
+              (vecPush tab dd)
+              (vecPush sums CtUnseen)
+            })))
+      (tcSetCtResults tc sums)
+      (tcSetCtClaimed tc tab)
+      tab
+    }))
 
-(pub :: ctSums (-> TC Ints))
-;@axiom:effect(unsafe)
+(pub :: ctSums (-> TC (Vec CtResult)))
 (pub fn (ctSums tc)
-  (as tc.unsafe.ctResults (Vec Int)))
+  tc.unsafe.ctResults)
 
 ; The declared name a call's head resolves to, the way the checker
 ; resolves it: a call names its callee bare, even across modules.
@@ -33693,20 +33633,18 @@
     }
   })
 
-(pub :: ctTableIndex (-> (Vec ASTNode) String Int))
+(pub :: ctTableIndex (-> Nodes String (Option Int)))
 (pub fn (ctTableIndex tab name)
   {
     (let mut i 0)
-    (let mut at (- 0 1))
-    {
-      (while (&& (< i (vecLen tab)) (< at 0))
-        {
-          (if (strEq (nodeAName (vecGet tab i)) name)
-            (set at i))
-          (set i (+ i 1))
-        })
-      at
-    }
+    (let mut at None)
+    (while (&& (< i (vecLen tab)) (isNone at))
+      {
+        (if (strEq (nodeAName (vecGet tab i)) name)
+          (set at (Some i)))
+        (set i (+ i 1))
+      })
+    at
   })
 
 ; The result taint of the `k`th claimed function: its body walked once
@@ -33716,29 +33654,21 @@
 (pub fn (ctSummary tc k)
   {
     (let sums (ctSums tc))
-    (let s (vecGet (ctSums tc) k))
-    (if (== s 3)
-      2
-      (if (>= s 0)
-        s
+    (match (vecGet sums k)
+      ((CtWalking) 2)
+      ((CtKnown taint) taint)
+      ((CtUnseen)
         {
           (let dd (vecGet (ctTable tc) k))
-          {
-            (vecSet sums k 3)
-            {
-              (let cs (ctClaimOf tc dd))
-              {
-                (let r
-                  (ctInModule tc dd
-                    (lambda (x) (ctRounds (ctWalkNew tc (nodeAName x) (ctClaimText cs)) x cs))))
-                {
-                  (vecSet sums k r)
-                  r
-                }
-              }
-            }
-          }
-        }))
+          (vecSet sums k CtWalking)
+          (let cs (ctClaimOf tc dd))
+          (let result
+            (ctInModule tc dd
+              (lambda (x) (ctRounds (ctWalkNew tc (nodeAName x) (ctClaimText cs)) x cs))))
+          (vecSet sums k (CtKnown result))
+          result
+        }
+      ))
   })
 
 ; A walk of the function named `name`, whose claim reads `claim`.
@@ -34013,19 +33943,19 @@
     0
     {
       (let k (ctTableIndex (ctTable w.tc) (ctResolve w.tc n)))
-      (if (< k 0)
+      (if (let (Some index) k)
+        {
+          (let dd (vecGet (ctTable w.tc) index))
+          {
+            (ctCheckArgs w e dd (ctClaimOf w.tc dd) ts 0)
+            (ctSummary w.tc index)
+          }
+        }
         {
           (ctHit w (nodeSpan e)
             (concat (concat "`" (bareOf n)) "` gets a secret, and makes no `ct(...)` claim")
             "a secret to an unclaimed call")
           0
-        }
-        {
-          (let dd (vecGet (ctTable w.tc) k))
-          {
-            (ctCheckArgs w e dd (ctClaimOf w.tc dd) ts 0)
-            (ctSummary w.tc k)
-          }
         })
     }))
 
