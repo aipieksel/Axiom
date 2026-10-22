@@ -114,12 +114,12 @@
     }
   })
 
-(pub :: tyVarIndex (-> Strings String Int Int))
+(pub :: tyVarIndex (-> Strings String Int (Option Int)))
 (pub fn (tyVarIndex names name i)
   (if (>= i (vecLen names))
-    (- 0 1)
+    None
     (if (strEq (vecGetStr names i) name)
-      i
+      (Some i)
       (tyVarIndex names name (+ i 1)))))
 
 (pub :: tyVarLabel (-> Int String))
@@ -147,7 +147,7 @@
           ; the user did not write, so both get a reader-friendly
           ; label. Testing `_t` alone printed a raw `_i267` into a
           ; diagnostic the moment the second prefix existed.
-          (if (&& (strStartsWith (nodeAName t) "_") (< (tyVarIndex names (nodeAName t) 0) 0))
+          (if (&& (strStartsWith (nodeAName t) "_") (isNone (tyVarIndex names (nodeAName t) 0)))
             {
               (vecPush names (nodeAName t))
               0
@@ -191,12 +191,9 @@
       {
         (let tag (nodeTag t))
         (if (== tag TAG_T_VAR)
-          {
-            (let i (tyVarIndex names (nodeAName t) 0))
-            (if (< i 0)
-              (nodeAName t)
-              (tyVarLabel i))
-          }
+          (if (let (Some index) (tyVarIndex names (nodeAName t) 0))
+            (tyVarLabel index)
+            (nodeAName t))
           (if (== tag TAG_T_CON)
             (tyRenderAppScoped (typeNameForScope (nodeAName t) owner) (nodeBChildren t) names owner)
             (if (== tag TAG_T_ARR)

@@ -1,0 +1,63 @@
+; Missing display-variable indexes retain written names and stable minted labels.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: at (-> (Option Int) Int Bool))
+(fn (at result expected)
+  (match result
+    ((Some index) (== index expected))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let names (vecPush (vecPush (vecPush vecNew "_t10") "_i20") "_t10"))
+    (say 1 (isNone (tyVarIndex vecNew "_t10" 0)))
+    (say 2 (at (tyVarIndex names "_t10" 0) 0))
+    (say 3 (at (tyVarIndex names "_i20" 0) 1))
+    (say 4 (at (tyVarIndex names "_t10" 1) 2))
+    (say 5 (isNone (tyVarIndex names "missing" 0)))
+    (say 6 (isNone (tyVarIndex names "_t10" (vecLen names))))
+    (let first (mkTVar "_t10"))
+    (let second (mkTVar "_i20"))
+    (let collected vecNew)
+    (tyVarsInto first collected)
+    (tyVarsInto second collected)
+    (tyVarsInto first collected)
+    (tyVarsInto (mkTVar "written") collected)
+    (say 7 (== (vecLen collected) 2))
+    (say 8 (strEq (vecGetStr collected 0) "_t10"))
+    (say 9 (strEq (vecGetStr collected 1) "_i20"))
+    (say 10 (strEq (tyRenderIn first collected) "_a"))
+    (say 11 (strEq (tyRenderIn second collected) "_b"))
+    (say 12 (strEq (tyRenderIn (mkTVar "written") collected) "written"))
+    (say 13 (strEq (tyRenderIn (mkTVar "_missing") collected) "_missing"))
+    (say 14 (strEq (tyRender (mkTArr first (mkTArr second first))) "(_a -> (_b -> _a))"))
+    (say 15 (strEq (tyRender nilNode) "{unknown}"))
+    (say 16 (strEq (tyRender mkTErr) "{unknown}"))
+    (let before (vecLen collected))
+    (tyVarsInto nilNode collected)
+    (tyVarsInto mkTErr collected)
+    (say 17 (== (vecLen collected) before))
+    (let many vecNew)
+    (for index in 0..27
+      (vecPush many (concat "_t" (fmtInt index))))
+    (say 18 (strEq (tyRenderIn (mkTVar "_t26") many) "_a1"))
+    0
+  })
