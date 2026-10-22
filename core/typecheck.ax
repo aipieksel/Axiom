@@ -14753,7 +14753,8 @@
                       (if (strEq n "Int")
                         (showRewriteTo tc head "Fmt" "fmtInt" (spanOf e))
                         {
-                          (showSplice e (showIntegerExpr tc arg n (spanOf e)))
+                          (if (let (Some rendered) (showIntegerExpr tc arg n (spanOf e)))
+                            (showSplice e rendered))
                           0
                         })
                       (if (strEq n "Float")
@@ -14799,16 +14800,13 @@
 ; program actually holds (`showHelperName`).
 (pub :: showRewriteTo (-> TC ASTNode String String Int Int))
 (pub fn (showRewriteTo tc head mod name sp)
-  {
-    (let full (showHelperName tc mod name sp))
-    (if (== (strLen full) 0)
+  (if (let (Some full) (showHelperName tc mod name sp))
+    {
+      (writeNodeText head 1 full)
+      (writeNodeWord head 6 0)
       0
-      {
-        (writeNodeText head 1 full)
-        (writeNodeWord head 6 0)
-        0
-      })
-  })
+    }
+    0))
 
 ; The head renamed to the generated renderer for `ty`, generating it
 ; first when this is the type's first use. `withSeen` adds the
@@ -14818,40 +14816,39 @@
 (pub :: showRewriteGen (-> TC ASTNode ASTNode ASTNode ASTNode Int Int))
 (pub fn (showRewriteGen tc e head arg ty withSeen)
   {
-    (let nm (showEnsure tc ty (spanOf e)))
-    (if (== (strLen nm) 0)
-      0
-      {
-        (writeNodeText head 1 nm)
-        (writeNodeWord head 6 0)
-        (if (== withSeen 1)
+    (let sp (spanOf e))
+    (if (let (Some nm) (showEnsure tc ty sp))
+      (if (== withSeen 1)
+        (if (let (Some fresh) (showHelperName tc "Vec" "vecNew" sp))
           {
-            (let fresh (showHelperName tc "Vec" "vecNew" (spanOf e)))
-            (if (! (== (strLen fresh) 0))
-              {
-                (let inner (nodeBuildEApp head arg nilWords (nodeSpan e)))
-                {
-                  (writeNodeChild e 1 inner)
-                  (writeNodeChild e 2 (mkEVarAt fresh (nodeSpan e)))
-                }
-              })
-          })
-        0
-      })
+            (writeNodeText head 1 nm)
+            (writeNodeWord head 6 0)
+            (let inner (nodeBuildEApp head arg nilWords (nodeSpan e)))
+            (writeNodeChild e 1 inner)
+            (writeNodeChild e 2 (mkEVarAt fresh (nodeSpan e)))
+            0
+          }
+          0)
+        {
+          (writeNodeText head 1 nm)
+          (writeNodeWord head 6 0)
+          0
+        })
+      0)
   })
 
 ; The name a library function is registered under in THIS program:
 ; `Mod$name` for an imported module, the bare name when that module is
-; the file being compiled, and "" - after a diagnostic - when it is
+; the file being compiled, and `None` after a diagnostic when it is
 ; not loaded at all.
-(pub :: showHelperName (-> TC String String Int String))
+(pub :: showHelperName (-> TC String String Int (Option String)))
 (pub fn (showHelperName tc mod name sp)
   {
     (let full (concat (concat mod "$") name))
     (if (isSome (fnEntExact tc full))
-      full
+      (Some full)
       (if (isSome (fnEntExact tc name))
-        name
+        (Some name)
         {
           (showDiag tc sp
             (concat (concat (concat (concat "`format` renders with `" mod) "`'s `") name)
@@ -14859,7 +14856,7 @@
             (concat (concat "(import " mod)
               ") - `IO` imports it, so a program that prints already has it")
             "a rendering is a rewrite to the standard library's own functions, not a runtime of its own")
-          ""
+          None
         }))
   })
 
@@ -15056,36 +15053,64 @@
         (showDerivableFields tc fields seen (+ i 1)))
     }))
 
+; A renderer is registered before its body so recursive fields can name it.
+; On refusal, discard only this generation's appended rows and declarations.
+; Diagnostics and entries that existed before generation remain owned by TC.
+(pub :: showRollback (-> TC Int Int ()))
+(pub fn (showRollback tc declCount fnCount)
+  {
+    (let decls (tcAllDeclsVec tc))
+    (let fns (tcFnsVec tc))
+    (while (> (vecLen decls) declCount)
+      {
+        (vecPop decls)
+        ()
+      })
+    (while (> (vecLen fns) fnCount)
+      {
+        (vecPop fns)
+        ()
+      })
+    (if (isSome (tcFnIdx tc))
+      (tcSetFnIdx tc (fnIdxBuildSized fns (vecLen decls))))
+    (if (isSome (tcFnSufIdx tc))
+      (tcSetFnSufIdx tc (fnSufIdxBuildSized fns (vecLen decls))))
+    ()
+  })
+
 ; The renderer for `ty`, by name - generated now if this is its first
-; use, "" after a diagnostic when it cannot be. The derivability
+; use, or `None` after a diagnostic when it cannot be. The derivability
 ; question is asked of the WHOLE type first, so that a body is only
 ; ever generated for a type every field of which renders, and the
 ; refusal lands at the call that asked rather than inside generated
 ; code nobody wrote.
-(pub :: showEnsure (-> TC ASTNode Int String))
+(pub :: showEnsure (-> TC ASTNode Int (Option String)))
 (pub fn (showEnsure tc ty sp)
   {
     (let nm (concat "show#" (showTyName ty)))
     (if (isSome (fnEntExact tc nm))
-      nm
-      {
-        (let badFound (showDerivable tc ty vecNew))
-        (if (let (Some bad) badFound)
-          {
-            (showDiag tc sp
-              (concat (concat (concat "`format` cannot render `" (tyRender ty)) "`: it holds ")
-                (if (== (nodeTag bad) TAG_T_VAR)
-                  "a value whose type is a type variable"
-                  (concat (concat "a `" (tyRender bad)) "`, which has no rendering")))
-              "give the field a type `format` can render, or write a function that renders this type and interpolate its result"
-              "a rendering is derived from the static type at compile time, field by field, and a type the compiler cannot take apart has none")
-            ""
-          }
-          {
-            (showGenerate tc ty nm sp)
-            nm
-          })
-      })
+      (Some nm)
+      (if (let (Some bad) (showDerivable tc ty vecNew))
+        {
+          (showDiag tc sp
+            (concat (concat (concat "`format` cannot render `" (tyRender ty)) "`: it holds ")
+              (if (== (nodeTag bad) TAG_T_VAR)
+                "a value whose type is a type variable"
+                (concat (concat "a `" (tyRender bad)) "`, which has no rendering")))
+            "give the field a type `format` can render, or write a function that renders this type and interpolate its result"
+            "a rendering is derived from the static type at compile time, field by field, and a type the compiler cannot take apart has none")
+          None
+        }
+        {
+          (let declCount (vecLen (tcAllDeclsVec tc)))
+          (let fnCount (vecLen (tcFnsVec tc)))
+          (if (showGenerate tc ty nm sp)
+            (Some nm)
+            {
+              (showRollback tc declCount fnCount)
+              None
+            })
+        }))
   })
 
 ; Append the pair `(:: nm ty)` / `(fn (nm params) 0)` to the merged
@@ -15188,9 +15213,11 @@
   (mkEApp (mkEApp (mkEApp (mkEVarAt f sp) x) y) z))
 
 ; `(concat a b)`, through whatever `Str` is called here.
-(pub :: showCat (-> TC ASTNode ASTNode Int ASTNode))
+(pub :: showCat (-> TC ASTNode ASTNode Int (Option ASTNode)))
 (pub fn (showCat tc a b sp)
-  (showCall2 (showHelperName tc "Str" "concat" sp) a b sp))
+  (if (let (Some concatFn) (showHelperName tc "Str" "concat" sp))
+    (Some (showCall2 concatFn a b sp))
+    None))
 
 ; `(cast Int v)` - the block's address, or a nullary constructor's
 ; immediate tag, which can never be an ancestor of anything and so
@@ -15203,40 +15230,45 @@
 ; the expression `x` that reads it. Scalars take the builtin's own
 ; rendering here rather than an instance - a `String` field is
 ; quoted - and a nested `data`/`struct` takes the ancestor stack.
-(pub :: showIntegerExpr (-> TC ASTNode String Int ASTNode))
+(pub :: showIntegerExpr (-> TC ASTNode String Int (Option ASTNode)))
 (pub fn (showIntegerExpr tc value name sp)
-  (showCall1
-    (showHelperName tc "Fmt"
-      (if (integerUnsigned (integerTypeCode name))
-        "fmtUIntWord"
-        "fmtInt")
-      sp)
-    (showCall1 (concat "__integer.word." name) value sp) sp))
+  (if (let (Some fmtFn) (showHelperName tc "Fmt"
+                          (if (integerUnsigned (integerTypeCode name))
+                            "fmtUIntWord"
+                            "fmtInt")
+                          sp))
+    (Some (showCall1 fmtFn (showCall1 (concat "__integer.word." name) value sp) sp))
+    None))
 
-(pub :: showFieldExpr (-> TC ASTNode ASTNode Int ASTNode))
+(pub :: showFieldExpr (-> TC ASTNode ASTNode Int (Option ASTNode)))
 (pub fn (showFieldExpr tc fty x sp)
   {
     (let ty (tyExpandAliases tc fty 0))
-    {
-      (let n (nodeAName ty))
-      (if (strEq n "String")
-        (showCall1 (showEnsureString tc sp) x sp)
-        (if (> (integerTypeCode n) 0)
-          (showIntegerExpr tc x n sp)
-          (if (strEq n "Float")
-            (showCall1 (showHelperName tc "Fmt" "fmtFloat" sp) x sp)
-            (if (strEq n "Bool")
-              (nodeBuildEIf x (showLit "true" sp) (showLit "false" sp) sp)
-              (if (strEq n "Char")
-                (showCall1 (showEnsure tc ty sp) x sp)
-                (showCall2 (showEnsure tc ty sp) x (showVar "seen" sp) sp))))))
-    }
+    (let n (nodeAName ty))
+    (if (strEq n "String")
+      (if (let (Some name) (showEnsureString tc sp))
+        (Some (showCall1 name x sp))
+        None)
+      (if (> (integerTypeCode n) 0)
+        (showIntegerExpr tc x n sp)
+        (if (strEq n "Float")
+          (if (let (Some name) (showHelperName tc "Fmt" "fmtFloat" sp))
+            (Some (showCall1 name x sp))
+            None)
+          (if (strEq n "Bool")
+            (Some (nodeBuildEIf x (showLit "true" sp) (showLit "false" sp) sp))
+            (if (let (Some name) (showEnsure tc ty sp))
+              (Some
+                (if (strEq n "Char")
+                  (showCall1 name x sp)
+                  (showCall2 name x (showVar "seen" sp) sp)))
+              None)))))
   })
 
 ; Dispatch on the kind of type a renderer is being generated for.
 ; `showDerivable` has already said yes to every field, so the three
 ; arms are exhaustive over what reaches here.
-(pub :: showGenerate (-> TC ASTNode String Int Int))
+(pub :: showGenerate (-> TC ASTNode String Int Bool))
 (pub fn (showGenerate tc ty nm sp)
   {
     (let n (nodeAName ty))
@@ -15248,7 +15280,7 @@
           (showGenData tc ty nm sp dent)
           (if (let (Some sent) (findStruct tc n))
             (showGenStruct tc ty nm sp sent)
-            0))
+            false))
       })
   })
 
@@ -15263,23 +15295,22 @@
 ;
 ; and, for a type none of whose constructors carries a field, the
 ; `match` alone: nothing to recurse into, nothing to guard.
-(pub :: showGenData (-> TC ASTNode String Int DataEnt Int))
+(pub :: showGenData (-> TC ASTNode String Int DataEnt Bool))
 (pub fn (showGenData tc ty nm sp dent)
   {
     (let fnd
       (showDeclare tc nm (mkTArr ty (mkTArr mkVecIntTy mkStringTy)) (showParams "v" "seen") sp))
-    {
-      (let ctors (dataEntCtors dent))
-      {
-        (let arms vecNew)
+    (let ctors (dataEntCtors dent))
+    (let arms vecNew)
+    (if (showGenArms tc ctors ty arms sp 0)
+      (if (let (Some body) (showGuarded tc (nodeBuildEMatch (showVar "v" sp) arms 0 sp)
+                             (showCtorsHaveFields ctors 0) sp))
         {
-          (showGenArms tc ctors ty arms sp 0)
-          (showFinish tc fnd
-            (showGuarded tc (nodeBuildEMatch (showVar "v" sp) arms 0 sp)
-              (showCtorsHaveFields ctors 0) sp))
+          (showFinish tc fnd body)
+          true
         }
-      }
-    }
+        false)
+      false)
   })
 
 (pub :: showCtorsHaveFields (-> (Vec CtorEnt) Int Int))
@@ -15292,58 +15323,54 @@
 
 ; The ancestor guard around a body, when the type has anything to
 ; recurse into.
-(pub :: showGuarded (-> TC ASTNode Int Int ASTNode))
+(pub :: showGuarded (-> TC ASTNode Int Int (Option ASTNode)))
 (pub fn (showGuarded tc body hasFields sp)
   (if (== hasFields 0)
-    body
-    {
-      (let seenFn (showEnsureSeen tc sp))
-      {
-        (let steps vecNew)
-        {
-          (vecPush steps
-            (showCall2 (showHelperName tc "Vec" "vecPush" sp) (showVar "seen" sp) (showAddr "v" sp)
-              sp))
-          (vecPush steps
-            {
-              (let after vecNew)
-              {
-                (vecPush after
-                  (showCall1 (showHelperName tc "Vec" "vecPop" sp) (showVar "seen" sp) sp))
-                (vecPush after (showVar "r" sp))
-                (mkELetAt "r" body (nodeBuildEBegin after 0 0 sp) sp)
-              }
-            })
-          (nodeBuildEIf (showCall3 seenFn (showVar "seen" sp) (showAddr "v" sp) (mkEInt 0) sp)
-            (showLit "..." sp) (nodeBuildEBegin steps 0 0 sp) sp)
-        }
-      }
-    }))
+    (Some body)
+    (if (let (Some seenFn) (showEnsureSeen tc sp))
+      (if (let (Some pushFn) (showHelperName tc "Vec" "vecPush" sp))
+        (if (let (Some popFn) (showHelperName tc "Vec" "vecPop" sp))
+          {
+            (let after vecNew)
+            (vecPush after (showCall1 popFn (showVar "seen" sp) sp))
+            (vecPush after (showVar "r" sp))
+            (let steps vecNew)
+            (vecPush steps (showCall2 pushFn (showVar "seen" sp) (showAddr "v" sp) sp))
+            (vecPush steps (mkELetAt "r" body (nodeBuildEBegin after 0 0 sp) sp))
+            (Some
+              (nodeBuildEIf (showCall3 seenFn (showVar "seen" sp) (showAddr "v" sp) (mkEInt 0) sp)
+                (showLit "..." sp) (nodeBuildEBegin steps 0 0 sp) sp))
+          }
+          None)
+        None)
+      None)))
 
 ; One arm per constructor: `((C) "C")`, or `((D f0 f1) "(D " f0 " " f1 ")")`
 ; with each field rendered by `showFieldExpr` at this instantiation.
-(pub :: showGenArms (-> TC (Vec CtorEnt) ASTNode (Vec ASTNode) Int Int Int))
+(pub :: showGenArms (-> TC (Vec CtorEnt) ASTNode (Vec ASTNode) Int Int Bool))
 (pub fn (showGenArms tc ctors ty arms sp i)
   (if (>= i (vecLen ctors))
-    0
+    true
     {
       (let ctor (vecGet ctors i))
-      {
-        (let cname ctor.name)
-        (let ftys (showCtorFieldTys tc ctor ty))
+      (let cname ctor.name)
+      (let ftys (showCtorFieldTys tc ctor ty))
+      (if (== (vecLen ftys) 0)
         {
-          (if (== (vecLen ftys) 0)
-            (vecPush arms (nodeBuildMArm (nodeBuildPCon0 cname 0 0 sp) (showLit cname sp) 0 sp))
-            {
-              (let pat (showBinderSpine (showVar cname sp) (vecLen ftys) sp 0))
-              {
-                (let body (showCtorBody tc ftys (showLit (concat "(" cname) sp) sp 0))
-                (vecPush arms (nodeBuildMArm pat (showCat tc body (showLit ")" sp) sp) 0 sp))
-              }
-            })
+          (vecPush arms (nodeBuildMArm (nodeBuildPCon0 cname 0 0 sp) (showLit cname sp) 0 sp))
           (showGenArms tc ctors ty arms sp (+ i 1))
         }
-      }
+        {
+          (let pat (showBinderSpine (showVar cname sp) (vecLen ftys) sp 0))
+          (if (let (Some body) (showCtorBody tc ftys (showLit (concat "(" cname) sp) sp 0))
+            (if (let (Some closed) (showCat tc body (showLit ")" sp) sp))
+              {
+                (vecPush arms (nodeBuildMArm pat closed 0 sp))
+                (showGenArms tc ctors ty arms sp (+ i 1))
+              }
+              false)
+            false)
+        })
     }))
 
 ; `(C f0 f1 ...)` as the parser builds a constructor pattern: a
@@ -15354,14 +15381,18 @@
     acc
     (showBinderSpine (mkEApp acc (showVar (concat "f" (fmtInt i)) sp)) n sp (+ i 1))))
 
-(pub :: showCtorBody (-> TC Nodes ASTNode Int Int ASTNode))
+(pub :: showCtorBody (-> TC Nodes ASTNode Int Int (Option ASTNode)))
 (pub fn (showCtorBody tc ftys acc sp i)
   (if (>= i (vecLen ftys))
-    acc
-    (showCtorBody tc ftys
-      (showCat tc (showCat tc acc (showLit " " sp) sp)
-        (showFieldExpr tc (vecGet ftys i) (showVar (concat "f" (fmtInt i)) sp) sp) sp)
-      sp (+ i 1))))
+    (Some acc)
+    (if (let (Some spaced) (showCat tc acc (showLit " " sp) sp))
+      (if (let (Some field) (showFieldExpr tc (vecGet ftys i) (showVar (concat "f" (fmtInt i)) sp)
+                              sp))
+        (if (let (Some joined) (showCat tc spaced field sp))
+          (showCtorBody tc ftys joined sp (+ i 1))
+          None)
+        None)
+      None)))
 
 ; The renderer of a struct: `{x = 1, y = 2}` in declaration order,
 ; each field read by name and rendered by its declared type, under
@@ -15373,45 +15404,52 @@
 ; field would be refused as AX3086 at the format hole, over a field the
 ; program never wrote. The same answer inside the module keeps the one
 ; type rendering one way wherever it is printed.
-(pub :: showGenStruct (-> TC ASTNode String Int StructEnt Int))
+(pub :: showGenStruct (-> TC ASTNode String Int StructEnt Bool))
 (pub fn (showGenStruct tc ty nm sp sent)
   {
     (let fnd
       (showDeclare tc nm (mkTArr ty (mkTArr mkVecIntTy mkStringTy)) (showParams "v" "seen") sp))
-    {
-      (let fields (structEntFields sent))
-      (showFinish tc fnd
-        (if (!= (& (structEntRepr sent) 5) 0)
-          (showLit (concat "<" (concat (structEntName sent) ">")) sp)
-          (if (== (vecLen fields) 0)
-            (showLit "{}" sp)
-            (showGuarded tc
-              (showCat tc (showStructBody tc fields (showLit "{" sp) sp 0) (showLit "}" sp) sp) 1
-              sp))))
-    }
+    (let fields (structEntFields sent))
+    (let rendered
+      (if (!= (& (structEntRepr sent) 5) 0)
+        (Some (showLit (concat "<" (concat (structEntName sent) ">")) sp))
+        (if (== (vecLen fields) 0)
+          (Some (showLit "{}" sp))
+          (if (let (Some body) (showStructBody tc fields (showLit "{" sp) sp 0))
+            (if (let (Some closed) (showCat tc body (showLit "}" sp) sp))
+              (showGuarded tc closed 1 sp)
+              None)
+            None))))
+    (if (let (Some body) rendered)
+      {
+        (showFinish tc fnd body)
+        true
+      }
+      false)
   })
 
-(pub :: showStructBody (-> TC (Vec ASTNode) ASTNode Int Int ASTNode))
+(pub :: showStructBody (-> TC (Vec ASTNode) ASTNode Int Int (Option ASTNode)))
 (pub fn (showStructBody tc fields acc sp i)
   (if (>= i (vecLen fields))
-    acc
+    (Some acc)
     {
       (let f (vecGet fields i))
-      (showStructBody tc fields
-        (showCat tc
-          (showCat tc acc
-            (showLit
-              (concat
-                (if (== i 0)
-                  ""
-                  ", ")
-                (concat (nodeAName f) " = "))
-              sp)
-            sp)
-          (showFieldExpr tc (nodeTyChild f) (nodeBuildEField (showVar "v" sp) (nodeAName f) 0 sp)
-            sp)
-          sp)
-        sp (+ i 1))
+      (if (let (Some named) (showCat tc acc
+                              (showLit
+                                (concat
+                                  (if (== i 0)
+                                    ""
+                                    ", ")
+                                  (concat (nodeAName f) " = "))
+                                sp)
+                              sp))
+        (if (let (Some field) (showFieldExpr tc (nodeTyChild f)
+                                (nodeBuildEField (showVar "v" sp) (nodeAName f) 0 sp) sp))
+          (if (let (Some joined) (showCat tc named field sp))
+            (showStructBody tc fields joined sp (+ i 1))
+            None)
+          None)
+        None)
     }))
 
 ; The ancestor test, one for the whole program:
@@ -15419,35 +15457,36 @@
 ;   (fn (show#seen seen x i)
 ;     (if (>= i (vecLen seen)) false
 ;       (if (== (vecGet seen i) x) true (show#seen seen x (+ i 1)))))
-(pub :: showEnsureSeen (-> TC Int String))
+(pub :: showEnsureSeen (-> TC Int (Option String)))
 (pub fn (showEnsureSeen tc sp)
   {
     (let nm "show#seen")
     (if (isSome (fnEntExact tc nm))
-      nm
-      {
-        (let fnd
-          (showDeclare tc nm (mkTArr mkVecIntTy (mkTArr mkIntTy (mkTArr mkIntTy mkBoolTy)))
-            (showParams3 "seen" "x" "i") sp))
-        {
-          (showFinish tc fnd
-            (nodeBuildEIf
-              (showCall2 ">=" (showVar "i" sp)
-                (showCall1 (showHelperName tc "Vec" "vecLen" sp) (showVar "seen" sp) sp) sp)
-              (showVar "false" sp)
-              (nodeBuildEIf
-                (showCall2 "=="
-                  (showCall2 (showHelperName tc "Vec" "vecGet" sp) (showVar "seen" sp)
-                    (showVar "i" sp) sp)
-                  (showVar "x" sp) sp)
-                (showVar "true" sp)
-                (showCall3 nm (showVar "seen" sp) (showVar "x" sp)
-                  (showCall2 "+" (showVar "i" sp) (mkEInt 1) sp) sp)
-                sp)
-              sp))
-          nm
-        }
-      })
+      (Some nm)
+      (if (let (Some lenFn) (showHelperName tc "Vec" "vecLen" sp))
+        (if (let (Some getFn) (showHelperName tc "Vec" "vecGet" sp))
+          {
+            (let fnd
+              (showDeclare tc nm (mkTArr mkVecIntTy (mkTArr mkIntTy (mkTArr mkIntTy mkBoolTy)))
+                (showParams3 "seen" "x" "i") sp))
+            {
+              (showFinish tc fnd
+                (nodeBuildEIf
+                  (showCall2 ">=" (showVar "i" sp) (showCall1 lenFn (showVar "seen" sp) sp) sp)
+                  (showVar "false" sp)
+                  (nodeBuildEIf
+                    (showCall2 "==" (showCall2 getFn (showVar "seen" sp) (showVar "i" sp) sp)
+                      (showVar "x" sp) sp)
+                    (showVar "true" sp)
+                    (showCall3 nm (showVar "seen" sp) (showVar "x" sp)
+                      (showCall2 "+" (showVar "i" sp) (mkEInt 1) sp) sp)
+                    sp)
+                  sp))
+              (Some nm)
+            }
+          }
+          None)
+        None))
   })
 
 ; A `String` inside a structure, quoted with the lexer's seven escapes
@@ -15459,59 +15498,79 @@
 ;     (if (>= i (strLen s)) acc
 ;       (show#String#from s (+ i 1) (concat acc (show#String#byte (strByte s i))))))
 ;   (fn (show#String#byte b) (if (== b 34) "\\\"" ... (strFromByte b)))
-(pub :: showEnsureString (-> TC Int String))
+(:: showGenerateString (-> TC String Int Bool))
+(fn (showGenerateString tc nm sp)
+  {
+    (let fromNm "show#String#from")
+    (let byteNm "show#String#byte")
+    (let quoted (showDeclare tc nm (mkTArr mkStringTy mkStringTy) (showParams "s" "") sp))
+    (let from
+      (showDeclare tc "show#String#from"
+        (mkTArr mkStringTy (mkTArr mkIntTy (mkTArr mkStringTy mkStringTy)))
+        (showParams3 "s" "i" "acc") sp))
+    (let byte
+      (showDeclare tc "show#String#byte" (mkTArr mkIntTy mkStringTy) (showParams "b" "") sp))
+    (if (let (Some concatFn) (showHelperName tc "Str" "concat" sp))
+      {
+        (showFinish tc quoted
+          (showCall2 concatFn (showCall3 fromNm (showVar "s" sp) (mkEInt 0) (showLit "\\\"" sp) sp)
+            (showLit "\\\"" sp) sp))
+        (if (let (Some lenFn) (showHelperName tc "Str" "strLen" sp))
+          (if (let (Some byteFn) (showHelperName tc "Str" "strByte" sp))
+            {
+              (showFinish tc from
+                (nodeBuildEIf
+                  (showCall2 ">=" (showVar "i" sp) (showCall1 lenFn (showVar "s" sp) sp) sp)
+                  (showVar "acc" sp)
+                  (showCall3 fromNm (showVar "s" sp) (showCall2 "+" (showVar "i" sp) (mkEInt 1) sp)
+                    (showCall2 concatFn (showVar "acc" sp)
+                      (showCall1 byteNm (showCall2 byteFn (showVar "s" sp) (showVar "i" sp) sp) sp)
+                      sp)
+                    sp)
+                  sp))
+              (if (let (Some fromByteFn) (showHelperName tc "Str" "strFromByte" sp))
+                {
+                  ; Each `text` is the LEXEME body that unescapes to the two
+                  ; bytes wanted at run time: `\"` is spelled `\\\"` in a
+                  ; literal, and that spelling is itself a literal here.
+                  (showFinish tc byte
+                    (showByteEscapes tc "b" 34 "\\\\\\\""
+                      (showByteEscapes tc "b" 92 "\\\\\\\\"
+                        (showByteEscapes tc "b" 10 "\\\\n"
+                          (showByteEscapes tc "b" 9 "\\\\t"
+                            (showByteEscapes tc "b" 13 "\\\\r"
+                              (showByteEscapes tc "b" 0 "\\\\0"
+                                (showCall1 fromByteFn (showVar "b" sp) sp) sp)
+                              sp)
+                            sp)
+                          sp)
+                        sp)
+                      sp))
+                  true
+                }
+                false)
+            }
+            false)
+          false)
+      }
+      false)
+  })
+
+(pub :: showEnsureString (-> TC Int (Option String)))
 (pub fn (showEnsureString tc sp)
   {
     (let nm "show#String#quoted")
     (if (isSome (fnEntExact tc nm))
-      nm
+      (Some nm)
       {
-        (let fromNm "show#String#from")
-        (let byteNm "show#String#byte")
-        (let quoted (showDeclare tc nm (mkTArr mkStringTy mkStringTy) (showParams "s" "") sp))
-        (let from
-          (showDeclare tc "show#String#from"
-            (mkTArr mkStringTy (mkTArr mkIntTy (mkTArr mkStringTy mkStringTy)))
-            (showParams3 "s" "i" "acc") sp))
-        (let byte
-          (showDeclare tc "show#String#byte" (mkTArr mkIntTy mkStringTy) (showParams "b" "") sp))
-        {
-          (showFinish tc quoted
-            (showCat tc (showCall3 fromNm (showVar "s" sp) (mkEInt 0) (showLit "\\\"" sp) sp)
-              (showLit "\\\"" sp) sp))
-          (showFinish tc from
-            (nodeBuildEIf
-              (showCall2 ">=" (showVar "i" sp)
-                (showCall1 (showHelperName tc "Str" "strLen" sp) (showVar "s" sp) sp) sp)
-              (showVar "acc" sp)
-              (showCall3 fromNm (showVar "s" sp) (showCall2 "+" (showVar "i" sp) (mkEInt 1) sp)
-                (showCat tc (showVar "acc" sp)
-                  (showCall1 byteNm
-                    (showCall2 (showHelperName tc "Str" "strByte" sp) (showVar "s" sp)
-                      (showVar "i" sp) sp)
-                    sp)
-                  sp)
-                sp)
-              sp))
-          ; Each `text` is the LEXEME body that unescapes to the two
-          ; bytes wanted at run time: `\"` is spelled `\\\"` in a
-          ; literal, and that spelling is itself a literal here.
-          (showFinish tc byte
-            (showByteEscapes tc "b" 34 "\\\\\\\""
-              (showByteEscapes tc "b" 92 "\\\\\\\\"
-                (showByteEscapes tc "b" 10 "\\\\n"
-                  (showByteEscapes tc "b" 9 "\\\\t"
-                    (showByteEscapes tc "b" 13 "\\\\r"
-                      (showByteEscapes tc "b" 0 "\\\\0"
-                        (showCall1 (showHelperName tc "Str" "strFromByte" sp) (showVar "b" sp) sp)
-                        sp)
-                      sp)
-                    sp)
-                  sp)
-                sp)
-              sp))
-          nm
-        }
+        (let declCount (vecLen (tcAllDeclsVec tc)))
+        (let fnCount (vecLen (tcFnsVec tc)))
+        (if (showGenerateString tc nm sp)
+          (Some nm)
+          {
+            (showRollback tc declCount fnCount)
+            None
+          })
       })
   })
 
@@ -15528,7 +15587,7 @@
 ;   (fn (show#Char c) (let ((n (cast Int c))) (concat "'" (concat (show#Char#esc n) "'"))))
 ;   (fn (show#Char#esc n) (if (== n 10) "\\n" ... (show#Char#utf8 n)))
 ;   (fn (show#Char#utf8 n) (if (< n 128) (strFromByte n) (if (< n 2048) ... )))
-(pub :: showGenChar (-> TC String Int Int))
+(pub :: showGenChar (-> TC String Int Bool))
 (pub fn (showGenChar tc nm sp)
   {
     (let escNm "show#Char#esc")
@@ -15536,38 +15595,44 @@
     (let lit (showDeclare tc nm (mkTArr mkCharTy mkStringTy) (showParams "c" "") sp))
     (let esc (showDeclare tc "show#Char#esc" (mkTArr mkIntTy mkStringTy) (showParams "n" "") sp))
     (let utf (showDeclare tc "show#Char#utf8" (mkTArr mkIntTy mkStringTy) (showParams "n" "") sp))
-    {
-      (showFinish tc lit
-        (mkELetAt "n" (showAddr "c" sp)
-          (showCat tc (showLit "'" sp)
-            (showCat tc (showCall1 escNm (showVar "n" sp) sp) (showLit "'" sp) sp) sp)
-          sp))
-      (showFinish tc esc
-        (showByteEscapes tc "n" 10 "\\\\n"
-          (showByteEscapes tc "n" 9 "\\\\t"
-            (showByteEscapes tc "n" 13 "\\\\r"
-              (showByteEscapes tc "n" 92 "\\\\\\\\"
-                (showByteEscapes tc "n" 39 "\\\\'"
-                  (showByteEscapes tc "n" 0 "\\\\0" (showCall1 utfNm (showVar "n" sp) sp) sp) sp)
+    (if (let (Some concatFn) (showHelperName tc "Str" "concat" sp))
+      {
+        (showFinish tc lit
+          (mkELetAt "n" (showAddr "c" sp)
+            (showCall2 concatFn (showLit "'" sp)
+              (showCall2 concatFn (showCall1 escNm (showVar "n" sp) sp) (showLit "'" sp) sp) sp)
+            sp))
+        (showFinish tc esc
+          (showByteEscapes tc "n" 10 "\\\\n"
+            (showByteEscapes tc "n" 9 "\\\\t"
+              (showByteEscapes tc "n" 13 "\\\\r"
+                (showByteEscapes tc "n" 92 "\\\\\\\\"
+                  (showByteEscapes tc "n" 39 "\\\\'"
+                    (showByteEscapes tc "n" 0 "\\\\0" (showCall1 utfNm (showVar "n" sp) sp) sp) sp)
+                  sp)
                 sp)
               sp)
-            sp)
-          sp))
-      (showFinish tc utf (showUtf8Ladder tc sp))
-      0
-    }
+            sp))
+        (if (let (Some utfBody) (showUtf8Ladder tc sp))
+          {
+            (showFinish tc utf utfBody)
+            true
+          }
+          false)
+      }
+      false)
   })
 
 ; `(+ base (% (/ n div) 64))` as one continuation byte, or the lead
 ; byte when `mod` is 0 (no masking).
-(pub :: showUtf8Byte (-> TC Int Int Int Int ASTNode))
-(pub fn (showUtf8Byte tc base div mask sp)
+(:: showUtf8ByteWith (-> String Int Int Int Int ASTNode))
+(fn (showUtf8ByteWith fromByteFn base div mask sp)
   {
     (let shifted
       (if (== div 1)
         (showVar "n" sp)
         (showCall2 "/" (showVar "n" sp) (mkEInt div) sp)))
-    (showCall1 (showHelperName tc "Str" "strFromByte" sp)
+    (showCall1 fromByteFn
       (showCall2 "+" (mkEInt base)
         (if (== mask 0)
           shifted
@@ -15576,28 +15641,44 @@
       sp)
   })
 
-(pub :: showUtf8Ladder (-> TC Int ASTNode))
+(pub :: showUtf8Byte (-> TC Int Int Int Int (Option ASTNode)))
+(pub fn (showUtf8Byte tc base div mask sp)
+  (if (let (Some fromByteFn) (showHelperName tc "Str" "strFromByte" sp))
+    (Some (showUtf8ByteWith fromByteFn base div mask sp))
+    None))
+
+(pub :: showUtf8Ladder (-> TC Int (Option ASTNode)))
 
 ; A continuation byte: `(+ 128 (% (/ n div) 64))`.
-(pub :: showUtf8Cont (-> TC Int Int ASTNode))
+(pub :: showUtf8Cont (-> TC Int Int (Option ASTNode)))
 (pub fn (showUtf8Cont tc div sp)
   (showUtf8Byte tc 128 div 1 sp))
 
 (pub fn (showUtf8Ladder tc sp)
-  (nodeBuildEIf (showCall2 "<" (showVar "n" sp) (mkEInt 128) sp)
-    (showCall1 (showHelperName tc "Str" "strFromByte" sp) (showVar "n" sp) sp)
-    (nodeBuildEIf (showCall2 "<" (showVar "n" sp) (mkEInt 2048) sp)
-      (showCat tc (showUtf8Byte tc 192 64 0 sp) (showUtf8Cont tc 1 sp) sp)
-      (nodeBuildEIf (showCall2 "<" (showVar "n" sp) (mkEInt 65536) sp)
-        (showCat tc (showUtf8Byte tc 224 4096 0 sp)
-          (showCat tc (showUtf8Cont tc 64 sp) (showUtf8Cont tc 1 sp) sp) sp)
-        (showCat tc (showUtf8Byte tc 240 262144 0 sp)
-          (showCat tc (showUtf8Cont tc 4096 sp)
-            (showCat tc (showUtf8Cont tc 64 sp) (showUtf8Cont tc 1 sp) sp) sp)
-          sp)
-        sp)
-      sp)
-    sp))
+  (if (let (Some fromByteFn) (showHelperName tc "Str" "strFromByte" sp))
+    (if (let (Some concatFn) (showHelperName tc "Str" "concat" sp))
+      (Some
+        (nodeBuildEIf (showCall2 "<" (showVar "n" sp) (mkEInt 128) sp)
+          (showCall1 fromByteFn (showVar "n" sp) sp)
+          (nodeBuildEIf (showCall2 "<" (showVar "n" sp) (mkEInt 2048) sp)
+            (showCall2 concatFn (showUtf8ByteWith fromByteFn 192 64 0 sp)
+              (showUtf8ByteWith fromByteFn 128 1 1 sp) sp)
+            (nodeBuildEIf (showCall2 "<" (showVar "n" sp) (mkEInt 65536) sp)
+              (showCall2 concatFn (showUtf8ByteWith fromByteFn 224 4096 0 sp)
+                (showCall2 concatFn (showUtf8ByteWith fromByteFn 128 64 1 sp)
+                  (showUtf8ByteWith fromByteFn 128 1 1 sp) sp)
+                sp)
+              (showCall2 concatFn (showUtf8ByteWith fromByteFn 240 262144 0 sp)
+                (showCall2 concatFn (showUtf8ByteWith fromByteFn 128 4096 1 sp)
+                  (showCall2 concatFn (showUtf8ByteWith fromByteFn 128 64 1 sp)
+                    (showUtf8ByteWith fromByteFn 128 1 1 sp) sp)
+                  sp)
+                sp)
+              sp)
+            sp)
+          sp))
+      None)
+    None))
 
 ; Exactly `(op l r)` with a bare operator head - stage0's
 ; numeric_builtin_app is purely syntactic; no shadow check exists.
