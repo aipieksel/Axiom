@@ -6493,7 +6493,7 @@
     0
     {
       (let e (vecGet fns i))
-      (if (strEq (memGetWordStr e 0) name)
+      (if (strEq (fnEntName e) name)
         e
         (findFnEntExact fns name (+ i 1)))
     }))
@@ -6504,7 +6504,7 @@
     0
     {
       (let e (vecGet fns i))
-      (if (== (nameMatches (memGetWordStr e 0) name) 1)
+      (if (== (nameMatches (fnEntName e) name) 1)
         e
         (findFnEntSuffix fns name (+ i 1)))
     }))
@@ -6648,8 +6648,8 @@
     0
     {
       (let e (vecGet fns i))
-      (if (strEq (memGetWordStr e 0) name)
-        (if (== (privBlocks privs (memGetWordStr e 0) curMod) 0)
+      (if (strEq (fnEntName e) name)
+        (if (== (privBlocks privs (fnEntName e) curMod) 0)
           e
           (findFnEntVisibleExactFrom privs fns name curMod (+ i 1)))
         (findFnEntVisibleExactFrom privs fns name curMod (+ i 1)))
@@ -6665,8 +6665,8 @@
     0
     {
       (let e (vecGet fns i))
-      (if (== (nameMatches (memGetWordStr e 0) name) 1)
-        (if (== (privBlocks privs (memGetWordStr e 0) curMod) 0)
+      (if (== (nameMatches (fnEntName e) name) 1)
+        (if (== (privBlocks privs (fnEntName e) curMod) 0)
           e
           (findFnEntVisibleSuffixFrom privs fns name curMod (+ i 1)))
         (findFnEntVisibleSuffixFrom privs fns name curMod (+ i 1)))
@@ -6776,9 +6776,9 @@
 (pub fn (fnEntOutOfModuleScope tc m name e)
   (if (== m 0)
     0
-    (if (!= (memGetWord e 3) 0)
+    (if (!= (fnEntIsBuiltin e) 0)
       0
-      (if (== (memGetWord e 4) 1)
+      (if (== (fnEntIsEffectOp e) 1)
         0
         (if (== (nameHasDollar name 0) 1)
           0
@@ -6806,9 +6806,9 @@
     0
     {
       (let e (vecGet fns i))
-      (if (&& (== (nameMatches (memGetWordStr e 0) name) 1)
-            (&& (== (fnEntOutOfModuleScope tc (tcCurModule tc) (memGetWordStr e 0) e) 0)
-              (== (privBlocks (tcPrivIdx tc) (memGetWordStr e 0) (tcCurModuleName tc)) 0)))
+      (if (&& (== (nameMatches (fnEntName e) name) 1)
+            (&& (== (fnEntOutOfModuleScope tc (tcCurModule tc) (fnEntName e) e) 0)
+              (== (privBlocks (tcPrivIdx tc) (fnEntName e) (tcCurModuleName tc)) 0)))
         e
         (fnEntModuleSuffixIn tc fns name (+ i 1)))
     }))
@@ -6971,7 +6971,7 @@
 (pub fn (fnIdxScan v name i)
   (if (>= i (vecLen v))
     0
-    (if (strEq (memGetWordStr (vecGet v i) 0) name)
+    (if (strEq (fnEntName (vecGet v i)) name)
       (vecGet v i)
       (fnIdxScan v name (+ i 1)))))
 
@@ -7027,8 +7027,8 @@
     0
     {
       (let e (vecGet v i))
-      (if (strEq (memGetWordStr e 0) name)
-        (if (== (privBlocks privs (memGetWordStr e 0) curMod) 0)
+      (if (strEq (fnEntName e) name)
+        (if (== (privBlocks privs (fnEntName e) curMod) 0)
           e
           (fnIdxScanVisible v privs name curMod (+ i 1)))
         (fnIdxScanVisible v privs name curMod (+ i 1)))
@@ -7074,7 +7074,7 @@
     0
     {
       (let e (vecGet v i))
-      (if (== (nameIsQual (memGetWordStr e 0) m name) 1)
+      (if (== (nameIsQual (fnEntName e) m name) 1)
         e
         (fnIdxScanQual v m name (+ i 1)))
     }))
@@ -7223,7 +7223,7 @@
     0
     {
       (let e (vecGet v i))
-      (if (== (nameMatches (memGetWordStr e 0) name) 1)
+      (if (== (nameMatches (fnEntName e) name) 1)
         e
         (fnSufIdxScan v name (+ i 1)))
     }))
@@ -7243,8 +7243,8 @@
     0
     {
       (let e (vecGet v i))
-      (if (== (nameMatches (memGetWordStr e 0) name) 1)
-        (if (== (privBlocks privs (memGetWordStr e 0) curMod) 0)
+      (if (== (nameMatches (fnEntName e) name) 1)
+        (if (== (privBlocks privs (fnEntName e) curMod) 0)
           e
           (fnSufIdxScanVisible v privs name curMod (+ i 1)))
         (fnSufIdxScanVisible v privs name curMod (+ i 1)))
@@ -12766,9 +12766,9 @@
     (let e (ambFind tc n))
     (if (== e 0)
       vecNew
-      (if (&& (== (memGetWord e 2) 1) (rootNameVisibleHere tc n))
+      (if (&& (ambEntModuleless e) (rootNameVisibleHere tc n))
         vecNew
-        (memGetWordVec e 1)))
+        (ambEntMods e)))
   })
 
 (pub :: rootNameVisibleHere (-> Int String Bool))
@@ -12785,7 +12785,40 @@
 (pub struct AmbEnt
   (name : String)
   (mods : Int)
-  (moduleless : Int))
+  (mut moduleless : Int))
+
+(:: ambEntName (-> Int String))
+;@axiom:effect(unsafe)
+(fn (ambEntName e)
+  {
+    (let a (as e AmbEnt))
+    a.name
+  })
+
+(:: ambEntMods (-> Int (Vec b)))
+;@axiom:effect(unsafe)
+(fn (ambEntMods e)
+  {
+    (let rec (as e AmbEnt))
+    (as rec.mods (Vec b))
+  })
+
+(:: ambEntModuleless (-> Int Bool))
+;@axiom:effect(unsafe)
+(fn (ambEntModuleless e)
+  {
+    (let a (as e AmbEnt))
+    (== a.moduleless 1)
+  })
+
+(:: ambSetModuleless (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (ambSetModuleless e)
+  {
+    (let a (as e AmbEnt))
+    (set a.moduleless 1)
+    e
+  })
 
 ; Buckets over the entries, keyed on the name. An entry is MUTATED
 ; after insert - a module appended to its list, or its module-less
@@ -12822,7 +12855,7 @@
 (pub fn (ambFindIn v n i)
   (if (>= i (vecLen v))
     0
-    (if (strEq (memGetWordStr (vecGet v i) 0) n)
+    (if (strEq (ambEntName (vecGet v i)) n)
       (vecGet v i)
       (ambFindIn v n (+ i 1)))))
 
@@ -12859,11 +12892,11 @@
         }
       }
       (if (== (as m Int) 0)
-        (memSetWord e 2 1)
-        (if (== (strInVec (memGetWordVec e 1) (as m String) 0) 1)
+        (ambSetModuleless e)
+        (if (== (strInVec (ambEntMods e) (as m String) 0) 1)
           0
           {
-            (vecPush (memGetWordVec e 1) m)
+            (vecPush (ambEntMods e) m)
             0
           })))
   })
@@ -28275,7 +28308,7 @@
             (vecPush seen name)
             {
               (let e (fnEntExact tc name))
-              (if (! (|| (== e 0) (&& (== skipTrusted 1) (== (memGetWord e 9) 1))))
+              (if (! (|| (== e 0) (&& (== skipTrusted 1) (== (fnEntUnsafe e) 1))))
                 {
                   (vecPush queue e)
                   (vecPush parent from)
