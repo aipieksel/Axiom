@@ -518,11 +518,11 @@
 (struct LspWorkspace
   (open : (Vec Int))
   (files : (Vec Int))
-  (searches : (Vec Int)))
+  (searches : (Vec LspSearchInput)))
 
 (struct LspSearchInput
   (directory : String)
-  (roots : (Vec Int)))
+  (roots : Names))
 
 ; Open documents are immutable source overlays for one request. A closed
 ; document is omitted, so its imports return to the on-disk source.
@@ -600,28 +600,29 @@
     }
   })
 
-(pub :: lspWorkspaceSearch (-> LspWorkspace String Ints))
+(pub :: lspWorkspaceSearch (-> LspWorkspace String Names))
 ;@axiom:effect(io)
 (pub fn (lspWorkspaceSearch workspace entryDir)
   {
     (let mut i 0)
-    (let mut found 0)
+    (let mut hit (- 0 1))
     {
-      (while (&& (== found 0) (< i (vecLen workspace.searches)))
+      (while (&& (< hit 0) (< i (vecLen workspace.searches)))
         {
-          {
-            (let item (vecGet workspace.searches i))
-            (if (strEq entryDir (memGetWordStr item 0))
-              (set found item))
-          }
+          (let item (vecGet workspace.searches i))
+          (if (strEq entryDir item.directory)
+            (set hit i))
           (set i (+ i 1))
         })
-      (if (!= found 0)
-        (memGetWordVec found 1)
+      (if (>= hit 0)
+        {
+          (let item (vecGet workspace.searches hit))
+          item.roots
+        }
         {
           (let dirs (moduleSearchDirs entryDir))
           {
-            (vecPush workspace.searches (as (LspSearchInput :directory entryDir :roots dirs) Int))
+            (vecPush workspace.searches (LspSearchInput :directory entryDir :roots dirs))
             dirs
           }
         })
@@ -5326,16 +5327,11 @@
       (for item in workspace.searches
         {
           (let paths jsonArr)
-          (let mut j 0)
           {
-            (while (< j (vecLen (memGetWordVec item 1)))
-              {
-                (jsonArrPush paths (jsonStr (vecGetStr (memGetWordVec item 1) j)))
-                (set j (+ j 1))
-              })
+            (for root in item.roots
+              (jsonArrPush paths (jsonStr root)))
             (jsonArrPush searches
-              (jsonObjPut (jsonObjPut jsonObj "directory" (jsonStr (memGetWordStr item 0))) "roots"
-                paths))
+              (jsonObjPut (jsonObjPut jsonObj "directory" (jsonStr item.directory)) "roots" paths))
           }
         })
       (jsonObjPut (jsonObjPut jsonObj "files" files) "searches" searches)

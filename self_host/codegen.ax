@@ -5308,7 +5308,7 @@
 ; `(pathDir (sysArg 0))` is `""` and the exe-relative entries below
 ; would resolve against the working directory. `pushExeRelStdlib`
 ; handles that case rather than degrading into it; see its comment.
-(pub :: moduleSearchDirs (-> String Ints))
+(pub :: moduleSearchDirs (-> String Names))
 ;@axiom:effect(io)
 (pub fn (moduleSearchDirs entryDir)
   ; The entry directory is pushed WITH ITS SLASH, the way every
@@ -5332,7 +5332,7 @@
   {
     (let v vecNew)
     {
-      (vecPush v (as (pathWithSlash entryDir) Int))
+      (vecPush v (pathWithSlash entryDir))
       ; `axiom.pkg`'s `depend` directories, between the entry file's
       ; own directory and `$AXIOM_PATH`. That position is the whole
       ; policy: a project still shadows a dependency with its own file
@@ -5372,7 +5372,7 @@
 ; provide this module?" with the very list the resolver would have
 ; searched, rather than a second copy of it that drifts. A refusal
 ; about a search order has to be built from the search order.
-(pub :: stdlibSearchDirs Ints)
+(pub :: stdlibSearchDirs Names)
 ;@axiom:effect(io)
 (pub fn (stdlibSearchDirs)
   {
@@ -5381,7 +5381,7 @@
       {
         (let sl (sysEnv "AXIOM_STDLIB"))
         (if (> (strLen sl) 0)
-          (vecPush v (as (pathWithSlash sl) Int))
+          (vecPush v (pathWithSlash sl))
           (pushExeRelStdlib v (pathDir (sysArg 0))))
       }
       v
@@ -5420,24 +5420,24 @@
       (shadowCheckDirs (pkgConcatDirs (pkgDependDirs entryDir) (pkgCrateAxiomDirs entryDir)) mf 0))
   })
 
-(pub :: shadowCheckDirs (-> Ints String Int Int))
+(pub :: shadowCheckDirs (-> Names String Int Int))
 ;@axiom:effect(io)
 (pub fn (shadowCheckDirs dirs mf i)
   (if (>= i (vecLen dirs))
     0
     {
-      (shadowCheckOne (vecGetStr dirs i) (pkgModules (vecGetStr dirs i)) mf 0)
+      (shadowCheckOne (vecGet dirs i) (pkgModules (vecGet dirs i)) mf 0)
       (shadowCheckDirs dirs mf (+ i 1))
     }))
 
-(pub :: shadowCheckOne (-> String Ints String Int Int))
+(pub :: shadowCheckOne (-> String Names String Int Int))
 ;@axiom:effect(io)
 (pub fn (shadowCheckOne dir mods mf i)
   (if (>= i (vecLen mods))
     0
     {
       {
-        (let rel (vecGetStr mods i))
+        (let rel (vecGet mods i))
         {
           (let lib (searchDirsFor stdlibSearchDirs rel 0))
           (if (! (== (strLen lib) 0))
@@ -5488,7 +5488,7 @@
 ; The two working-directory entries are still pushed afterwards, so
 ; nothing that resolved before this resolves differently now - the
 ; resolved root is added AHEAD of them, never in place of them.
-(pub :: pushExeRelStdlib (-> Ints String Ints))
+(pub :: pushExeRelStdlib (-> Names String Names))
 ;@axiom:effect(io)
 (pub fn (pushExeRelStdlib v exe)
   {
@@ -5497,12 +5497,12 @@
         (let found (pathOfCommand (sysArg 0)))
         (if (> (strLen found) 0)
           {
-            (vecPush v (as (concat found "../stdlib/") Int))
-            (vecPush v (as (concat found "../../stdlib/") Int))
+            (vecPush v (concat found "../stdlib/"))
+            (vecPush v (concat found "../../stdlib/"))
           })
       })
-    (vecPush v (as (concat exe "../stdlib/") Int))
-    (vecPush v (as (concat exe "../../stdlib/") Int))
+    (vecPush v (concat exe "../stdlib/"))
+    (vecPush v (concat exe "../../stdlib/"))
   })
 
 ; The first `PATH` entry holding a file named `name`, slash-terminated,
@@ -5530,7 +5530,7 @@
       (while (&& (< i (vecLen parts)) (== (strLen found) 0))
         {
           {
-            (let d (vecGetStr parts i))
+            (let d (vecGet parts i))
             (if (> (strLen d) 0)
               {
                 (let dir (pathWithSlash d))
@@ -5545,7 +5545,7 @@
   })
 
 ; Append each non-empty `:`-separated entry of `list`, slash-terminated.
-(pub :: pushPathList (-> Ints String Int))
+(pub :: pushPathList (-> Names String Int))
 (pub fn (pushPathList v list)
   ; `strSplit` owns the colon scan now. This was one of two open-coded
   ; copies of it - the other is `Sys.sysRunSearch`, which keeps its
@@ -5566,26 +5566,24 @@
 ; three now - `depend`, the manifest's crates, and the standard-library
 ; tail - and a name that says which one it was for is a name that lies
 ; to two of them.
-(pub :: pushDirs (-> Ints Ints Int Int))
+(pub :: pushDirs (-> Names Names Int Int))
 (pub fn (pushDirs v dirs i)
   (if (>= i (vecLen dirs))
     0
     {
-      (vecPush v (as (vecGetStr dirs i) Int))
+      (vecPush v (vecGet dirs i))
       (pushDirs v dirs (+ i 1))
     }))
 
-(pub :: pushPathParts (-> Ints Strings Int Int))
-;@axiom:effect(unsafe)
+(pub :: pushPathParts (-> Names Strings Int Int))
 (pub fn (pushPathParts v parts i)
   (if (>= i (vecLen parts))
     0
     {
       {
-        (let d (vecGetStr parts i))
+        (let d (vecGet parts i))
         (if (> (strLen d) 0)
-          (vecPush v (as (pathWithSlash d) Int))
-          (as 0 (Vec Int)))
+          (vecPush v (pathWithSlash d)))
       }
       (pushPathParts v parts (+ i 1))
     }))
@@ -5643,13 +5641,13 @@
       true
       (stemDotDotAt s (+ i 1)))))
 
-(pub :: searchDirsFor (-> Ints String Int String))
+(pub :: searchDirsFor (-> Names String Int String))
 ;@axiom:effect(io)
 (pub fn (searchDirsFor dirs base i)
   (if (|| (stemEscapes base) (>= i (vecLen dirs)))
     ""
     {
-      (let cand (concat (vecGetStr dirs i) base))
+      (let cand (concat (vecGet dirs i) base))
       (if (!= (strLen (unwrapOr (readFile cand) "")) 0)
         cand
         (searchDirsFor dirs base (+ i 1)))
@@ -5727,9 +5725,8 @@
 
 ; Every `--crate DIR` (or `--crate=DIR`) on the command line, as a
 ; module search directory `DIR/axiom/`.
-(pub :: pushCrateDirs (-> Ints Int Int))
+(pub :: pushCrateDirs (-> Names Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (pushCrateDirs v i)
   (if (>= i sysArgc)
     0
@@ -5738,13 +5735,12 @@
       (if (strEq a "--crate")
         {
           (if (< (+ i 1) sysArgc)
-            (vecPush v (as (concat (pathWithSlash (sysArg (+ i 1))) "axiom/") Int))
-            (as 0 (Vec Int)))
+            (vecPush v (concat (pathWithSlash (sysArg (+ i 1))) "axiom/")))
           (pushCrateDirs v (+ i 2))
         }
         (if (strStartsWith a "--crate=")
           {
-            (vecPush v (as (concat (pathWithSlash (strSlice a 8 (- (strLen a) 8))) "axiom/") Int))
+            (vecPush v (concat (pathWithSlash (strSlice a 8 (- (strLen a) 8))) "axiom/"))
             (pushCrateDirs v (+ i 1))
           }
           (pushCrateDirs v (+ i 1))))
@@ -8512,7 +8508,7 @@
         0)
     }))
 
-(pub :: crateDirsOf Ints)
+(pub :: crateDirsOf Names)
 ;@axiom:effect(io)
 (pub fn (crateDirsOf)
   {
@@ -8523,9 +8519,8 @@
     }
   })
 
-(pub :: collectCrateDirs (-> Ints Int Int))
+(pub :: collectCrateDirs (-> Names Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (collectCrateDirs v i)
   (if (>= i sysArgc)
     0
@@ -8534,13 +8529,12 @@
       (if (strEq a "--crate")
         {
           (if (< (+ i 1) sysArgc)
-            (vecPush v (as (sysArg (+ i 1)) Int))
-            (as 0 (Vec Int)))
+            (vecPush v (sysArg (+ i 1))))
           (collectCrateDirs v (+ i 2))
         }
         (if (strStartsWith a "--crate=")
           {
-            (vecPush v (as (strSlice a 8 (- (strLen a) 8)) Int))
+            (vecPush v (strSlice a 8 (- (strLen a) 8)))
             (collectCrateDirs v (+ i 1))
           }
           (collectCrateDirs v (+ i 1))))
@@ -8930,7 +8924,7 @@
 (pub fn (pathInStdlib path)
   (dirsHoldPath (pathAbsClean path) stdlibSearchDirs 0))
 
-(pub :: dirsHoldPath (-> String Ints Int Bool))
+(pub :: dirsHoldPath (-> String Names Int Bool))
 ;@axiom:effect(io)
 (pub fn (dirsHoldPath file dirs i)
   (if (>= i (vecLen dirs))
@@ -8950,7 +8944,7 @@
         ((Ok dir) (concat (pathWithSlash dir) p))
         ((Err _) p)))))
 
-(pub :: unitInDirs (-> String Ints Int Int))
+(pub :: unitInDirs (-> String Names Int Int))
 (pub fn (unitInDirs file dirs i)
   (if (>= i (vecLen dirs))
     0
@@ -25384,7 +25378,7 @@
 (pub fn (asmFileRecorded file)
   (asmStdlibRel file stdlibSearchDirs 0))
 
-(pub :: asmStdlibRel (-> String Ints Int String))
+(pub :: asmStdlibRel (-> String Names Int String))
 (pub fn (asmStdlibRel file dirs i)
   (if (>= i (vecLen dirs))
     file
@@ -25404,7 +25398,7 @@
     (asmStdlibFind (strSlice name 9 (- (strLen name) 9)) stdlibSearchDirs 0)
     name))
 
-(pub :: asmStdlibFind (-> String Ints Int String))
+(pub :: asmStdlibFind (-> String Names Int String))
 ;@axiom:effect(io)
 (pub fn (asmStdlibFind rel dirs i)
   (if (>= i (vecLen dirs))
