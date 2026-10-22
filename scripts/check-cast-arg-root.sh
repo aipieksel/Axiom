@@ -462,7 +462,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # reference erasures, leaving 555.
 # Typed contexts, function entries, expansion owners and renderer rows
 # remove 58 more reference erasures in a same-compiler comparison.
-erasure_pin=497
+# Typed checker definition/module tables and graph searches remove
+# 34 further reference erasures in a same-compiler comparison.
+erasure_pin=463
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)

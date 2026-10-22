@@ -35,6 +35,7 @@ gate_init
 gate_build_axc axc
 
 python3 tests/tools/compiler-representation.py "$axc"
+python3 tests/selfhost/typecheck-type-registry.py --axiom "$axc"
 python3 tests/tools/format-option-specifiers.py "$axc"
 python3 tests/tools/expansion-option-frames.py "$axc"
 python3 tests/tools/expansion-option-bindings.py "$axc"

@@ -142,7 +142,7 @@ checking remains a separate obligation.
 
 | Invariant | Enforcement and evidence | Limit |
 |---|---|---|
-| Function tables retain checked entries and distinguish an absent name from an entry | `Vec FnEnt`, `Option FnEnt`; `tests/selfhost/typecheck-function-registry.ax` | Other checker definition tables still use word carriers |
+| Function tables retain checked entries and distinguish an absent name from an entry | `Vec FnEnt`, `Option FnEnt`; `tests/selfhost/typecheck-function-registry.ax` | Checker context carriers still need migration |
 | Expansion preserves present empty repetitions and keeps binding and frame owners | Typed matches, binding vectors and `Option` results; `tests/tools/expansion-option-sequences.py`, `tests/tools/expansion-option-frames.py` | Syntax-identity metadata still crosses the raw AST arena boundary |
 | Emitter metadata keeps each live share through replacement and restoration | Owning `CG` context and typed tables; `tests/selfhost/emitter-symbol-scope.py`, `tests/selfhost/emitter-type-registry.py` | Remaining packed state and reference erasures require separate review |
 | Failed pattern tests continue without exposing branch bindings | `Some` and `None` paths; `tests/selfhost/typecheck-if-let-control-flow.ax`, `tests/diagnostics/1496-if-let-scope.ax` | Conditional matching does not require an `else` |
