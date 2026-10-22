@@ -196,37 +196,44 @@
               (tyVarLabel i))
           }
           (if (== tag TAG_T_CON)
-            (tyRenderAppScoped (typeNameForScope (nodeAName t) owner) (nodeBChildren t) 0 names
-              owner)
+            (tyRenderAppScoped (typeNameForScope (nodeAName t) owner) (nodeBChildren t) names owner)
             (if (== tag TAG_T_ARR)
               (concat
                 (concat (concat (concat "(" (tyRenderScoped (nodeAChild t) names owner)) " -> ")
                   (tyRenderScoped (nodeBChild t) names owner))
                 ")")
               (if (== tag TAG_T_TUP)
-                (concat (concat "(" (tyRenderJoinScoped (nodeAChildren t) 0 "" names owner)) ")")
+                (concat (concat "(" (tyRenderJoinScoped (nodeAChildren t) names owner)) ")")
                 (if (== tag TAG_T_PTR)
                   (concat "*" (tyRenderScoped (nodeAChild t) names owner))
                   "{unknown}")))))
       })
   })
 
-(:: tyRenderAppScoped (-> String (Vec ASTNode) Int Strings Int String))
-(fn (tyRenderAppScoped acc args i names owner)
-  (if (>= i (vecLen args))
-    acc
-    (tyRenderAppScoped (concat (concat acc " ") (tyRenderScoped (vecGet args i) names owner)) args
-      (+ i 1) names owner)))
+(:: tyRenderAppScoped (-> String (Vec ASTNode) Strings Int String))
+(fn (tyRenderAppScoped head args names owner)
+  {
+    (let out (strBuilderPush strBuilderNew head))
+    (for i in 0..(vecLen args)
+      {
+        (strBuilderPush out " ")
+        (strBuilderPush out (tyRenderScoped (vecGet args i) names owner))
+      })
+    (strBuilderFinish out)
+  })
 
-(:: tyRenderJoinScoped (-> (Vec ASTNode) Int String Strings Int String))
-(fn (tyRenderJoinScoped xs i acc names owner)
-  (if (>= i (vecLen xs))
-    acc
-    (tyRenderJoinScoped xs (+ i 1)
-      (if (== i 0)
-        (tyRenderScoped (vecGet xs 0) names owner)
-        (concat (concat acc ", ") (tyRenderScoped (vecGet xs i) names owner)))
-      names owner)))
+(:: tyRenderJoinScoped (-> (Vec ASTNode) Strings Int String))
+(fn (tyRenderJoinScoped xs names owner)
+  {
+    (let out strBuilderNew)
+    (for i in 0..(vecLen xs)
+      {
+        (if (> i 0)
+          (strBuilderPush out ", "))
+        (strBuilderPush out (tyRenderScoped (vecGet xs i) names owner))
+      })
+    (strBuilderFinish out)
+  })
 
 (:: typeNameForScope (-> String Int String))
 (fn (typeNameForScope name owner)
@@ -7455,8 +7462,8 @@
             (diagSetLabel
               (mkDiag SEV_ERROR "AX3044" "ambiguous-type" span
                 (concat (concat (concat "ambiguous type `" (bareOf name)) "`: declared in ")
-                  (joinModules mods 0 ""))
-                0 0 (concat "qualify the reference: " (joinQualified mods (bareOf name) 0 "")))
+                  (joinModules mods))
+                0 0 (concat "qualify the reference: " (joinQualified mods (bareOf name))))
               (concat (concat "`" (bareOf name)) "` could mean more than one declaration")))
           1
         })
@@ -12123,9 +12130,9 @@
                 (mkDiag SEV_ERROR "AX3014" "ambiguous-name" span
                   (concat
                     (concat (concat (concat "ambiguous name `" (bareOf name)) "`: defined in ")
-                      (joinModules mods 0 ""))
+                      (joinModules mods))
                     "")
-                  0 0 (concat "qualify the reference: " (joinQualified mods (bareOf name) 0 "")))
+                  0 0 (concat "qualify the reference: " (joinQualified mods (bareOf name))))
                 (concat (concat "`" (bareOf name)) "` could mean more than one definition")))
             1
           })))
@@ -12372,26 +12379,31 @@
     0
   })
 
-(pub :: joinModules (-> Ints Int String String))
-(pub fn (joinModules v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (joinModules v (+ i 1)
-      (if (== i 0)
-        (vecGetStr v i)
-        (concat (concat acc ", ") (vecGetStr v i))))))
-
-(pub :: joinQualified (-> Ints String Int String String))
-(pub fn (joinQualified v n i acc)
-  (if (>= i (vecLen v))
-    acc
-    (joinQualified v n (+ i 1)
+(:: joinModules (-> Ints String))
+(fn (joinModules v)
+  {
+    (let out strBuilderNew)
+    (for i in 0..(vecLen v)
       {
-        (let one (concat (concat (concat "`" (vecGetStr v i)) "::") (concat n "`")))
-        (if (== i 0)
-          one
-          (concat (concat acc " or ") one))
-      })))
+        (if (> i 0)
+          (strBuilderPush out ", "))
+        (strBuilderPush out (vecGetStr v i))
+      })
+    (strBuilderFinish out)
+  })
+
+(:: joinQualified (-> Ints String String))
+(fn (joinQualified v n)
+  {
+    (let out strBuilderNew)
+    (for i in 0..(vecLen v)
+      {
+        (if (> i 0)
+          (strBuilderPush out " or "))
+        (strBuilderPush out (concat (concat (concat "`" (vecGetStr v i)) "::") (concat n "`")))
+      })
+    (strBuilderFinish out)
+  })
 
 (pub :: checkVar (-> Int ASTNode Int ASTNode))
 (pub fn (checkVar tc e inHead)
@@ -14912,7 +14924,7 @@
       (if (== tg TAG_T_CON)
         (if (== (vecLen (nodeBChildren t)) 0)
           (nodeAName t)
-          (concat (concat "(" (showTyNameVec (nodeAName t) (nodeBChildren t) 0)) ")"))
+          (concat (concat "(" (showTyNameVec (nodeAName t) (nodeBChildren t))) ")"))
         (if (== tg TAG_T_ARR)
           (concat
             (concat (concat (concat "(-> " (showTyName (nodeAChild t))) " ")
@@ -14921,11 +14933,17 @@
           (tyRender t)))
     }))
 
-(pub :: showTyNameVec (-> String (Vec ASTNode) Int String))
-(pub fn (showTyNameVec acc xs i)
-  (if (>= i (vecLen xs))
-    acc
-    (showTyNameVec (concat (concat acc " ") (showTyName (vecGet xs i))) xs (+ i 1))))
+(:: showTyNameVec (-> String (Vec ASTNode) String))
+(fn (showTyNameVec head xs)
+  {
+    (let out (strBuilderPush strBuilderNew head))
+    (for i in 0..(vecLen xs)
+      {
+        (strBuilderPush out " ")
+        (strBuilderPush out (showTyName (vecGet xs i)))
+      })
+    (strBuilderFinish out)
+  })
 
 ; The constructor's field types at THIS instantiation of its type:
 ; `Some`'s `a` is `Int` over `(Option Int)`. `ctorPatEnv` pairs the
@@ -20797,16 +20815,20 @@
 ; The concrete effects, sorted by display name, joined with ", ".
 (pub :: effJoin (-> Strings String))
 (pub fn (effJoin v)
-  (effJoinFrom (effSorted v) 0 ""))
+  (effJoinFrom (effSorted v)))
 
-(pub :: effJoinFrom (-> Strings Int String String))
-(pub fn (effJoinFrom v i acc)
-  (if (>= i (vecLen v))
-    acc
-    (effJoinFrom v (+ i 1)
-      (if (== i 0)
-        (effRender (vecGetStr v i))
-        (concat (concat acc ", ") (effRender (vecGetStr v i)))))))
+(:: effJoinFrom (-> Strings String))
+(fn (effJoinFrom v)
+  {
+    (let out strBuilderNew)
+    (for i in 0..(vecLen v)
+      {
+        (if (> i 0)
+          (strBuilderPush out ", "))
+        (strBuilderPush out (effRender (vecGet v i)))
+      })
+    (strBuilderFinish out)
+  })
 
 ; Insertion sort by rendered name - the sets are three or four
 ; entries, and this has to agree with stage0's `sort_by_key` on the
@@ -25355,14 +25377,14 @@
                     (if (== (vecLen missing) 0)
                       (concat "non-exhaustive pattern match: some `"
                         (concat (tyRender scrutTy) "` values are not covered"))
-                      (concat "non-exhaustive pattern match: missing " (joinComma missing 0 "")))
+                      (concat "non-exhaustive pattern match: missing " (joinComma missing)))
                     0 0 0))
                 {
                   (diagSetLabel d
                     (if (== (vecLen missing) 0)
                       (concat "this `match` does not cover every value of `"
                         (concat (tyRender scrutTy) "`"))
-                      (concat "this `match` does not cover: " (joinComma missing 0 ""))))
+                      (concat "this `match` does not cover: " (joinComma missing))))
                   (matchFixHelps tc d arms scrutTy scrut matrix missing)
                   (emitDiag tc d)
                   0
@@ -25391,14 +25413,18 @@
 ; `matExhaustive` replaced it. `matMissing` asks the same question of
 ; a matrix COLUMN, which is the only place the answer was ever
 ; correct, so the pair had no remaining caller.
-(pub :: joinComma (-> Ints Int String String))
-(pub fn (joinComma xs i acc)
-  (if (>= i (vecLen xs))
-    acc
-    (joinComma xs (+ i 1)
-      (if (== i 0)
-        (vecGetStr xs 0)
-        (concat (concat acc ", ") (vecGetStr xs i))))))
+(:: joinComma (-> Ints String))
+(fn (joinComma xs)
+  {
+    (let out strBuilderNew)
+    (for i in 0..(vecLen xs)
+      {
+        (if (> i 0)
+          (strBuilderPush out ", "))
+        (strBuilderPush out (vecGetStr xs i))
+      })
+    (strBuilderFinish out)
+  })
 
 ; ------------------------------------------------------------------
 ; Patterns, typed. A bare identifier binds at the expected type -
@@ -29907,20 +29933,22 @@
             (concat (concat (concat (concat "`effect(" val) ")` on `") (bareOf (nodeAName d)))
               "` names ")
             (concat (fmtInt (vecLen names)) " effects, and an `effect(...)` tag names one"))
-          0 0 (concat "write one tag line per effect: " (effTagLines names 0 ""))
+          0 0 (concat "write one tag line per effect: " (effTagLines names))
           "a list here was read as ONE effect spelled with the comma in it, which nothing declares - so the claim could never be satisfied, and AX3010 reported it missing from a body that performed it. `restrict(...)` takes a comma list; `effect(...)` does not")
         "one effect per `effect(...)` tag"))))
 
-(pub :: effTagLines (-> Strings Int String String))
-(pub fn (effTagLines names i acc)
-  (if (>= i (vecLen names))
-    acc
-    (effTagLines names (+ i 1)
-      (concat
-        (if (== i 0)
-          acc
-          (concat acc " and "))
-        (concat (concat "`;@axiom:effect(" (vecGetStr names i)) ")`")))))
+(:: effTagLines (-> Strings String))
+(fn (effTagLines names)
+  {
+    (let out strBuilderNew)
+    (for i in 0..(vecLen names)
+      {
+        (if (> i 0)
+          (strBuilderPush out " and "))
+        (strBuilderPush out (concat (concat "`;@axiom:effect(" (vecGet names i)) ")`"))
+      })
+    (strBuilderFinish out)
+  })
 
 ; The LAST `)`, scanned backwards, which is stage0's `rfind` - a
 ; value may contain parens of its own.
