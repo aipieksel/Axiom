@@ -37,10 +37,9 @@
     (- c 55)))
 
 (:: obfMaskLiteral (-> String Int String))
-;@axiom:effect(unsafe)
 (fn (obfMaskLiteral body seed)
   {
-    (let out (strAlloc (strLen body)))
+    (let out (strBuilderWithCapacity (strLen body)))
     (let mut state seed)
     {
       (for i in 0..(/ (strLen body) 3)
@@ -55,15 +54,15 @@
               {
                 (let masked (^ byte (& state 255)))
                 {
-                  (__store8 (strData out) at 92)
-                  (__store8 (strData out) (+ at 1) (hexDigit (/ masked 16)))
-                  (__store8 (strData out) (+ at 2) (hexDigit (% masked 16)))
+                  (strBuilderPushByte out 92)
+                  (strBuilderPushByte out (hexDigit (/ masked 16)))
+                  (strBuilderPushByte out (hexDigit (% masked 16)))
                 }
               }
             }
           }
         })
-      out
+      (strBuilderFinish out)
     }
   })
 
@@ -103,29 +102,16 @@
     }))
 
 (:: obfJoin (-> Strings String String))
-;@axiom:effect(unsafe)
 (fn (obfJoin parts separator)
   {
-    (let mut n 0)
+    (let out strBuilderNew)
     {
       (for part in parts
-        (set n (+ n (+ (strLen part) (strLen separator)))))
-      {
-        (let out (strAlloc n))
-        (let mut offset 0)
         {
-          (for part in parts
-            {
-              (for i in 0..(strLen part)
-                (__store8 (strData out) (+ offset i) (strByte part i)))
-              (set offset (+ offset (strLen part)))
-              (for i in 0..(strLen separator)
-                (__store8 (strData out) (+ offset i) (strByte separator i)))
-              (set offset (+ offset (strLen separator)))
-            })
-          out
-        }
-      }
+          (strBuilderPush out part)
+          (strBuilderPush out separator)
+        })
+      (strBuilderFinish out)
     }
   })
 
@@ -149,7 +135,7 @@
     (let init vecNew)
     (let mut literal 0)
     {
-      (for name in (as (symtabNames (as lines (Vec Int))) (Vec String))
+      (for name in (symtabNames (as lines (Vec Int)))
         (if (! (obfKeepName name))
           {
             (let id (internIntern names name))
