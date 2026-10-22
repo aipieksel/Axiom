@@ -77,7 +77,7 @@
 (pub struct MangleIdx
   (names : Int)
   (pos : (Vec Int))
-  (done : Int))
+  (mut done : Int))
 
 (pub :: mangleIdxNew Int)
 (pub fn (mangleIdxNew)
@@ -86,20 +86,22 @@
 ; Absorb every entry of `bares` from `done` to its end. Answers the
 ; new `done`.
 (pub :: mangleIdxSync (-> Int Strings Int))
+;@axiom:effect(unsafe)
 (pub fn (mangleIdxSync idx bares)
   {
-    (let mut i (memGetWord idx 2))
+    (let m (as idx MangleIdx))
+    (let mut i m.done)
     {
       (while (< i (vecLen bares))
         {
           {
-            (let id (internIntern (memGetWord idx 0) (vecGetStr bares i)))
-            (if (== id (vecLen (memGetWordVec idx 1)))
-              (vecPush (memGetWordVec idx 1) i))
+            (let id (internIntern m.names (vecGetStr bares i)))
+            (if (== id (vecLen m.pos))
+              (vecPush m.pos i))
           }
           (set i (+ i 1))
         })
-      (memSetWord idx 2 i)
+      (set m.done i)
       i
     }
   })
@@ -107,10 +109,12 @@
 ; Is `name` in `bares`? The indexed form of `mangleHasIn`, and the
 ; one every writer here asks.
 (pub :: mangleIdxHas (-> Int Strings String Bool))
+;@axiom:effect(unsafe)
 (pub fn (mangleIdxHas idx bares name)
   {
+    (let m (as idx MangleIdx))
     (mangleIdxSync idx bares)
-    (match (internFind (memGetWord idx 0) name)
+    (match (internFind m.names name)
       ((Some _) true)
       ((None) false))
   })
@@ -121,11 +125,13 @@
 ; `(vecSet fulls i name)`, so a miss that reached the index is a wild
 ; WRITE - it would store into the word before the vector's first.
 (pub :: mangleIdxIndexOf (-> Int Strings String (Option Int)))
+;@axiom:effect(unsafe)
 (pub fn (mangleIdxIndexOf idx bares name)
   {
+    (let m (as idx MangleIdx))
     (mangleIdxSync idx bares)
-    (match (internFind (memGetWord idx 0) name)
-      ((Some id) (Some (vecGet (memGetWordVec idx 1) id)))
+    (match (internFind m.names name)
+      ((Some id) (Some (vecGet m.pos id)))
       ((None) None))
   })
 
