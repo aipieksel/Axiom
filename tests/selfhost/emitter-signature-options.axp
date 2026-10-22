@@ -1,0 +1,96 @@
+; Signatures stay typed in linear and indexed lookup. Missing names
+; keep conservative defaults and summary mutations share one entry.
+(import codegen)
+(import parser)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: signature (-> String Int FSig))
+(fn (signature name arity)
+  (FSig
+    :name (strDup name)
+    :nameLen (strLen name)
+    :flags (vecPush vecNew 0)
+    :sigTy nilNode
+    :takesEv 0
+    :owned 1
+    :arity arity
+    :stash 0
+    :ret 0
+    :consume 0
+    :transfer 0
+    :callers 0
+    :writes 0))
+
+(:: signatures (Vec FSig))
+(fn (signatures)
+  {
+    (let table vecNew)
+    (vecPush table (signature "Alpha" 7))
+    (vecPush table (signature "Bravo" 11))
+    (vecPush table (signature "Alpha" 99))
+    (vecPush table (signature "main" 2))
+    table
+  })
+
+(:: arityIs (-> (Option FSig) Int Bool))
+(fn (arityIs found arity)
+  (if (let (Some entry) found)
+    (== entry.arity arity)
+    false))
+
+(:: absent (-> (Option FSig) Bool))
+(fn (absent found)
+  (if (let (Some _) found)
+    false
+    true))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let table signatures)
+    (say 1 (absent (findFSig table "Other")))
+    (say 2 (arityIs (findFSig table "Alpha") 7))
+    (say 3 (arityIs (findFSig table "Bravo") 11))
+    (say 4 (arityIs (findFSig table "__axiom_user_main") 2))
+    (say 5 (arityIs (findFSigIn table "Alpha" 5 1) 99))
+    (say 6 (absent (findFSigIn table "Alpha" 4 0)))
+    (let cg newCG)
+    (probeInstallSignatures cg table false)
+    (say 7 (arityIs (findFSigCg cg "Bravo") 11))
+    (say 8 (absent (findFSigCg cg "Other")))
+    (probeInstallSignatures cg table true)
+    (say 9 (arityIs (findFSigCg cg "Bravo") 11))
+    (say 10 (absent (findFSigCg cg "Other")))
+    (say 11 (arityIs (findFSigCg cg "__axiom_user_main") 2))
+    (say 12 (arityIs (findFSigCg cg "Alpha") 7))
+    (if (let (Some entry) (findFSigCg cg "Bravo"))
+      (set entry.owned 0))
+    (say 13 (== (fnResultOwned cg "Bravo") 0))
+    (say 14
+      (if (let (Some entry) (findFSig table "Bravo"))
+        (== entry.owned 0)
+        false))
+    (say 15 (== (fnResultOwned cg "missing") 0))
+    (say 16 (== (fnArityCg cg "missing") -1))
+    (say 17
+      (if (let (Some entry) (findFSigCg cg "Alpha"))
+        (&& (strEq entry.name "Alpha") (== (vecGet entry.flags 0) 0))
+        false))
+    (let scanned (scanFloatSigs (vecPush vecNew (nodeBuildDSig "Scanned" vecNew 0 0)) vecNew 0))
+    (say 18 (arityIs (findFSig scanned "Scanned") -1))
+    0
+  })
