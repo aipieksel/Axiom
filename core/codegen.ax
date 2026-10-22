@@ -10222,7 +10222,7 @@
 
 ; Every entry-file function maps to itself, recorded ahead of every
 ; import so that a collision resolves to the file being compiled.
-(pub :: recordEntryFns (-> (Vec ASTNode) Int Strings Strings Int Int))
+(pub :: recordEntryFns (-> (Vec ASTNode) MangleIdx Strings Strings Int Int))
 (pub fn (recordEntryFns decls idx bares fulls i)
   (if (>= i (vecLen decls))
     0
@@ -10242,7 +10242,7 @@
       (recordEntryFns decls idx bares fulls (+ i 1))
     }))
 
-(pub :: recordExternSyms (-> Int Strings Strings (Vec ASTNode) Int Int))
+(pub :: recordExternSyms (-> MangleIdx Strings Strings (Vec ASTNode) Int Int))
 (pub fn (recordExternSyms idx bares fulls items i)
   (if (== (as items Int) 0)
     0
@@ -10262,7 +10262,7 @@
         (recordExternSyms idx bares fulls items (+ i 1))
       })))
 
-(pub :: resolveImports (-> (Vec ASTNode) Names Names Ints Int String Units (Vec ASTNode)))
+(pub :: resolveImports (-> (Vec ASTNode) Names Names ModuleImports Int String Units (Vec ASTNode)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (resolveImports decls bares fulls mods tcode entryDir units)
@@ -10277,8 +10277,8 @@
     {
       (recordEntryFns decls idx bares fulls 0)
       (let merged
-        (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods (as 0 (Vec String))
-          tcode entryDir units cache))
+        (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods (None) tcode
+          entryDir units cache))
       (entryFnsOffExternSyms decls merged bares fulls)
       merged
     }
@@ -10366,7 +10366,8 @@
 ; four workers and a smaller one stays serial: forking one module on
 ; its own costs more than parsing it, so a hello-world program never
 ; forks, while a self-compile frontier of dozens does.
-(pub :: resolveImportsParallel (-> (Vec ASTNode) Names Names Ints Int String Units (Vec ASTNode)))
+(pub :: resolveImportsParallel
+  (-> (Vec ASTNode) Names Names ModuleImports Int String Units (Vec ASTNode)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -10435,8 +10436,8 @@
           })
         (recordEntryFns decls idx bares fulls 0)
         (let merged
-          (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods
-            (as 0 (Vec String)) tcode entryDir units cache))
+          (resolveDecls decls vecNew vecNew 0 (as 0 String) idx bares fulls mods (None) tcode
+            entryDir units cache))
         (entryFnsOffExternSyms decls merged bares fulls)
         merged
       })
@@ -10447,20 +10448,17 @@
 ; `modName` is the module the list came from, 0 for the entry file; an
 ; imported function is renamed to `modName$name` as it lands.
 ;
-; `filter` is the import's name list, 0 when the import named none:
-; `(import M (a b))` splices only M's declarations named `a` or `b`,
-; exactly as stage0 filters through its `wanted` set - including the
-; harsh part, where a kept function's un-named private helpers vanish
-; with it. M's own nested imports are processed regardless: in stage0
-; they live outside the filtered declaration list, so a name list never
-; suppresses a dependency.
+; `filter` is the optional import name list; `None` keeps the module's
+; entire public surface. `Some (a b)` exports only those bare names.
+; All declarations and nested imports are still merged, so a public
+; body can call its own private helpers regardless of the import list.
 ;
 ; `acc` and `seen` are threaded rather than rebuilt: `vecPush` mutates in
 ; place and returns the same handle, so both stay stable across the whole
 ; traversal and siblings observe each other's additions.
 (pub :: resolveDecls
-  (-> (Vec ASTNode) (Vec ASTNode) Strings Int String Int Strings Strings Ints Strings Int String
-    (Vec core::CUnit2) FrontCache (Vec ASTNode)))
+  (-> (Vec ASTNode) (Vec ASTNode) Strings Int String MangleIdx Strings Strings ModuleImports
+    (Option Names) Int String (Vec core::CUnit2) FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
 (pub fn (resolveDecls decls acc seen i modName idx bares fulls mods filter tcode entryDir units
           cache)
@@ -10482,10 +10480,9 @@
 ; imported module resolving BOTH its phases depth-first), phase 1 only
 ; the module's own declarations.
 (pub :: resolveDeclsPhase
-  (-> (Vec ASTNode) (Vec ASTNode) Strings Int String Int Strings Strings Ints Strings Int String
-    (Vec core::CUnit2) Int FrontCache (Vec ASTNode)))
+  (-> (Vec ASTNode) (Vec ASTNode) Strings Int String MangleIdx Strings Strings ModuleImports
+    (Option Names) Int String (Vec core::CUnit2) Int FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (resolveDeclsPhase decls acc seen i modName idx bares fulls mods filter tcode entryDir
           units phase cache)
   (if (>= i (vecLen decls))
@@ -10532,13 +10529,13 @@
                     {
                       (let ns (nodeBNames first))
                       (if (== (as ns Int) 0)
-                        (as 0 (Vec String))
+                        (None)
                         (if (== (vecLen ns) 0)
-                          (as 0 (Vec String))
-                          ns))
+                          (None)
+                          (Some ns)))
                     })
                   {
-                    (modFilterRecord mods name (as subFilter Int))
+                    (modFilterRecord mods name subFilter)
                     (resolveDeclsPhase decls
                       (resolveDecls modDecls acc seen 0 name idx bares fulls mods subFilter tcode
                         entryDir units cache)
@@ -10609,40 +10606,31 @@
 ; either import ran (MAC-EXP-16) - the recorded answer has to cover
 ; every list, not the first one.
 (pub :: resolveRepeatImport
-  (-> String ASTNode Int Strings Strings Ints (Vec ASTNode) (Vec ASTNode)))
-;@axiom:effect(unsafe)
+  (-> String ASTNode MangleIdx Strings Strings ModuleImports (Vec ASTNode) (Vec ASTNode)))
 (pub fn (resolveRepeatImport mod imp idx bares fulls mods acc)
   {
     (let sub (nodeBNames imp))
     (if (|| (== (as sub Int) 0) (== (vecLen sub) 0))
       ; A bare repeat import names everything, so the union is the
       ; module's whole public surface and the recorded filter goes
-      ; back to "named nothing" (which `filterKeeps` reads as full).
+      ; back to `None`, the unrestricted public surface.
       {
-        (modFilterWiden mods mod (as 0 (Vec String)))
+        (modFilterWiden mods mod (None))
         (repeatExportNew acc mod (modPubsFor mods mod) idx bares fulls 0)
       }
-      ; The cast is the handle/opaque split `modFilterRecord` lives
-      ; with: `mods` is a Vec of pair handles, and `modFilterFor`
-      ; spells it `(Vec (Vec Int))` for expansion's `(Vec a)` reader.
-      {
-        (let old (modFilterFor (as mods (Vec (Vec Int))) mod))
-        (if (== (as old Int) 0)
-          ; The first import was already full: everything public is
-          ; exported and there is nothing to add. Validation of this
-          ; list's names is the checker's (`checkImportNames`), which
-          ; walks every import node whether or not it merged one.
-          acc
-          {
-            (let delta (repeatDelta old sub (modPubsFor mods mod) vecNew 0))
-            (if (== (vecLen delta) 0)
-              acc
-              {
-                (modFilterWiden mods mod (repeatUnion old delta))
-                (repeatExportNew acc mod delta idx bares fulls 0)
-              })
-          })
-      })
+      (if (let (Some old) (modFilterFor mods mod))
+        {
+          (let delta (repeatDelta old sub (modPubsFor mods mod) vecNew 0))
+          (if (== (vecLen delta) 0)
+            acc
+            {
+              (modFilterWiden mods mod (Some (repeatUnion old delta)))
+              (repeatExportNew acc mod delta idx bares fulls 0)
+            })
+        }
+        ; The first import was already unrestricted. Name validation
+        ; still checks every import node, whether or not it merged one.
+        acc))
   })
 
 ; The names in `sub` the recorded filter does not already keep,
@@ -10693,7 +10681,8 @@
 ; keeps a name it defined itself. Every other declaration kind needs
 ; only the flip. Foreign items widen individually and acquire a bare
 ; mapping only when the module exports that item.
-(pub :: repeatExportNew (-> (Vec ASTNode) String Strings Int Strings Strings Int (Vec ASTNode)))
+(pub :: repeatExportNew
+  (-> (Vec ASTNode) String Strings MangleIdx Strings Strings Int (Vec ASTNode)))
 (pub fn (repeatExportNew acc mod delta idx bares fulls i)
   (if (>= i (vecLen acc))
     acc
