@@ -66,6 +66,35 @@ def field_negative_control(compiler, repo, env, work):
     print("field poison negative control rejected the wildcard mutation (status 2)")
 
 
+def collector_negative_control(compiler, repo, env, work):
+    """Prove that built-empty caches cannot be rescanned as unbuilt."""
+    overlay = work / "negative-collector-core"
+    overlay.mkdir()
+    for source in (repo / "core").iterdir():
+        if source.is_file() and source.name != "typecheck.ax":
+            (overlay / source.name).symlink_to(source)
+    source = (repo / "core/typecheck.ax").read_text()
+    old = """(if (let (Some cached) (tcSigTags tc))
+        cached"""
+    if source.count(old) != 1:
+        raise SystemExit("cache control no longer matches its single implementation site")
+    changed = old.replace("\n        cached", "\n        (sigTagsBuild (tcAllDeclsVec tc) vecNew 0)")
+    (overlay / "typecheck.ax").write_text(source.replace(old, changed))
+    executable = work / "collector-negative"
+    built = subprocess.run(
+        [str(compiler), "--diagnostic-format=ai", "build",
+         str(repo / "tests/selfhost/typecheck-collector-options.ax"),
+         "--opt", "0", "--output", str(executable)],
+        env=dict(env, AXIOM_PATH=str(overlay)), capture_output=True, text=True,
+    )
+    if built.returncode:
+        raise SystemExit(built.stdout + built.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    if ran.returncode != 2 or ran.stdout or ran.stderr:
+        raise SystemExit(f"cache control: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+    print("cache negative control rejected the built-empty rescan mutation (status 2)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
@@ -78,6 +107,7 @@ def main():
         "typecheck-type-registry.ax", "typecheck-module-options.ax",
         "typecheck-function-registry.ax", "typecheck-private-state.ax",
         "typecheck-witness-options.ax", "typecheck-field-options.ax",
+        "typecheck-collector-options.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
@@ -86,6 +116,7 @@ def main():
         ("typecheck-private-context-refusal.axp", "AX3004", ("ContractContext", "Int")),
         ("typecheck-witness-exhaustive.axp", "AX3005", ("None",)),
         ("typecheck-field-exhaustive.axp", "AX3005", ("None",)),
+        ("typecheck-collector-refusal.axp", "AX3004", ("Option", "Int")),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -114,6 +145,7 @@ def main():
         if args.negative_controls:
             witness_negative_control(compiler, repo, env, Path(work))
             field_negative_control(compiler, repo, env, Path(work))
+            collector_negative_control(compiler, repo, env, Path(work))
     print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 

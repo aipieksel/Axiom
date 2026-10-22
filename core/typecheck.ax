@@ -3373,23 +3373,23 @@
   (mut lamBase : Int)
   (mut curSigVars : Names)
   (mut curDeclNode : ASTNode)
-  (mut sigTags : Nodes)
+  (mut sigTags : (Option Nodes))
   (mut fnSufIdx : (Option FnIndex))
   (mut privIdx : (Option StringRows))
   (mut rgnFactsDone : Int)
   (mut curCalls : (Option Names))
   (mut tyIdx : (Option TypeIndex))
-  (mut deprecated : Nodes)
+  (mut deprecated : (Option Nodes))
   (lamVars : Names)
   (mut rgnGaveUp : Int)
   (mut contractTag : (Option ContractContext))
   (regions : (Vec Int))
-  (mut pairSites : Nodes)
+  (mut pairSites : (Option Nodes))
   (floatOps : (Vec ASTNode))
   (subtypes : Nodes)
   (mut rgnHasForm : Int)
   (mut rgnStamping : Int)
-  (rgnRefused : (Vec Int))
+  (rgnRefused : (Vec Int))  ; packed parser spans, compared as scalar locations
   (wordLower : (Vec ASTNode))
   (wordStructs : Int)
   (unsafe : UState)
@@ -3427,11 +3427,11 @@
 ; read through the `tc...` accessors after `TC` (`tcUnsafeSink`,
 ; `tcForgeSites`, and so on):
 ;
-;   0 `unsafeSink`  a Vec while `checkAxtags` walks one body's effects,
-;                    0 otherwise: every reference that walk resolves to
+;   0 `unsafeSink`  Some Vec while `checkAxtags` walks one body's effects,
+;                    None otherwise: every reference that walk resolves to
 ;                    an extern is pushed here, so AX3073 names the
 ;                    call the way it names a primitive.
-;   1 `forgeSites`  a Vec while `tcCheckFn` checks one body, 0
+;   1 `forgeSites`  Some Vec while `tcCheckFn` checks one body, None
 ;                    otherwise: every `cast` in it that may forge
 ;                    (`castNoteForge`), narrowed to the ones that do
 ;                    once the body is typed (`unsafeSettleForges`). The
@@ -3449,7 +3449,7 @@
 ;   6 `evPending`   the evidence witnesses no pin had reached yet when
 ;                    their call was checked (`evNotePending`), asked
 ;                    again once the body is typed (`evSettle`).
-;   7 `eraseSites`  a Vec while `tcCheckFn` checks one body, 0
+;   7 `eraseSites`  Some Vec while `tcCheckFn` checks one body, None
 ;                    otherwise: every `cast` in it whose target is a
 ;                    word (`castNoteForge`), three words each, judged
 ;                    once the body is typed (`eraseSettle`).
@@ -3486,14 +3486,14 @@
 ;                    answered, so a value walked twice draws one
 ;                    diagnostic (`fieldStoreCheck`).
 (struct UState
-  (mut unsafeSink : Nodes)
-  (mut forgeSites : Nodes)
+  (mut unsafeSink : (Option Nodes))
+  (mut forgeSites : (Option Nodes))
   (forgeDecls : (Vec FnEnt))
   (unsafePending : (Vec ASTNode))
   (mut ctClaimed : (Option Nodes))
   (mut ctResults : (Vec CtResult))
   (evPending : (Vec EvPend))
-  (mut eraseSites : Nodes)
+  (mut eraseSites : (Option Nodes))
   (eraseCounts : (Vec EraseCount))
   (fieldVals : (Vec FieldStore))
   (mut mayCalls : (Option Names))
@@ -3908,11 +3908,11 @@
     tc
   })
 
-(:: tcSigTags (-> TC Nodes))
+(:: tcSigTags (-> TC (Option Nodes)))
 (fn (tcSigTags tc)
   tc.sigTags)
 
-(:: tcSetSigTags (-> TC Nodes TC))
+(:: tcSetSigTags (-> TC (Option Nodes) TC))
 (fn (tcSetSigTags tc v)
   {
     (set tc.sigTags v)
@@ -3975,11 +3975,11 @@
     tc
   })
 
-(:: tcDeprecated (-> TC Nodes))
+(:: tcDeprecated (-> TC (Option Nodes)))
 (fn (tcDeprecated tc)
   tc.deprecated)
 
-(:: tcSetDeprecated (-> TC Nodes TC))
+(:: tcSetDeprecated (-> TC (Option Nodes) TC))
 (fn (tcSetDeprecated tc v)
   {
     (set tc.deprecated v)
@@ -4023,11 +4023,11 @@
     tc
   })
 
-(:: tcPairSites (-> TC Nodes))
+(:: tcPairSites (-> TC (Option Nodes)))
 (fn (tcPairSites tc)
   tc.pairSites)
 
-(:: tcSetPairSites (-> TC Nodes TC))
+(:: tcSetPairSites (-> TC (Option Nodes) TC))
 (fn (tcSetPairSites tc v)
   {
     (set tc.pairSites v)
@@ -4037,7 +4037,7 @@
 (:: tcClearPairSites (-> TC TC))
 (fn (tcClearPairSites tc)
   {
-    (set tc.pairSites nilNodes)
+    (set tc.pairSites None)
     tc
   })
 
@@ -4091,11 +4091,11 @@
 ; checks (`ExprChecks`, word 46), read through the same view. The
 ; per-body vectors are 0 between bodies, so each has a clear beside
 ; its setter.
-(:: tcUnsafeSink (-> TC Nodes))
+(:: tcUnsafeSink (-> TC (Option Nodes)))
 (fn (tcUnsafeSink tc)
   tc.unsafe.unsafeSink)
 
-(:: tcSetUnsafeSink (-> TC Nodes TC))
+(:: tcSetUnsafeSink (-> TC (Option Nodes) TC))
 (fn (tcSetUnsafeSink tc v)
   {
     (set tc.unsafe.unsafeSink v)
@@ -4105,15 +4105,15 @@
 (:: tcClearUnsafeSink (-> TC TC))
 (fn (tcClearUnsafeSink tc)
   {
-    (set tc.unsafe.unsafeSink nilNodes)
+    (set tc.unsafe.unsafeSink None)
     tc
   })
 
-(:: tcForgeSites (-> TC Nodes))
+(:: tcForgeSites (-> TC (Option Nodes)))
 (fn (tcForgeSites tc)
   tc.unsafe.forgeSites)
 
-(:: tcSetForgeSites (-> TC Nodes TC))
+(:: tcSetForgeSites (-> TC (Option Nodes) TC))
 (fn (tcSetForgeSites tc v)
   {
     (set tc.unsafe.forgeSites v)
@@ -4123,7 +4123,7 @@
 (:: tcClearForgeSites (-> TC TC))
 (fn (tcClearForgeSites tc)
   {
-    (set tc.unsafe.forgeSites nilNodes)
+    (set tc.unsafe.forgeSites None)
     tc
   })
 
@@ -4153,11 +4153,11 @@
     tc
   })
 
-(:: tcEraseSites (-> TC Nodes))
+(:: tcEraseSites (-> TC (Option Nodes)))
 (fn (tcEraseSites tc)
   tc.unsafe.eraseSites)
 
-(:: tcSetEraseSites (-> TC Nodes TC))
+(:: tcSetEraseSites (-> TC (Option Nodes) TC))
 (fn (tcSetEraseSites tc v)
   {
     (set tc.unsafe.eraseSites v)
@@ -4167,7 +4167,7 @@
 (:: tcClearEraseSites (-> TC TC))
 (fn (tcClearEraseSites tc)
   {
-    (set tc.unsafe.eraseSites nilNodes)
+    (set tc.unsafe.eraseSites None)
     tc
   })
 
@@ -5127,18 +5127,18 @@
             :lamBase 0
             :curSigVars vecNew
             :curDeclNode nilNode
-            :sigTags nilNodes
+            :sigTags None
             :fnSufIdx None
             :privIdx None
             :rgnFactsDone 0
             :curCalls None
             :tyIdx None
-            :deprecated nilNodes
+            :deprecated None
             :lamVars vecNew
             :rgnGaveUp 0
             :contractTag None
             :regions vecNew
-            :pairSites nilNodes
+            :pairSites None
             :floatOps vecNew
             :subtypes vecNew
             :rgnHasForm 0
@@ -5148,14 +5148,14 @@
             :wordStructs (countWordStructs allDecls 0 0)
             :unsafe
               (UState
-                :unsafeSink nilNodes
-                :forgeSites nilNodes
+                :unsafeSink None
+                :forgeSites None
                 :forgeDecls vecNew
                 :unsafePending vecNew
                 :ctClaimed None
                 :ctResults vecNew
                 :evPending vecNew
-                :eraseSites nilNodes
+                :eraseSites None
                 :eraseCounts vecNew
                 :fieldVals vecNew
                 :mayCalls None
@@ -5174,7 +5174,7 @@
                 :computeEnabled 0
                 :validatingEffects false
                 :restrictionsStrict false
-                :unsignedParams nilNodes)))
+                :unsignedParams vecNew)))
         {
           (tcSetTyIdx tc (tyIdxNew (vecLen allDecls)))
           ; The builtin `Option` went into `datas` before this record
@@ -10679,15 +10679,13 @@
   {
     (let state (tcCheckState tc))
     (let params state.unsignedParams)
-    (if (== (as params Int) 0)
+    (if (! (unsignedParamIn params ty))
       false
-      (if (! (unsignedParamIn params ty))
-        false
-        {
-          (for i in 0..(vecLen params)
-            (writeNodeWord (vecGet params i) 0 TAG_T_ERR))
-          true
-        }))
+      {
+        (for i in 0..(vecLen params)
+          (writeNodeWord (vecGet params i) 0 TAG_T_ERR))
+        true
+      })
   })
 
 ; Lambda grounding can discard a speculative pass's diagnostics. Keep
@@ -10698,24 +10696,22 @@
   {
     (let state (tcCheckState tc))
     (let params state.unsignedParams)
-    (if (== (as params Int) 0)
+    (if (|| (== (vecLen params) 0) (== (tyIsErr (vecGet params 0)) 0))
       0
-      (if (|| (== (vecLen params) 0) (== (tyIsErr (vecGet params 0)) 0))
-        0
-        {
-          (let d (tcCurDeclNode tc))
-          (if (== (nodeSpan d) 0)
-            0
-            (emitDiag tc
-              (diagSetLabel
-                (mkDiagNote SEV_ERROR "AX3089" "signature-needed" (nodeSpan d)
-                  (concat "`"
-                    (concat (bareOf (nodeAName d))
-                      "` needs a signature to declare its parameter types"))
-                  0 0 "write a `(:: ...)` signature above this definition"
-                  "parameters of a function without a signature default to Int; this body needs a different parameter type")
-                "declare this function's parameter types")))
-        }))
+      {
+        (let d (tcCurDeclNode tc))
+        (if (== (nodeSpan d) 0)
+          0
+          (emitDiag tc
+            (diagSetLabel
+              (mkDiagNote SEV_ERROR "AX3089" "signature-needed" (nodeSpan d)
+                (concat "`"
+                  (concat (bareOf (nodeAName d))
+                    "` needs a signature to declare its parameter types"))
+                0 0 "write a `(:: ...)` signature above this definition"
+                "parameters of a function without a signature default to Int; this body needs a different parameter type")
+              "declare this function's parameter types")))
+      })
   })
 
 (pub :: emitMismatch (-> TC String String Int Int))
@@ -16013,40 +16009,29 @@
 ; observing casts that are most of them.
 (pub :: castNoteForge (-> TC ASTNode ASTNode ASTNode ASTNode Int))
 (pub fn (castNoteForge tc e tgt src val)
-  {
-    (let sites (tcForgeSites tc))
-    (if (vecIsNull sites)
+  (if (let (Some sites) (tcForgeSites tc))
+    (if (== (divTailOk (tcAllDeclsVec tc) val vecNew 0) 1)
       0
-      (if (== (divTailOk (tcAllDeclsVec tc) val vecNew 0) 1)
-        0
-        (if (== (castMayForge tc tgt src) 1)
-          {
-            (let v sites)
+      (if (== (castMayForge tc tgt src) 1)
+        {
+          (vecPush sites e)
+          (vecPush sites tgt)
+          (vecPush sites src)
+          0
+        }
+        ; A word target can erase a reference; keep the same body-local
+        ; site order for eraseSettle, with an explicitly active collector.
+        (if (let (Some sites) (tcEraseSites tc))
+          (if (!= (castTyClass tc tgt) 0)
+            0
             {
-              (vecPush v e)
-              (vecPush v tgt)
-              (vecPush v src)
+              (vecPush sites e)
+              (vecPush sites tgt)
+              (vecPush sites src)
               0
-            }
-          }
-          ; A word target: the cast may ERASE a reference, which is
-          ; judged with the body for the reason above
-          ; (`eraseSettle`).
-          {
-            (let ev (tcEraseSites tc))
-            (if (|| (vecIsNull ev) (!= (castTyClass tc tgt) 0))
-              0
-              {
-                (let v ev)
-                {
-                  (vecPush v e)
-                  (vecPush v tgt)
-                  (vecPush v src)
-                  0
-                }
-              })
-          })))
-  })
+            })
+          0)))
+    0))
 
 ; `(cast Type v)`, `(sizeof Type)`, `(alignof Type)`: argument zero is
 ; a TYPE, and a type name is not a variable reference - checking it
@@ -17428,24 +17413,18 @@
 
 (pub :: tcSiteIn (-> TC ASTNode Int))
 (pub fn (tcSiteIn tc e)
-  {
-    (let rec (tcPairSites tc))
-    (if (vecIsNull rec)
-      0
-      (tcNodeIn rec e))
-  })
+  (if (let (Some sites) (tcPairSites tc))
+    (tcNodeIn sites e)
+    0))
 
 (pub :: tcSiteAdd (-> TC ASTNode Int))
 (pub fn (tcSiteAdd tc e)
-  {
-    (let rec (tcPairSites tc))
-    (if (vecIsNull rec)
+  (if (let (Some sites) (tcPairSites tc))
+    {
+      (vecPush sites e)
       0
-      {
-        (vecPush rec e)
-        0
-      })
-  })
+    }
+    0))
 
 ; Word 37, the float-operator record: `tcFloatOpAdd` from
 ; `checkNumeric` as the operands are typed, `tcFloatOpIn` from
@@ -21814,7 +21793,7 @@
           {
             (let _c (tcSetCurCalls tc (Some (fnEntCalls ent))))
             (let _y (tcSetMayCalls tc (Some (fnEntMayCalls ent))))
-            (let _s (tcSetPairSites tc (tcPairSitesOf tc d)))
+            (let _s (tcSetPairSites tc (Some (tcPairSitesOf tc d))))
             (let got (collectEffects tc (nodeCChild d) sc))
             (let _s0 (tcClearPairSites tc))
             (let _c0 (tcSetCurCalls tc None))
@@ -25951,8 +25930,8 @@
                   ; that do once it is typed (`unsafeSettleForges`), for
                   ; `checkAxtags` to answer and `unsafeLatePass` to
                   ; follow.
-                  (tcSetForgeSites tc nodesNew)
-                  (tcSetEraseSites tc nodesNew)
+                  (tcSetForgeSites tc (Some nodesNew))
+                  (tcSetEraseSites tc (Some nodesNew))
                   (tcCheckFn tc d)
                   (unsafeSettleForges tc)
                   (eraseSettle tc d)
@@ -26073,9 +26052,9 @@
       (let _m (tcSetCurModule tc (nodeModuleOpt d)))
       (let sc (bodyScopeOf tc d))
       {
-        (let _s (tcSetPairSites tc (tcPairSitesOf tc d)))
+        (let _s (tcSetPairSites tc (Some (tcPairSitesOf tc d))))
         (let sink nodesNew)
-        (let _k (tcSetUnsafeSink tc sink))
+        (let _k (tcSetUnsafeSink tc (Some sink)))
         (let eff (validateEffects tc (nodeCChild d) sc))
         (let _k0 (tcClearUnsafeSink tc))
         (let _s0 (tcClearPairSites tc))
@@ -29018,9 +28997,9 @@
 ; Vec outside a checked body.
 (pub :: unsafeForgeSitesOf (-> TC (Vec ASTNode)))
 (pub fn (unsafeForgeSitesOf tc)
-  (if (vecIsNull (tcForgeSites tc))
-    vecNew
-    (tcForgeSites tc)))
+  (match (tcForgeSites tc)
+    ((None) vecNew)
+    ((Some sites) sites)))
 
 ; Once a body is typed: of the casts `castNoteForge` recorded, keep the
 ; ones that forge. Every placeholder the body pins is pinned by now, so
@@ -29028,16 +29007,14 @@
 ; why the cast itself cannot ask).
 (pub :: unsafeSettleForges (-> TC Int))
 (pub fn (unsafeSettleForges tc)
-  (if (vecIsNull (tcForgeSites tc))
-    0
+  (if (let (Some sites) (tcForgeSites tc))
     {
       (let kept vecNew)
-      {
-        (unsafeSettleFrom tc (tcForgeSites tc) kept 0)
-        (tcSetForgeSites tc kept)
-        0
-      }
-    }))
+      (unsafeSettleFrom tc sites kept 0)
+      (tcSetForgeSites tc (Some kept))
+      0
+    }
+    0))
 
 (pub :: unsafeSettleFrom (-> TC (Vec ASTNode) (Vec ASTNode) Int Int))
 (pub fn (unsafeSettleFrom tc sites kept i)
@@ -29081,25 +29058,22 @@
 
 (pub :: eraseSettle (-> TC ASTNode Int))
 (pub fn (eraseSettle tc d)
-  {
-    (let ev (tcEraseSites tc))
-    (if (vecIsNull ev)
-      0
-      {
-        (let n (eraseCountFrom tc ev 0 0))
-        (if (== n 0)
-          0
-          {
-            (let entFound (restrictOwnEnt tc d))
-            (if (let (Some ent) entFound)
-              {
-                (vecPush (tcEraseCounts tc) (EraseCount :entry ent :count n))
-                0
-              }
-              0)
-          })
-      })
-  })
+  (if (let (Some ev) (tcEraseSites tc))
+    {
+      (let n (eraseCountFrom tc ev 0 0))
+      (if (== n 0)
+        0
+        {
+          (let entFound (restrictOwnEnt tc d))
+          (if (let (Some ent) entFound)
+            {
+              (vecPush (tcEraseCounts tc) (EraseCount :entry ent :count n))
+              0
+            }
+            0)
+        })
+    }
+    0))
 
 (pub :: eraseCountFrom (-> TC (Vec ASTNode) Int Int Int))
 (pub fn (eraseCountFrom tc sites i acc)
@@ -29236,24 +29210,21 @@
 ; the function, and is not pushed.
 (pub :: unsafeSinkNote (-> TC ASTNode BScope Int))
 (pub fn (unsafeSinkNote tc node bound)
-  {
-    (let sink (tcUnsafeSink tc))
-    (if (vecIsNull sink)
+  (if (let (Some sink) (tcUnsafeSink tc))
+    (if (== (bsIsLocal bound (nodeAName node)) 1)
       0
-      (if (== (bsIsLocal bound (nodeAName node)) 1)
-        0
-        {
-          (let entFound (findFnEnt tc (nodeAName node)))
-          (if (let (Some ent) entFound)
-            (if (== (fnEntIsEffectOp ent) 2)
-              {
-                (vecPush sink node)
-                0
-              }
-              0)
+      {
+        (let entFound (findFnEnt tc (nodeAName node)))
+        (if (let (Some ent) entFound)
+          (if (== (fnEntIsEffectOp ent) 2)
+            {
+              (vecPush sink node)
+              0
+            }
             0)
-        }))
-  })
+          0)
+      })
+    0))
 
 ; The AXTAGs on the `(:: name ...)` signature for `name`, or 0.
 ;
@@ -29277,14 +29248,20 @@
   ; and walking it as a Vec walks `tc` - a segfault that printed OK
   ; on small files and died at 139 emitting the compiler.
   {
-    (if (vecIsNull (tcSigTags tc))
-      (tcSetSigTags tc (sigTagsBuild (tcAllDeclsVec tc) vecNew 0)))
-    (as (sigAxtagsFrom (tcSigTags tc) name 0) (Vec Int))
+    (let table
+      (if (let (Some cached) (tcSigTags tc))
+        cached
+        {
+          (let built (sigTagsBuild (tcAllDeclsVec tc) vecNew 0))
+          (tcSetSigTags tc (Some built))
+          built
+        }))
+    (as (sigAxtagsFrom table name 0) (Vec Int))
   })
 
 ; One pass over the declaration list, keeping only the signatures that
-; carry an AXTAG. An empty Vec is a real handle, so "built and empty"
-; and "not built" are distinguishable and the pass runs once.
+; carry an AXTAG. None is unbuilt and Some empty is built with no tags,
+; so the pass runs once even when no declaration carries a tag.
 ; The replacement text a `;@axiom:deprecated(...)` names, or "" when
 ; `name` is not deprecated.
 ;
@@ -29323,9 +29300,15 @@
 (pub :: deprecatedFor (-> TC String String))
 (pub fn (deprecatedFor tc name)
   {
-    (if (vecIsNull (tcDeprecated tc))
-      (tcSetDeprecated tc (deprecatedBuild (tcAllDeclsVec tc) vecNew 0)))
-    (deprecatedFrom (tcDeprecated tc) name 0)
+    (let table
+      (if (let (Some cached) (tcDeprecated tc))
+        cached
+        {
+          (let built (deprecatedBuild (tcAllDeclsVec tc) vecNew 0))
+          (tcSetDeprecated tc (Some built))
+          built
+        }))
+    (deprecatedFrom table name 0)
   })
 
 ; One pass over the declaration list, keeping the declarations that
@@ -30901,7 +30884,7 @@
           (set state.unsignedParams (if (&& (== (nodeTag sigTy) TAG_T_VAR)
                                           (strStartsWith (nodeAName sigTy) "_fn_"))
             ptys
-            nilNodes))
+            vecNew))
           ; A LAMBDA BODY IS CHECKED AGAINST THE DECLARED RESULT, for the
           ; reason `checkHandler` gives one line for one: `bindLamParams`
           ; binds every parameter to a FRESH TYPE VARIABLE, and
@@ -30992,7 +30975,7 @@
                     ())
                   ())
                 (scopeTrunc (tcScopeVec tc) base)
-                (set state.unsignedParams nilNodes)
+                (set state.unsignedParams vecNew)
                 ; Every pin this body makes has been made.
                 (evSettle tc)
                 (tcSetCurModule tc None)
