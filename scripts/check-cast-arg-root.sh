@@ -270,13 +270,18 @@ echo "--- 1. user-level cast count does not grow ---"
 # through one private erasure in emitter-line-buffer.py's probeCount.
 # Its subject is the reference count itself, which a safe view cannot read:
 # the MM-VAL-23 reason for this one additional test-only cast.
+# Typed compiler probes add ten occurrences: the effect-registry bridge
+# passes its live module-name owner across the remaining CG word boundary.
+# Nine numeric conversions exercise UInt8 format radix payloads and their
+# invalid-value controls, including emitted source. None forges a reference;
+# these are MM-VAL-23 compiler-boundary and numeric-conversion subjects.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1260 ]; then
-  ok "user-level (cast count $cast_count <= 1260)"
+elif [ "$cast_count" -le 1270 ]; then
+  ok "user-level (cast count $cast_count <= 1270)"
 else
-  bad "user-level (cast count $cast_count > 1260): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1270): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -447,8 +452,10 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # mirEmitInsts' three; the typed operand table introduces none.
 # Typed records and string vectors in the driver, REPL, highlighter,
 # history, completion, AXIR and nolint modules leave 666; the LSP's
-# typed navigation, highlight and lint records leave 646.
-erasure_pin=646
+# typed navigation, highlight and lint records leave 646. Typed scopes,
+# constructor/signature tables and namespace owners remove another 91
+# reference erasures, leaving 555.
+erasure_pin=555
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
