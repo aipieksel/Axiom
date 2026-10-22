@@ -1,0 +1,76 @@
+; expect 42
+; Positional metadata is None. Named metadata stays Some even when
+; empty, while matching and field agreement keep their diagnostics.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: constructorNameContext (-> String TC))
+(fn (constructorNameContext source)
+  {
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "constructor-names.ax" :src source :name "" :imports vecNew :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: namedCountIs (-> (Option Names) Int Bool))
+(fn (namedCountIs names count)
+  (match names
+    ((None) false)
+    ((Some fields) (== (vecLen fields) count))))
+
+(:: constructorMetadataChecks Bool)
+(fn (constructorMetadataChecks)
+  {
+    (let parsed
+      (constructorNameContext
+        "(pub data Cases (Positional Int) (Named { value : Int }) (EmptyNamed {}) (EmptyPositional))\n"))
+    (let nodes (nodeBChildren (vecGet parsed.allDecls 0)))
+    (let entries vecNew)
+    (tcCollectCtors nodes (mkTCon "Cases" vecNew) entries 0)
+    (let emptyIndex (dataFirstDeclIdx vecNew "value" 0))
+    (let foundIndex
+      (match (dataFirstDeclIdx entries "value" 0)
+        ((None) false)
+        ((Some index) (== index 0))))
+    (&& (== (vecLen entries) 4)
+      (&& (isNone (nodeFieldNamesOpt (vecGet nodes 0)))
+        (&& (namedCountIs (nodeFieldNamesOpt (vecGet nodes 2)) 0)
+          (&& (isNone (ctorEntFieldNames (vecGet entries 0)))
+            (&& (namedCountIs (ctorEntFieldNames (vecGet entries 1)) 1)
+              (&& (namedCountIs (ctorEntFieldNames (vecGet entries 2)) 0)
+                (&& (isNone (ctorEntFieldNames (vecGet entries 3)))
+                  (&& (isNone emptyIndex)
+                    (&& foundIndex (isNone (dataFirstDeclIdx entries "missing" 0)))))))))))
+  })
+
+(:: namedPatternChecks Bool)
+(fn (namedPatternChecks)
+  {
+    (let goodSource
+      "(pub data One (Named { value : Int }))\n(:: get (-> One Int))\n(pub fn (get item) (match item ((Named { value = value }) value)))\n(:: main Int)\n(pub fn (main) (get (Named 42)))\n")
+    (let badSource
+      "(pub data One (Named { value : Int }))\n(:: get (-> One Int))\n(pub fn (get item) (match item ((Named { missing = _ }) 0)))\n(:: main Int)\n(pub fn (main) 42)\n")
+    (let good (constructorNameContext goodSource))
+    (let bad (constructorNameContext badSource))
+    (let goodChecked (checkModuleTcTyped good.allDecls good.allDecls good.units))
+    (let badChecked (checkModuleTcTyped bad.allDecls bad.allDecls bad.units))
+    (if (&& (== (countErrorDiags (tcOutVec goodChecked)) 0)
+          (== (countErrorDiags (tcOutVec badChecked)) 1))
+      (strEq (diagCode (vecGet (tcOutVec badChecked) 0)) "AX3007")
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (constructorMetadataChecks)
+    (if (namedPatternChecks)
+      42
+      2)
+    1))

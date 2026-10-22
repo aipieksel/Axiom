@@ -2,6 +2,7 @@
 """Check typed registry lookup and refusal with the selected compiler."""
 import argparse
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -44,13 +45,10 @@ def field_negative_control(compiler, repo, env, work):
         if source.is_file() and source.name != "typecheck.ax":
             (overlay / source.name).symlink_to(source)
     source = (repo / "core/typecheck.ax").read_text()
-    old = """                (Some
-                  (if (< j (vecLen tys))
-                    (vecGet tys j)
-                    mkTErr))"""
-    if source.count(old) != 1:
+    pattern = re.compile(r"(\(Some\s+\(if \(< j \(vecLen tys\)\)\s+\(vecGet tys j\)\s+)mkTErr(\)\))")
+    if len(pattern.findall(source)) != 1:
         raise SystemExit("field poison control no longer matches its single implementation site")
-    (overlay / "typecheck.ax").write_text(source.replace(old, old.replace("mkTErr", "mkSilentWild")))
+    (overlay / "typecheck.ax").write_text(pattern.sub(lambda m: m[1] + "mkSilentWild" + m[2], source))
     executable = work / "field-negative"
     built = subprocess.run(
         [str(compiler), "--diagnostic-format=ai", "build",
@@ -127,6 +125,36 @@ def current_decl_negative_control(compiler, repo, env, work):
     print("declaration stamp negative control rejected the discarded Some payload (status 2)")
 
 
+def constructor_name_negative_control(compiler, repo, env, work):
+    """Prove that a named empty variant cannot be collapsed to positional."""
+    overlay = work / "negative-constructor-name-core"
+    overlay.mkdir()
+    for source in (repo / "core").iterdir():
+        if source.is_file() and source.name != "parser.ax":
+            (overlay / source.name).symlink_to(source)
+    source = (repo / "core/parser.ax").read_text()
+    old = "(Some (nodeFieldNamesNames node))"
+    if source.count(old) != 1:
+        raise SystemExit("constructor metadata control no longer matches its single boundary site")
+    changed = """(let names (nodeFieldNamesNames node))"""
+    # Keep the binding within an expression block; only the empty case changes.
+    changed = "{ " + changed + " (if (== (vecLen names) 0) None (Some names)) }"
+    (overlay / "parser.ax").write_text(source.replace(old, changed))
+    executable = work / "constructor-name-negative"
+    built = subprocess.run(
+        [str(compiler), "--diagnostic-format=ai", "build",
+         str(repo / "tests/selfhost/typecheck-constructor-name-options.ax"),
+         "--opt", "0", "--output", str(executable)],
+        env=dict(env, AXIOM_PATH=str(overlay)), capture_output=True, text=True,
+    )
+    if built.returncode:
+        raise SystemExit(built.stdout + built.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    if ran.returncode != 1 or ran.stdout or ran.stderr:
+        raise SystemExit(f"constructor metadata control: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+    print("constructor metadata negative control rejected Some-empty collapse (status 1)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
@@ -140,6 +168,7 @@ def main():
         "typecheck-function-registry.ax", "typecheck-private-state.ax",
         "typecheck-witness-options.ax", "typecheck-field-options.ax",
         "typecheck-collector-options.ax", "typecheck-current-decl-options.ax",
+        "typecheck-constructor-name-options.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
@@ -150,6 +179,7 @@ def main():
         ("typecheck-field-exhaustive.axp", "AX3005", ("None",)),
         ("typecheck-collector-refusal.axp", "AX3004", ("Option", "Int")),
         ("typecheck-current-decl-refusal.axp", "AX3004", ("Option", "Int")),
+        ("typecheck-constructor-name-refusal.axp", "AX3004", ("Option", "Vec")),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -180,6 +210,7 @@ def main():
             field_negative_control(compiler, repo, env, Path(work))
             collector_negative_control(compiler, repo, env, Path(work))
             current_decl_negative_control(compiler, repo, env, Path(work))
+            constructor_name_negative_control(compiler, repo, env, Path(work))
     print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 

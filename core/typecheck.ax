@@ -3080,15 +3080,15 @@
 ; its result comes from. 0 until `rgnEnsureFacts` has run, which it
 ; does only for a program that names a region or claims
 ; `restrict(no-escape)` - every other program never allocates one.
-; `fieldNames` is the constructor's declared field names when it was
-; written as a struct variant, and 0 otherwise. A NAMED pattern is
+; `fieldNames` is Some declared names for a struct variant (including
+; an empty named variant), and None for a positional constructor. A NAMED pattern is
 ; reordered against it.
 (pub struct CtorEnt
   (name : String)
   (fieldTys : (Vec ASTNode))
   (resTy : ASTNode)
   (ctorTy : ASTNode)
-  (fieldNames : Names))
+  (fieldNames : (Option Names)))
 
 ; `module` is Some declaring module, or None for the entry file and
 ; builtins. It exists so a QUALIFIED reference can be
@@ -3168,7 +3168,7 @@
 (pub fn (ctorEntResTy ent)
   ent.resTy)
 
-(pub :: ctorEntFieldNames (-> CtorEnt Names))
+(pub :: ctorEntFieldNames (-> CtorEnt (Option Names)))
 (pub fn (ctorEntFieldNames ent)
   ent.fieldNames)
 
@@ -5064,14 +5064,9 @@
                 }
               :resTy optRes
               :ctorTy (mkTArr (mkTVar "a") optRes)
-              :fieldNames nilNames))
+              :fieldNames None))
           (vecPush optCtors
-            (CtorEnt
-              :name "None"
-              :fieldTys vecNew
-              :resTy optRes
-              :ctorTy optRes
-              :fieldNames nilNames))
+            (CtorEnt :name "None" :fieldTys vecNew :resTy optRes :ctorTy optRes :fieldNames None))
           (vecPush datas (DataEnt :name "Option" :ctors optCtors :module None :arity 1))
           ; `Vec`, ABSTRACT AND PARAMETERISED. No constructors: a `Vec`
           ; is made by `vecNew` and read by `vecGet`, never matched, so
@@ -5874,7 +5869,7 @@
               :fieldTys fieldTys
               :resTy resTy
               :ctorTy (ctorArrowOf fieldTys resTy (- (vecLen fieldTys) 1))
-              :fieldNames (nodeFieldNamesNames c)))
+              :fieldNames (nodeFieldNamesOpt c)))
           (tcCollectCtors ctorNodes resTy acc (+ i 1))
         }
       }
@@ -22987,38 +22982,32 @@
 ; (`findDataField`), so any disagreement loads another
 ; constructor's slot, or a word past a shorter block.
 ; `dataAgreedFieldTy` answers the field's declared type when that
-; holds, else 0. Type agreement compares renderings, which observe
+; holds, else None. Type agreement compares renderings, which observe
 ; without unifying: `tyCompat` would pin where this must only look.
 (pub :: dataAgreedFieldTy (-> (Vec CtorEnt) String (Option ASTNode)))
 (pub fn (dataAgreedFieldTy ctors fname)
-  {
-    (let idx (dataFirstDeclIdx ctors fname 0))
-    (if (< idx 0)
-      None
-      (if (let (Some ty0) (dataFieldTyInCtors ctors fname 0))
-        (if (== (dataCtorsAgree ctors fname 0 idx ty0) 1)
-          (Some ty0)
-          None)
-        None))
-  })
+  (if (let (Some idx) (dataFirstDeclIdx ctors fname 0))
+    (if (let (Some ty0) (dataFieldTyInCtors ctors fname 0))
+      (if (== (dataCtorsAgree ctors fname 0 idx ty0) 1)
+        (Some ty0)
+        None)
+      None)
+    None))
 
 ; The declared index of fname in the first constructor that declares
-; it, else -1.
-(pub :: dataFirstDeclIdx (-> (Vec CtorEnt) String Int Int))
+; it, or None when no constructor declares the field.
+(pub :: dataFirstDeclIdx (-> (Vec CtorEnt) String Int (Option Int)))
 (pub fn (dataFirstDeclIdx ctors fname i)
   (if (>= i (vecLen ctors))
-    (- 0 1)
-    {
-      (let declared (ctorEntFieldNames (vecGet ctors i)))
-      (if (== (as declared Int) 0)
-        (dataFirstDeclIdx ctors fname (+ i 1))
-        {
-          (let j (declaredFieldIndex declared fname 0))
-          (if (< j 0)
-            (dataFirstDeclIdx ctors fname (+ i 1))
-            j)
-        })
-    }))
+    None
+    (if (let (Some declared) (ctorEntFieldNames (vecGet ctors i)))
+      {
+        (let j (declaredFieldIndex declared fname 0))
+        (if (< j 0)
+          (dataFirstDeclIdx ctors fname (+ i 1))
+          (Some j))
+      }
+      (dataFirstDeclIdx ctors fname (+ i 1)))))
 
 ; 1 when every constructor declares fname at index idx with a type
 ; rendering equal to ty0's, else 0. A constructor with no declared
@@ -23027,24 +23016,21 @@
 (pub fn (dataCtorsAgree ctors fname i idx ty0)
   (if (>= i (vecLen ctors))
     1
-    {
-      (let declared (ctorEntFieldNames (vecGet ctors i)))
-      (if (== (as declared Int) 0)
-        0
-        {
-          (let j (declaredFieldIndex declared fname 0))
-          (if (!= j idx)
-            0
-            {
-              (let tys (ctorEntFieldTys (vecGet ctors i)))
-              (if (>= j (vecLen tys))
-                0
-                (if (strEq (tyRender (vecGet tys j)) (tyRender ty0))
-                  (dataCtorsAgree ctors fname (+ i 1) idx ty0)
-                  0))
-            })
-        })
-    }))
+    (if (let (Some declared) (ctorEntFieldNames (vecGet ctors i)))
+      {
+        (let j (declaredFieldIndex declared fname 0))
+        (if (!= j idx)
+          0
+          {
+            (let tys (ctorEntFieldTys (vecGet ctors i)))
+            (if (>= j (vecLen tys))
+              0
+              (if (strEq (tyRender (vecGet tys j)) (tyRender ty0))
+                (dataCtorsAgree ctors fname (+ i 1) idx ty0)
+                0))
+          })
+      }
+      0)))
 
 (pub :: emitFieldOnMixed (-> TC String String Int Int))
 (pub fn (emitFieldOnMixed tc fname tyname span)
@@ -23099,23 +23085,20 @@
     None
     {
       (let c (vecGet ctors i))
-      {
-        (let declared c.fieldNames)
-        (if (== (as declared Int) 0)
-          (dataFieldTyInCtors ctors fname (+ i 1))
-          {
-            (let j (declaredFieldIndex declared fname 0))
-            (if (< j 0)
-              (dataFieldTyInCtors ctors fname (+ i 1))
-              {
-                (let tys c.fieldTys)
-                (Some
-                  (if (< j (vecLen tys))
-                    (vecGet tys j)
-                    mkTErr))
-              })
-          })
-      }
+      (if (let (Some declared) c.fieldNames)
+        {
+          (let j (declaredFieldIndex declared fname 0))
+          (if (< j 0)
+            (dataFieldTyInCtors ctors fname (+ i 1))
+            {
+              (let tys c.fieldTys)
+              (Some
+                (if (< j (vecLen tys))
+                  (vecGet tys j)
+                  mkTErr))
+            })
+        }
+        (dataFieldTyInCtors ctors fname (+ i 1)))
     }))
 
 (pub :: declaredFieldIndex (-> Names String Int Int))
@@ -24260,20 +24243,14 @@
     (if (== tag TAG_E_APP)
       (spineArgVec pat vecNew)
       (if (== tag TAG_P_CONNAMED)
-        {
-          (let ctorFound (findCtor tc (nodeAName pat)))
-          (if (let (Some ctor) ctorFound)
-            {
-              (let declared ctor.fieldNames)
-              (if (== (as declared Int) 0)
-                vecNew
-                (spineArgVec
-                  (namedPatSpine (nodeAName pat) declared (nodeBChildren pat) (nodeCChildren pat)
-                    (nodeSpan pat))
-                  vecNew))
-            }
+        (if (let (Some ctor) (findCtor tc (nodeAName pat)))
+          (if (let (Some declared) ctor.fieldNames)
+            (spineArgVec
+              (namedPatSpine (nodeAName pat) declared (nodeBChildren pat) (nodeCChildren pat)
+                (nodeSpan pat))
+              vecNew)
             vecNew)
-        }
+          vecNew)
         vecNew))
   })
 
@@ -25249,14 +25226,14 @@
                   (let declared ctor.fieldNames)
                   {
                     (checkNamedPatFields tc (nodeBChildren pat) declared (bareOf (nodeAName pat)) 0)
-                    (if (== (as declared Int) 0)
-                      0
+                    (if (let (Some fields) declared)
                       (checkCtorPattern tc (nodeAName pat)
                         (spineArgVec
-                          (namedPatSpine (nodeAName pat) declared (nodeBChildren pat)
+                          (namedPatSpine (nodeAName pat) fields (nodeBChildren pat)
                             (nodeCChildren pat) (nodeSpan pat))
                           vecNew)
-                        (nodeSpan pat) fitTy scrutTy))
+                        (nodeSpan pat) fitTy scrutTy)
+                      0)
                   }
                 }
                 (checkCtorPattern tc (nodeAName pat) vecNew (nodeSpan pat) fitTy scrutTy))
@@ -25344,14 +25321,17 @@
 
 ; Each field the pattern names must be declared. AX3007's message and
 ; help are the field-access ones, byte for byte.
-(pub :: checkNamedPatFields (-> TC Nodes Names String Int Int))
+(pub :: checkNamedPatFields (-> TC Nodes (Option Names) String Int Int))
 (pub fn (checkNamedPatFields tc names declared tyName i)
   (if (>= i (vecLen names))
     0
     {
       {
         (let nm (vecGet names i))
-        (if (! (== (declaredHasField declared (nodeAName nm)) 1))
+        (if (!
+              (match declared
+                ((None) false)
+                ((Some fields) (== (declaredHasField fields (nodeAName nm)) 1))))
           (emitFieldNotFound tc (nodeAName nm) tyName (nodeSpan nm)))
       }
       (checkNamedPatFields tc names declared tyName (+ i 1))
