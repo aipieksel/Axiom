@@ -1684,14 +1684,193 @@
   (flags : Ints)
   (sigTy : ASTNode)
   (takesEv : Int)
-  (owned : Int)
-  (arity : Int)
-  (stash : Int)
-  (ret : Int)
-  (consume : Int)
-  (transfer : Int)
-  (callers : Int)
-  (writes : Int))
+  (mut owned : Int)
+  (mut arity : Int)
+  (mut stash : Int)
+  (mut ret : Int)
+  (mut consume : Int)
+  (mut transfer : Int)
+  (mut callers : Int)
+  (mut writes : Int))
+
+; A signature travels as its address. The reads below are field loads,
+; so every later store is a field store too: a raw word store is not
+; one, and the load would keep answering the value from construction.
+(:: fsigName (-> Int String))
+;@axiom:effect(unsafe)
+(fn (fsigName e)
+  {
+    (let s (as e FSig))
+    s.name
+  })
+
+(:: fsigNameLen (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigNameLen e)
+  {
+    (let s (as e FSig))
+    s.nameLen
+  })
+
+(:: fsigFlags (-> Int Ints))
+;@axiom:effect(unsafe)
+(fn (fsigFlags e)
+  {
+    (let s (as e FSig))
+    s.flags
+  })
+
+(:: fsigTy (-> Int ASTNode))
+;@axiom:effect(unsafe)
+(fn (fsigTy e)
+  {
+    (let s (as e FSig))
+    s.sigTy
+  })
+
+(:: fsigTakesEv (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigTakesEv e)
+  {
+    (let s (as e FSig))
+    s.takesEv
+  })
+
+(:: fsigOwned (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigOwned e)
+  {
+    (let s (as e FSig))
+    s.owned
+  })
+
+(:: fsigSetOwned (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetOwned e v)
+  {
+    (let s (as e FSig))
+    (set s.owned v)
+    e
+  })
+
+(:: fsigArity (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigArity e)
+  {
+    (let s (as e FSig))
+    s.arity
+  })
+
+(:: fsigSetArity (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetArity e v)
+  {
+    (let s (as e FSig))
+    (set s.arity v)
+    e
+  })
+
+(:: fsigStash (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigStash e)
+  {
+    (let s (as e FSig))
+    s.stash
+  })
+
+(:: fsigSetStash (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetStash e v)
+  {
+    (let s (as e FSig))
+    (set s.stash v)
+    e
+  })
+
+(:: fsigRet (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigRet e)
+  {
+    (let s (as e FSig))
+    s.ret
+  })
+
+(:: fsigSetRet (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetRet e v)
+  {
+    (let s (as e FSig))
+    (set s.ret v)
+    e
+  })
+
+(:: fsigConsume (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigConsume e)
+  {
+    (let s (as e FSig))
+    s.consume
+  })
+
+(:: fsigSetConsume (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetConsume e v)
+  {
+    (let s (as e FSig))
+    (set s.consume v)
+    e
+  })
+
+(:: fsigTransferOf (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigTransferOf e)
+  {
+    (let s (as e FSig))
+    s.transfer
+  })
+
+(:: fsigSetTransfer (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetTransfer e v)
+  {
+    (let s (as e FSig))
+    (set s.transfer v)
+    e
+  })
+
+(:: fsigCallers (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigCallers e)
+  {
+    (let s (as e FSig))
+    s.callers
+  })
+
+(:: fsigSetCallers (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetCallers e v)
+  {
+    (let s (as e FSig))
+    (set s.callers v)
+    e
+  })
+
+(:: fsigWrites (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigWrites e)
+  {
+    (let s (as e FSig))
+    s.writes
+  })
+
+(:: fsigSetWrites (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (fsigSetWrites e v)
+  {
+    (let s (as e FSig))
+    (set s.writes v)
+    e
+  })
 
 ; Word 10 of an FSig: 1 when the declaration carries
 ; `;@axiom:result(owned)` (MM-LIFE-2n), so a call's type-variable
@@ -1704,7 +1883,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       0
-      (memGetWord e 10))
+      (fsigTransferOf e))
   })
 
 ; Word 11 of an FSig: how many distinct declarations the caller
@@ -1726,7 +1905,7 @@
             {
               (let e (findFSig sigs (nodeAName d)))
               (if (! (== e 0))
-                (memSetWord e 10 1))
+                (fsigSetTransfer e 1))
             }))
         (markTransferSigs decls sigs (+ i 1))
       }
@@ -1813,7 +1992,7 @@
     0
     {
       (let e (vecGet sigs i))
-      (if (&& (== (memGetWord e 1) nl) (strEq (memGetWordStr e 0) name))
+      (if (&& (== (fsigNameLen e) nl) (strEq (fsigName e) name))
         e
         (findFSigIn sigs name nl (+ i 1)))
     }))
@@ -1885,7 +2064,7 @@
             {
               (let e (vecGet sigs i))
               {
-                (let id (internIntern si (memGetWordStr e 0)))
+                (let id (internIntern si (fsigName e)))
                 (if (== id (vecLen byId))
                   (vecPush byId e)
                   (as 0 (Vec Int)))
@@ -2185,7 +2364,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       (- 0 1)
-      (memGetWord e 6))
+      (fsigArity e))
   })
 
 ; ------------------------------------------------------------------
@@ -2454,7 +2633,7 @@
         (let mut k 0)
         (while (< k (vecLen byId))
           {
-            (memSetWord (vecGet byId k) 11 (vecLen (vecGetVec rows k)))
+            (fsigSetCallers (vecGet byId k) (vecLen (vecGetVec rows k)))
             (set k (+ k 1))
           })
       }
@@ -2469,7 +2648,7 @@
 (pub fn (cgMarkCallers cg rows marks next d)
   {
     (let e (findFSigCg cg (nodeAName d)))
-    (if (|| (== e 0) (== (memGetWord e 11) 0))
+    (if (|| (== e 0) (== (fsigCallers e) 0))
       0
       {
         (let id (fsigIdCg cg (nodeAName d)))
@@ -2558,17 +2737,17 @@
       (let _m (cgSetModule cg (nodeModule d)))
       (let _d (cgSetCurDecl cg d))
       (let e (findFSigCg cg (nodeAName d)))
-      (if (|| (== e 0) (== (memGetWord e 5) 0))
+      (if (|| (== e 0) (== (fsigOwned e) 0))
         0
         (if (==
               {
-                (let _a (memSetWord e 6 (vecLen (nodeBNames d))))
+                (let _a (fsigSetArity e (vecLen (nodeBNames d))))
                 (tailOwned cg (nodeCChild d) (nodeBNames d) vecNew)
               }
               1)
           0
           {
-            (memSetWord e 5 0)
+            (fsigSetOwned e 0)
             1
           }))
     }))
@@ -2593,7 +2772,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       0
-      (memGetWord e 5))
+      (fsigOwned e))
   })
 
 ; Is every value `e` can answer owned? `params` are the enclosing
@@ -3022,21 +3201,20 @@
             {
               (let st0 (| (regionNet cell) (tyvarSlotsMask cg e d)))
               {
-                (let st (| (memGetWord e 7) (| st0 (arrivalToWord st0))))
+                (let st (| (fsigStash e) (| st0 (arrivalToWord st0))))
                 (let rt
                   (if (== (fsigResultIsWord cg e) 1)
                     0
-                    (| (memGetWord e 8) (flowMask cg (nodeCChild d) (nodeBNames d) vecNew))))
+                    (| (fsigRet e) (flowMask cg (nodeCChild d) (nodeBNames d) vecNew))))
                 (let _z (mutMemoClose cg))
                 (let co0 (& (memGetWord cell 3) (^ (memGetWord cell 1) (- 0 1))))
-                (let co (| (memGetWord e 9) (| co0 (arrivalToWord co0))))
-                (if (&& (== st (memGetWord e 7))
-                      (&& (== rt (memGetWord e 8)) (== co (memGetWord e 9))))
+                (let co (| (fsigConsume e) (| co0 (arrivalToWord co0))))
+                (if (&& (== st (fsigStash e)) (&& (== rt (fsigRet e)) (== co (fsigConsume e))))
                   0
                   {
-                    (memSetWord e 7 st)
-                    (memSetWord e 8 rt)
-                    (memSetWord e 9 co)
+                    (fsigSetStash e st)
+                    (fsigSetRet e rt)
+                    (fsigSetConsume e co)
                     1
                   })
               }
@@ -3070,7 +3248,7 @@
 ;@axiom:effect(unsafe)
 (pub fn (fsigResultIsWord cg e)
   {
-    (let res (fnDeclaredResultTy (readAstNode e 3) (memGetWord e 6)))
+    (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
     (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_CON))
       0
       {
@@ -3094,7 +3272,7 @@
 (pub :: tyvarSlotsMask (-> Int Int ASTNode Int))
 (pub fn (tyvarSlotsMask cg e d)
   (if (== (tailCallsSelf (nodeCChild d) (bareOf (nodeAName d)) (vecLen (nodeBNames d))) 1)
-    (tyvarSlotsFrom cg (readAstNode e 3) (vecLen (nodeBNames d)) 0)
+    (tyvarSlotsFrom cg (fsigTy e) (vecLen (nodeBNames d)) 0)
     0))
 
 (pub :: tyvarSlotsFrom (-> Int ASTNode Int Int Int))
@@ -3241,7 +3419,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       0
-      (memGetWord e 7))
+      (fsigStash e))
   })
 
 (pub :: fnRetMask (-> Int String Int))
@@ -3250,7 +3428,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       0
-      (memGetWord e 8))
+      (fsigRet e))
   })
 
 ; The RET mask of `name` as the call `e` reads it. A type-variable
@@ -3292,7 +3470,7 @@
         {
           (while (&& (< i n) (< i 19))
             {
-              (if (== (fldClass cg (arrowParamTy (readAstNode e 3) i)) 2)
+              (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 2)
                 (set m (| m (ownerBit i))))
               (set i (+ i 1))
             })
@@ -3319,7 +3497,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       0
-      (memGetWord e 9))
+      (fsigConsume e))
   })
 
 ; The mask of parameters whose reference may be (part of) `e`'s
@@ -3485,7 +3663,7 @@
             (let e (findFSigCg cg (nodeAName d)))
             (if (== e 0)
               (paramBit i)
-              (if (== (fldClass cg (arrowParamTy (readAstNode e 3) i)) 0)
+              (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 0)
                 (| (wordBit i) (ownerBit i))
                 (paramBit i)))
           }))
@@ -4622,7 +4800,7 @@
             (if (== e 0)
               0
               {
-                (let t (arrowParamTy (readAstNode e 3) i))
+                (let t (arrowParamTy (fsigTy e) i))
                 (if (nodeSame t nilNode)
                   0
                   (if (== (nodeTag t) TAG_T_CON)
@@ -4648,7 +4826,7 @@
           (let e (findFSigCg cg (nodeAName d)))
           (if (== e 0)
             2
-            (fldClass cg (arrowParamTy (readAstNode e 3) i)))
+            (fldClass cg (arrowParamTy (fsigTy e) i)))
         }))
   })
 
@@ -4673,7 +4851,7 @@
     (if (== e 0)
       (- 0 1)
       {
-        (let res (fnDeclaredResultTy (readAstNode e 3) (memGetWord e 6)))
+        (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
         (if (nodeSame res nilNode)
           1
           (fldClass cg res))
@@ -4901,7 +5079,7 @@
     (let e (findFSigCg cg full))
     (if (== e 0)
       0
-      (memGetWord e 4))
+      (fsigTakesEv e))
   })
 
 ; A stamp is a function of the node alone: a macro-spliced argument
@@ -5260,7 +5438,7 @@
         (let entry (findFSigCg cg name))
         (if (== entry 0)
           (as 0 Ints)
-          (memGetWordVec entry 2))
+          (fsigFlags entry))
       }
     )))
 
@@ -14493,7 +14671,7 @@
     (let e (findFSigCg cg "__axiom_user_main"))
     (if (== e 0)
       0
-      (if (== (isResultIntErrorTy (readAstNode e 3)) 0)
+      (if (== (isResultIntErrorTy (fsigTy e)) 0)
         0
         {
           (let ee (findFSigCg cg (mainResultErrorText cg)))
@@ -14502,7 +14680,7 @@
             ; the rendering takes an `Error` and answers a `String` -
             ; anything else bearing the name is not this call
             {
-              (let ety (readAstNode ee 3))
+              (let ety (fsigTy ee))
               (if (!= (nodeTag ety) TAG_T_ARR)
                 0
                 (if (|| (== (isNamedConTy (nodeAChild ety) "Err$Error") 0)
@@ -19724,10 +19902,10 @@
     (let acc vecNew)
     (if (== e 0)
       acc
-      (if (== (memGetWord e 5) 1)
+      (if (== (fsigOwned e) 1)
         acc
         {
-          (let res (fnDeclaredResultTy (readAstNode e 3) (memGetWord e 6)))
+          (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
           (if (nodeSame res nilNode)
             acc
             (if (!= (fldClass cg res) 2)
@@ -19925,7 +20103,7 @@
           (let e (findFSigCg cg (nodeAName d)))
           (if (== e 0)
             0
-            (if (== (fldClass cg (arrowParamTy (readAstNode e 3) i)) 2)
+            (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 2)
               1
               0))
         })
@@ -19952,10 +20130,10 @@
           (let e (findFSigCg cg (nodeAName d)))
           (if (== e 0)
             (- 0 1)
-            (if (== (memGetWord e 4) 0)
+            (if (== (fsigTakesEv e) 0)
               (- 0 1)
               {
-                (let tn (arrowParamTy (readAstNode e 3) i))
+                (let tn (arrowParamTy (fsigTy e) i))
                 (if (nodeSame tn nilNode)
                   (- 0 1)
                   (if (!= (tyIsSrcVar tn) 1)
@@ -19963,7 +20141,7 @@
                     {
                       (let vars vecNew)
                       {
-                        (cgSigVarsInto (readAstNode e 3) vars)
+                        (cgSigVarsInto (fsigTy e) vars)
                         (strVecIdx vars (nodeAName tn))
                       }
                     }))
@@ -20176,7 +20354,7 @@
         (let e (findFSigCg cg (nodeAName d)))
         (if (== e 0)
           0
-          (memGetWord e 7))
+          (fsigStash e))
       })
   })
 
@@ -20190,7 +20368,7 @@
         (let e (findFSigCg cg (nodeAName d)))
         (if (== e 0)
           0
-          (memGetWord e 8))
+          (fsigRet e))
       })
   })
 
@@ -21870,7 +22048,7 @@
         (let e (findFSigCg cg (mangledForCg cg hn)))
         (if (== e 0)
           nilNode
-          (arrowResultTy (readAstNode e 3)))
+          (arrowResultTy (fsigTy e)))
       })
   })
 
@@ -27590,7 +27768,7 @@
     (let e (findFSigCg cg (mangledForCg cg name)))
     (if (== e 0)
       1
-      (memGetWord e 12))
+      (fsigWrites e))
   })
 
 ; The least fixed point of "may write" over the call graph: each
@@ -27614,7 +27792,7 @@
                 (let bound (writesBound (nodeCChild d) (nodeBNames d)))
                 (let names vecNew)
                 (if (writesIn cg (nodeCChild d) bound names 0)
-                  (memSetWord e 12 1))
+                  (fsigSetWrites e 1))
                 (vecPush sigs e)
                 (vecPush callees names)
               })
@@ -27624,9 +27802,9 @@
         {
           (set changed false)
           (for (e k) in sigs
-            (if (&& (== (memGetWord e 12) 0) (writesAnyCallee cg (vecGet callees k)))
+            (if (&& (== (fsigWrites e) 0) (writesAnyCallee cg (vecGet callees k)))
               {
-                (memSetWord e 12 1)
+                (fsigSetWrites e 1)
                 (set changed true)
               }))
         })
@@ -27652,7 +27830,7 @@
         (if (! hit)
           {
             (let e (findFSigCg cg n))
-            (if (|| (== e 0) (== (memGetWord e 12) 1))
+            (if (|| (== e 0) (== (fsigWrites e) 1))
               (set hit true))
           }))
       hit
@@ -27801,7 +27979,7 @@
                   (let sig (findFSigCg cg full))
                   ; surplus arguments call the closure the function
                   ; answers, which may do anything
-                  (if (|| (== sig 0) (> (spineArity e) (arrowArity (readAstNode sig 3))))
+                  (if (|| (== sig 0) (> (spineArity e) (arrowArity (fsigTy sig))))
                     true
                     {
                       (vecPush names full)
@@ -29388,7 +29566,7 @@
                   (let sig (findFSigCg cg full))
                   (if (== sig 0)
                     0
-                    (if (== (spineArgs e 0) (arrowArity (readAstNode sig 3)))
+                    (if (== (spineArgs e 0) (arrowArity (fsigTy sig)))
                       1
                       0))
                 })
@@ -29510,7 +29688,7 @@
     (let e (findFSigCg cg (nodeAName node)))
     (if (== e 0)
       nilNode
-      (arrowResultTy (readAstNode e 3)))
+      (arrowResultTy (fsigTy e)))
   })
 
 (pub :: pairFnOK (-> Int ASTNode Int))
@@ -29523,9 +29701,9 @@
         (let e (findFSigCg cg name))
         (if (== e 0)
           0
-          (if (!= (memGetWord e 4) 0)
+          (if (!= (fsigTakesEv e) 0)
             0
-            (if (== (pairRetOK cg (arrowResultTy (readAstNode e 3))) 0)
+            (if (== (pairRetOK cg (arrowResultTy (fsigTy e))) 0)
               0
               {
                 (let body (nodeCChild node))
@@ -30654,7 +30832,7 @@
               (if (|| (== e 0) (!= (spineArity valExpr) (fnArityCg cg n)))
                 0
                 {
-                  (let res (fnDeclaredResultTy (readAstNode e 3) (fnArityCg cg n)))
+                  (let res (fnDeclaredResultTy (fsigTy e) (fnArityCg cg n)))
                   (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_VAR))
                     0
                     {
@@ -30704,12 +30882,12 @@
         (- 0 1)
         {
           (let e (findFSigCg cg (nodeAName d)))
-          (if (|| (== e 0) (== (memGetWord e 4) 0))
+          (if (|| (== e 0) (== (fsigTakesEv e) 0))
             (- 0 1)
             {
               (let vars vecNew)
               {
-                (cgSigVarsInto (readAstNode e 3) vars)
+                (cgSigVarsInto (fsigTy e) vars)
                 (strVecIdx vars n)
               }
             })
@@ -33609,7 +33787,7 @@
                   (let sig (findFSigCg cg (mangledForCg cg n)))
                   (if (== sig 0)
                     false
-                    (dropFreeTy cg (fnDeclaredResultTy (readAstNode sig 3) (memGetWord sig 6)) 16))
+                    (dropFreeTy cg (fnDeclaredResultTy (fsigTy sig) (fsigArity sig)) 16))
                 })
             }
             false)
