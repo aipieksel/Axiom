@@ -1,0 +1,191 @@
+; Counted children and actual raw owner words need distinct escape summaries.
+(import Vec)
+(import IO)
+(import Fmt)
+(import Str)
+
+(struct Entry
+  (all : Bool)
+  (row : (Vec String)))
+
+(struct Owner
+  (names : (Vec String))
+  (entries : (Vec Entry)))
+
+(struct Holder
+  (owner : Owner))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: ownerOf (-> Holder Owner))
+(fn (ownerOf holder)
+  holder.owner)
+
+(:: readAll (-> Owner Bool))
+(fn (readAll owner)
+  true)
+
+(:: entryAt (-> (Vec Entry) String (Option Entry)))
+(fn (entryAt entries name)
+  {
+    (let mut found None)
+    (for entry in entries
+      (set found (Some entry)))
+    found
+  })
+
+(:: tailLoop (-> Holder ()))
+(fn (tailLoop holder)
+  {
+    (let owner (ownerOf holder))
+    (for name in owner.names
+      (if (let (Some entry) (entryAt owner.entries name))
+        ()
+        {
+          (vecPush owner.entries (Entry :all (readAll owner) :row vecNew))
+          ()
+        }))
+  })
+
+(:: unitAfterLoop (-> Holder ()))
+(fn (unitAfterLoop holder)
+  {
+    (let owner (ownerOf holder))
+    (for name in owner.names
+      ())
+    ()
+  })
+
+(:: scalarAfterLoop (-> Holder Int))
+(fn (scalarAfterLoop holder)
+  {
+    (let owner (ownerOf holder))
+    (for name in owner.names
+      ())
+    0
+  })
+
+(:: getterOnly (-> Holder Int))
+(fn (getterOnly holder)
+  {
+    (let owner (ownerOf holder))
+    0
+  })
+
+(:: wordAt (-> (Vec Entry) Int))
+;@axiom:effect(unsafe)
+(fn (wordAt entries)
+  (__load64 (__load64 (as entries Int) 2) 0))
+
+(:: rawStash (-> Holder ()))
+(fn (rawStash holder)
+  {
+    (let owner (ownerOf holder))
+    (for name in owner.names
+      {
+        (let parked (Some (wordAt owner.entries)))
+        ()
+      })
+  })
+
+(:: childAfterOwner (-> Bool (Option Entry)))
+(fn (childAfterOwner present)
+  {
+    (let entries vecNew)
+    (if present
+      (vecPush entries (Entry :all true :row vecNew))
+      entries)
+    (entryAt entries "child")
+  })
+
+(:: rowHas (-> (Vec String) String Int Bool))
+(fn (rowHas values value index)
+  (if (>= index (vecLen values))
+    false
+    (if (strEq (vecGet values index) value)
+      true
+      (rowHas values value (+ index 1)))))
+
+(:: mergeRow (-> (Vec String) (Vec String) Int Int))
+(fn (mergeRow acc src index)
+  (if (>= index (vecLen src))
+    0
+    {
+      (let rest (mergeRow acc src (+ index 1)))
+      (if (rowHas acc (vecGet src index) 0)
+        rest
+        {
+          (vecPush acc (vecGet src index))
+          1
+        })
+    }))
+
+(:: mergeEntriesLoop (-> Holder ()))
+(fn (mergeEntriesLoop holder)
+  {
+    (let owner (ownerOf holder))
+    (for item in owner.entries
+      (if (let (Some existing) (entryAt owner.entries "entry"))
+        {
+          (mergeRow existing.row item.row 0)
+          ()
+        }
+        ()))
+  })
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(unsafe)
+(fn (main)
+  {
+    (let owner (Owner :names vecNew :entries vecNew))
+    (let holder (Holder :owner owner))
+    (let before (count owner))
+    (getterOnly holder)
+    (say 1 (== (count owner) before))
+    (tailLoop holder)
+    (say 2 (== (count owner) before))
+    (unitAfterLoop holder)
+    (say 3 (== (count owner) before))
+    (scalarAfterLoop holder)
+    (say 4 (== (count owner) before))
+    (vecPush owner.names (strDup "missing"))
+    (tailLoop holder)
+    (say 5 (== (count owner) before))
+    (say 6 (== (vecLen owner.entries) 1))
+    (tailLoop holder)
+    (say 7 (== (count owner) before))
+    (say 8 (== (vecLen owner.entries) 1))
+    (say 9
+      (if (let (Some entry) (childAfterOwner true))
+        entry.all
+        false))
+    (say 10
+      (match (childAfterOwner false)
+        ((None) true)
+        ((Some _) false)))
+    (rawStash holder)
+    (say 11 (== (count owner) (+ before 1)))
+    ; Retire the explicit conservative keep measured above while its owner
+    ; is still held. This unsafe control never observes freed storage.
+    (if (== (count owner) (+ before 1))
+      (__release (as owner Int)))
+    (say 12 (== (count owner) before))
+    (let stored (vecGet owner.entries 0))
+    (vecPush stored.row (strDup "effect"))
+    (mergeEntriesLoop holder)
+    (say 13 (== (count owner) before))
+    0
+  })
