@@ -1433,42 +1433,36 @@
 ; values are a subset of its base type's, bounded by 1-2 Int expressions
 ; in the declaration's c slot (a Vec of EXPR nodes, not types).
 ;
-; The subtype declaration node for a type node, or 0.
-(pub :: tySubtypeDecl (-> TC ASTNode ASTNode))
+; The subtype declaration for a type node, or None when it is not a subtype.
+(pub :: tySubtypeDecl (-> TC ASTNode (Option ASTNode)))
 (pub fn (tySubtypeDecl tc name)
   (if (== (nodeTag name) TAG_T_CON)
     {
       (let n (nodeAName name))
       (tySubtypeDeclByName tc n 0 (vecLen (tcSubtypesVec tc)))
     }
-    nilNode))
+    None))
 
-(pub :: tySubtypeDeclByName (-> TC String Int Int ASTNode))
+(pub :: tySubtypeDeclByName (-> TC String Int Int (Option ASTNode)))
 (pub fn (tySubtypeDeclByName tc n i lim)
   (tyFindAnyVisSyntax tc TY_SUBTYPE n))
 
 ; Look up a type name in the subtype table and return its base type,
-; or 0 when the name is not a subtype.
-(pub :: tySubtypeBase (-> TC ASTNode ASTNode))
+; or None when the name is not a subtype.
+(pub :: tySubtypeBase (-> TC ASTNode (Option ASTNode)))
 (pub fn (tySubtypeBase tc name)
-  {
-    (let d (tySubtypeDecl tc name))
-    (if (nodeSame d nilNode)
-      nilNode
-      (nodeBChild d))
-  })
+  (if (let (Some declaration) (tySubtypeDecl tc name))
+    (Some (nodeBChild declaration))
+    None))
 
-; Return the bounds Vec handle (as Int) for a subtype type node,
-; or 0 when the type is not a known subtype. The Vec holds 1-2 EXPR
+; Return Some bounds for a known subtype, including an empty bounds vector.
+; None means the type is not a known subtype. The bounds hold expression
 ; nodes: (lower) or (lower upper).
-(pub :: tySubtypeBounds (-> TC ASTNode Nodes))
+(pub :: tySubtypeBounds (-> TC ASTNode (Option Nodes)))
 (pub fn (tySubtypeBounds tc name)
-  {
-    (let d (tySubtypeDecl tc name))
-    (if (nodeSame d nilNode)
-      nilNodes
-      (nodeCChildren d))
-  })
+  (if (let (Some declaration) (tySubtypeDecl tc name))
+    (Some (nodeCChildren declaration))
+    None))
 
 ; Walk a (possibly-subtype) type to its non-subtype base for uses
 ; that dispatch on the type's NAME (rendering, numeric ops): a
@@ -1479,9 +1473,9 @@
     nilNode
     {
       (let b (tySubtypeBase tc ty))
-      (if (nodeSame b nilNode)
-        ty
-        (showBaseOf tc b))
+      (if (let (Some b) b)
+        (showBaseOf tc b)
+        ty)
     }))
 
 ; Argument compatibility with subtypes, where `tyCompat` stays pure.
@@ -1505,8 +1499,8 @@
         (let expDecl (tySubtypeDecl tc expected))
         {
           (let actDecl (tySubtypeDecl tc actual))
-          (if (! (nodeSame expDecl nilNode))
-            (if (! (nodeSame actDecl nilNode))
+          (if (let (Some expDecl) expDecl)
+            (if (let (Some actDecl) actDecl)
               (if (nodeSame expDecl actDecl)
                 1
                 {
@@ -1524,7 +1518,7 @@
                   2
                   0)
               })
-            (if (! (nodeSame actDecl nilNode))
+            (if (let (Some actDecl) actDecl)
               (if (== (tyCompat tc (nodeBChild actDecl) expected) 1)
                 1
                 0)
@@ -1548,7 +1542,7 @@
         0))))
 
 ; Build a TAG_E_SUBCHECK node checking `value` against `targetTy`'s
-; range. `boundsH` is the bounds Vec handle from `tySubtypeBounds`
+; range. `boundsH` is the bounds vector from `tySubtypeBounds`
 ; (shared, never mutated). The ty slot carries the target subtype.
 (pub :: mkSubtypeCheckNode (-> ASTNode Nodes ASTNode Int ASTNode))
 (pub fn (mkSubtypeCheckNode value boundsH targetTy sp)
@@ -1588,14 +1582,14 @@
       bodyTy
       {
         (let bh (tySubtypeBounds tc resTy))
-        (if (vecIsNull bh)
-          bodyTy
+        (if (let (Some bh) bh)
           {
             (checkSubtypeBounds tc bh 0)
             (writeNodeChild d 3
               (mkSubtypeCheckNode (nodeCChild d) bh resTy (spanOf (nodeCChild d))))
             resTy
-          })
+          }
+          bodyTy)
       })))
 
 ; ------------------------------------------------------------------
@@ -6775,28 +6769,34 @@
       name
       {
         (let d (tyCanonicalDecl tc name))
-        (if (|| (nodeSame d nilNode) (== (nodeTag d) TAG_D_ALIAS))
-          name
-          (nominalName (nodeAName d) (nodeModuleOpt d)))
+        (if (let (Some d) d)
+          (if (== (nodeTag d) TAG_D_ALIAS)
+            name
+            (nominalName (nodeAName d) (nodeModuleOpt d)))
+          name)
       })))
 
 ; Public signatures can expose an opaque private type. When no visible
 ; declaration owns a written name, preserve the identity of a unique
 ; private declaration too. Several private candidates remain unresolved.
-(:: tyCanonicalDecl (-> TC String ASTNode))
+(:: tyCanonicalDecl (-> TC String (Option ASTNode)))
 (fn (tyCanonicalDecl tc name)
   {
     (let visible (tyFindSyntax tc TY_DECL name 0))
-    (if (! (nodeSame visible nilNode))
-      visible
+    (if (let (Some visible) visible)
+      (Some visible)
       {
         (let first (tyFindAnyVisFromSyntax tc TY_DECL name 0))
         (let last (tyFindAnyVisFromSyntax tc TY_DECL name 1))
-        (if (|| (! (nodeSame first last)) (nodeSame first nilNode))
-          nilNode
-          (if (&& (isSome (tcCurModule tc)) (isNone (nodeModuleOpt first)))
-            nilNode
-            first))
+        (if (let (Some first) first)
+          (if (let (Some last) last)
+            (if (! (nodeSame first last))
+              None
+              (if (&& (isSome (tcCurModule tc)) (isNone (nodeModuleOpt first)))
+                None
+                (Some first)))
+            None)
+          None)
       })
   })
 
@@ -7994,28 +7994,27 @@
 ; caret twice for `(-> Nope Nope)`, and this repository's rule for a
 ; shape it kept no span for is to say less rather than to mis-point.
 ; ------------------------------------------------------------------
-(pub :: tcAliasFind (-> TC String ASTNode))
+(pub :: tcAliasFind (-> TC String (Option ASTNode)))
 (pub fn (tcAliasFind tc name)
   (if (!= (as (typeKeywordCanon name) Int) 0)
-    nilNode
-    {
-      (let al (tyFindSyntax tc TY_ALIAS name 0))
-      (if (|| (nodeSame al nilNode) (isSome (modOf name)))
-        al
+    None
+    (if (let (Some alias) (tyFindSyntax tc TY_ALIAS name 0))
+      (if (isSome (modOf name))
+        (Some alias)
         {
           (let here (tcCurModule tc))
-          (let owner (nodeModuleOpt al))
+          (let owner (nodeModuleOpt alias))
           (if (== (typeModuleSame here owner) 1)
-            al
+            (Some alias)
             (if (== (typeNominalOwned tc name here 0) 1)
-              nilNode
+              None
               (if (isNone owner)
-                al
+                (Some alias)
                 (if (&& (isNone here) (== (typeNominalOwned tc name None 0) 1))
-                  nilNode
-                  al))))
+                  None
+                  (Some alias)))))
         })
-    }))
+      None)))
 
 ; Aliases share the type namespace with nominal types. The declaration
 ; vector is available before field expansion registers data and structs,
@@ -8190,7 +8189,7 @@
     {
       (let tg (nodeTag t))
       (if (== tg TAG_T_CON)
-        (if (|| (! (nodeSame (tcAliasFind tc (nodeAName t)) nilNode))
+        (if (|| (isSome (tcAliasFind tc (nodeAName t)))
               (! (strEq (tyNominalName tc (nodeAName t)) (nodeAName t))))
           1
           (tyHasAliasConVec tc (nodeBChildren t) 0))
@@ -8237,10 +8236,9 @@
           (let args (tyExpandAliasPathVec tc (nodeBChildren t) seen vecNew 0))
           (let al
             (if (== (tySourceAmbiguous tc (nodeAName t)) 1)
-              nilNode
+              None
               (tcAliasFind tc (nodeAName t))))
-          (if (nodeSame al nilNode)
-            (mkTCon (tyNominalName tc (nodeAName t)) args)
+          (if (let (Some al) al)
             (if (|| (== (aliasPathHas seen al 0) 1) (!= (vecLen args) (aliasParamCount al)))
               mkTErr
               {
@@ -8257,7 +8255,8 @@
                     }
                   }
                 }
-              }))
+              })
+            (mkTCon (tyNominalName tc (nodeAName t)) args))
         }
         (if (== tg TAG_T_ARR)
           (mkTArr (tyExpandAliasPath tc (nodeAChild t) seen)
@@ -8552,7 +8551,9 @@
       (if (== tg TAG_T_CON)
         {
           (let alias (tcAliasFind tc (nodeAName t)))
-          (if (&& (! (nodeSame alias nilNode)) (== (nodeTag (nodeBChild alias)) TAG_T_ERR))
+          (if (if (let (Some alias) alias)
+            (== (nodeTag (nodeBChild alias)) TAG_T_ERR)
+            false)
             nilNode
             {
               (let argCycle (aliasCycleVec tc (nodeBChildren t) seen 0))
@@ -8560,8 +8561,7 @@
                 argCycle
                 {
                   (let al (tcAliasFind tc (nodeAName t)))
-                  (if (nodeSame al nilNode)
-                    nilNode
+                  (if (let (Some al) al)
                     (if (== (aliasPathHas seen al 0) 1)
                       al
                       {
@@ -8578,7 +8578,8 @@
                             }
                           }
                         }
-                      }))
+                      })
+                    nilNode)
                 })
             })
         }
@@ -8660,7 +8661,7 @@
       (if (== tg TAG_T_CON)
         {
           (let arity
-            (if (&& aliasesOnly (nodeSame (tcAliasFind tc (nodeAName t)) nilNode))
+            (if (&& aliasesOnly (isNone (tcAliasFind tc (nodeAName t))))
               (- 0 1)
               (tyDeclaredArity tc (nodeAName t))))
           (if (&& (>= arity 0) (!= (vecLen (nodeBChildren t)) arity))
@@ -8723,7 +8724,7 @@
 (pub fn (tyDeclaredArity tc name)
   {
     (let al (tcAliasFind tc name))
-    (if (! (nodeSame al nilNode))
+    (if (let (Some al) al)
       (aliasParamCount al)
       {
         (let deFound (findDataAnyVis tc name))
@@ -8736,7 +8737,7 @@
                 0
                 (vecLen st.tyvars))
               (if (|| (!= (as (typeKeywordCanon name) Int) 0)
-                    (! (nodeSame (tyFindSyntax tc TY_SUBTYPE name 0) nilNode)))
+                    (isSome (tyFindSyntax tc TY_SUBTYPE name 0)))
                 0
                 (- 0 1)))
           })
@@ -13930,13 +13931,14 @@
         (if (== (nodeTag arg) TAG_E_INT)
           {
             (let bounds (tySubtypeBounds tc param))
-            (if (&& (! (vecIsNull bounds))
-                  (&& (> (vecLen bounds) 0)
-                    (&& (== (nodeTag (vecGet bounds 0)) TAG_E_INT)
-                      (|| (< (nodeA arg) (nodeA (vecGet bounds 0)))
-                        (&& (== (vecLen bounds) 2)
-                          (&& (== (nodeTag (vecGet bounds 1)) TAG_E_INT)
-                            (>= (nodeA arg) (nodeA (vecGet bounds 1)))))))))
+            (if (if (let (Some bounds) bounds)
+              (&& (> (vecLen bounds) 0)
+                (&& (== (nodeTag (vecGet bounds 0)) TAG_E_INT)
+                  (|| (< (nodeA arg) (nodeA (vecGet bounds 0)))
+                    (&& (== (vecLen bounds) 2)
+                      (&& (== (nodeTag (vecGet bounds 1)) TAG_E_INT)
+                        (>= (nodeA arg) (nodeA (vecGet bounds 1))))))))
+              false)
               (emitDiag tc
                 (diagSetLabel
                   (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf arg)
@@ -14228,7 +14230,7 @@
                                               (if (== act 2)
                                                 {
                                                   (let bh (tySubtypeBounds tc (nodeAChild funcTy)))
-                                                  (if (! (vecIsNull bh))
+                                                  (if (let (Some bh) bh)
                                                     {
                                                       (checkSubtypeBounds tc bh 0)
                                                       (writeNodeChild e 2
@@ -15818,7 +15820,7 @@
         ; pointer into memory Axiom never allocated and never walks.
         (if (== (evScalarName n) 1)
           0
-          (if (! (nodeSame (tySubtypeBase tc t) nilNode))
+          (if (isSome (tySubtypeBase tc t))
             0
             ; Ignoring visibility: a module's private struct is still a
             ; reference in the module that names it - `Map` is private to
@@ -16219,8 +16221,8 @@
                     (let subBase
                       (if (&& (! (nodeSame targetTy nilNode)) (== (nodeTag targetTy) TAG_T_CON))
                         (tySubtypeBase tc targetTy)
-                        nilNode))
-                    (if (nodeSame subBase nilNode)
+                        None))
+                    (if (isNone subBase)
                       {
                         ; 3 is a proof of a type-preserving cast, distinct
                         ; from a word answer (1) and region freshness (2).
@@ -16257,8 +16259,7 @@
                         targetTy
                         {
                           (let boundsH (tySubtypeBounds tc targetTy))
-                          (if (vecIsNull boundsH)
-                            targetTy
+                          (if (let (Some boundsH) boundsH)
                             (if (== (vecLen args) 2)
                               {
                                 (writeNodeWord e 0 TAG_E_SUBCHECK)
@@ -16280,7 +16281,8 @@
                                       (spanOf (vecGet args 1))))
                                   targetTy
                                 }
-                              }))
+                              })
+                            targetTy)
                         }))
                   }
                 }
@@ -34643,38 +34645,38 @@
   })
 
 ; Syntax lookup views are confined to the type index's tagged entry boundary.
-(:: tyFindSyntax (-> TC Int String Int ASTNode))
+(:: tyFindSyntax (-> TC Int String Int (Option ASTNode)))
 (fn (tyFindSyntax tc kind name last)
   (if (let (Some record) (tyFind tc kind name last))
     (match record.payload
-      ((TyAlias node) node)
-      ((TySubtype node) node)
-      ((TyDecl node) node)
-      ((TyStruct _) nilNode)
-      ((TyData _) nilNode)
-      ((TyCtor _ _) nilNode))
-    nilNode))
+      ((TyAlias node) (Some node))
+      ((TySubtype node) (Some node))
+      ((TyDecl node) (Some node))
+      ((TyStruct _) None)
+      ((TyData _) None)
+      ((TyCtor _ _) None))
+    None))
 
-(:: tyFindAnyVisSyntax (-> TC Int String ASTNode))
+(:: tyFindAnyVisSyntax (-> TC Int String (Option ASTNode)))
 (fn (tyFindAnyVisSyntax tc kind name)
   (if (let (Some record) (tyFindAnyVis tc kind name))
     (match record.payload
-      ((TyAlias node) node)
-      ((TySubtype node) node)
-      ((TyDecl node) node)
-      ((TyStruct _) nilNode)
-      ((TyData _) nilNode)
-      ((TyCtor _ _) nilNode))
-    nilNode))
+      ((TyAlias node) (Some node))
+      ((TySubtype node) (Some node))
+      ((TyDecl node) (Some node))
+      ((TyStruct _) None)
+      ((TyData _) None)
+      ((TyCtor _ _) None))
+    None))
 
-(:: tyFindAnyVisFromSyntax (-> TC Int String Int ASTNode))
+(:: tyFindAnyVisFromSyntax (-> TC Int String Int (Option ASTNode)))
 (fn (tyFindAnyVisFromSyntax tc kind name last)
   (if (let (Some record) (tyFindAnyVisFrom tc kind name last))
     (match record.payload
-      ((TyAlias node) node)
-      ((TySubtype node) node)
-      ((TyDecl node) node)
-      ((TyStruct _) nilNode)
-      ((TyData _) nilNode)
-      ((TyCtor _ _) nilNode))
-    nilNode))
+      ((TyAlias node) (Some node))
+      ((TySubtype node) (Some node))
+      ((TyDecl node) (Some node))
+      ((TyStruct _) None)
+      ((TyData _) None)
+      ((TyCtor _ _) None))
+    None))

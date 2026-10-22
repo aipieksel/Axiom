@@ -1,0 +1,37 @@
+; Semantic type-declaration lookups distinguish missing from present syntax.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew declarations declarations units))
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "1420-generic-alias-arity.ax"
+      "; Type uses supply exactly the alias's declared arguments.\n(type Items a (Option a))\n\n(type Plain Int)\n\n(type BadTarget Items)\n\n(type Unknown NotDeclared)\n\n(:: missing (-> Items Int))\n(fn (missing x)\n  0)\n\n(:: extra (-> (Items Int Float) Int))\n(fn (extra x)\n  0)\n\n(:: plainExtra (-> (Plain Int) Int))\n(fn (plainExtra x)\n  0)\n\n(struct BadField\n  (item : Items))\n\n(data BadPayload\n  (Payload (Items Int Float)))\n\n(data Box a\n  (Boxed a))\n\n(struct Holder (a)\n  (value : a))\n\n(:: bareBox (-> Box Int))\n(fn (bareBox x)\n  0)\n\n(:: extraBox (-> (Box Int String) Int))\n(fn (extraBox x)\n  0)\n\n(:: bareHolder (-> Holder Int))\n(fn (bareHolder x)\n  0)\n\n(:: bareOption (-> Option Int))\n(fn (bareOption x)\n  0)\n\n(:: bareVec (-> Vec Int))\n(fn (bareVec x)\n  0)\n\n(:: conversionTarget Int)\n(fn (conversionTarget)\n  (as 0 Items))\n\n(:: sizeTarget Int)\n(fn (sizeTarget)\n  (sizeof (Items Int Float)))\n\n(:: alignTarget Int)\n(fn (alignTarget)\n  (alignof Box))\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    (checkSource "1422-recursive-alias.ax"
+      "; Recursive aliases are refused even when no value uses them.\n(type Direct Direct)\n\n(type First Second)\n\n(type Second First)\n\n(type Recursive a (Option (Recursive a)))\n\n(type Through a (-> Int (Through a)))\n\n(type Finite a a)\n\n(type Good (Finite (Finite Int)))\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    (checkSource "1459-empty-subtype-range.ax"
+      "(subtype Empty is Int range 5..5)\n\n(subtype Reversed is Int range 10..0)\n\n(subtype Negative is Int range -2..-5)\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    (checkSource "1509-link-width.ax"
+      "; A link's width is `UInt8`, `UInt16` or `UInt32`, or a type variable a\n; generic signature leaves open: anything else is AX3145, once per\n; written type. `tight`, `aliased` (through the alias `Wide`) and\n; `pass` are the controls.\n(import Link)\n\n(type Wide UInt32)\n\n(struct Node\n  (key : Int)\n  (signed : (Link Node Int32))\n  (word : (Link Node Int))\n  (tight : (Link Node UInt8))\n  (aliased : (Link Node Wide)))\n\n(:: pass (-> (Link Node w) (Link Node w)))\n(fn (pass l)\n  l)\n\n(:: widen (-> (Link Node UInt64) Int))\n(fn (widen l)\n  0)\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    0
+  })
