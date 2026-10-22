@@ -22633,7 +22633,11 @@
           (let cgV (emitExpr (nodeCChild node) cgL))
           (let v (strDup (cgResult cgV)))
           (let cgR
-            (if (&& owns (!= (argIsDirectCon cgV (nodeCChild node)) 1))
+            ; A static value needs no share, so storing a literal takes
+            ; none and gives none back.
+            (if (&& owns
+                  (&& (!= (argIsDirectCon cgV (nodeCChild node)) 1)
+                    (== (isStaticSentinelNode cgV (nodeCChild node)) 0)))
               (emitStructFieldRc cgV cls shape bit v 1)
               cgV))
           (let cgS (storeStructFieldAt cgR base (nodeA fi) (nodeTyChild fi) v))
@@ -22644,7 +22648,8 @@
           (let cgT
             (if (&& owns
                   (&& (!= (argIsDirectCon cgD (nodeCChild node)) 1)
-                    (== (valueOwnedRef cgD (nodeCChild node)) 1)))
+                    (&& (== (valueOwnedRef cgD (nodeCChild node)) 1)
+                      (== (isStaticSentinelNode cgD (nodeCChild node)) 0))))
               (emitStructFieldRc cgD cls shape bit v 0)
               cgD))
           {
@@ -27437,12 +27442,18 @@
               1
               0))
         }
-        ; A `set` answers the value it stores, so storing a literal
-        ; answers that literal: dropping it is a static release too.
+        ; A `set` of a local answers the value it stores, so storing a
+        ; literal answers that literal, and a block answers its last
+        ; expression: dropping either is a static release too.
         (if (== (nodeTag e) TAG_E_SET)
           (isStaticSentinelNode cg (nodeBChild e))
-          (if (== (nodeTag e) TAG_E_SETF)
-            (isStaticSentinelNode cg (nodeCChild e))
+          (if (== (nodeTag e) TAG_E_BEGIN)
+            {
+              (let xs (nodeAChildren e))
+              (if (> (vecLen xs) 0)
+                (isStaticSentinelNode cg (vecGet xs (- (vecLen xs) 1)))
+                0)
+            }
             0))))))
 
 (pub :: isNullaryConNode (-> Int ASTNode Int))
