@@ -34,6 +34,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 gate_build_axc axc
 
+python3 tests/selfhost/typecheck-type-registry.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/typecheck-bound-scope.py --axiom "$axc"
+python3 tests/selfhost/typecheck-lookup-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-result-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-region-records.py --axiom "$axc"
+python3 tests/selfhost/typecheck-compact-index.py --axiom "$axc"
+python3 tests/selfhost/retained-constructor-child.py --axiom "$axc"
 python3 tests/tools/format-option-specifiers.py "$axc"
 python3 tests/tools/expansion-option-frames.py "$axc"
 python3 tests/tools/expansion-option-bindings.py "$axc"

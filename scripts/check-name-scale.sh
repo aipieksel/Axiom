@@ -47,7 +47,7 @@
 # copy of core/, since a compiler carrying two defects proves
 # neither arm:
 #   arm 1: `fnEntVisibleExact` (core/typecheck.ax) branches on
-#          `tcFnIdx`. Forcing the zero branch makes every
+#          `tcFnIdx`. Forcing the absent branch makes every
 #          lookup fall to `findFnEntVisibleExact`, a scan of every entry
 #          filtered by `privBlocks`. The suffix index (`tcFnSufIdx`)
 #          is left alone: the exact pass dominates
@@ -329,9 +329,9 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 old = '''(pub fn (fnEntVisibleExact tc privs name curMod)
-  (if (== (tcFnIdx tc) 0)
-    (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)
-    (fnIdxGetVisible (tcFnIdxVec tc) privs name curMod)))'''
+  (if (let (Some buckets) (tcFnIdx tc))
+    (fnIdxGetVisible buckets privs name curMod)
+    (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)))'''
 new = '''(pub fn (fnEntVisibleExact tc privs name curMod)
   (findFnEntVisibleExact privs (tcFnsVec tc) name curMod))'''
 n = s.count(old)

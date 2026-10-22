@@ -290,6 +290,7 @@ def main():
         "typecheck-constructor-name-options.ax", "typecheck-exhaustiveness-options.ax",
         "typecheck-declaration-field-options.ax", "typecheck-semantic-string-options.ax",
         "typecheck-capture-name-options.ax",
+        "region-fact-projections.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
