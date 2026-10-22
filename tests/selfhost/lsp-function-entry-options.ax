@@ -1,0 +1,37 @@
+; expect 42
+; Signature-assist buckets own typed checker entries. Missing names and
+; an empty table have no entry, while a found entry shares its checked type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import lsp)
+(import Vec)
+(import Str)
+
+(:: main Int)
+(fn (main)
+  {
+    (let source "(pub :: chosen Int)\n(pub fn (chosen) 21)\n")
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let decls (readAstNodes parsed 1))
+    (let tc (checkModuleTcTyped decls decls vecNew))
+    (let entries (tcFnsVec tc))
+    (let index (lspFixEntryIndex entries))
+    (let empty (lspFixEntryIndex (:: vecNew (Vec FnEnt))))
+    (if (&& (isNone (lspFixEntryFind empty "chosen"))
+          (&& (isNone (lspFixEntryFind index "missing")) (== (countErrorDiags (tcOutVec tc)) 0)))
+      (if (let (Some entry) (lspFixEntryFind index "chosen"))
+        (if (strEq (tyRender entry.ty) "Int")
+          {
+            (set entry.ty mkBoolTy)
+            (if (let (Some again) (lspFixEntryFind index "chosen"))
+              (if (&& (strEq again.name "chosen") (strEq (tyRender again.ty) "Bool"))
+                42
+                3)
+              4)
+          }
+          2)
+        1)
+      5)
+  })

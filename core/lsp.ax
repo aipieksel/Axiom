@@ -99,6 +99,8 @@
 
 (type LspTopBuckets (Vec (Option (Vec LspTopEntry))))
 
+(type LspFnBuckets (Vec (Option (Vec FnEnt))))
+
 ; Buckets are allocated on their first insertion. Absence remains an
 ; Option rather than a forged vector reference.
 (pub :: lspBucketsNew (-> Int (Vec (Option (Vec a)))))
@@ -12641,7 +12643,7 @@
 ; declarations) and 1.87x with no signatures at all (2,000 walks of
 ; the checker's table), against 0.72x for a one-line range.
 (pub :: lspSigAssists
-  (-> Int (Vec ASTNode) Ints LspNodeBuckets LspBuckets String String Ints Int Int))
+  (-> Int (Vec ASTNode) Ints LspNodeBuckets LspFnBuckets String String Ints Int Int))
 (pub fn (lspSigAssists out decls rawVis sigs entries src uri ix want)
   {
     (let n (vecLen rawVis))
@@ -12655,60 +12657,42 @@
               (let o (lspFormStart src (spanStart (nodeSpan d))))
               (if (&& (<= o (spanEnd want)) (>= (lspFormEnd src o) (spanStart want)))
                 (if (! (! (nodeSame (lspViewIdxFind sigs (nodeAName d)) nilNode)))
-                  {
-                    (let e (lspFixEntryFind entries (nodeAName d)))
-                    (if (! (== e 0))
-                      {
-                        (let ty (readAstNode e 1))
-                        (if (lspTyKnown ty)
-                          (jsonArrPush out (lspSigAssistJson d vis ty src uri ix o)))
-                      })
-                  }))
+                  (if (let (Some entry) (lspFixEntryFind entries (nodeAName d)))
+                    (if (lspTyKnown entry.ty)
+                      (jsonArrPush out (lspSigAssistJson d vis entry.ty src uri ix o))))))
             })
         })
       0
     }
   })
 
-; The checker's entries by name: word 0 the name, word 1 the type
-; node - inferred when the function has no signature, which is the
-; only case this is asked about. The same bucket table the hint
-; request keys its `fn` index by, and its own find, because an entry
-; is not a node and has no module word to prefer by.
-(pub :: lspFixEntryIndex (-> Ints LspBuckets))
+; The checker supplies typed entries. A bucket owns each entry once,
+; and absence is distinct from a function whose inferred type is unknown.
+(pub :: lspFixEntryIndex (-> (Vec FnEnt) LspFnBuckets))
 (pub fn (lspFixEntryIndex fns)
   {
-    (let idx (lspBucketsNew LSP_VIEW_IDX_SLOTS))
-    (let n (vecLen fns))
-    {
-      (for i in 0..n
-        {
-          (let entry (vecGet fns i))
-          (let name (memGetWordStr entry 0))
-          (let slot (lspViewIdxSlot name))
-          (let bucket (lspBucketFor idx slot))
-          (vecPushStr bucket name)
-          (vecPush bucket entry)
-        })
-      idx
-    }
+    (let index (lspBucketsNew LSP_VIEW_IDX_SLOTS))
+    (for entry in fns
+      (vecPush (lspBucketFor index (lspViewIdxSlot entry.name)) entry))
+    index
   })
 
-(pub :: lspFixEntryFind (-> LspBuckets String Int))
-(pub fn (lspFixEntryFind idx name)
-  (if (let (Some bucket) (vecGet idx (lspViewIdxSlot name)))
+(pub :: lspFixEntryFind (-> LspFnBuckets String (Option FnEnt)))
+(pub fn (lspFixEntryFind index name)
+  (if (let (Some bucket) (vecGet index (lspViewIdxSlot name)))
     {
       (let mut i 0)
-      (let mut found 0)
-      (while (&& (< i (vecLen bucket)) (== found 0))
+      (let mut found None)
+      (while (&& (< i (vecLen bucket)) (isNone found))
         {
-          (if (strEq (vecGetStr bucket i) name)
-            (set found (vecGet bucket (+ i 1))))
-          (set i (+ i 2))
+          (let entry (vecGet bucket i))
+          (if (strEq entry.name name)
+            (set found (Some entry)))
+          (set i (+ i 1))
         })
       found
     }
-    0))
+    None))
 
 ; The signature goes on its own line directly above the form, at the
 ; form's own column - which is 0 for every declaration `lspFormStart`
