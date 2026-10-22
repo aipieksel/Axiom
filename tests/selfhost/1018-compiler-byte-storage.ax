@@ -28,11 +28,13 @@
 (:: formatBytes Int)
 (fn (formatBytes)
   {
-    (let warm (mkFmtSpec 62 1 20 -1 0 1))
+    (let warm (mkFmtSpec 62 1 20 None None))
+    (let precision (Some 12))
+    (let radix (Some (as 120 UInt8)))
     (let before liveBytes)
-    (let value (mkFmtSpec 60 0 100 12 120 1))
+    (let value (mkFmtSpec 60 0 100 precision radix))
     (let bytes (- liveBytes before))
-    (if (&& (== (fmtSpecWidth warm) 20) (== (fmtSpecPrec value) 12))
+    (if (&& (== (fmtSpecWidth warm) 20) (precisionIs value 12))
       bytes
       -1)
   })
@@ -47,33 +49,47 @@
           (&& (== (hlBrkPartner value) -1) (== (hlBrkSpan value) 2199023255552)))))
   })
 
+(:: precisionIs (-> FmtSpec Int Bool))
+(fn (precisionIs spec want)
+  (if (let (Some value) (fmtSpecPrec spec))
+    (== value want)
+    false))
+
+(:: radixIs (-> FmtSpec Int Bool))
+(fn (radixIs spec want)
+  (if (let (Some value) (fmtSpecType spec))
+    (== (as value Int) want)
+    false))
+
 (:: formatValues Bool)
 (fn (formatValues)
   {
-    (let value (mkFmtSpec 94 1 1099511627776 2199023255552 88 0))
+    (let value (mkFmtSpec 94 1 1099511627776 (Some 2199023255552) (Some (as 88 UInt8))))
     (&& (== (fmtSpecAlign value) 94)
       (&& (== (fmtSpecZero value) 1)
         (&& (== (fmtSpecWidth value) 1099511627776)
-          (&& (== (fmtSpecPrec value) 2199023255552)
-            (&& (== (fmtSpecType value) 88) (== (fmtSpecOk value) 0))))))
+          (&& (precisionIs value 2199023255552) (radixIs value 88)))))
   })
 
 (:: absentValues Bool)
 (fn (absentValues)
   {
-    (let value (mkFmtSpec 62 0 0 -1 0 1))
+    (let value (mkFmtSpec 62 0 0 None None))
     (&& (== (fmtSpecAlign value) 62)
       (&& (== (fmtSpecZero value) 0)
         (&& (== (fmtSpecWidth value) 0)
-          (&& (== (fmtSpecPrec value) -1)
-            (&& (== (fmtSpecType value) 0) (== (fmtSpecOk value) 1))))))
+          (if (let (Some _) (fmtSpecPrec value))
+            false
+            (if (let (Some _) (fmtSpecType value))
+              false
+              true)))))
   })
 
 (:: stableViews Bool)
 (fn (stableViews)
   {
     (let bracket (mkHlBrk 7 1 2 -1 99))
-    (let spec (mkFmtSpec 62 1 20 6 120 1))
+    (let spec (mkFmtSpec 62 1 20 (Some 6) (Some (as 120 UInt8))))
     (let bracketCount (blockCount bracket))
     (let specCount (blockCount spec))
     (let mut exact true)
@@ -89,8 +105,7 @@
                        (&& (== (fmtSpecAlign spec) 62)
                          (&& (== (fmtSpecZero spec) 1)
                            (&& (== (fmtSpecWidth spec) 20)
-                             (&& (== (fmtSpecPrec spec) 6)
-                               (&& (== (fmtSpecType spec) 120) (== (fmtSpecOk spec) 1))))))))
+                             (&& (precisionIs spec 6) (radixIs spec 120)))))))
         })
       (&& exact
         (&& (> bracketCount 0)
@@ -113,43 +128,44 @@
       (mkHlBrk 0 0 3 -1 0)
     (mkHlBrk 0 0 256 -1 0)))
 
+(:: invalidFormatFlag (-> Int FmtSpec))
+(fn (invalidFormatFlag k)
+  (if (== k 0)
+      (mkFmtSpec -1 0 0 None None)
+    (== k 1)
+      (mkFmtSpec 0 0 0 None None)
+    (== k 2)
+      (mkFmtSpec 256 0 0 None None)
+    (== k 3)
+      (mkFmtSpec 62 -1 0 None None)
+    (== k 4)
+      (mkFmtSpec 62 2 0 None None)
+    (== k 5)
+      (mkFmtSpec 62 256 0 None None)
+    (== k 6)
+      (mkFmtSpec 62 0 0 None (Some (as -1 UInt8)))
+    (== k 7)
+      (mkFmtSpec 62 0 0 None (Some (as 121 UInt8)))
+    (mkFmtSpec 62 0 0 None (Some (as 256 UInt8)))))
+
 (:: invalidFlag (-> Int Int))
 (fn (invalidFlag k)
   (if (< k 6)
-      {
-        (invalidBracket k)
-        0
-      }
-    (== k 6)
-      (mkFmtSpec -1 0 0 -1 0 1)
-    (== k 7)
-      (mkFmtSpec 0 0 0 -1 0 1)
-    (== k 8)
-      (mkFmtSpec 256 0 0 -1 0 1)
-    (== k 9)
-      (mkFmtSpec 62 -1 0 -1 0 1)
-    (== k 10)
-      (mkFmtSpec 62 2 0 -1 0 1)
-    (== k 11)
-      (mkFmtSpec 62 256 0 -1 0 1)
-    (== k 12)
-      (mkFmtSpec 62 0 0 -1 -1 1)
-    (== k 13)
-      (mkFmtSpec 62 0 0 -1 121 1)
-    (== k 14)
-      (mkFmtSpec 62 0 0 -1 256 1)
-    (== k 15)
-      (mkFmtSpec 62 0 0 -1 0 -1)
-    (== k 16)
-      (mkFmtSpec 62 0 0 -1 0 2)
-    (mkFmtSpec 62 0 0 -1 0 256)))
+    {
+      (invalidBracket k)
+      0
+    }
+    {
+      (invalidFormatFlag (- k 6))
+      0
+    }))
 
 (:: guardedFlags Bool)
 (fn (guardedFlags)
   {
     (let mut exact true)
     {
-      (for k in 0..18
+      (for k in 0..15
         {
           (let status (__axiom_recover __axiom_arena_mark (lambda (ignored) (invalidFlag k))))
           (set exact (&& exact (== status 80)))
