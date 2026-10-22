@@ -1,0 +1,77 @@
+; A repeat selective import widens only public names; unrestricted
+; imports remain unrestricted and declarations are merged just once.
+(import codegen)
+(import namespace)
+(import parser)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: names (-> String Names))
+(fn (names name)
+  (vecPush vecNew name))
+
+(:: register (-> String Int ModuleImports MangleIdx Names Names (Option Names) ASTNode))
+(fn (register name public mods idx bares fulls filter)
+  {
+    (let decl (nodeBuildDFn name vecNew nilNode 0))
+    (writeNodeWord decl 5 public)
+    (let exported (moduleDeclExport decl "Mix" mods filter))
+    (writeNodeText decl 8 "Mix")
+    (writeNodeWord decl 5 exported)
+    (mangleDecl decl "Mix" idx bares fulls exported)
+    decl
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let mods vecNew)
+    (let idx mangleIdxNew)
+    (let bares vecNew)
+    (let fulls vecNew)
+    (let first (Some (names "alpha")))
+    (modFilterRecord mods "Mix" first)
+    (let alpha (register "alpha" 1 mods idx bares fulls first))
+    (let beta (register "beta" 1 mods idx bares fulls first))
+    (let gamma (register "gamma" 1 mods idx bares fulls first))
+    (let secret (register "secret" 0 mods idx bares fulls first))
+    (let decls (vecPush (vecPush (vecPush (vecPush vecNew alpha) beta) gamma) secret))
+    (say 1 (== (nodeVis alpha) 1))
+    (say 2 (== (nodeVis beta) 0))
+    (let widened
+      (resolveRepeatImport "Mix" (nodeBuildDImport "Mix" (names "beta") 0 0) idx bares fulls mods
+        decls))
+    (say 3 (== (vecLen widened) 4))
+    (say 4 (== (nodeVis beta) 1))
+    (say 5 (== (nodeVis gamma) 0))
+    (say 6 (filterKeeps (modFilterFor mods "Mix") "beta"))
+    (resolveRepeatImport "Mix" (nodeBuildDImport "Mix" (names "secret") 0 0) idx bares fulls mods
+      decls)
+    (say 7 (== (nodeVis secret) 0))
+    (say 8 (! (filterKeeps (modFilterFor mods "Mix") "secret")))
+    (resolveRepeatImport "Mix" (nodeBuildDImport "Mix" vecNew 0 0) idx bares fulls mods decls)
+    (say 9 (== (nodeVis gamma) 1))
+    (say 10 (== (nodeVis secret) 0))
+    (say 11
+      (if (let (Some _) (modFilterFor mods "Mix"))
+        false
+        true))
+    (let repeated
+      (resolveRepeatImport "Mix" (nodeBuildDImport "Mix" (names "beta") 0 0) idx bares fulls mods
+        decls))
+    (say 12 (&& (== (vecLen repeated) 4) (== (nodeVis gamma) 1)))
+    0
+  })
