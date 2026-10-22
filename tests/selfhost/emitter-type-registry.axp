@@ -1,0 +1,76 @@
+; Type registry hits use spelling, retain their typed payloads and
+; preserve constructor eligibility while missing entries stay absent.
+(import codegen)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: tagIs (-> (Option TypeEntry) Int Bool))
+(fn (tagIs found expected)
+  (if (let (Some entry) found)
+    (== (eTag entry) expected)
+    false))
+
+(:: absent (-> (Option TypeEntry) Bool))
+(fn (absent found)
+  (if (let (Some _) found)
+    false
+    true))
+
+(:: entries (Vec TypeEntry))
+(fn (entries)
+  {
+    (let table vecNew)
+    (addType table (strDup "Alpha") TF_DATA 0 12 1 vecNew)
+    (addType table (strDup "Bravo") TF_DATA 1 13 2 vecNew)
+    (addType table (strDup "Alpha") TF_DATA 0 99 1 vecNew)
+    table
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let table entries)
+    (say 1 (absent (lookupType table "Other")))
+    (say 2 (tagIs (lookupType table "Alpha") 12))
+    (say 3 (tagIs (lookupType table "Bravo") 13))
+    (say 4 (tagIs (lookupByIdx table "Alpha" 5 1) 99))
+    (say 5 (absent (lookupByIdx table "Alpha" 4 0)))
+    (say 6 (absent (lookupByIdx table "Alpha" 5 3)))
+    (say 7
+      (if (let (Some entry) (lookupType table "Bravo"))
+        (&& (== (eArity entry) 1) (== (eRep entry) 2))
+        false))
+    (let cg newCG)
+    (say 8 (tagIs (pairEntryOfArity cg "None" 0) 1))
+    (say 9 (tagIs (pairEntryOfArity cg "Some" 1) 0))
+    (say 10 (absent (pairEntryOfArity cg "Some" 0)))
+    (say 11 (absent (pairEntryOfArity cg "None" 1)))
+    (say 12 (absent (pairEntryOfArity cg "Other" 0)))
+    (let mut value 0)
+    (if (let (Some entry) (lookupType table "missing"))
+        (set value (eTag entry))
+      (let (Some entry) (lookupType table "Alpha"))
+        (set value (eTag entry))
+      (set value -1))
+    (say 13 (== value 12))
+    (say 14
+      (if (let (Some entry) (lookupType table "missing"))
+          (== (eTag entry) 0)
+        (let (Some entry) (lookupType table "Bravo"))
+          (== (eTag entry) 13)
+        false))
+    0
+  })
