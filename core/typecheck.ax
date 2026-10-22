@@ -2200,7 +2200,7 @@
       (if (== tg TAG_T_VAR)
         (evWalkVar tc st pt at0 castArg late)
         (if (&& (== late 0) (&& (== castArg 0) (== (tyIsMintedVar at0) 1)))
-          (evNotePending tc st pt at0 nilNode)
+          (evNotePending tc st pt at0)
           (if (== tg TAG_T_CON)
             (if (&& (! (nodeSame at nilNode))
                   (&& (== (nodeTag at) TAG_T_CON) (strEq (nodeAName pt) (nodeAName at))))
@@ -2275,7 +2275,7 @@
                     (&& (== castArg 0)
                       (&& (== (tyIsMintedVar at) 1) (isNone (lamVarDepth tc (nodeAName at)))))))
                 (if early
-                  (evNotePending tc st pt at nilNode)
+                  (evNotePending tc st pt at)
                   {
                     (let c
                       (if (== castArg 1)
@@ -2294,14 +2294,20 @@
     }
   })
 
-; Keep a witness for `evSettle`. `st` and `pt` name a stamp and the
-; parameter tree the witness meets, or `node` names an application
-; whose own `ty` slot holds the class (a closure application's
-; argument, a cast's surplus argument) with `st` 0.
-(pub :: evNotePending (-> TC ASTNode ASTNode ASTNode ASTNode Int))
-(pub fn (evNotePending tc st pt at node)
+; Keep a stamp witness for `evSettle`, with the parameter tree and
+; argument type it meets. Application witnesses use their own variant
+; and keep the checked application whose `ty` slot holds the class.
+(pub :: evNotePending (-> TC ASTNode ASTNode ASTNode Int))
+(pub fn (evNotePending tc st pt at)
   {
-    (vecPush (evPendingOf tc) (EvPend :st st :pt pt :at at :node node :sigVars (tcCurSigVars tc)))
+    (vecPush (evPendingOf tc) (EvStampWitness st pt at (tcCurSigVars tc)))
+    0
+  })
+
+(pub :: evNotePendingApplication (-> TC ASTNode ASTNode Int))
+(pub fn (evNotePendingApplication tc node at)
+  {
+    (vecPush (evPendingOf tc) (EvApplicationWitness node at (tcCurSigVars tc)))
     0
   })
 
@@ -2313,7 +2319,7 @@
     0
     (if (== (tyIsMintedVar (tyResolve at)) 0)
       0
-      (evNotePending tc nilNode nilNode at e))))
+      (evNotePendingApplication tc e at))))
 
 ; The pending witnesses, TC word 44's word 6.
 (pub :: evPendingOf (-> TC (Vec EvPend)))
@@ -2334,16 +2340,22 @@
         (let sv0 (tcCurSigVars tc))
         {
           (for p in ps
-            {
-              (tcSetCurSigVars tc p.sigVars)
-              (if (nodeSame p.node nilNode)
-                (evWalk tc p.st p.pt p.at 0 1)
+            (match p
+              ((EvStampWitness st pt at sigVars)
                 {
-                  (let c (evClassOf tc p.at))
+                  (tcSetCurSigVars tc sigVars)
+                  (evWalk tc st pt at 0 1)
+                }
+              )
+              ((EvApplicationWitness node at sigVars)
+                {
+                  (tcSetCurSigVars tc sigVars)
+                  (let c (evClassOf tc at))
                   (if (! (< c 0))
-                    (setNodeTyWord p.node c))
-                })
-            })
+                    (setNodeTyWord node c))
+                  0
+                }
+              )))
           (tcSetCurSigVars tc sv0)
           (vecClear ps)
           0
@@ -3504,19 +3516,14 @@
   (fieldDeclNames : (Vec FieldDeclName))
   (fieldStoreSpans : (Vec Int)))
 
-; One evidence witness kept for `evSettle`: a call is checked in program
-; order, and the pin that decides its witness may come later in the
-; body. `st` and `pt` are the stamp and the parameter tree the witness
-; meets, or `st` is 0 and `node` is an application whose own `ty` slot
-; holds the class. `sigVars` is TC word 23 when the witness was kept,
-; so a placeholder pinned to one of the function's own type variables
-; is read against that function.
-(struct EvPend
-  (st : ASTNode)
-  (pt : ASTNode)
-  (at : ASTNode)
-  (node : ASTNode)
-  (sigVars : Names))
+; A pending witness owns exactly the nodes its variant needs. The
+; declaration-order snapshot of `sigVars` gives late placeholders the
+; same enclosing signature they had when the call was checked.
+(data EvWitness
+  (EvStampWitness ASTNode ASTNode ASTNode Names)
+  (EvApplicationWitness ASTNode ASTNode Names))
+
+(type EvPend EvWitness)
 
 ; Word 18 was `traits`, the `trait` declaration nodes `symbols`
 ; walked, and word 28 was `implIdx`, every `impl` declaration
@@ -7262,35 +7269,37 @@
         1
         0))))
 
-; The first ambiguous type constructor in `t`, as a word, or 0 - the
-; same walk and the same "first only, no span of its own" anchoring
-; rule as `tyUnknownCon` below.
-(pub :: tyAmbigCon (-> TC ASTNode Int))
+; The first ambiguous type constructor in `t`, or None. The walk
+; preserves first-witness order and the declaration anchors its diagnostic.
+(pub :: tyAmbigCon (-> TC ASTNode (Option String)))
 (pub fn (tyAmbigCon tc t)
   (if (nodeSame t nilNode)
-    0
+    None
     (if (== (nodeTag t) TAG_T_CON)
       (if (== (tyConAmbiguous tc (nodeAName t)) 1)
-        (nodeA t)
+        (Some (nodeAName t))
         (tyAmbigConVec tc (nodeBChildren t) 0))
       (if (== (nodeTag t) TAG_T_ARR)
-        (if (!= (tyAmbigCon tc (nodeAChild t)) 0)
-          (tyAmbigCon tc (nodeAChild t))
-          (tyAmbigCon tc (nodeBChild t)))
+        {
+          (let first (tyAmbigCon tc (nodeAChild t)))
+          (if (let (Some name) first)
+            (Some name)
+            (tyAmbigCon tc (nodeBChild t)))
+        }
         (if (== (nodeTag t) TAG_T_TUP)
           (tyAmbigConVec tc (nodeAChildren t) 0)
           (if (== (nodeTag t) TAG_T_PTR)
             (tyAmbigCon tc (nodeAChild t))
-            0))))))
+            None))))))
 
-(pub :: tyAmbigConVec (-> TC (Vec ASTNode) Int Int))
+(pub :: tyAmbigConVec (-> TC (Vec ASTNode) Int (Option String)))
 (pub fn (tyAmbigConVec tc xs i)
-  (if (== (as xs Int) 0)
-    0
+  (if (vecIsNull xs)
+    None
     (if (>= i (vecLen xs))
-      0
-      (if (!= (tyAmbigCon tc (vecGet xs i)) 0)
-        (tyAmbigCon tc (vecGet xs i))
+      None
+      (if (let (Some name) (tyAmbigCon tc (vecGet xs i)))
+        (Some name)
         (tyAmbigConVec tc xs (+ i 1))))))
 
 ; A declaration's own signature or field types, refused when one of
@@ -7298,28 +7307,21 @@
 ; because expansion resolves an alias name and would otherwise pick
 ; one of the two colliding aliases and erase the evidence.
 (pub :: checkAmbiguousSigTy (-> TC ASTNode ASTNode Int))
-;@axiom:effect(unsafe)
 (pub fn (checkAmbiguousSigTy tc d t)
   {
     (let bad (tyAmbigCon tc t))
-    (if (== bad 0)
-      0
-      ; The unit, around this one emission. This pass runs before
-      ; `tcWalkDecls`, which is what normally stamps word 14, so
-      ; without this an AX3044 raised on an IMPORTED module's
-      ; signature would carry the entry file's unit and render its
-      ; caret against the wrong source. Restored to 0, which is what
-      ; the rest of the pass expects to find there.
+    (if (let (Some bad) bad)
       {
         (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
         {
-          (let r (checkAmbiguousType tc TY_ANY (as bad String) (nodeSpan d)))
+          (let r (checkAmbiguousType tc TY_ANY bad (nodeSpan d)))
           {
             (tcSetCurUnit tc 0)
             r
           }
         }
-      })
+      }
+      0)
   })
 
 ; Does the constructor vector of one `data` hold `name`? The index
@@ -8170,38 +8172,29 @@
       1
       0)))
 
-; The name of the first type constructor in `t` that resolves to
-; nothing, or 0. A known head with an unknown ARGUMENT is still a
-; miss, so `(Box Nope)` reports `Nope`.
-; The name of the first unknown type constructor in `t`, as a word: the
-; name when there is one and 0 when the type is fully known.
-; `tyUnknownConName` is the String view.
-(pub :: tyUnknownCon (-> TC ASTNode Int))
+; The first unknown type constructor in `t`, or None when every
+; constructor is known. A known head with an unknown argument still
+; reports that argument, so `(Box Nope)` reports `Nope`.
+(pub :: tyUnknownCon (-> TC ASTNode (Option String)))
 (pub fn (tyUnknownCon tc t)
   (if (nodeSame t nilNode)
-    0
+    None
     (if (== (nodeTag t) TAG_T_CON)
       (if (== (tyConKnown tc (nodeAName t)) 0)
-        (nodeA t)
+        (Some (nodeAName t))
         (tyUnknownConVec tc (nodeBChildren t) 0))
       (if (== (nodeTag t) TAG_T_ARR)
-        (if (!= (tyUnknownCon tc (nodeAChild t)) 0)
-          (tyUnknownCon tc (nodeAChild t))
-          (tyUnknownCon tc (nodeBChild t)))
+        {
+          (let first (tyUnknownCon tc (nodeAChild t)))
+          (if (let (Some name) first)
+            (Some name)
+            (tyUnknownCon tc (nodeBChild t)))
+        }
         (if (== (nodeTag t) TAG_T_TUP)
           (tyUnknownConVec tc (nodeAChildren t) 0)
           (if (== (nodeTag t) TAG_T_PTR)
             (tyUnknownCon tc (nodeAChild t))
-            0))))))
-
-; The String view of `tyUnknownCon`. Only ask it where the word is
-; known non-zero. The cast is here, at a return inside a signature that
-; carries the type - a cast at an argument root would classify the
-; name's evidence 0 and drop its release (MM-LIFE-2e).
-(pub :: tyUnknownConName (-> TC ASTNode String))
-;@axiom:effect(unsafe)
-(pub fn (tyUnknownConName tc t)
-  (as (tyUnknownCon tc t) String))
+            None))))))
 
 ; The help for an unknown type name: migration advice for the five
 ; removed builtins and for a `*` glued to a name, the generic
@@ -8228,12 +8221,12 @@
       "spell a pointer `(* T)`: `*` joins the name without the space"
     "check for typos, or a missing `data`/`struct`/`type` declaration"))
 
-(pub :: tyUnknownConVec (-> TC (Vec ASTNode) Int Int))
+(pub :: tyUnknownConVec (-> TC (Vec ASTNode) Int (Option String)))
 (pub fn (tyUnknownConVec tc xs i)
   (if (>= i (vecLen xs))
-    0
-    (if (!= (tyUnknownCon tc (vecGet xs i)) 0)
-      (tyUnknownCon tc (vecGet xs i))
+    None
+    (if (let (Some name) (tyUnknownCon tc (vecGet xs i)))
+      (Some name)
       (tyUnknownConVec tc xs (+ i 1)))))
 
 ; ------------------------------------------------------------------
@@ -8961,16 +8954,15 @@
 
 (pub :: tcCheckAliasTargetKnown (-> TC ASTNode Int))
 (pub fn (tcCheckAliasTargetKnown tc d)
-  (if (== (tyUnknownCon tc (nodeBChild d)) 0)
-    0
+  (if (let (Some bad) (tyUnknownCon tc (nodeBChild d)))
     {
       (if (!= (nodeSpan d) 0)
         (emitDiag tc
           (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan d)
-            (concat "undefined type `" (concat (tyUnknownConName tc (nodeBChild d)) "`")) 0 0
-            (tyRemovedBuiltinHelp (tyUnknownConName tc (nodeBChild d))))))
+            (concat "undefined type `" (concat bad "`")) 0 0 (tyRemovedBuiltinHelp bad))))
       (writeNodeChild d 2 mkTErr)
-    }))
+    }
+    0))
 
 (pub :: tcCheckDataTypeUses (-> TC (Vec ASTNode) Int Int))
 (pub fn (tcCheckDataTypeUses tc ctors i)
@@ -9275,7 +9267,14 @@
           (let f (vecGet items i))
           {
             (let bad (tyUnknownCon tc (nodeBChild f)))
-            (if (== bad 0)
+            (if (let (Some bad) bad)
+              (if (! (== (nodeSpan f) 0))
+                (emitDiag tc
+                  (diagSetLabel
+                    (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan f)
+                      (concat (concat "undefined type `" bad) "`") 0 0
+                      "an `extern` item's type is the only description of the boundary the compiler has; declare the type, or use `Foreign` for an opaque handle")
+                    (concat (concat "no type named `" bad) "` is visible here"))))
               {
                 (let shape (externTypeRefusal (nodeBChild f) 1))
                 (if (let (Some shape) shape)
@@ -9286,16 +9285,7 @@
                           " across the boundary")
                         0 0
                         "an `extern` signature names only `Int`, `Float`, `Bool`, `Char`, `String` and `Foreign` (one machine word each way); a Rust value of any other shape crosses as a `Foreign` handle, or through the wrapper `axiom-bindgen` generates (a `String` result, a `Result`, an `Option`, an opaque type)"))))
-              }
-              (if (! (== (nodeSpan f) 0))
-                (emitDiag tc
-                  (diagSetLabel
-                    (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan f)
-                      (concat (concat "undefined type `" (tyUnknownConName tc (nodeBChild f))) "`")
-                      0 0
-                      "an `extern` item's type is the only description of the boundary the compiler has; declare the type, or use `Foreign` for an opaque handle")
-                    (concat (concat "no type named `" (tyUnknownConName tc (nodeBChild f)))
-                      "` is visible here")))))
+              })
           }
         }
         (tcCheckExternTypes tc items (+ i 1))
@@ -10151,24 +10141,22 @@
 (pub fn (tcCheckSigTypeOf tc d)
   {
     (let bad (tyUnknownCon tc (nodeTyChild d)))
-    (if (== bad 0)
-      0
+    (if (let (Some bad) bad)
       {
         (if (! (== (nodeSpan d) 0))
           (emitDiag tc
             (diagSetLabel
               (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan d)
-                (concat (concat "undefined type `" (tyUnknownConName tc (nodeTyChild d))) "`") 0 0
-                (tyRemovedBuiltinHelp (tyUnknownConName tc (nodeTyChild d))))
-              (concat (concat "no type named `" (tyUnknownConName tc (nodeTyChild d)))
-                "` is visible here"))))
+                (concat (concat "undefined type `" bad) "`") 0 0 (tyRemovedBuiltinHelp bad))
+              (concat (concat "no type named `" bad) "` is visible here"))))
         {
           (let entFound (fnEntExact tc (nodeAName d)))
           (if (let (Some ent) entFound)
             (fnEntSetTy ent (tyPoisonUnknown tc (nodeTyChild d)))
             0)
         }
-      })
+      }
+      0)
   })
 
 ; The same type with every unresolvable constructor replaced by
@@ -26083,18 +26071,14 @@
                   {
                     {
                       (let bad (tyUnknownCon tc (nodeBChild d)))
-                      (if (!= bad 0)
+                      (if (let (Some bad) bad)
                         (if (! (== (nodeSpan d) 0))
                           (emitDiag tc
                             (diagSetLabel
                               (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan d)
-                                (concat
-                                  (concat "undefined type `" (tyUnknownConName tc (nodeBChild d)))
-                                  "`")
-                                0 0 (tyRemovedBuiltinHelp (tyUnknownConName tc (nodeBChild d))))
-                              (concat
-                                (concat "no type named `" (tyUnknownConName tc (nodeBChild d)))
-                                "` is visible here"))))
+                                (concat (concat "undefined type `" bad) "`") 0 0
+                                (tyRemovedBuiltinHelp bad))
+                              (concat (concat "no type named `" bad) "` is visible here"))))
                         (if (! (tyIsBareInt (nodeBChild d)))
                           (if (! (== (nodeSpan d) 0))
                             (emitMismatchTy tc mkIntTy (nodeBChild d) (nodeSpan d)))))
