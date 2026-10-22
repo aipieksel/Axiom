@@ -80,6 +80,7 @@ python3 tests/tools/checker-declared-arity-options.py "$axc"
 python3 tests/tools/checker-function-arity-options.py "$axc"
 python3 tests/tools/compiler-unit-name-options.py --axiom "$axc"
 python3 tests/tools/expansion-option-sequences.py "$axc"
+python3 tests/tools/expansion-option-queries.py "$axc"
 
 failed=0
 checks=0

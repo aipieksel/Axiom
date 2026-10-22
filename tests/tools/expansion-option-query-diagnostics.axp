@@ -1,0 +1,87 @@
+; Diagnostic byte-compatibility probe, valid before and after the Option port.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+
+(:: environment (-> Diags Units Nodes MEnv))
+(fn (environment diagnostics units declarations)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNew
+    :structBuckets vecNew))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let diagnostics (:: vecNew Diags))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "query.ax" :src "query" :name "" :imports vecNew :library false)))
+    (let parsed
+      (parseModule
+        (lex
+          "(struct Empty) (struct Pair (left : Int) (right : Int)) (data Choice (Zero) (One Int))")))
+    (let declarations (pResNodes parsed))
+    (let env (environment diagnostics units declarations))
+    (expResolveQueryName env "T" (vecPush vecNew "T") (vecPush vecNew (mkEInt 3)) 0)
+    (expQueryArgName env (mkEInt 3) vecNew vecNew 0)
+    (expFieldsOf env "Choice" 0)
+    (expFieldsOf env "Missing" 0)
+    (expConstructorsOf env "Pair" 0)
+    (expConstructorsOf env "Missing" 0)
+    (expBindersOf env "Ghost" "p" 0)
+    (expCtorArityFor env "Ghost" 0 "syntax/arity" "measure")
+    (expEvalSeq env (mkEInt 3) vecNew vecNew 0)
+    (expEvalSeq env (mkEVar "bad") vecNew vecNew 0)
+    (expIterPairs env (mkEInt 3) 0 "syntax/for")
+    (expIterPairsRest env (vecPush (vecPush vecNew (mkEInt 3)) (mkEInt 4)) 0 vecNew 1 "syntax/fold")
+    (writeNodeText (vecGet declarations 1) 8 "Private")
+    (expFieldsOf env "Pair" 0)
+    (writeNodeText (vecGet declarations 2) 8 "Private")
+    (expConstructorsOf env "Choice" 0)
+    (expBindersOf env "One" "p" 0)
+    (writeStr stdout (renderDiagsUnits diagnostics units))
+    0
+  })

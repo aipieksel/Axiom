@@ -1,0 +1,299 @@
+; Typed query ownership, missing answers, iteration refusal and empty success.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+
+(:: environment (-> Diags Units Nodes MEnv))
+(fn (environment diagnostics units declarations)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNew
+    :structBuckets vecNew))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: expression (-> String ASTNode))
+(fn (expression body)
+  {
+    (let parsed (parseModule (lex (concat (concat "(fn (probe) " body) ")"))))
+    (if (pResOk parsed)
+      (nodeCChild (vecGet (pResNodes parsed) 0))
+      (mkEInt -900))
+  })
+
+(:: named (-> (Option String) String Bool))
+(fn (named answer want)
+  (if (let (Some name) answer)
+    (strEq name want)
+    false))
+
+(:: query (-> (Option ExpQuerySequence) String Int Bool))
+(fn (query answer key size)
+  (if (let (Some sequence) answer)
+    (&& (strEq sequence.key key) (== (vecLen sequence.values) size))
+    false))
+
+(:: queryMissing (-> (Option ExpQuerySequence) Bool))
+(fn (queryMissing answer)
+  (if (let None answer)
+    true
+    false))
+
+(:: iteratorSize (-> (Option (Vec ExpIterSequence)) Int Int Bool))
+(fn (iteratorSize answer pairs size)
+  (if (let (Some sequences) answer)
+    (&& (== (vecLen sequences) pairs) (== (expIterLen sequences) size))
+    false))
+
+(:: iterMissing (-> (Option (Vec ExpIterSequence)) Bool))
+(fn (iterMissing answer)
+  (if (let None answer)
+    true
+    false))
+
+(:: joinedTemporary (-> MEnv (Option String)))
+(fn (joinedTemporary env)
+  (expQueryArgName env (expression "(syntax/join (syntax/join fresh Owned) Result)") vecNew vecNew
+    0))
+
+(:: evaluatesExpansion (-> String Int Bool))
+;@axiom:effect(io)
+(fn (evaluatesExpansion source want)
+  {
+    (let parsed (parseModule (lex source)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let diagnostics (:: vecNew Diags))
+        (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
+        (if (== (countErrorDiags diagnostics) 0)
+          {
+            (let functions (:: vecNew (Vec MFunc)))
+            (let refused (:: vecNew Names))
+            (mLowerDecls declarations functions refused 0)
+            (&& (== (vecLen refused) 0) (== (mvalCall1 functions "main" 0) want))
+          }
+          false)
+      }
+      false)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let diagnostics (:: vecNew Diags))
+    (let parsed
+      (parseModule
+        (lex
+          "(struct Empty) (struct Pair (left : Int) (right : Int)) (data Choice (Zero) (One Int) (Two Int Int))")))
+    (let declarations (pResNodes parsed))
+    (let env (environment diagnostics vecNew declarations))
+    (say 1 (named (expResolveQueryName env "literal" vecNew vecNew 0) "literal"))
+    (say 2 (named (expResolveQueryName env "" vecNew vecNew 0) ""))
+    (let parameters (vecPush vecNew "T"))
+    (say 3
+      (named (expResolveQueryName env "T" parameters (vecPush vecNew (mkEVar "Pair")) 0) "Pair"))
+    (say 4
+      (if (let None (expResolveQueryName env "T" parameters (vecPush vecNew (mkEInt 3)) 0))
+        true
+        false))
+    (say 5 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (vecPush env.forstack (ForBind :name "T" :elem "Choice" :key "test" :idx 0 :seq 0))
+    (say 6 (named (expResolveQueryName env "T" parameters (vecPush vecNew (mkEInt 3)) 0) "Choice"))
+    (say 7 (== (vecLen diagnostics) 0))
+    (expTrunc env.forstack 0)
+    (say 8 (named (joinedTemporary env) "freshOwnedResult"))
+    (say 9
+      (if (let None (expQueryArgName env (expression "(syntax/join 1 2)") vecNew vecNew 0))
+        true
+        false))
+    (say 10 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (say 11 (query (expFieldsOf env "Pair" 0) "fields Pair" 2))
+    (say 12
+      (if (let (Some fields) (expFieldsOf env "Pair" 0))
+        (&& (strEq (vecGet fields.values 0) "left") (strEq (vecGet fields.values 1) "right"))
+        false))
+    (say 13 (query (expFieldsOf env "Empty" 0) "fields Empty" 0))
+    (say 14 (queryMissing (expFieldsOf env "Missing" 0)))
+    (say 15 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (set env.defer 1)
+    (say 16 (queryMissing (expFieldsOf env "Later" 0)))
+    (say 17 (&& (== env.deferHits 1) (== (vecLen diagnostics) 0)))
+    (set env.defer 0)
+    (set env.deferHits 0)
+    (say 18 (query (expConstructorsOf env "Choice" 0) "constructors Choice" 3))
+    (say 19 (query (expBindersOf env "Zero" "v" 0) "binders Zero v" 0))
+    (say 20 (query (expBindersOf env "Two" "v" 0) "binders Two v" 2))
+    (say 21
+      (if (let (Some binders) (expBindersOf env "Two" "v" 0))
+        (strEq (vecGet binders.values 1) "v#1")
+        false))
+    (say 22
+      (if (let (Some arity) (expCtorArityFor env "Zero" 0 "syntax/arity" "measure"))
+        (== arity 0)
+        false))
+    (say 23
+      (if (let None (expCtorArityFor env "Ghost" 0 "syntax/arity" "measure"))
+        true
+        false))
+    (expTrunc diagnostics 0)
+    (say 24
+      (query (expEvalSeq env (expression "(syntax/fields Pair)") vecNew vecNew 0) "fields Pair" 2))
+    (say 25
+      (queryMissing
+        (expEvalSeq env (expression "(syntax/binders bad worse)")
+          (vecPush (vecPush vecNew "bad") "worse") (vecPush (vecPush vecNew (mkEInt 1)) (mkEInt 2))
+          0)))
+    (say 26 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (say 27
+      (if (let (Some pairs) (expIterPairs env (expression "(x (syntax/fields Pair))") 0
+                              "syntax/for"))
+        (== (vecLen pairs) 1)
+        false))
+    (say 28
+      (if (let None (expIterPairs env (mkEInt 2) 0 "syntax/for"))
+        true
+        false))
+    (expTrunc diagnostics 0)
+    (say 29
+      (iteratorSize (expIterSeqsOf env (expression "(x (syntax/fields Empty))") vecNew vecNew 0 0)
+        1 0))
+    (say 30
+      (iteratorSize
+        (expIterSeqsOf env (expression "(x (syntax/fields Pair) (y (syntax/binders Two p)))")
+          vecNew vecNew 0 0)
+        2 2))
+    (say 31
+      (iterMissing
+        (expIterSeqsOf env (expression "(x (syntax/fields Pair) (y (syntax/binders Zero p)))")
+          vecNew vecNew 0 0)))
+    (say 32 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (say 33
+      (iterMissing
+        (expIterSeqsOf env (expression "(x (syntax/fields Ghost) (y (syntax/binders Missing p)))")
+          vecNew vecNew 0 0)))
+    (say 34 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (let before (vecLen env.forstack))
+    (let args
+      (vecPush
+        (vecPush (vecPush (vecPush vecNew (mkEVar "+")) (mkEInt 8))
+          (expression "(x (syntax/fields Empty))"))
+        (mkEInt 99)))
+    (let folded (expEvalFold env args vecNew vecNew 0))
+    (say 35 (&& (== (nodeTag folded) TAG_E_INT) (== (nodeA folded) 8)))
+    (say 36 (&& (== (vecLen env.forstack) before) (== (vecLen diagnostics) 0)))
+    (say 37
+      (evaluatesExpansion
+        "(struct P (a : Int) (b : Int)) (macro sumFields ((sumFields S) (syntax/fold + 0 (f (syntax/fields S)) 4))) (:: main Int) (fn (main) (sumFields P))"
+        8))
+    (say 38
+      (evaluatesExpansion
+        "(struct Empty) (macro sumFields ((sumFields S) (syntax/fold + 7 (f (syntax/fields S)) 4))) (:: main Int) (fn (main) (sumFields Empty))"
+        7))
+    (say 39
+      (if (let (Some declaration) (expFindDeclNamed env "Pair" 1))
+        (== (nodeTag declaration) TAG_D_STRUCT)
+        false))
+    (say 40
+      (if (let None (expFindDeclNamed env "Ghost" 1))
+        true
+        false))
+    (say 41
+      (if (let (Some constructor) (expFindCtorNamed env "Two" 1))
+        (== (nodeB constructor) 2)
+        false))
+    (say 42
+      (if (let None (expFindCtorNamed env "Ghost" 1))
+        true
+        false))
+    (say 43 (named (expCondQuery (expression "(syntax/same x y)")) "syntax/same"))
+    (say 44
+      (if (let None (expCondQuery (expression "(runtime x)")))
+        true
+        false))
+    (say 45 (== (expIsDefinedName env "Pair") 1))
+    (say 46 (== (expIsDefinedName env "Zero") 1))
+    (say 47 (== (expIsDefinedName env "Ghost") 0))
+    (say 48
+      (evaluatesExpansion
+        "(struct Pair (a : Int)) (macro pick ((pick) (if (syntax/defined Ghost) (bad) (if (syntax/defined Pair) 13 9)))) (:: main Int) (fn (main) (pick))"
+        13))
+    (let private (vecGet declarations 1))
+    (writeNodeText private 8 "Private")
+    (say 49
+      (if (let None (expFindDeclNamed env "Pair" 1))
+        true
+        false))
+    (say 50
+      (if (let (Some declaration) (expFindDeclNamedFrom declarations "Pair" 1 (Some "Private") 0))
+        (nodeSame declaration private)
+        false))
+    (say 51 (queryMissing (expFieldsOf env "Pair" 0)))
+    (say 52 (== (vecLen diagnostics) 1))
+    (expTrunc diagnostics 0)
+    (writeNodeText (vecGet declarations 2) 8 "Private")
+    (say 53
+      (if (let None (expFindCtorNamed env "Two" 1))
+        true
+        false))
+    (say 54
+      (if (let (Some _) (expFindCtorNamed env "Two" 0))
+        true
+        false))
+    0
+  })

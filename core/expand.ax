@@ -1659,25 +1659,27 @@
 ; (innermost wins), then a macro parameter - whose argument must be a
 ; bare identifier, the same rule a name position enforces - then the
 ; identifier itself.
-(pub :: expResolveQueryName (-> MEnv String Names (Vec ASTNode) Int String))
-;@axiom:effect(unsafe)
+(pub :: expResolveQueryName (-> MEnv String Names Nodes Int (Option String)))
 (pub fn (expResolveQueryName env s params args isp)
   {
     (let foundFor (expForLookup env s))
     (if (let (Some fe) foundFor)
-      fe
+      (Some fe)
       {
         (let idx (expParamIndex params s))
         (if (< idx 0)
-          s
+          (Some s)
           {
             (let a (vecGet args idx))
             (if (== (nodeTag a) TAG_E_VAR)
-              (nodeAName a)
-              (as (expQueryErr env isp
-                    (concat (concat "a syntax/* query's argument must be a bare identifier; `" s)
-                      "` was given an expression")
-                    "pass a plain name in this argument position" (expMacMod env)) String))
+              (Some (nodeAName a))
+              {
+                (expQueryErr env isp
+                  (concat (concat "a syntax/* query's argument must be a bare identifier; `" s)
+                    "` was given an expression")
+                  "pass a plain name in this argument position" (expMacMod env))
+                None
+              })
           })
       })
   })
@@ -1691,11 +1693,9 @@
 ; unchanged; the join form nests, because each side resolves through
 ; this same function.
 ;
-; Answering 0 means a refusal has already been emitted (the String
-; cast of a 0 handle is the family's existing poison convention -
-; every caller compares against 0 before spending the answer).
-(pub :: expQueryArgName (-> MEnv ASTNode Names (Vec ASTNode) Int String))
-;@axiom:effect(unsafe)
+; A missing name records its refusal before returning None. Nested joins
+; resolve left to right and stop at the first refusal.
+(pub :: expQueryArgName (-> MEnv ASTNode Names Nodes Int (Option String)))
 (pub fn (expQueryArgName env a params args isp)
   (if (== (nodeTag a) TAG_E_VAR)
     (expResolveQueryName env (nodeAName a) params args isp)
@@ -1707,72 +1707,82 @@
               (&& (strEq (nodeAName h) "syntax/join") (== (vecLen ps) 2)))
           {
             (let l (expQueryArgName env (vecGet ps 0) params args isp))
-            (if (== (as l Int) 0)
-              (as 0 String)
+            (if (let (Some l) l)
               {
                 (let r (expQueryArgName env (vecGet ps 1) params args isp))
-                (if (== (as r Int) 0)
-                  (as 0 String)
-                  (expJoinName l r))
-              })
+                (if (let (Some r) r)
+                  (Some (expJoinName l r))
+                  None)
+              }
+              None)
           }
-          (as (expQueryErr env
-                (if (!= (nodeSpan a) 0)
-                  (nodeSpan a)
-                  isp)
-                "a syntax/* query's argument must be a bare identifier or a `(syntax/join a b)`"
-                "pass a plain name here, or join two of them with `(syntax/join a b)`"
-                (expMacMod env)) String))
+          {
+            (expQueryErr env
+              (if (!= (nodeSpan a) 0)
+                (nodeSpan a)
+                isp)
+              "a syntax/* query's argument must be a bare identifier or a `(syntax/join a b)`"
+              "pass a plain name here, or join two of them with `(syntax/join a b)`"
+              (expMacMod env))
+            None
+          })
       }
-      (as (expQueryErr env
-            (if (!= (nodeSpan a) 0)
-              (nodeSpan a)
-              isp)
-            "a syntax/* query's argument must be a bare identifier or a `(syntax/join a b)`"
-            "pass a plain name here, or join two of them with `(syntax/join a b)`"
-            (expMacMod env)) String))))
+      {
+        (expQueryErr env
+          (if (!= (nodeSpan a) 0)
+            (nodeSpan a)
+            isp)
+          "a syntax/* query's argument must be a bare identifier or a `(syntax/join a b)`"
+          "pass a plain name here, or join two of them with `(syntax/join a b)`" (expMacMod env))
+        None
+      })))
 
 ; `(syntax/fields S)`: the field names of struct S, in declaration
 ; order - any visible module's, the same rule as expConstructorsOf.
-(pub :: expFieldsOf (-> MEnv String Int Ints))
-;@axiom:effect(unsafe)
+(pub struct ExpQuerySequence
+  (key : String)
+  (values : Names))
+
+(pub :: expFieldsOf (-> MEnv String Int (Option ExpQuerySequence)))
 (pub fn (expFieldsOf env s isp)
   {
     (let d (expFindDeclNamed env s 1))
-    (if (! (nodeSame d nilNode))
+    (if (let (Some d) d)
       (if (== (nodeTag d) TAG_D_STRUCT)
         {
           (let names vecNew)
           (let fs (nodeBChildren d))
           {
             (for i in 0..(vecLen fs)
-              (vecPush names (nodeA (vecGet fs i))))
-            {
-              (let r vecNew)
-              {
-                (vecPushStr r (concat "fields " s))
-                (vecPushVec r names)
-                r
-              }
-            }
+              (vecPush names (nodeAName (vecGet fs i))))
+            (Some (ExpQuerySequence :key (concat "fields " s) :values names))
           }
         }
-        (as (expQueryErr env isp
-              (concat (concat "`" s) "` is not a `struct` declaration, so it has no fields")
-              "syntax/fields answers structs; a data type's query is syntax/constructors"
-              (expMacMod env)) (Vec Int)))
+        {
+          (expQueryErr env isp
+            (concat (concat "`" s) "` is not a `struct` declaration, so it has no fields")
+            "syntax/fields answers structs; a data type's query is syntax/constructors"
+            (expMacMod env))
+          None
+        })
       {
         (let any (expFindDeclNamed env s 0))
-        (if (! (nodeSame any nilNode))
-          (as (expQueryErr env isp
-                (concat (concat (concat "`" s) "` is private to module `")
-                  (concat (nodeModuleName any) "`"))
-                "a query answers what an entry-file reference could name; mark the struct `pub`, or derive by hand inside its module"
-                (expMacMod env)) (Vec Int))
-          (as (expQueryMissing env isp
-                (concat (concat "no declaration named `" s) "` for syntax/fields to answer")
-                "the query reads the declaration list; check the spelling, and declare (or import) the struct before deriving over it"
-                (expMacMod env)) (Vec Int)))
+        (if (let (Some any) any)
+          {
+            (expQueryErr env isp
+              (concat (concat (concat "`" s) "` is private to module `")
+                (concat (nodeModuleName any) "`"))
+              "a query answers what an entry-file reference could name; mark the struct `pub`, or derive by hand inside its module"
+              (expMacMod env))
+            None
+          }
+          {
+            (expQueryMissing env isp
+              (concat (concat "no declaration named `" s) "` for syntax/fields to answer")
+              "the query reads the declaration list; check the spelling, and declare (or import) the struct before deriving over it"
+              (expMacMod env))
+            None
+          })
       })
   })
 
@@ -1780,45 +1790,46 @@
 ; `data` type T, in declaration order. Two passes over the
 ; declaration list - entry-only for the ANSWER, any-module for the
 ; refusal's wording - mirroring the declaration-macro v1 limit.
-(pub :: expConstructorsOf (-> MEnv String Int Ints))
-;@axiom:effect(unsafe)
+(pub :: expConstructorsOf (-> MEnv String Int (Option ExpQuerySequence)))
 (pub fn (expConstructorsOf env t isp)
   {
     (let d (expFindDeclNamed env t 1))
-    (if (! (nodeSame d nilNode))
+    (if (let (Some d) d)
       (if (== (nodeTag d) TAG_D_DATA)
         {
           (let names vecNew)
           (let cs (nodeBChildren d))
           {
             (for i in 0..(vecLen cs)
-              (vecPush names (nodeA (vecGet cs i))))
-            {
-              (let r vecNew)
-              {
-                (vecPushStr r (concat "constructors " t))
-                (vecPushVec r names)
-                r
-              }
-            }
+              (vecPush names (nodeAName (vecGet cs i))))
+            (Some (ExpQuerySequence :key (concat "constructors " t) :values names))
           }
         }
-        (as (expQueryErr env isp
-              (concat (concat "`" t) "` is not a `data` declaration, so it has no constructors")
-              "syntax/constructors answers `data` types; a struct's query is syntax/fields"
-              (expMacMod env)) (Vec Int)))
+        {
+          (expQueryErr env isp
+            (concat (concat "`" t) "` is not a `data` declaration, so it has no constructors")
+            "syntax/constructors answers `data` types; a struct's query is syntax/fields"
+            (expMacMod env))
+          None
+        })
       {
         (let any (expFindDeclNamed env t 0))
-        (if (! (nodeSame any nilNode))
-          (as (expQueryErr env isp
-                (concat (concat (concat "`" t) "` is private to module `")
-                  (concat (nodeModuleName any) "`"))
-                "a query answers what an entry-file reference could name; mark the type `pub`, or derive by hand inside its module"
-                (expMacMod env)) (Vec Int))
-          (as (expQueryMissing env isp
-                (concat (concat "no declaration named `" t) "` for syntax/constructors to answer")
-                "the query reads the declaration list; check the spelling, and declare (or import) the type before deriving over it"
-                (expMacMod env)) (Vec Int)))
+        (if (let (Some any) any)
+          {
+            (expQueryErr env isp
+              (concat (concat (concat "`" t) "` is private to module `")
+                (concat (nodeModuleName any) "`"))
+              "a query answers what an entry-file reference could name; mark the type `pub`, or derive by hand inside its module"
+              (expMacMod env))
+            None
+          }
+          {
+            (expQueryMissing env isp
+              (concat (concat "no declaration named `" t) "` for syntax/constructors to answer")
+              "the query reads the declaration list; check the spelling, and declare (or import) the type before deriving over it"
+              (expMacMod env))
+            None
+          })
       })
   })
 
@@ -1836,44 +1847,39 @@
 ; it, the moment an importer's name list did not mention it - the
 ; filter is a fact about the importer, and the query is asked on the
 ; other side of it.
-(pub :: expFindDeclNamed (-> MEnv String Int ASTNode))
+(pub :: expFindDeclNamed (-> MEnv String Int (Option ASTNode)))
 (pub fn (expFindDeclNamed env t visibleOnly)
   (expFindDeclNamedFrom (expDeclsVec env) t visibleOnly
-    (if (== (as (expQSite env) Int) 0)
-      env.site
-      (expQSite env))
+    (expModuleWordOpt
+      (if (== (expQSite env) 0)
+        env.site
+        (expQSite env)))
     0))
 
-(pub :: expFindDeclNamedFrom (-> (Vec ASTNode) String Int a Int ASTNode))
+(pub :: expFindDeclNamedFrom (-> Nodes String Int (Option String) Int (Option ASTNode)))
 (pub fn (expFindDeclNamedFrom decls t visibleOnly site i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))
             (&& (strEq (nodeAName d) t)
               (|| (== visibleOnly 0)
                 (|| (== (expModEq (nodeModuleOpt d) None) 1)
-                  (|| (== (expModEq (nodeModuleOpt d) (expModuleWordOpt (as site Int))) 1)
-                    (== (nodeVis d) 1))))))
-        d
+                  (|| (== (expModEq (nodeModuleOpt d) site) 1) (== (nodeVis d) 1))))))
+        (Some d)
         (expFindDeclNamedFrom decls t visibleOnly site (+ i 1)))
     }))
 
 ; The arity of entry-file constructor C - the field count its
-; declaration carries - or -1 with the refusal emitted. Same two-pass
+; declaration carries - or None with the refusal emitted. Same two-pass
 ; shape as the type lookups. `who` names the query in the miss
 ; message, because two of them count the same thing for different
 ; reasons and a diagnostic that always says `syntax/binders` sends a
 ; reader of `(syntax/arity Ghost)` to the wrong row of the table.
 (pub :: expCtorArity (-> MEnv String Int (Option Int)))
 (pub fn (expCtorArity env c isp)
-  {
-    (let n (expCtorArityFor env c isp "syntax/binders" "count"))
-    (if (< n 0)
-      None
-      (Some n))
-  })
+  (expCtorArityFor env c isp "syntax/binders" "count"))
 
 ; English's possessive, because the two queries that share this
 ; message end differently: `syntax/binders'` and `syntax/arity's`.
@@ -1886,19 +1892,19 @@
     (concat w "'")
     (concat w "'s")))
 
-(pub :: expCtorArityFor (-> MEnv String Int String String Int))
+(pub :: expCtorArityFor (-> MEnv String Int String String (Option Int)))
 (pub fn (expCtorArityFor env c isp who verb)
   {
     (let k (expFindCtorNamed env c 1))
-    (if (! (nodeSame k nilNode))
-      (nodeB k)
-      (if (! (nodeSame (expFindCtorNamed env c 0) nilNode))
+    (if (let (Some k) k)
+      (Some (nodeB k))
+      (if (let (Some _) (expFindCtorNamed env c 0))
         {
           (expQueryErr env isp
             (concat (concat "`" c) "` is a constructor of a type its module keeps private")
             "a query answers what an entry-file reference could name; mark the type `pub`, or derive by hand inside its module"
             (expMacMod env))
-          (- 0 1)
+          None
         }
         {
           (expQueryErr env isp
@@ -1907,18 +1913,18 @@
             (concat (concat "the query reads the declaration list; " (expPossessive who))
               " first argument names a data constructor")
             (expMacMod env))
-          (- 0 1)
+          None
         }))
   })
 
-(pub :: expFindCtorNamed (-> MEnv String Int ASTNode))
+(pub :: expFindCtorNamed (-> MEnv String Int (Option ASTNode)))
 (pub fn (expFindCtorNamed env c visibleOnly)
   (expFindCtorFrom (expDeclsVec env) c visibleOnly 0))
 
-(pub :: expFindCtorFrom (-> (Vec ASTNode) String Int Int ASTNode))
+(pub :: expFindCtorFrom (-> Nodes String Int Int (Option ASTNode)))
 (pub fn (expFindCtorFrom decls c visibleOnly i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_DATA)
@@ -1926,19 +1932,19 @@
               (|| (== (expModEq (nodeModuleOpt d) None) 1) (== (nodeVis d) 1))))
         {
           (let k (expFindCtorIn (nodeBChildren d) c 0))
-          (if (! (nodeSame k nilNode))
-            k
+          (if (let (Some k) k)
+            (Some k)
             (expFindCtorFrom decls c visibleOnly (+ i 1)))
         }
         (expFindCtorFrom decls c visibleOnly (+ i 1)))
     }))
 
-(pub :: expFindCtorIn (-> (Vec ASTNode) String Int ASTNode))
+(pub :: expFindCtorIn (-> Nodes String Int (Option ASTNode)))
 (pub fn (expFindCtorIn cs c i)
   (if (>= i (vecLen cs))
-    nilNode
+    None
     (if (strEq (nodeAName (vecGet cs i)) c)
-      (vecGet cs i)
+      (Some (vecGet cs i))
       (expFindCtorIn cs c (+ i 1)))))
 
 ; `(syntax/binders C p)`: arity-of-C fresh identifiers derived from
@@ -1949,8 +1955,7 @@
 ; by MAC-HYG-2 like any template binder), and the fold's mention
 ; resolves to the same spellings, which scope resolution then answers
 ; with the renamed binders - hygiene falls out of the existing order.
-(pub :: expBindersOf (-> MEnv String String Int Ints))
-;@axiom:effect(unsafe)
+(pub :: expBindersOf (-> MEnv String String Int (Option ExpQuerySequence)))
 (pub fn (expBindersOf env c p isp)
   (if (let (Some n) (expCtorArity env c isp))
     {
@@ -1962,51 +1967,46 @@
             (vecPush names (concat (concat p "#") (fmtInt i)))
             (set i (+ i 1))
           })
-        {
-          (let r vecNew)
-          {
-            (vecPushStr r (concat (concat (concat "binders " c) " ") p))
-            (vecPushVec r names)
-            r
-          }
-        }
+        (Some (ExpQuerySequence :key (concat (concat (concat "binders " c) " ") p) :values names))
       }
     }
-    (as 0 (Vec Int))))
+    None))
 
 ; Evaluate an iteration SEQUENCE expression: `(syntax/constructors
 ; T)`, `(syntax/fields S)`, or `(syntax/binders C p)`. The answer is
-; a two-slot record - the identity key, then the name vector - or 0
-; with the refusal already emitted.
-(pub :: expEvalSeq (-> MEnv ASTNode Names (Vec ASTNode) Int Ints))
-;@axiom:effect(unsafe)
+; an owning identity key and name vector, or None with the refusal
+; already recorded. A present sequence may have no names.
+(pub :: expEvalSeq (-> MEnv ASTNode Names Nodes Int (Option ExpQuerySequence)))
 (pub fn (expEvalSeq env seq params args isp)
   {
     (let head (spineHead seq))
     (let qargs (spineArgVec seq vecNew))
     (if (!= (nodeTag head) TAG_E_VAR)
-      (as (expQueryErr env
-            (if (!= (nodeSpan seq) 0)
-              (nodeSpan seq)
-              isp)
-            "syntax/for's sequence must be a query spine"
-            "write the sequence as `(syntax/constructors T)`, `(syntax/fields S)`, or `(syntax/binders C p)`"
-            (expMacMod env)) (Vec Int))
+      {
+        (expQueryErr env
+          (if (!= (nodeSpan seq) 0)
+            (nodeSpan seq)
+            isp)
+          "syntax/for's sequence must be a query spine"
+          "write the sequence as `(syntax/constructors T)`, `(syntax/fields S)`, or `(syntax/binders C p)`"
+          (expMacMod env))
+        None
+      }
       (if (&& (strEq (nodeAName head) "syntax/constructors")
             (&& (== (vecLen qargs) 1) (== (nodeTag (vecGet qargs 0)) TAG_E_VAR)))
         {
           (let t (expResolveQueryName env (nodeAName (vecGet qargs 0)) params args isp))
-          (if (== (as t Int) 0)
-            (as 0 (Vec Int))
-            (expConstructorsOf env t isp))
+          (if (let (Some t) t)
+            (expConstructorsOf env t isp)
+            None)
         }
         (if (&& (strEq (nodeAName head) "syntax/fields")
               (&& (== (vecLen qargs) 1) (== (nodeTag (vecGet qargs 0)) TAG_E_VAR)))
           {
             (let s (expResolveQueryName env (nodeAName (vecGet qargs 0)) params args isp))
-            (if (== (as s Int) 0)
-              (as 0 (Vec Int))
-              (expFieldsOf env s isp))
+            (if (let (Some s) s)
+              (expFieldsOf env s isp)
+              None)
           }
           (if (&& (strEq (nodeAName head) "syntax/binders")
                 (&& (== (vecLen qargs) 2)
@@ -2014,23 +2014,26 @@
                     (== (nodeTag (vecGet qargs 1)) TAG_E_VAR))))
             {
               (let c (expResolveQueryName env (nodeAName (vecGet qargs 0)) params args isp))
-              (if (== (as c Int) 0)
-                (as 0 (Vec Int))
+              (if (let (Some c) c)
                 {
                   (let p (expResolveQueryName env (nodeAName (vecGet qargs 1)) params args isp))
-                  (if (== (as p Int) 0)
-                    (as 0 (Vec Int))
-                    (expBindersOf env c p isp))
-                })
+                  (if (let (Some p) p)
+                    (expBindersOf env c p isp)
+                    None)
+                }
+                None)
             }
-            (as (expQueryErr env
-                  (if (!= (nodeSpan seq) 0)
-                    (nodeSpan seq)
-                    isp)
-                  (concat (concat "`" (nodeAName head))
-                    "` is not an iteration sequence this vocabulary answers, or its arguments are not bare identifiers")
-                  "sequences are `(syntax/constructors T)`, `(syntax/fields S)`, and `(syntax/binders C p)`; several of them zip in one iteration as `((x xs) (y ys))`"
-                  (expMacMod env)) (Vec Int))))))
+            {
+              (expQueryErr env
+                (if (!= (nodeSpan seq) 0)
+                  (nodeSpan seq)
+                  isp)
+                (concat (concat "`" (nodeAName head))
+                  "` is not an iteration sequence this vocabulary answers, or its arguments are not bare identifiers")
+                "sequences are `(syntax/constructors T)`, `(syntax/fields S)`, and `(syntax/binders C p)`; several of them zip in one iteration as `((x xs) (y ys))`"
+                (expMacMod env))
+              None
+            }))))
   })
 
 ; For-variable substitution on the PATTERN side, run before the
@@ -2090,9 +2093,9 @@
                 })
             {
               (let sr (expEvalSeq env a params args isp))
-              (if (== (as sr Int) 0)
-                (vecPush out (mkEVarAt "_" isp))
-                (expPushBinderVars out (vecGetVec sr 1) isp 0))
+              (if (let (Some sr) sr)
+                (expPushBinderVars out sr.values isp 0)
+                (vecPush out (mkEVarAt "_" isp)))
             }
             (vecPush out (expSubstPatFor a params args env isp))))
         ; AN EMPTY BINDER SPLICE IS A NULLARY CONSTRUCTOR, NOT A
@@ -2245,8 +2248,7 @@
     }
     {
       (let n (expQueryArgName env (vecGet qargs 0) params args isp))
-      (if (== (as n Int) 0)
-        (mkEInt 0)
+      (if (let (Some n) n)
         ; A TAG_E_STR node carries the LEXEME, quotes and escapes
         ; included - `internString` stores it verbatim and the
         ; emitter unescapes on the way out - so a synthesised
@@ -2257,7 +2259,8 @@
         ; class this repository's fixtures assert values to catch.
         ; An identifier needs no escaping - `"` and `\` cannot lex
         ; in one - so quoting is the whole conversion.
-        (nodeBuildEStr (concat (concat "\"" n) "\"") 0 0 isp))
+        (nodeBuildEStr (concat (concat "\"" n) "\"") 0 0 isp)
+        (mkEInt 0))
     }))
 
 ; `(syntax/arity C)`: the field count of constructor `C`, as an
@@ -2275,14 +2278,14 @@
     }
     {
       (let c (expQueryArgName env (vecGet qargs 0) params args isp))
-      (if (== (as c Int) 0)
-        (mkEInt 0)
+      (if (let (Some c) c)
         {
           (let n (expCtorArityFor env c isp "syntax/arity" "measure"))
-          (if (< n 0)
-            (mkEInt 0)
-            (nodeBuildEInt n 0 0 isp))
-        })
+          (if (let (Some n) n)
+            (nodeBuildEInt n 0 0 isp)
+            (mkEInt 0))
+        }
+        (mkEInt 0))
     }))
 
 ; Does `n` name a visible top-level declaration - a function or its
@@ -2298,17 +2301,17 @@
 (pub :: expIsDefinedName (-> MEnv String Int))
 (pub fn (expIsDefinedName env n)
   (if (== (expDeclNamed (expDeclsVec env) n 0) 1)
-    1
-    (if (! (nodeSame (expFindDeclNamed env n 1) nilNode))
       1
-      (if (! (nodeSame (expFindCtorNamed env n 1) nilNode))
-        1
-        {
-          (let q (expQualify env n))
-          (if (strEq q n)
-            0
-            1)
-        }))))
+    (let (Some _) (expFindDeclNamed env n 1))
+      1
+    (let (Some _) (expFindCtorNamed env n 1))
+      1
+    {
+      (let q (expQualify env n))
+      (if (strEq q n)
+        0
+        1)
+    }))
 
 ; `(syntax/defined n)`: `true` or `false`, decided here and spliced.
 ; A `syntax/defined` standing as an `if` condition is folded at
@@ -2327,11 +2330,11 @@
     }
     {
       (let n (expQueryArgName env (vecGet qargs 0) params args isp))
-      (if (== (as n Int) 0)
-        (mkEInt 0)
+      (if (let (Some n) n)
         (if (== (expIsDefinedName env n) 1)
           (mkEVarAt "true" isp)
-          (mkEVarAt "false" isp)))
+          (mkEVarAt "false" isp))
+        (mkEInt 0))
     }))
 
 ; ==================================================================
@@ -3025,22 +3028,22 @@
   })
 
 ; The name of the expansion-time query at the head of an `if`
-; condition, or "" when the condition is an ordinary runtime
+; condition, or None when the condition is an ordinary runtime
 ; expression. Exactly two queries answer a Bool, and both are folded
 ; by substTpl's TAG_E_IF arm.
-(pub :: expCondQuery (-> ASTNode String))
-(pub fn (expCondQuery c)
-  (if (!= (nodeTag c) TAG_E_APP)
-    ""
+(pub :: expCondQuery (-> ASTNode (Option String)))
+(pub fn (expCondQuery condition)
+  (if (!= (nodeTag condition) TAG_E_APP)
+    None
     {
-      (let h (spineHead c))
-      (if (!= (nodeTag h) TAG_E_VAR)
-        ""
-        (if (strEq (nodeAName h) "syntax/same")
-          "syntax/same"
-          (if (strEq (nodeAName h) "syntax/defined")
-            "syntax/defined"
-            "")))
+      (let head (spineHead condition))
+      (if (!= (nodeTag head) TAG_E_VAR)
+          None
+        (strEq (nodeAName head) "syntax/same")
+          (Some "syntax/same")
+        (strEq (nodeAName head) "syntax/defined")
+          (Some "syntax/defined")
+        None)
     }))
 
 ; `(syntax/join a b)` where an expression stands: the joined
@@ -3061,12 +3064,10 @@
     }
     {
       (let l (expQueryArgName env (vecGet qargs 0) params args isp))
-      (if (== (as l Int) 0)
-        (mkEInt 0)
+      (if (let (Some l) l)
         {
           (let r (expQueryArgName env (vecGet qargs 1) params args isp))
-          (if (== (as r Int) 0)
-            (mkEInt 0)
+          (if (let (Some r) r)
             {
               (let f (mkEVarAt (expQualify env (expJoinName l r)) isp))
               (let out vecNew)
@@ -3075,8 +3076,10 @@
                   (vecPush out (substTpl (vecGet qargs i) params args env isp)))
                 (markGeneratedCall (expRebuildSpine f out isp 0))
               }
-            })
-        })
+            }
+            (mkEInt 0))
+        }
+        (mkEInt 0))
     }))
 
 ; Is this expression a `(syntax/for (x seq) tpl)` spine?
@@ -3119,8 +3122,7 @@
   (values : Names)
   (key : String))
 
-(pub :: expIterPairs (-> MEnv ASTNode Int String (Vec ExpIterBinding)))
-;@axiom:effect(unsafe)
+(pub :: expIterPairs (-> MEnv ASTNode Int String (Option (Vec ExpIterBinding))))
 (pub fn (expIterPairs env binds isp who)
   {
     (let h (spineHead binds))
@@ -3130,7 +3132,7 @@
         (expQueryErr env isp
           (concat (concat "`" who) "`'s binding form is `(x xs)` or `((x xs) (y ys) ...)`")
           "bind each iteration variable to one sequence" (expMacMod env))
-        (as 0 (Vec ExpIterBinding))
+        None
       }
       {
         (let pairs vecNew)
@@ -3144,11 +3146,11 @@
       })
   })
 
-(pub :: expIterPairsRest (-> MEnv Nodes Int (Vec ExpIterBinding) Int String (Vec ExpIterBinding)))
-;@axiom:effect(unsafe)
+(pub :: expIterPairsRest
+  (-> MEnv Nodes Int (Vec ExpIterBinding) Int String (Option (Vec ExpIterBinding))))
 (pub fn (expIterPairsRest env bargs isp pairs i who)
   (if (>= i (vecLen bargs))
-    pairs
+    (Some pairs)
     {
       (let b (vecGet bargs i))
       {
@@ -3159,7 +3161,7 @@
             (expQueryErr env isp
               (concat (concat "each parallel `" who) "` binding is a `(y ys)` pair")
               "bind each iteration variable to one sequence" (expMacMod env))
-            (as 0 (Vec ExpIterBinding))
+            None
           }
           {
             (let p (ExpIterBinding :name (nodeAName bh) :sequence (vecGet bas 0)))
@@ -3174,8 +3176,8 @@
 ; The binding form of an ARM- or DECLARATION-position `syntax/for`,
 ; evaluated: pairs normalised, each sequence answered, and every
 ; sequence required to have the same length. Answers the (var, names,
-; key) triples `expIterPush` binds from, or 0 with the refusal already
-; emitted.
+; key) triples `expIterPush` binds from, or None with the refusal already
+; recorded.
 ;
 ; TWO spans, because two kinds of thing go wrong here and the author
 ; changes a different line for each (MAC-DIAG-5). A malformed binding
@@ -3185,26 +3187,28 @@
 ; so it anchors at the invocation and carries the frame naming the
 ; macro. `syntax/fold` has always reported its skew at the invocation;
 ; this is the same rule stated rather than inherited.
-(pub :: expIterSeqsOf (-> MEnv ASTNode Names (Vec ASTNode) Int Int (Vec ExpIterSequence)))
-;@axiom:effect(unsafe)
+(pub :: expIterSeqsOf (-> MEnv ASTNode Names Nodes Int Int (Option (Vec ExpIterSequence))))
 (pub fn (expIterSeqsOf env binds params args shapeSp isp)
   {
     (let pairs (expIterPairs env binds shapeSp "syntax/for"))
-    (if (== (as pairs Int) 0)
-      (as 0 (Vec ExpIterSequence))
+    (if (let (Some pairs) pairs)
       {
         (let seqs (expIterSeqs env pairs params args shapeSp vecNew 0))
-        (if (== (as seqs Int) 0)
-          (as 0 (Vec ExpIterSequence))
+        (if (let (Some seqs) seqs)
           {
             (let n (expIterLen seqs))
             (if (== (expIterSameLen seqs n 1) 0)
-              (as (expQueryErr env isp "syntax/for's parallel sequences have different lengths"
-                    "parallel sequences zip in lockstep and must have equal length (macro-system.md MAC-CAP-5)"
-                    (expMacMod env)) (Vec ExpIterSequence))
-              seqs)
-          })
-      })
+              {
+                (expQueryErr env isp "syntax/for's parallel sequences have different lengths"
+                  "parallel sequences zip in lockstep and must have equal length (macro-system.md MAC-CAP-5)"
+                  (expMacMod env))
+                None
+              }
+              (Some seqs))
+          }
+          None)
+      }
+      None)
   })
 
 ; How many elements one evaluated binding set iterates.
@@ -3226,12 +3230,10 @@
     }
     {
       (let pairs (expIterPairs env (vecGet qargs 2) isp "syntax/fold"))
-      (if (== (as pairs Int) 0)
-        (mkEInt 0)
+      (if (let (Some pairs) pairs)
         {
           (let seqs (expIterSeqs env pairs params args isp vecNew 0))
-          (if (== (as seqs Int) 0)
-            (mkEInt 0)
+          (if (let (Some seqs) seqs)
             {
               (let n (expIterLen seqs))
               (if (== (expIterSameLen seqs n 1) 0)
@@ -3246,32 +3248,33 @@
                   (expFoldBuild env pairs seqs params args isp fh (vecGet qargs 3)
                     (substTpl (vecGet qargs 1) params args env isp) (- n 1))
                 })
-            })
-        })
+            }
+            (mkEInt 0))
+        }
+        (mkEInt 0))
     }))
 
 ; Evaluate each pair's sequence; answers a vec of (var, names, key)
-; triples, or 0.
+; triples, or None after the first refused query.
 (pub :: expIterSeqs
-  (-> MEnv (Vec ExpIterBinding) Names (Vec ASTNode) Int (Vec ExpIterSequence) Int
-    (Vec ExpIterSequence)))
-;@axiom:effect(unsafe)
+  (-> MEnv (Vec ExpIterBinding) Names Nodes Int (Vec ExpIterSequence) Int
+    (Option (Vec ExpIterSequence))))
 (pub fn (expIterSeqs env pairs params args isp acc i)
   (if (>= i (vecLen pairs))
-    acc
+    (Some acc)
     {
       (let p (vecGet pairs i))
       {
         (let sr (expEvalSeq env p.sequence params args isp))
-        (if (== (as sr Int) 0)
-          (as 0 (Vec ExpIterSequence))
+        (if (let (Some sr) sr)
           {
-            (let t (ExpIterSequence :name p.name :values (vecGetVec sr 1) :key (vecGetStr sr 0)))
+            (let t (ExpIterSequence :name p.name :values sr.values :key sr.key))
             {
               (vecPush acc t)
               (expIterSeqs env pairs params args isp acc (+ i 1))
             }
-          })
+          }
+          None)
       }
     }))
 
@@ -3366,12 +3369,12 @@
       }
       {
         (let seqs (expIterSeqsOf env (vecGet qargs 0) params args fsp isp))
-        (if (== (as seqs Int) 0)
+        (if (let (Some seqs) seqs)
+          (expSpliceForArgElems (vecGet qargs 1) params args env isp out seqs (expIterLen seqs) 0)
           {
             (vecPush out (mkEInt 0))
             0
-          }
-          (expSpliceForArgElems (vecGet qargs 1) params args env isp out seqs (expIterLen seqs) 0))
+          })
       })
   })
 
@@ -3883,7 +3886,7 @@
               ; AX3001 on the arm the query exists to avoid.
               {
                 (let cq (expCondQuery (nodeAChild tpl)))
-                (if (!= (strLen cq) 0)
+                (if (let (Some cq) cq)
                   {
                     (let v
                       (if (strEq cq "syntax/same")
@@ -4472,12 +4475,12 @@
           (nodeSpan farm)
           isp)
         isp))
-    (if (== (as seqs Int) 0)
+    (if (let (Some seqs) seqs)
+      (expSpliceForElems farm params args env isp acc seqs (expIterLen seqs) 0)
       {
         (vecPush acc (nodeBuildMArm (mkEVarAt "_" isp) (mkEInt 0) 0 isp))
         0
-      }
-      (expSpliceForElems farm params args env isp acc seqs (expIterLen seqs) 0))
+      })
   })
 
 (pub :: expSpliceForElems
@@ -9650,9 +9653,9 @@
           (nodeSpan f)
           isp)
         isp))
-    (if (== (as seqs Int) 0)
-      0
-      (expBuildForElems f params args env isp acc seqs (expIterLen seqs) 0))
+    (if (let (Some seqs) seqs)
+      (expBuildForElems f params args env isp acc seqs (expIterLen seqs) 0)
+      0)
   })
 
 (pub :: expBuildForElems
