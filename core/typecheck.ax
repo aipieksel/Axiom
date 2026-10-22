@@ -31629,17 +31629,27 @@
     }))
 
 ; Lambda binders keep their checked arrow; applications keep an
-; evidence stamp whose first word is their checked result type.
-(pub :: rgnCheckedTy (-> ASTNode ASTNode))
+; evidence stamp whose first word is their checked result type. Missing
+; stamps or missing stamped results are None; poison and wildcard nodes
+; remain present so each consumer preserves its existing fallback.
+(pub :: rgnCheckedTy (-> ASTNode (Option ASTNode)))
 (pub fn (rgnCheckedTy e)
-  {
-    (let ty (nodeBinderTyChild e))
-    (if (nodeSame ty nilNode)
-      nilNode
-      (if (== (nodeTag ty) TAG_EVSTAMP)
-        (nodeAChild ty)
-        ty))
-  })
+  (if (nodeSame e nilNode)
+    None
+    {
+      (let stamp (nodeBinderTyChild e))
+      (if (nodeSame stamp nilNode)
+        None
+        {
+          (let ty
+            (if (== (nodeTag stamp) TAG_EVSTAMP)
+              (nodeAChild stamp)
+              stamp))
+          (if (nodeSame ty nilNode)
+            None
+            (Some ty))
+        })
+    }))
 
 (pub :: rgnCheckScopedValue (-> RgnCtx ASTNode Int Int))
 (pub fn (rgnCheckScopedValue rc e span)
@@ -32440,7 +32450,9 @@
     (let b (rgnExpr rc (nodeAChild e)))
     (let origins (rgnExpr rc (nodeCChild e)))
     (let v
-      (if (== (rgTyScalar (rgnTc rc) (rgnCheckedTy (nodeCChild e))) 1)
+      (if (if (let (Some ty) (rgnCheckedTy (nodeCChild e)))
+        (== (rgTyScalar (rgnTc rc) ty) 1)
+        false)
         0
         origins))
     {
@@ -32476,7 +32488,7 @@
           (strEq (vecGet (rgnFormNames rc) (- rc.curRid 1)) "#scoped callback")
           false)
           (rgnCheckedTy e)
-          nilNode))
+          None))
       (rgnExpr rc (nodeBChild e))
       (rgnEnvTrunc rc mark)
       {
@@ -32563,7 +32575,7 @@
     0
     cap))
 
-(pub :: rgnBindTypedParams (-> RgnCtx Strings Int Int ASTNode Int))
+(pub :: rgnBindTypedParams (-> RgnCtx Strings Int Int (Option ASTNode) Int))
 (pub fn (rgnBindTypedParams rc params i mask ty)
   (if (== (as params Int) 0)
     0
@@ -32571,7 +32583,13 @@
       0
       {
         (rgnBind rc (vecGetStr params i)
-          (if (== (rgTyScalar (rgnTc rc) (nthParamTy ty i nilNode)) 1)
+          (if (if (let (Some signature) ty)
+            (if (let (Some arrow) (peelArrows signature i))
+              (if (== (nodeTag arrow) TAG_T_ARR)
+                (== (rgTyScalar (rgnTc rc) (nodeAChild arrow)) 1)
+                false)
+              false)
+            false)
             0
             mask)
           rc.curRid)
@@ -32671,7 +32689,9 @@
 ; Its invocation may reclaim and therefore constrains an outer handler.
 (pub :: rgnHandlerLocal (-> RgnCtx ASTNode Int))
 (pub fn (rgnHandlerLocal rc h)
-  (if (== (tyIsErr (rgnCheckedTy h)) 1)
+  (if (if (let (Some ty) (rgnCheckedTy h))
+    (== (tyIsErr ty) 1)
+    false)
     0
     (if (== (nodeTag h) TAG_E_LAM)
       (rgnExpr rc h)
@@ -32738,7 +32758,9 @@
 ; evaluate their handler, so the caller skips this walk for them.
 (pub :: rgnHandlerValue (-> RgnCtx ASTNode Int))
 (pub fn (rgnHandlerValue rc h)
-  (if (== (tyIsErr (rgnCheckedTy h)) 1)
+  (if (if (let (Some ty) (rgnCheckedTy h))
+    (== (tyIsErr ty) 1)
+    false)
     0
     (if (== (nodeTag h) TAG_E_LAM)
       (rgnFormWalk rc h "#handler" (nodeSpan h))
@@ -32809,7 +32831,9 @@
             (if (== (rgnScopedParam rc head) 1)
               {
                 (let v (rgnUnknownCall rc args (spanOf e) 0))
-                (if (== (rgTyScalar tc (rgnCheckedTy e)) 1)
+                (if (if (let (Some ty) (rgnCheckedTy e))
+                  (== (rgTyScalar tc ty) 1)
+                  false)
                   0
                   v)
               }
@@ -34640,7 +34664,10 @@
                 (if (let (Some ent) entFound)
                   (!= (fnEntIsBuiltin ent) 0)
                   true))
-            (if (&& (> (vecLen args) 0) (computePrimitive tc (rgnCheckedTy e)))
+            (if (&& (> (vecLen args) 0)
+                  (if (let (Some ty) (rgnCheckedTy e))
+                    (computePrimitive tc ty)
+                    false))
               (computeWalkExpr walk (vecGet args (- (vecLen args) 1)) bound mutable)
               (computeFail walk "compute callback converts to a non-primitive type"))
             {
