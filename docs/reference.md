@@ -956,6 +956,15 @@ control access and closing.
 handle. It has one immutable `Int` field, no type parameters, and only
 its declaring module can construct it or read the field. Add `shared`
 only when its operations are safe across concurrent bindings.
+
+A `word` struct can also pack several fixed-width fields into that
+word. `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`,
+`UInt64`, and a `Link` of width `UInt8`, `UInt16` or `UInt32` are the
+fields it accepts. Their widths must total 64 bits or fewer. Building
+one packs the fields, and reading one shifts and masks. A vector of
+them is a vector of words. The fields are readable from any module
+unless you also write `sealed`. There is no `mut` field: replace the
+whole value. Tested by `tests/stdlib/999-packed-word.ax`.
 `(pub struct Chan sealed shared (owner : Handle))` is a shared counted
 handle: a `parallel` form lends it to its bindings, and it can't have a
 `mut` field.

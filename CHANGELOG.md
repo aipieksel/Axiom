@@ -16,6 +16,17 @@ its changelog too.
 
 ## Unreleased
 
+- A `word` struct can pack several fixed-width fields into its one
+  word. The fields are `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`,
+  `UInt16`, `UInt32`, `UInt64`, or a `Link` of width `UInt8`, `UInt16`
+  or `UInt32`, and the widths must total 64 bits or fewer. Construction
+  packs them and a field read shifts and masks, on every compilation
+  path. A vector of such values is a vector of words. One `Int` field
+  stays a sealed handle. A packed word's fields are readable from every
+  module unless the struct is marked `sealed`. Tested by
+  `tests/stdlib/999-packed-word.ax` and
+  `tests/diagnostics/1065-struct-marker.ax`.
+
 - Links. `(Link T W)` is an index into a `(Vec T)` that takes no share,
   and a struct field stores it in the bytes `W` names: `UInt8`, `UInt16`
   or `UInt32`. `linkTo`, `linkGet`, `linkNone`, `linkIsSome` and

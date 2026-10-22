@@ -1671,9 +1671,9 @@ handle and remain 8. ADT and vector slots retain their word representation.
 `(P a b)` builds a struct; `(struct P a b)` in expression position is refused
 with `AX2004`. Tested by `tests/stdlib/959-compact-struct-fields.ax`.
 
-**MM-VAL-10a (H). A `word` struct is one machine word, sealed to its
-module.** A struct declared with the marker `word` isn't a heap block.
-Its one field, an `Int`, is the whole value:
+**MM-VAL-10a (H). A `word` struct is one machine word.** A struct
+declared with the marker `word` isn't a heap block. It takes no share
+and has no address.
 
 ```scheme
 (pub struct Ticket word shared
@@ -1681,31 +1681,53 @@ Its one field, an `Int`, is the whole value:
 ```
 
 `(Ticket w)` is the word `w`, and `t.slot` is the word `t`. The value
-allocates nothing and takes no share. It has no bit in any reference
-map and costs a polymorphic call no evidence word, so a heap block that
-holds one maps exactly as it would for an `Int`.
+allocates nothing. It has no bit in any reference map and costs a
+polymorphic call no evidence word, so a heap block that holds one maps
+exactly as it would for an `Int`.
 
-The type is sealed. Only the module that declares it can build one, in
-either spelling, or read its field, whatever `pub` says (`AX3085`,
-`AX3086`). A function declared to answer `Int` can't answer one
-(`AX3004`). `pub` exports the name, so another module's signatures can
-mention the type and pass it on, but can't make or open one. Every
-value of the type is therefore one its module made. A `as` to the
-type forges one, and that belongs to the unsafe layer (`MM-VAL-22`).
+One `Int` field is a handle, and that form is sealed. Only the module
+that declares it can build one, in either spelling, or read its field,
+whatever `pub` says (`AX3085`, `AX3086`). A function declared to answer
+`Int` can't answer one (`AX3004`). `pub` exports the name, so another
+module's signatures can mention the type and pass it on, but can't make
+or open one. Every value of that type is one its module made. An `as`
+to the type forges one, and that belongs to the unsafe layer
+(`MM-VAL-22`).
 
-The checker holds the shape (`AX3084`): exactly one field, typed `Int`,
-not `mut`, and no type parameters. The marker `shared` needs `word`,
-or `sealed` on a heap struct (`MM-PAR-16`). It says every operation the
-module offers on the type is safe from several bindings at once, and
+A word may instead pack several fixed-width fields into those 64 bits.
+Each field is `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`,
+`UInt32`, `UInt64`, or a `Link` whose width is `UInt8`, `UInt16` or
+`UInt32`. Widths add in declaration order and must total 64 bits or fewer.
+The checker lowers a construction to the shifts and masks that pack
+the fields, and a field read to the shift and mask that unpack one.
+The same operations are what every compilation path emits. A `(Vec Node)`
+of such a struct is an ordinary vector of words.
+
+```scheme
+(struct Node word
+  (key : Int32)
+  (left : (Link Node UInt16))
+  (right : (Link Node UInt16)))
+```
+
+A packed word is a data record. Its fields are readable from every
+module unless the struct is also marked `sealed`. `shared` on a packed
+word needs `sealed`, because `shared` says the module keeps the fields.
+You replace a whole value. There is no field store, because the fields
+are immutable.
+
+The checker holds the shape (`AX3084`): no `mut` field, no reference,
+and no type parameters. The marker `shared` needs `word`, or `sealed`
+on a heap struct (`MM-PAR-16`). It says every operation the module
+offers on the type is safe from several bindings at once, and
 `MM-PAR-6` lets a concurrent binding capture exactly those word
-structs. The checker lowers construction and
-field reads to the word itself, so the emitter never sees either, and
-`symbols` reports the representation as `#repr=word` or
+structs. `symbols` reports the representation as `#repr=word` or
 `#repr=word,shared`.
 
 Tested by `tests/diagnostics/1062-handle-sealed-build.ax`,
-`tests/diagnostics/1063-handle-sealed-field.ax` and
-`tests/diagnostics/1065-struct-marker.ax`. `scripts/check-handles.sh`
+`tests/diagnostics/1063-handle-sealed-field.ax`,
+`tests/diagnostics/1065-struct-marker.ax` and
+`tests/stdlib/999-packed-word.ax`. `scripts/check-handles.sh`
 compares the shape word of a record holding a handle with the same
 record holding an `Int`.
 

@@ -2697,27 +2697,34 @@ and its fields:
     (pub struct Chan sealed shared
       (owner : Handle))
 
-`word` makes the struct one machine word instead of a heap block, and
-seals it: only the module that declares it can build one or read its
-field (AX3085, AX3086), so no other code can forge one. `sealed` seals
-a heap struct the same way. `shared` lets a `parallel` binding capture
-it (AX3064), which says every operation the module offers on it is
-safe from several bindings at once.
+`word` makes the struct one machine word instead of a heap block. One
+`Int` field is a handle, and that form is sealed: only the declaring
+module can build one or read its field (AX3085, AX3086). Several
+fixed-width fields pack into the same 64 bits. Those fields are
+readable from every module unless the struct is also marked `sealed`.
+`sealed` seals a heap struct the same way. `shared` lets a `parallel`
+binding capture the struct (AX3064), which says every operation the
+module offers on it is safe from several bindings at once.
 
-A word struct is its one field, so it has exactly one, typed `Int`,
-not `mut`, and no type parameters. `shared` needs `word` or `sealed`.
-A `sealed shared` heap struct is a counted block, and two bindings
+A packed field is `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`,
+`UInt16`, `UInt32`, `UInt64`, or a `Link` of width `UInt8`, `UInt16`
+or `UInt32`. The widths must total 64 bits or fewer. A `mut` field, a
+reference, or a type parameter is refused. `shared` on a packed word
+needs `sealed`. `shared` needs `word` or `sealed` on any struct. A
+`sealed shared` heap struct is a counted block, and two bindings
 touching one count race (MM-PAR-6), so a `parallel` form lends it with
 its count frozen until the last join (MM-PAR-16). It takes no `mut`
 field, since every binding reads it at once, and no type parameters.
 Any other name in the marker position is refused, and so is a marker
 written twice.
 
+
 ### explain AX3085
 AX3085 - a word struct built outside its module
 
-A struct declared `word` is sealed. Only its declaring module can
-construct it, even when the type is public. For example, `Mem` declares
+A `word` struct with one `Int` field is sealed, and so is any struct
+marked `sealed`. Only its declaring module can construct it, even when
+the type is public. For example, `Mem` declares
 `Addr` with a private `slot` field:
 
     (import Mem)
@@ -2731,11 +2738,12 @@ An `as` conversion from a raw word to a sealed type forges a handle.
 It belongs to the unsafe layer (MM-VAL-22), whose obligations include
 establishing that the word represents a valid value of that type.
 
+
 ### explain AX3086
 AX3086 - a word struct's field read outside its module
 
-A struct declared `word` is sealed. Only its declaring module can
-read its field:
+A `word` struct with one `Int` field is sealed, and so is any struct
+marked `sealed`. Only its declaring module can read its field:
 
     (import Mem)
     (:: peek (-> Addr Int))
@@ -2745,6 +2753,7 @@ What the word means is the module's business. Use the operations it
 provides, such as `addrEq` and `addrHash`, rather than reading `Addr`'s
 private representation. A function declared to answer `Int` cannot
 answer an `Addr` instead; that is AX3004.
+
 
 ### explain AX3089
 AX3089 - a function that needs a signature

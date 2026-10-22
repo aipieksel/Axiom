@@ -7845,11 +7845,41 @@
 (pub fn (wordSealedHere tc ent)
   (if (if (== ent 0)
     true
-    (== (& (structEntRepr ent) 5) 0))
+    (== (wordEntKeepsFields ent) 0))
     0
     (if (== (tcSameModule (structEntModule ent) (tcCurModule tc)) 1)
       0
       1)))
+
+; A sealed marker keeps the fields in the module. A `word` whose one
+; field is `Int` does too: that word is a handle. A packed word is a
+; data record, so its fields are readable everywhere unless it is
+; also marked `sealed`.
+(pub :: wordEntKeepsFields (-> Int Int))
+(pub fn (wordEntKeepsFields ent)
+  (if (== ent 0)
+    0
+    (if (!= (& (structEntRepr ent) 4) 0)
+      1
+      (if (== (structEntIsWord ent) 0)
+        0
+        (if (== (structEntIsLegacyWord ent) 1)
+          1
+          0)))))
+
+; One `Int` field. Construction and field reads are that word.
+(pub :: structEntIsLegacyWord (-> Int Int))
+(pub fn (structEntIsLegacyWord ent)
+  (if (== ent 0)
+    0
+    {
+      (let fs (structEntFields ent))
+      (if (!= (vecLen fs) 1)
+        0
+        (if (tyIsBareInt (nodeTyChild (vecGet fs 0)))
+          1
+          0))
+    }))
 
 ; ------------------------------------------------------------------
 ; The declaration rules, AX3084. A marker is `word`, `sealed` or
@@ -7940,37 +7970,219 @@
   {
     (let fs (nodeBChildren d))
     (let name (nodeAName d))
-    (if (!= (vecLen fs) 1)
+    (if (!= (nodeTy d) 0)
       (emitStructMarkerDiag tc (nodeSpan d)
-        (concat (concat (concat (concat "word struct `" name) "` declares ") (fmtInt (vecLen fs)))
-          " fields, and a word holds exactly one")
-        "give it one field, `(slot : Int)`: a word struct IS its one field, so a second one has nowhere to live"
-        "a word struct is one machine word, not a block (docs/memory-model.md MM-VAL-10a)")
-      {
-        (let f (vecGet fs 0))
-        (if (!= (nodeTy d) 0)
+        (concat (concat "word struct `" name) "` takes type parameters")
+        "drop the parameters: a word carries no type argument"
+        "a word takes no share and so has no evidence a type argument could describe")
+      (if (== (vecLen fs) 0)
+        (emitStructMarkerDiag tc (nodeSpan d)
+          (concat (concat "word struct `" name) "` declares no fields")
+          "give it one `Int` field, or fixed-width fields whose widths total 64 bits or fewer"
+          "a word struct is one machine word, not a block (docs/memory-model.md MM-VAL-10a)")
+        (wordCheckFields tc d fs name 0 0 1)))
+  })
+
+; `legacy` stays 1 only while every field seen is the single bare `Int`.
+(:: wordCheckFields (-> Int ASTNode Nodes String Int Int Int Int))
+(fn (wordCheckFields tc d fs name i total legacy)
+  (if (>= i (vecLen fs))
+    (if (== legacy 1)
+      0
+      (if (> total 64)
+        (emitStructMarkerDiag tc (nodeSpan d)
+          (concat (concat (concat (concat "word struct `" name) "` fields total ") (fmtInt total))
+            " bits, and a word holds 64")
+          "drop a field or narrow one until the widths fit in 64 bits"
+          "a word struct is one machine word, not a block (docs/memory-model.md MM-VAL-10a)")
+        (if (&& (structIsShared d)
+              (if (structHasMarker d "sealed")
+                false
+                true))
           (emitStructMarkerDiag tc (nodeSpan d)
-            (concat (concat "word struct `" name) "` takes type parameters")
-            "drop the parameters: a word carries no type argument"
-            "a word takes no share and so has no evidence a type argument could describe")
-          (if (== (fieldIsMut f) 1)
+            (concat (concat "word struct `" name)
+              "` is `shared` and its fields are readable everywhere")
+            "add `sealed`, or drop `shared`: `shared` says the module keeps the fields"
+            "a packed word is a data record, so mark `sealed` when its fields must stay in the module")
+          0)))
+    {
+      (let f (vecGet fs i))
+      (let code (wordWidthCode tc (nodeTyChild f)))
+      (if (== (fieldIsMut f) 1)
+        {
+          (emitStructMarkerDiag tc (spanOf f)
+            (concat (concat (concat (concat "field `" (nodeAName f)) "` of word struct `") name)
+              "` is `mut`")
+            "drop `mut`: a word struct is a value, and a store would change only the copy it was made on"
+            "a word struct has no block a field store could reach")
+          0
+        }
+        (if (== code 0)
+          {
             (emitStructMarkerDiag tc (spanOf f)
               (concat (concat (concat (concat "field `" (nodeAName f)) "` of word struct `") name)
-                "` is `mut`")
-              "drop `mut`: a word struct is a value, and a store would change only the copy it was made on"
-              "a word struct has no block a field store could reach")
-            (if (&& (!= (nodeTy f) 0)
-                  (if (tyIsBareInt (nodeTyChild f))
-                    false
-                    true))
-              (emitStructMarkerDiag tc (spanOf f)
-                (concat
-                  (concat (concat (concat "field `" (nodeAName f)) "` of word struct `") name)
-                  "` is not an `Int`")
-                "type the field `Int`: a word struct holds one machine word, and `Int` is the type that is one"
-                "a `String`, a `Vec` or a record is a reference, and a word that held one would take no share of it")
-              0)))
-      })
+                "` is not a fixed-width field")
+              "type it `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, or a `Link` of width `UInt8`, `UInt16` or `UInt32`. One `Int` field is the whole word"
+              "a `String`, a `Vec` or a record is a reference, and a word that held one would take no share of it")
+            0
+          }
+          (wordCheckFields tc d fs name (+ i 1) (+ total (wordCodeBits code))
+            (if (&& (== legacy 1) (&& (== i 0) (== code 1)))
+              1
+              0))))
+    }))
+
+; 1 is a bare `Int`, the handle form. Any other accepted code stores
+; its width in the low 7 bits and sets bit 8 when the field is unsigned.
+(pub :: wordWidthCode (-> Int ASTNode Int))
+(pub fn (wordWidthCode tc ty)
+  (if (nodeSame ty nilNode)
+    0
+    (wordWidthCodeNode tc (tyExpandAliases tc ty 0))))
+
+(:: wordWidthCodeNode (-> Int ASTNode Int))
+(fn (wordWidthCodeNode tc t)
+  (if (!= (nodeTag t) TAG_T_CON)
+    0
+    (if (== (vecLen (nodeBChildren t)) 0)
+      (wordScalarCode (nodeAName t))
+      (if (&& (strEq (nodeAName t) "Link") (== (vecLen (nodeBChildren t)) 2))
+        (wordLinkWidthCode tc (vecGet (nodeBChildren t) 1))
+        0))))
+
+(:: wordScalarCode (-> String Int))
+(fn (wordScalarCode name)
+  (if (strEq name "Int")
+    1
+    (if (strEq name "Int8")
+      8
+      (if (strEq name "Int16")
+        16
+        (if (strEq name "Int32")
+          32
+          (if (strEq name "Int64")
+            64
+            (if (strEq name "UInt8")
+              (+ 8 256)
+              (if (strEq name "UInt16")
+                (+ 16 256)
+                (if (strEq name "UInt32")
+                  (+ 32 256)
+                  (if (strEq name "UInt64")
+                    (+ 64 256)
+                    0))))))))))
+
+(:: wordLinkWidthCode (-> Int ASTNode Int))
+(fn (wordLinkWidthCode tc ty)
+  {
+    (let w (wordWidthCode tc ty))
+    (if (== (& w 256) 0)
+      0
+      (if (> (& w 127) 32)
+        0
+        w))
+  })
+
+(pub :: wordCodeBits (-> Int Int))
+(pub fn (wordCodeBits code)
+  (if (== code 1)
+    64
+    (& code 127)))
+
+(:: wordCodeUnsigned (-> Int Int))
+(fn (wordCodeUnsigned code)
+  (if (== code 1)
+    0
+    (if (!= (& code 256) 0)
+      1
+      0)))
+
+(:: wordBin (-> String ASTNode ASTNode Int ASTNode))
+(fn (wordBin op left right span)
+  (mkEApp (mkEApp (mkEVarAt op span) left) right))
+
+(:: wordMask (-> Int Int))
+(fn (wordMask bits)
+  (if (== bits 8)
+    255
+    (if (== bits 16)
+      65535
+      (if (== bits 32)
+        4294967295
+        1))))
+
+; The field's low `bits`, then shifted up to `shift`. A 64-bit field
+; is the whole word.
+(:: wordPlace (-> ASTNode Int Int Int ASTNode))
+(fn (wordPlace value bits shift span)
+  {
+    (let masked
+      (if (== bits 64)
+        value
+        (wordBin "&" value (nodeBuildEInt (wordMask bits) 0 0 span) span)))
+    (if (== shift 0)
+      masked
+      (wordBin "<<" masked (nodeBuildEInt shift 0 0 span) span))
+  })
+
+(pub :: wordPackExpr (-> Int Int Nodes Int ASTNode))
+(pub fn (wordPackExpr tc ent args span)
+  {
+    (let fields (structEntFields ent))
+    (let mut acc (nodeBuildEInt 0 0 0 span))
+    (let mut shift 0)
+    (let mut i 0)
+    {
+      (while (< i (vecLen fields))
+        {
+          (let code (wordWidthCode tc (nodeTyChild (vecGet fields i))))
+          (let bits (wordCodeBits code))
+          (let piece (wordPlace (vecGet args i) bits shift span))
+          {
+            (set acc (if (== i 0)
+              piece
+              (wordBin "|" acc piece span)))
+            (set shift (+ shift bits))
+            (set i (+ i 1))
+          }
+        })
+      acc
+    }
+  })
+
+; Sign-extend a signed field. An unsigned field is a shift and a mask.
+(:: wordExtractBits (-> ASTNode Int Int Int Int ASTNode))
+(fn (wordExtractBits recv shift bits unsigned span)
+  (if (== bits 64)
+    recv
+    (if (== unsigned 1)
+      (wordBin "&" (wordBin ">>" recv (nodeBuildEInt shift 0 0 span) span)
+        (nodeBuildEInt (wordMask bits) 0 0 span) span)
+      (wordBin ">>" (wordBin "<<" recv (nodeBuildEInt (- 64 (+ shift bits)) 0 0 span) span)
+        (nodeBuildEInt (- 64 bits) 0 0 span) span))))
+
+(pub :: wordExtractExpr (-> Int Int String ASTNode Int ASTNode))
+(pub fn (wordExtractExpr tc ent fname recv span)
+  {
+    (let fields (structEntFields ent))
+    (let mut shift 0)
+    (let mut found recv)
+    (let mut i 0)
+    {
+      (while (< i (vecLen fields))
+        {
+          (let f (vecGet fields i))
+          (let code (wordWidthCode tc (nodeTyChild f)))
+          (let bits (wordCodeBits code))
+          {
+            (if (strEq (nodeAName f) fname)
+              (set found (wordExtractBits recv shift bits (wordCodeUnsigned code) span)))
+            (set shift (+ shift bits))
+            (set i (+ i 1))
+          }
+        })
+      found
+    }
   })
 
 (pub :: emitStructMarkerDiag (-> Int Int String String String Int))
@@ -17094,8 +17306,12 @@
 (pub :: wordLowerIfWord (-> Int Int ASTNode Nodes ASTNode ASTNode))
 (pub fn (wordLowerIfWord tc ent site args t)
   {
-    (if (&& (== (structEntIsWord ent) 1) (&& (== (vecLen args) 1) (== (tyIsErr t) 0)))
-      (wordLowerRecord tc site (vecGet args 0)))
+    (if (&& (== (structEntIsWord ent) 1) (== (tyIsErr t) 0))
+      (if (== (structEntIsLegacyWord ent) 1)
+        (if (== (vecLen args) 1)
+          (wordLowerRecord tc site (vecGet args 0)))
+        (if (== (vecLen args) (vecLen (structEntFields ent)))
+          (wordLowerRecord tc site (wordPackExpr tc ent args (nodeSpan site))))))
     t
   })
 
@@ -23275,10 +23491,13 @@
               (if (! (nodeSame fty nilNode))
                 {
                   (stampFieldStruct e ent)
-                  ; A word struct's field IS its word: the read is
-                  ; lowered to the receiver (`wordLowerRecord`).
+                  ; A legacy word's field is the word. A packed word's
+                  ; field is the shift and mask that unpack it.
                   (if (== (structEntIsWord ent) 1)
-                    (wordLowerRecord tc e (nodeAChild e)))
+                    (if (== (structEntIsLegacyWord ent) 1)
+                      (wordLowerRecord tc e (nodeAChild e))
+                      (wordLowerRecord tc e
+                        (wordExtractExpr tc ent (nodeBName e) (nodeAChild e) (nodeSpan e)))))
                   fty
                 }
                 ; Not a struct field. When the receiver names a
