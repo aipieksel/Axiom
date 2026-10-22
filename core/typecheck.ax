@@ -17828,7 +17828,7 @@
 ; value cannot enter a set of callable members.
 (pub struct FieldLambdaBinding
   (name : String)
-  (initialiser : ASTNode))
+  (initialiser : (Option ASTNode)))
 
 (pub struct FieldLambda
   (owner : ASTNode)
@@ -18618,9 +18618,9 @@
       {
         (let binding (vecGet bindings i))
         (let value
-          (if (nodeSame binding.initialiser nilNode)
-            None
-            (walkEffectsVal tc binding.initialiser bound vecNew)))
+          (if (let (Some initialiser) binding.initialiser)
+            (walkEffectsVal tc initialiser bound vecNew)
+            None))
         (set bound (if (let (Some functions) value)
           (bsWithVals bound binding.name functions)
           (bsWith bound binding.name bsOpaque)))
@@ -18712,22 +18712,22 @@
     }))
 
 ; The locals the collector knows, as three parallel columns: a local's
-; name, its initialiser (0 for a parameter or a binder whose value it
-; cannot see), and how many locals were in scope where it was bound,
-; which is where a name in the initialiser resolves. ONE stack serves
+; name, its optional initialiser (`None` for a parameter or a binder
+; whose value it cannot see), and the number of locals in scope where
+; it was bound, where a name in the initialiser resolves. One stack serves
 ; every declaration, pushed on the way into a scope and popped on the
 ; way out: this pass reads the whole program before the walk, and a
 ; record per binding would cost it memory for nothing it keeps.
 (pub struct FsStack
   (names : Names)
-  (inits : (Vec ASTNode))
+  (inits : (Vec (Option ASTNode)))
   (envs : (Vec Int)))
 
 (pub :: fsLen (-> FsStack Int))
 (pub fn (fsLen st)
   (vecLen st.names))
 
-(pub :: fsBind (-> FsStack String ASTNode Int Int))
+(pub :: fsBind (-> FsStack String (Option ASTNode) Int Int))
 (pub fn (fsBind st n init env)
   {
     (vecPushStr st.names n)
@@ -18741,7 +18741,7 @@
   (if (>= i (vecLen names))
     0
     {
-      (fsBind st (vecGetStr names i) nilNode (fsLen st))
+      (fsBind st (vecGetStr names i) None (fsLen st))
       (fsPush st names (+ i 1))
     }))
 
@@ -18761,7 +18761,7 @@
   (if (>= (vecLen st.inits) (vecLen st.names))
     0
     {
-      (vecPush st.inits nilNode)
+      (vecPush st.inits None)
       (vecPush st.envs 0)
       (fsFillCols st)
     }))
@@ -18806,8 +18806,8 @@
                 (fsWalk tc t d (nodeBChild e) st)
                 (fsBind st (nodeAName e)
                   (if (== tag TAG_E_LET)
-                    (nodeBChild e)
-                    nilNode)
+                    (Some (nodeBChild e))
+                    None)
                   n)
                 (fsWalk tc t d (nodeCChild e) st)
                 (fsPopTo st n)
@@ -18959,9 +18959,9 @@
         {
           (let k (fsFind st (nodeAName v) (- lim 1)))
           (if (>= k 0)
-            (if (nodeSame (vecGet st.inits k) nilNode)
-              UnknownFn
-              (fsClassify tc d (vecGet st.inits k) st (vecGet st.envs k)))
+            (if (let (Some initialiser) (vecGet st.inits k))
+              (fsClassify tc d initialiser st (vecGet st.envs k))
+              UnknownFn)
             {
               (let entFound (findFnEnt tc (nodeAName v)))
               (if (let (Some ent) entFound)
