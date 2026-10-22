@@ -155,6 +155,35 @@ def constructor_name_negative_control(compiler, repo, env, work):
     print("constructor metadata negative control rejected Some-empty collapse (status 1)")
 
 
+def exhaustiveness_negative_control(compiler, repo, env, work):
+    """Prove that an empty failure witness cannot be mistaken for success."""
+    overlay = work / "negative-exhaustiveness-core"
+    overlay.mkdir()
+    for source in (repo / "core").iterdir():
+        if source.is_file() and source.name != "typecheck.ax":
+            (overlay / source.name).symlink_to(source)
+    source = (repo / "core/typecheck.ax").read_text()
+    old = """(if (> (vecLen matrix) 0)
+      None
+      (Some vecNew))"""
+    if source.count(old) != 1:
+        raise SystemExit("matrix control no longer matches its single implementation site")
+    (overlay / "typecheck.ax").write_text(source.replace(old, old.replace("(Some vecNew)", "None")))
+    executable = work / "exhaustiveness-negative"
+    built = subprocess.run(
+        [str(compiler), "--diagnostic-format=ai", "build",
+         str(repo / "tests/selfhost/typecheck-exhaustiveness-options.ax"),
+         "--opt", "0", "--output", str(executable)],
+        env=dict(env, AXIOM_PATH=str(overlay)), capture_output=True, text=True,
+    )
+    if built.returncode:
+        raise SystemExit(built.stdout + built.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    if ran.returncode != 1 or ran.stdout or ran.stderr:
+        raise SystemExit(f"matrix control: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+    print("matrix negative control rejected Some-empty success conflation (status 1)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
@@ -168,7 +197,7 @@ def main():
         "typecheck-function-registry.ax", "typecheck-private-state.ax",
         "typecheck-witness-options.ax", "typecheck-field-options.ax",
         "typecheck-collector-options.ax", "typecheck-current-decl-options.ax",
-        "typecheck-constructor-name-options.ax",
+        "typecheck-constructor-name-options.ax", "typecheck-exhaustiveness-options.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
@@ -180,6 +209,7 @@ def main():
         ("typecheck-collector-refusal.axp", "AX3004", ("Option", "Int")),
         ("typecheck-current-decl-refusal.axp", "AX3004", ("Option", "Int")),
         ("typecheck-constructor-name-refusal.axp", "AX3004", ("Option", "Vec")),
+        ("typecheck-exhaustiveness-result-refusal.axp", "AX3005", ("None",)),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -211,6 +241,7 @@ def main():
             collector_negative_control(compiler, repo, env, Path(work))
             current_decl_negative_control(compiler, repo, env, Path(work))
             constructor_name_negative_control(compiler, repo, env, Path(work))
+            exhaustiveness_negative_control(compiler, repo, env, Path(work))
     print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 

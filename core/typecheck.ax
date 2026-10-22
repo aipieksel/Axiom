@@ -24195,10 +24195,9 @@
 ;                          recurse on the DEFAULT matrix, or fail with
 ;                          the missing constructors as the witness
 ;
-; The witness travels in `missOut`, a one-word cell, so AX3005's
-; message and label are constructed exactly as before - the missing
-; list for a top-level hole is byte-identical to what the shallow
-; check produced, which is what keeps the existing goldens.
+; None means exhaustive. Some names is the first missing witness;
+; Some empty means values are missing without enumerable names. The
+; typed result preserves AX3005's message, label and witness order.
 ; ------------------------------------------------------------------
 ; Does this pattern bind unconditionally? Only a bare identifier does
 ; - `_` and any binder - and `true`/`false` are the exception, since
@@ -24290,7 +24289,6 @@
 
 ; The constructors of this type that column 0 never tests.
 (pub :: matMissing (-> NodesRows (Vec CtorEnt) Strings Int Strings))
-;@axiom:effect(unsafe)
 (pub fn (matMissing matrix ctors acc i)
   (if (>= i (vecLen ctors))
     acc
@@ -24298,8 +24296,7 @@
       {
         (let cn (bareOf (ctorEntName (vecGet ctors i))))
         (if (== (colHasCtor matrix cn 0) 0)
-          (vecPush acc cn)
-          (as 0 (Vec String)))
+          (vecPush acc cn))
       }
       (matMissing matrix ctors acc (+ i 1))
     }))
@@ -24309,7 +24306,6 @@
 ; An arity-mismatched pattern already drew AX3009; pad it so the
 ; matrix stays rectangular and the walk cannot read past a row.
 (pub :: matSpecialize (-> TC NodesRows String Int NodesRows Int NodesRows))
-;@axiom:effect(unsafe)
 (pub fn (matSpecialize tc matrix cn arity acc i)
   (if (>= i (vecLen matrix))
     acc
@@ -24326,8 +24322,7 @@
                 (vecPush acc
                   (vecAppendFrom (rowTail row)
                     (pushWilds (vecAppendFrom args vecNew 0) arity (vecLen args)) 0))
-              }
-              (as 0 (Vec (Vec Int)))))
+              }))
         }
       }
       (matSpecialize tc matrix cn arity acc (+ i 1))
@@ -24360,7 +24355,6 @@
 ; S(lit, P) for a Bool literal: the rows that test `lit`, and the
 ; binder rows, minus the column.
 (pub :: matBoolRows (-> NodesRows String NodesRows Int NodesRows))
-;@axiom:effect(unsafe)
 (pub fn (matBoolRows matrix lit acc i)
   (if (>= i (vecLen matrix))
     acc
@@ -24371,93 +24365,68 @@
           (let p (vecGet row 0))
           (if (|| (== (patIrrefutable p) 1)
                 (&& (== (nodeTag p) TAG_E_VAR) (strEq (nodeAName p) lit)))
-            (vecPush acc (rowTail row))
-            (as 0 (Vec (Vec Int))))
+            (vecPush acc (rowTail row)))
         }
       }
       (matBoolRows matrix lit acc (+ i 1))
     }))
 
 (pub :: matDefault (-> NodesRows NodesRows Int NodesRows))
-;@axiom:effect(unsafe)
 (pub fn (matDefault matrix acc i)
   (if (>= i (vecLen matrix))
     acc
     {
       {
-        (let row (vecGetVec matrix i))
+        (let row (vecGet matrix i))
         (if (== (patIrrefutable (vecGet row 0)) 1)
-          (vecPush acc (rowTail row))
-          (as 0 (Vec (Vec Int))))
+          (vecPush acc (rowTail row)))
       }
       (matDefault matrix acc (+ i 1))
     }))
 
-(pub :: matExhaustive (-> TC NodesRows Nodes Int Int))
-;@axiom:effect(unsafe)
-(pub fn (matExhaustive tc matrix types missOut)
+(pub :: matExhaustive (-> TC NodesRows Nodes (Option Names)))
+(pub fn (matExhaustive tc matrix types)
   (if (== (vecLen types) 0)
     (if (> (vecLen matrix) 0)
-      1
-      0)
+      None
+      (Some vecNew))
     {
       (let ty (vecGet types 0))
       (let rest (rowTail types))
-      {
-        (let dent
-          (if (== (nodeTag ty) TAG_T_CON)
-            (findData tc (nodeAName ty))
-            None))
-        (if (let (Some dataEntry) dent)
-          {
-            (let missing (matMissing matrix (dataEntCtors dataEntry) vecNew 0))
-            (if (> (vecLen missing) 0)
-              ; An incomplete constructor set is covered only by
-              ; a binder, and then the binder's row is the only
-              ; one that can still match here.
-              (if (== (colHasWild matrix 0) 1)
-                (matExhaustive tc (matDefault matrix vecNew 0) rest missOut)
-                {
-                  (memSetWord missOut 0 missing)
-                  0
-                })
-              (matCtorsExh tc matrix rest (dataEntCtors dataEntry) ty missOut 0))
-          }
-          (if (== (tyIsBoolTy ty) 1)
+      (let dent
+        (if (== (nodeTag ty) TAG_T_CON)
+          (findData tc (nodeAName ty))
+          None))
+      (if (let (Some dataEntry) dent)
+        {
+          (let missing (matMissing matrix (dataEntCtors dataEntry) vecNew 0))
+          (if (> (vecLen missing) 0)
             (if (== (colHasWild matrix 0) 1)
-              (matExhaustive tc (matDefault matrix vecNew 0) rest missOut)
-              (if (&& (== (colHasBoolLit matrix "true" 0) 1)
-                    (== (colHasBoolLit matrix "false" 0) 1))
-                (if (== (matExhaustive tc (matBoolRows matrix "true" vecNew 0) rest missOut) 0)
-                  0
-                  (matExhaustive tc (matBoolRows matrix "false" vecNew 0) rest missOut))
-                {
-                  (memSetWord missOut 0
-                    {
-                      (let m vecNew)
-                      {
-                        (if (== (colHasBoolLit matrix "true" 0) 0)
-                          (vecPush m "true")
-                          (as 0 (Vec String)))
-                        (if (== (colHasBoolLit matrix "false" 0) 0)
-                          (vecPush m "false")
-                          (as 0 (Vec String)))
-                        m
-                      }
-                    })
-                  0
-                }))
-            ; Nothing enumerable in this column: only a binder covers
-            ; it. `Int`, `String`, a type variable and an unresolved
-            ; name all land here, which is why a literal arm never
-            ; makes a match total on its own.
-            (if (== (colHasWild matrix 0) 1)
-              (matExhaustive tc (matDefault matrix vecNew 0) rest missOut)
+              (matExhaustive tc (matDefault matrix vecNew 0) rest)
+              (Some missing))
+            (matCtorsExh tc matrix rest (dataEntCtors dataEntry) ty 0))
+        }
+        (if (== (tyIsBoolTy ty) 1)
+          (if (== (colHasWild matrix 0) 1)
+            (matExhaustive tc (matDefault matrix vecNew 0) rest)
+            (if (&& (== (colHasBoolLit matrix "true" 0) 1) (== (colHasBoolLit matrix "false" 0) 1))
               {
-                (memSetWord missOut 0 vecNew)
-                0
-              })))
-      }
+                (let missing (matExhaustive tc (matBoolRows matrix "true" vecNew 0) rest))
+                (if (let (Some names) missing)
+                  (Some names)
+                  (matExhaustive tc (matBoolRows matrix "false" vecNew 0) rest))
+              }
+              {
+                (let missing vecNew)
+                (if (== (colHasBoolLit matrix "true" 0) 0)
+                  (vecPush missing "true"))
+                (if (== (colHasBoolLit matrix "false" 0) 0)
+                  (vecPush missing "false"))
+                (Some missing)
+              }))
+          (if (== (colHasWild matrix 0) 1)
+            (matExhaustive tc (matDefault matrix vecNew 0) rest)
+            (Some vecNew))))
     }))
 
 ; `ty` is the column's own type, and the constructor's field types
@@ -24470,22 +24439,19 @@
 ; its refutation pass. `tyEnvSubst` replaces what the column pins and
 ; leaves the rest as written; it mints nothing, so the placeholder
 ; numbering every later diagnostic in the file renders is untouched.
-(pub :: matCtorsExh (-> TC NodesRows Nodes (Vec CtorEnt) ASTNode Int Int Int))
-(pub fn (matCtorsExh tc matrix rest ctors ty missOut i)
+(pub :: matCtorsExh (-> TC NodesRows Nodes (Vec CtorEnt) ASTNode Int (Option Names)))
+(pub fn (matCtorsExh tc matrix rest ctors ty i)
   (if (>= i (vecLen ctors))
-    1
+    None
     {
       (let c (vecGet ctors i))
-      {
-        (let fieldTys (tyEnvSubstVec c.fieldTys (ctorPatEnv c.resTy ty vecNew) vecNew 0))
-        (if (==
-              (matExhaustive tc
-                (matSpecialize tc matrix (bareOf c.name) (vecLen fieldTys) vecNew 0)
-                (vecAppendFrom rest (vecAppendFrom fieldTys vecNew 0) 0) missOut)
-              0)
-          0
-          (matCtorsExh tc matrix rest ctors ty missOut (+ i 1)))
-      }
+      (let fieldTys (tyEnvSubstVec c.fieldTys (ctorPatEnv c.resTy ty vecNew) vecNew 0))
+      (let missing
+        (matExhaustive tc (matSpecialize tc matrix (bareOf c.name) (vecLen fieldTys) vecNew 0)
+          (vecAppendFrom rest (vecAppendFrom fieldTys vecNew 0) 0)))
+      (if (let (Some names) missing)
+        (Some names)
+        (matCtorsExh tc matrix rest ctors ty (+ i 1)))
     }))
 
 ; `tyInstIn` without the minting: a source variable the environment
@@ -24752,7 +24718,7 @@
 ; `(import IO (todo))`, after its last import or at byte 0 when it has
 ; none.
 ; ------------------------------------------------------------------
-(pub :: matchFixHelps (-> TC diag::Diag (Vec ASTNode) ASTNode ASTNode NodesRows Ints ()))
+(pub :: matchFixHelps (-> TC diag::Diag (Vec ASTNode) ASTNode ASTNode NodesRows Names ()))
 (pub fn (matchFixHelps tc d arms scrutTy scrut matrix missing)
   {
     (let src (tcEntrySrc tc))
@@ -24888,7 +24854,7 @@
 
 ; The arms, or "" when one of the missing names is not this type's
 ; own top-level hole.
-(pub :: missingArmsText (-> TC ASTNode NodesRows Ints Int String))
+(pub :: missingArmsText (-> TC ASTNode NodesRows Names Int String))
 (pub fn (missingArmsText tc scrutTy matrix missing indent)
   {
     (let dentFound (findData tc (nodeAName scrutTy)))
@@ -24902,7 +24868,7 @@
         {
           (while (&& (== ok 1) (< i (vecLen missing)))
             {
-              (let cn (vecGetStr missing i))
+              (let cn (vecGet missing i))
               {
                 (let arity (ctorArityIn ctors cn 0))
                 {
@@ -25028,34 +24994,27 @@
       {
         (let matrix (armsMatrix arms vecNew 0))
         (let types (vecPush vecNew scrutTy))
-        (let missOut (memAlloc 8))
-        {
-          (memSetWord missOut 0 vecNew)
-          (if (== (matExhaustive tc matrix types missOut) 1)
-            0
+        (if (let (Some missing) (matExhaustive tc matrix types))
+          {
+            (let d
+              (mkDiag SEV_ERROR "AX3005" "non-exhaustive-match" span
+                (if (== (vecLen missing) 0)
+                  (concat "non-exhaustive pattern match: some `"
+                    (concat (tyRender scrutTy) "` values are not covered"))
+                  (concat "non-exhaustive pattern match: missing " (joinComma missing)))
+                0 0 0))
             {
-              (let missing (memGetWordVec missOut 0))
-              {
-                (let d
-                  (mkDiag SEV_ERROR "AX3005" "non-exhaustive-match" span
-                    (if (== (vecLen missing) 0)
-                      (concat "non-exhaustive pattern match: some `"
-                        (concat (tyRender scrutTy) "` values are not covered"))
-                      (concat "non-exhaustive pattern match: missing " (joinComma missing)))
-                    0 0 0))
-                {
-                  (diagSetLabel d
-                    (if (== (vecLen missing) 0)
-                      (concat "this `match` does not cover every value of `"
-                        (concat (tyRender scrutTy) "`"))
-                      (concat "this `match` does not cover: " (joinComma missing))))
-                  (matchFixHelps tc d arms scrutTy scrut matrix missing)
-                  (emitDiag tc d)
-                  0
-                }
-              }
-            })
-        }
+              (diagSetLabel d
+                (if (== (vecLen missing) 0)
+                  (concat "this `match` does not cover every value of `"
+                    (concat (tyRender scrutTy) "`"))
+                  (concat "this `match` does not cover: " (joinComma missing))))
+              (matchFixHelps tc d arms scrutTy scrut matrix missing)
+              (emitDiag tc d)
+              0
+            }
+          }
+          0)
       })
   })
 
@@ -25077,7 +25036,7 @@
 ; `matExhaustive` replaced it. `matMissing` asks the same question of
 ; a matrix COLUMN, which is the only place the answer was ever
 ; correct, so the pair had no remaining caller.
-(:: joinComma (-> Ints String))
+(:: joinComma (-> Names String))
 (fn (joinComma xs)
   {
     (let out strBuilderNew)
@@ -25085,7 +25044,7 @@
       {
         (if (> i 0)
           (strBuilderPush out ", "))
-        (strBuilderPush out (vecGetStr xs i))
+        (strBuilderPush out (vecGet xs i))
       })
     (strBuilderFinish out)
   })
