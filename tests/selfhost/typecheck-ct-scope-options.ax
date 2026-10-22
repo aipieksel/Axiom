@@ -1,0 +1,82 @@
+; expect 42
+; Lexical row zero is present; an absent global remains public.
+; Shadow scopes and set keep the existing monotone taint behaviour.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: ctRowIs (-> (Option Int) Int Bool))
+(fn (ctRowIs result expected)
+  (match result
+    ((None) false)
+    ((Some row) (== row expected))))
+
+(:: lexicalTaintChecks Bool)
+(fn (lexicalTaintChecks)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (let walk (ctWalkNew tc "test" ""))
+    (let outerKey (mkEVar "outerOwner"))
+    (let innerKey (mkEVar "innerOwner"))
+    (let initiallyMissing (isNone (ctScopeRow walk "value")))
+    (ctBind walk "value" (addrOf outerKey) 2)
+    (let outer (&& (ctRowIs (ctScopeRow walk "value") 0) (== (ctEval walk (mkEVar "value")) 2)))
+    (let mark 1)
+    (ctBind walk "value" (addrOf innerKey) 0)
+    (let inner (&& (ctRowIs (ctScopeRow walk "value") 1) (== (ctEval walk (mkEVar "value")) 0)))
+    (ctUnscope walk mark)
+    (&& initiallyMissing
+      (&& outer
+        (&& inner
+          (&& (ctRowIs (ctScopeRow walk "value") 0)
+            (&& (== (ctEval walk (mkEVar "value")) 2)
+              (&& (isNone (ctScopeRow walk "global")) (== (ctEval walk (mkEVar "global")) 0)))))))
+  })
+
+(:: assignmentTaintChecks Bool)
+(fn (assignmentTaintChecks)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (let walk (ctWalkNew tc "test" ""))
+    (let valueKey (mkEVar "valueOwner"))
+    (let secretKey (mkEVar "secretOwner"))
+    (ctBind walk "value" (addrOf valueKey) 0)
+    (ctBind walk "secret" (addrOf secretKey) 2)
+    (ctEval walk (nodeBuildESet "value" (mkEVar "secret") 0 0))
+    (let raised (== (ctEval walk (mkEVar "value")) 2))
+    (ctEval walk (nodeBuildESet "value" (mkEInt 0) 0 0))
+    (ctEval walk (nodeBuildESet "missing" (mkEVar "secret") 0 0))
+    (&& raised
+      (&& (== (ctEval walk (mkEVar "value")) 2)
+        (&& (ctRowIs (ctScopeRow walk "secret") 1)
+          (&& (isNone (ctScopeRow walk "missing")) (== (ctEval walk (mkEVar "missing")) 0)))))
+  })
+
+(:: ctBranchDiagnosticChecks Bool)
+(fn (ctBranchDiagnosticChecks)
+  {
+    (let source
+      "(:: branch (-> Int Int))\n;@axiom:ct(secret)\n(pub fn (branch secret) (if (== secret 0) 1 2))\n(:: main Int)\n(pub fn (main) 42)\n")
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units (CUnit2 :file "ct-scope.ax" :src source :name "" :imports vecNew :library false))
+    (let checked (checkModuleTcTyped declarations declarations units))
+    (if (== (countErrorDiags (tcOutVec checked)) 1)
+      (&& (strEq (diagCode (vecGet (tcOutVec checked) 0)) "AX3092")
+        (strEq (diagLabel (vecGet (tcOutVec checked) 0)) "a branch on a secret"))
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (lexicalTaintChecks)
+    (if (assignmentTaintChecks)
+      (if (ctBranchDiagnosticChecks)
+        42
+        3)
+      2)
+    1))

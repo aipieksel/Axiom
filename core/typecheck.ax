@@ -33747,18 +33747,18 @@
     }
   })
 
-; The row the innermost binding of `name` uses, or -1 for a name bound
+; The row the innermost binding of `name` uses, or None for a name bound
 ; outside the body (a function, a constant), which is public.
-(pub :: ctScopeRow (-> CtWalk String Int))
+(pub :: ctScopeRow (-> CtWalk String (Option Int)))
 (pub fn (ctScopeRow w name)
   {
     (let mut i (- (vecLen w.names) 1))
-    (let mut at (- 0 1))
+    (let mut at (:: None (Option Int)))
     {
-      (while (&& (>= i 0) (< at 0))
+      (while (&& (>= i 0) (isNone at))
         {
           (if (strEq (vecGet w.names i) name)
-            (set at (vecGet w.rows i)))
+            (set at (Some (vecGet w.rows i))))
           (set i (- i 1))
         })
       at
@@ -34066,12 +34066,9 @@
     {
       (let tag (nodeTag e))
       (if (== tag TAG_E_VAR)
-        {
-          (let row (ctScopeRow w (nodeAName e)))
-          (if (< row 0)
-            0
-            (vecGet w.taints row))
-        }
+        (if (let (Some row) (ctScopeRow w (nodeAName e)))
+          (vecGet w.taints row)
+          0)
         (if (== tag TAG_E_APP)
           (ctEvalApp w e)
           (if (|| (== tag TAG_E_LET) (== tag TAG_E_LETM))
@@ -34123,12 +34120,9 @@
                     (if (== tag TAG_E_SET)
                       {
                         (let t (ctEval w (nodeBChild e)))
-                        (let row (ctScopeRow w (nodeAName e)))
-                        {
-                          (if (>= row 0)
-                            (ctRaise w row t))
-                          0
-                        }
+                        (if (let (Some row) (ctScopeRow w (nodeAName e)))
+                          (ctRaise w row t))
+                        0
                       }
                       (if (== tag TAG_E_REGION)
                         (ctEval w (nodeBChild e))

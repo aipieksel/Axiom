@@ -29,6 +29,13 @@ CASES = [
         "new": "None",
         "negative_status": 1,
     },
+    {
+        "name": "ct-scope",
+        "function": "ctScopeRow",
+        "old": "(Some (vecGet w.rows i))",
+        "new": "None",
+        "negative_status": 1,
+    },
 ]
 
 
