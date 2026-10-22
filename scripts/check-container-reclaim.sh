@@ -650,6 +650,35 @@ else
   failed=1
 fi
 
+# A cast's target is type syntax; its value and surplus calls still run.
+# The unused `a` in this fixture collides with a generic type parameter.
+# A false call edge made read-only accessors look as if they wrote.
+type_probe="$repo_root/tests/stdlib/1001-type-operands-write-scope.ax"
+if "$axc" --diagnostic-format=ai emit-llvm "$type_probe" -o "$work/type-operands.ll" \
+    >"$work/type-operands.log" 2>&1; then
+  for name in reads castWrites ascribedWrites surplusWrites; do
+    if ! grep -q "^define .*@$name(" "$work/type-operands.ll"; then
+      echo "FAIL: missing type-operand control $name"
+      failed=1
+      continue
+    fi
+    count="$(retains_in "$name" "$work/type-operands.ll")"
+    if [[ "$name" == reads && "$count" -ne 0 ]]; then
+      echo "FAIL: a type operand made a read-only scope take $count share(s)"
+      failed=1
+    elif [[ "$name" != reads && "$count" -lt 1 ]]; then
+      echo "FAIL: $name lost the share that protects an overwritten element"
+      failed=1
+    else
+      echo "ok   type-operand control $name takes $count share(s)"
+    fi
+  done
+else
+  echo "FAIL: could not emit the type-operand controls"
+  sed 's/^/     /' "$work/type-operands.log" | head -10
+  failed=1
+fi
+
 if [[ "$failed" == 0 ]]; then
   echo "check-container-reclaim: gate passed"
 else

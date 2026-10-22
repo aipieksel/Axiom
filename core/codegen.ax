@@ -27933,11 +27933,23 @@
 (fn (writesApp cg e bound names mode)
   {
     (let head (spineHead e))
+    ; A cast or layout query's first operand is a type, represented as
+    ; expression syntax. It cannot call a same-named nullary function.
+    ; Its value operands still run, and surplus cast operands call the
+    ; function value the cast answers.
+    (let typeHead
+      (&& (== (nodeTag head) TAG_E_VAR)
+        (&& (|| (isCastName (nodeAName head)) (sizedTyIn (nodeAName head) "sizeof alignof"))
+          (!
+            (|| (writesNameIn (nodeAName head) bound)
+              (&& (== mode 1) (isLocalValue cg (nodeAName head))))))))
     (let argsWrite
       {
         (let mut hit false)
         {
-          (for k in 1..(slotPartCount e)
+          (for k in (if typeHead
+            2
+            1)..(slotPartCount e)
             (if (writesIn cg (slotPart e k) bound names mode)
               (set hit true)))
           hit
@@ -27952,8 +27964,10 @@
           ; a comparison reads its operands as `+` does: without it,
           ; every function that compared counted as writing, and every
           ; scope calling one took a share it never needed
-          (if (|| (isBinop n) (|| (isCmpOp n) (|| (isAndOr n) (isCastName n))))
-            argsWrite
+          (if (|| (isBinop n)
+                (|| (isCmpOp n)
+                  (|| (isAndOr n) (|| (isCastName n) (sizedTyIn n "sizeof alignof")))))
+            (|| argsWrite (&& (isCastName n) (> (spineArity e) 2)))
             (if (isPrimName n)
               (|| argsWrite (! (writesReadOnlyPrim n)))
               (if (!= (lookupType (cgTypes cg) n) 0)

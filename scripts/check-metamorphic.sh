@@ -226,6 +226,12 @@ ablate "cast-operand" typecheck.ax \
             1
             0)" \
   "0" run tests/selfhost/1023-type-operand-scope.ax
+ablate "write-type-operand" codegen.ax \
+  "(for k in (if typeHead
+            2
+            1)..(slotPartCount e)" \
+  "(for k in 1..(slotPartCount e)" \
+  run tests/stdlib/468-region-signatures.ax
 ablate "param-first" codegen.ax \
   "(if (&& (isNullaryFnCg cg full) (! parameter))" \
   "(if (isNullaryFnCg cg full)"

@@ -1,0 +1,92 @@
+; A type operand never runs. Cast values and surplus applications do.
+(import IO)
+(import Str)
+(import Vec)
+
+(struct Cell
+  (value : Int))
+
+(:: identity (-> a a))
+(fn (identity x)
+  (:: x a))
+
+(:: layout (-> a Int))
+(fn (layout x)
+  (+ (sizeof a) (alignof a)))
+
+(:: reads (-> (Vec Cell) Int))
+(fn (reads values)
+  {
+    (let first (vecGet values 0))
+    (let same (identity first))
+    (+ same.value (layout first))
+  })
+
+(:: replace (-> (Vec String) Int))
+(fn (replace values)
+  {
+    (vecSet values 0 (concat "replacement" "-value"))
+    0
+  })
+
+(:: castWrites (-> (Vec String) Int))
+(fn (castWrites values)
+  {
+    (let first (vecGet values 0))
+    (as (replace values) Int)
+    (strLen first)
+  })
+
+(:: ascribedWrites (-> (Vec String) Int))
+(fn (ascribedWrites values)
+  {
+    (let first (vecGet values 0))
+    (let touched (:: (replace values) Int))
+    (strLen first)
+  })
+
+(:: surplusWrites (-> (Vec String) Int))
+(fn (surplusWrites values)
+  {
+    (let first (vecGet values 0))
+    ((as replace (-> (Vec String) Int)) values)
+    (strLen first)
+  })
+
+(:: fresh (Vec String))
+(fn (fresh)
+  (vecPush vecNew (concat "original" "-value")))
+
+(:: check (-> String Int Int Int))
+;@axiom:effect(io)
+(fn (check name got want)
+  (if (== got want)
+    {
+      (println "ok   {name}")
+      0
+    }
+    {
+      (println "FAIL {name}: {got} != {want}")
+      1
+    }))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let cells (vecPush vecNew (Cell :value 31)))
+    (+ (check "type operands do not write" (reads cells) 47)
+      (+ (check "cast value writes" (castWrites fresh) 14)
+        (+ (check "ascribed value writes" (ascribedWrites fresh) 14)
+          (check "surplus cast writes" (surplusWrites fresh) 14))))
+  })
+
+; If a type operand is mistaken for a value, this unused function makes
+; the generic readers above appear to write.
+(:: a Int)
+;@axiom:effect(io)
+(fn (a)
+  {
+    (println "unused type operand executed")
+    0
+  })
