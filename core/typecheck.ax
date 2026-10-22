@@ -32152,33 +32152,124 @@
 ; Unknown calls conservatively store into every argument and capture.
 ; Overflow and an unfinished fixpoint refuse emission.
 ; ==================================================================
-; ---- the facts record, one per FnEnt (FnEnt word 8) ----
-;   0 state (0 fresh, 1 seen)   1 flowsCUR (bit i: a fresh value
-;   flows into parameter i)   2 flowsFrom, Vec Int per parameter (bit
-;   j: parameter j's value flows into parameter i)   3 resultFrom
-;   (bit j)   4 resultCUR   5 unknownCalls   6 culprits, Vec String
-;   per parameter (the callee the fresh value went in through, "" for
-;   this body)   7 nparams   8 may enter a reclaimed invocation extent
+; One facts record per function. `flowsCUR` bit i means a fresh value
+; flows into parameter i. `flowsFrom` is one mask per parameter: bit j
+; means parameter j's value flows into parameter i. `resultFrom` is
+; that mask for the result. `culprits` names, per parameter, the callee
+; a fresh value went in through, or "" for this body. `mayEnter` is 1
+; when the function may enter a reclaimed invocation extent.
+(pub struct RgnFacts
+  (mut state : Int)
+  (mut flowsCUR : Int)
+  (flowsFrom : Ints)
+  (mut resultFrom : Int)
+  (mut resultCUR : Int)
+  (mut unknownCalls : Int)
+  (culprits : Strings)
+  (nparams : Int)
+  (mut mayEnter : Int))
+
 (pub :: rgnFactsNew (-> Int Int))
 (pub fn (rgnFactsNew n)
   {
-    (let f (memAlloc 72))
     (let ff (rgnIntVec))
     (let cu (rgnStrVec))
     {
       (rgnFillInts ff n 0)
       (rgnFillStrs cu n)
-      (memSetWord f 0 0)
-      (memSetWord f 1 0)
-      (memSetWord f 2 (as ff Int))
-      (memSetWord f 3 0)
-      (memSetWord f 4 0)
-      (memSetWord f 5 0)
-      (memSetWord f 6 (as cu Int))
-      (memSetWord f 7 n)
-      (memSetWord f 8 0)
-      f
+      (as (RgnFacts
+            :state 0
+            :flowsCUR 0
+            :flowsFrom ff
+            :resultFrom 0
+            :resultCUR 0
+            :unknownCalls 0
+            :culprits cu
+            :nparams n
+            :mayEnter 0) Int)
     }
+  })
+
+(pub :: rgnFlowsCUR (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnFlowsCUR f)
+  {
+    (let r (as f RgnFacts))
+    r.flowsCUR
+  })
+
+(pub :: rgnFlowsFrom (-> Int Ints))
+;@axiom:effect(unsafe)
+(pub fn (rgnFlowsFrom f)
+  {
+    (let r (as f RgnFacts))
+    r.flowsFrom
+  })
+
+(pub :: rgnResultFrom (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnResultFrom f)
+  {
+    (let r (as f RgnFacts))
+    r.resultFrom
+  })
+
+(pub :: rgnResultCUR (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnResultCUR f)
+  {
+    (let r (as f RgnFacts))
+    r.resultCUR
+  })
+
+(pub :: rgnSetResultCUR (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnSetResultCUR f)
+  {
+    (let r (as f RgnFacts))
+    (set r.resultCUR 1)
+    f
+  })
+
+(pub :: rgnUnknown (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnUnknown f)
+  {
+    (let r (as f RgnFacts))
+    r.unknownCalls
+  })
+
+(pub :: rgnSetUnknown (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnSetUnknown f)
+  {
+    (let r (as f RgnFacts))
+    (set r.unknownCalls 1)
+    f
+  })
+
+(pub :: rgnCulprits (-> Int Strings))
+;@axiom:effect(unsafe)
+(pub fn (rgnCulprits f)
+  {
+    (let r (as f RgnFacts))
+    r.culprits
+  })
+
+(pub :: rgnNparams (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnNparams f)
+  {
+    (let r (as f RgnFacts))
+    r.nparams
+  })
+
+(pub :: rgnMayEnter (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (rgnMayEnter f)
+  {
+    (let r (as f RgnFacts))
+    r.mayEnter
   })
 
 (pub :: rgnIntVec Ints)
@@ -32764,13 +32855,24 @@
 
 ; ---- facts recording ----
 (pub :: rgnFactsOr (-> RgnCtx Int Int Int))
+;@axiom:effect(unsafe)
 (pub fn (rgnFactsOr rc word mask)
   {
-    (let f (rgnFacts rc))
-    (if (== (| (memGetWord f word) mask) (memGetWord f word))
+    (let r (as (rgnFacts rc) RgnFacts))
+    (let cur
+      (if (== word 1)
+        r.flowsCUR
+        (if (== word 3)
+          r.resultFrom
+          r.mayEnter)))
+    (if (== (| cur mask) cur)
       0
       {
-        (memSetWord f word (| (memGetWord f word) mask))
+        (if (== word 1)
+          (set r.flowsCUR (| cur mask))
+          (if (== word 3)
+            (set r.resultFrom (| cur mask))
+            (set r.mayEnter (| cur mask))))
         (set rc.changed 1)
         0
       })
@@ -32807,13 +32909,13 @@
             {
               (if fresh
                 {
-                  (if (== (& (memGetWord f 1) (<< 1 i)) 0)
-                    (vecSet (memGetWordVec f 6) i via)
+                  (if (== (& (rgnFlowsCUR f) (<< 1 i)) 0)
+                    (vecSet (rgnCulprits f) i via)
                     (as 0 (Vec String)))
                   (rgnFactsOr rc 1 (<< 1 i))
                 })
               {
-                (let ff (memGetWordVec f 2))
+                (let ff (rgnFlowsFrom f))
                 (if (! (== (| (vecGet ff i) fromP) (vecGet ff i)))
                   {
                     (vecSet ff i (| (vecGet ff i) fromP))
@@ -33011,8 +33113,8 @@
       (set rc.report rep)
       (if (== changed 1)
         {
-          (memSetWord (rgnTc rc) 28 2)
-          (memSetWord (rgnFacts rc) 5 1)
+          (tcSetRgnFactsDone (rgnTc rc) 2)
+          (rgnSetUnknown (rgnFacts rc))
           (set rc.changed 1)
           (if (== rep 1)
             (emitDiag (rgnTc rc)
@@ -33303,7 +33405,7 @@
                 "region safety cannot be proved: this function exceeds the lifetime origin capacity"
                 0 0
                 "split this function into smaller functions so each region has a distinct tracked origin")))
-          (memSetWord (rgnFacts rc) 5 1)
+          (rgnSetUnknown (rgnFacts rc))
           0
         }
         {
@@ -33464,9 +33566,9 @@
 (pub fn (rgnFactsKeep f)
   (if (== f 0)
     1
-    (if (|| (!= (memGetWord f 1) 0) (!= (memGetWord f 5) 0))
+    (if (|| (!= (rgnFlowsCUR f) 0) (!= (rgnUnknown f) 0))
       1
-      (rgnAnyFlow (memGetWordVec f 2) 0))))
+      (rgnAnyFlow (rgnFlowsFrom f) 0))))
 
 (pub :: rgnAnyFlow (-> Ints Int Int))
 (pub fn (rgnAnyFlow v i)
@@ -33588,7 +33690,7 @@
           }))
       (if (== (memGetWord (rgnFacts rc) 5) 0)
         {
-          (memSetWord (rgnFacts rc) 5 1)
+          (rgnSetUnknown (rgnFacts rc))
           (set rc.changed 1)
         })
       (| rc.curBit u)
@@ -33665,12 +33767,12 @@
         ; The facts say what the callee stores through each parameter.
         (if (! (== f 0))
           {
-            (rgnNoteReclaim rc (memGetWord f 8))
+            (rgnNoteReclaim rc (rgnMayEnter f))
             (for i in 0..(vecLen args)
-              (if (< i (memGetWord f 7))
+              (if (< i (rgnNparams f))
                 {
-                  (let fresh (!= (& (memGetWord f 1) (<< 1 i)) 0))
-                  (let from (vecGet (memGetWordVec f 2) i))
+                  (let fresh (!= (& (rgnFlowsCUR f) (<< 1 i)) 0))
+                  (let from (vecGet (rgnFlowsFrom f) i))
                   (let into
                     ; Parameter names are diagnostic text. Resolving one
                     ; scans declarations, so defer it until a reporting
@@ -33698,7 +33800,7 @@
                       })
                     {
                       (let mut j 0)
-                      (while (&& (< j (vecLen args)) (< j (memGetWord f 7)))
+                      (while (&& (< j (vecLen args)) (< j (rgnNparams f)))
                         {
                           (if (!= (& from (<< 1 j)) 0)
                             {
@@ -33722,10 +33824,10 @@
                     }
                   }
                 }))
-            (if (!= (memGetWord f 5) 0)
+            (if (!= (rgnUnknown f) 0)
               (if (== (memGetWord (rgnFacts rc) 5) 0)
                 {
-                  (memSetWord (rgnFacts rc) 5 1)
+                  (rgnSetUnknown (rgnFacts rc))
                   (set rc.changed 1)
                 }))
           })
@@ -33733,14 +33835,14 @@
         (if (== f 0)
           rc.curBit
           {
-            (if (!= (memGetWord f 4) 0)
+            (if (!= (rgnResultCUR f) 0)
               (set res rc.curBit))
             ; The facts carry one bit per declared parameter, so a
             ; surplus argument of an over-applied call has none.
             (set i 0)
-            (while (&& (< i (vecLen args)) (< i (memGetWord f 7)))
+            (while (&& (< i (vecLen args)) (< i (rgnNparams f)))
               {
-                (if (!= (& (memGetWord f 3) (<< 1 i)) 0)
+                (if (!= (& (rgnResultFrom f) (<< 1 i)) 0)
                   (set res (| res (vecGet masks i))))
                 (set i (+ i 1))
               })
@@ -33768,8 +33870,8 @@
             (if (&& (== (tcRgnStamping tc) 1)
                   (&& (== (tcRgnFactsDone tc) 1)
                     (&& (== (nodeResWord e) 0)
-                      (&& (!= (memGetWord f 4) 0)
-                        (&& (== (memGetWord f 5) 0) (== (vecLen args) (memGetWord f 7)))))))
+                      (&& (!= (rgnResultCUR f) 0)
+                        (&& (== (rgnUnknown f) 0) (== (vecLen args) (rgnNparams f)))))))
               {
                 (if (nodeSame sig nilNode)
                   (set ok 0)
@@ -33777,7 +33879,7 @@
                     (set i 0)
                     (while (< i (vecLen args))
                       {
-                        (if (&& (!= (& (memGetWord f 3) (<< 1 i)) 0)
+                        (if (&& (!= (& (rgnResultFrom f) (<< 1 i)) 0)
                               (== (rgTyScalar tc (nthParamTy sig i nilNode)) 0))
                           (set ok 0))
                         (set i (+ i 1))
@@ -33836,7 +33938,7 @@
               "region safety cannot be proved: this function has more than 61 parameter origins" 0
               0
               "split this function into smaller functions so every parameter has a distinct tracked origin")))
-        (memSetWord (rgnFacts rc) 5 1)
+        (rgnSetUnknown (rgnFacts rc))
         0
       }
       {
@@ -33852,7 +33954,7 @@
             (if (!= (& body (rgnFreshMask rc)) 0)
               (if (== (memGetWord (rgnFacts rc) 4) 0)
                 {
-                  (memSetWord (rgnFacts rc) 4 1)
+                  (rgnSetResultCUR (rgnFacts rc))
                   (set rc.changed 1)
                 }))
             rc.changed
@@ -34069,10 +34171,10 @@
 ; the claim over it is unverifiable rather than refuted.
 (pub :: rgnResolvedCulprit (-> Int Int Int))
 (pub fn (rgnResolvedCulprit f i)
-  (if (>= i (memGetWord f 7))
+  (if (>= i (rgnNparams f))
     (- 0 1)
-    (if (&& (!= (& (memGetWord f 1) (<< 1 i)) 0)
-          (if (strEq (vecGetStr (memGetWordVec f 6) i) "<unresolved call>")
+    (if (&& (!= (& (rgnFlowsCUR f) (<< 1 i)) 0)
+          (if (strEq (vecGetStr (rgnCulprits f) i) "<unresolved call>")
             false
             true))
       i
@@ -34100,12 +34202,11 @@
                       (concat "the body stores a value it allocates into its parameter `"
                         (rgnCalleeParamName tc (nodeAName d) i))
                       "`")
-                    (if (== (strLen (vecGetStr (memGetWordVec f 6) i)) 0)
+                    (if (== (strLen (vecGetStr (rgnCulprits f) i)) 0)
                       " in its own body"
-                      (concat (concat " through `" (bareOf (vecGetStr (memGetWordVec f 6) i)))
-                        "`")))
+                      (concat (concat " through `" (bareOf (vecGetStr (rgnCulprits f) i))) "`")))
                   (as 0 (Vec Int)))
-                (if (!= (memGetWord f 5) 0)
+                (if (!= (rgnUnknown f) 0)
                   (emitRestrictUnverifiable tc d r
                     "the body calls a value the compiler could not resolve - a parameter, a closure or a field - so where its allocations flow is not something the walk can settle"
                     (as 0 (Vec Int)))
