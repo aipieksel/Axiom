@@ -386,7 +386,7 @@
   (mut mangleBares : (Vec Int))
   (mut mangleFulls : (Vec Int))
   (mut resultIsFloat : Int)
-  (mut floatSigs : (Vec Int))
+  (mut floatSigs : (Vec FSig))
   (symfloats : (Vec Int))
   (mut curParams : Int)
   (mut curFlags : Int)
@@ -408,8 +408,8 @@
   (mut curModule : Int)
   (dataTyNames : (Vec String))
   (mut curDeclNode : ASTNode)
-  (mut sigIntern : Int)
-  (mut sigById : (Vec Int))
+  (mut sigIntern : (Option InternState))
+  (mut sigById : (Vec FSig))
   (mut bareIntern : Int)
   (mut bareFirst : (Vec Int))
   (mut tailRetain : (Vec Int))
@@ -643,7 +643,7 @@
             :curModule 0
             :dataTyNames vecNew
             :curDeclNode nilNode
-            :sigIntern 0
+            :sigIntern (None)
             :sigById vecNew
             :bareIntern 0
             :bareFirst vecNew
@@ -983,16 +983,16 @@
     cg
   })
 
-; Word 15: the `FSig` table, one address per signature.
-(:: cgFloatSigs (-> Int Ints))
+; Word 15: the typed `FSig` table.
+(:: cgFloatSigs (-> Int (Vec FSig)))
 ;@axiom:effect(unsafe)
 (fn (cgFloatSigs cg)
   {
     (let c (as cg CG))
-    (as c.floatSigs Ints)
+    c.floatSigs
   })
 
-(:: cgSetFloatSigs (-> Int Ints Int))
+(:: cgSetFloatSigs (-> Int (Vec FSig) Int))
 ;@axiom:effect(unsafe)
 (fn (cgSetFloatSigs cg sigs)
   {
@@ -1336,9 +1336,9 @@
   })
 
 ; Words 37 and 38: the signature index `buildNameIndexes` writes, an
-; `Intern` of names and the `FSig` for each id. Word 37 is 0 until it
-; is built.
-(:: cgSigIntern (-> Int Int))
+; owning `InternState` of names and the `FSig` for each id. Word 37
+; is `None` until the index is built.
+(:: cgSigIntern (-> Int (Option InternState)))
 ;@axiom:effect(unsafe)
 (fn (cgSigIntern cg)
   {
@@ -1346,12 +1346,12 @@
     c.sigIntern
   })
 
-(:: cgSigById (-> Int Ints))
+(:: cgSigById (-> Int (Vec FSig)))
 ;@axiom:effect(unsafe)
 (fn (cgSigById cg)
   {
     (let c (as cg CG))
-    (as c.sigById Ints)
+    c.sigById
   })
 
 ; Words 39 and 40: the mangle and declaration indexes. Word 39 is the
@@ -1365,12 +1365,12 @@
     c.bareIntern
   })
 
-(:: cgSetNameIndexes (-> Int Int Ints Int Ints Int))
+(:: cgSetNameIndexes (-> Int InternState (Vec FSig) Int Ints Int))
 ;@axiom:effect(unsafe)
 (fn (cgSetNameIndexes cg si byId bi rest)
   {
     (let c (as cg CG))
-    (set c.sigIntern si)
+    (set c.sigIntern (Some si))
     (set c.sigById byId)
     (set c.bareIntern bi)
     (set c.bareFirst rest)
@@ -1623,181 +1623,121 @@
   (mut callers : Int)
   (mut writes : Int))
 
-; A signature travels as its address. The reads below are field loads,
+; A signature remains typed throughout its registries. The reads are field loads,
 ; so every later store is a field store too: a raw word store is not
 ; one, and the load would keep answering the value from construction.
-(:: fsigName (-> Int String))
-;@axiom:effect(unsafe)
+(:: fsigName (-> FSig String))
 (fn (fsigName e)
-  {
-    (let s (as e FSig))
-    s.name
-  })
+  e.name)
 
-(:: fsigNameLen (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigNameLen (-> FSig Int))
 (fn (fsigNameLen e)
-  {
-    (let s (as e FSig))
-    s.nameLen
-  })
+  e.nameLen)
 
-(:: fsigFlags (-> Int Ints))
-;@axiom:effect(unsafe)
+(:: fsigFlags (-> FSig Ints))
 (fn (fsigFlags e)
-  {
-    (let s (as e FSig))
-    s.flags
-  })
+  e.flags)
 
-(:: fsigTy (-> Int ASTNode))
-;@axiom:effect(unsafe)
+(:: fsigTy (-> FSig ASTNode))
 (fn (fsigTy e)
-  {
-    (let s (as e FSig))
-    s.sigTy
-  })
+  e.sigTy)
 
-(:: fsigTakesEv (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigTakesEv (-> FSig Int))
 (fn (fsigTakesEv e)
-  {
-    (let s (as e FSig))
-    s.takesEv
-  })
+  e.takesEv)
 
-(:: fsigOwned (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigOwned (-> FSig Int))
 (fn (fsigOwned e)
-  {
-    (let s (as e FSig))
-    s.owned
-  })
+  e.owned)
 
-(:: fsigSetOwned (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetOwned (-> FSig Int FSig))
 (fn (fsigSetOwned e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.owned v)
     e
   })
 
-(:: fsigArity (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigArity (-> FSig Int))
 (fn (fsigArity e)
-  {
-    (let s (as e FSig))
-    s.arity
-  })
+  e.arity)
 
-(:: fsigSetArity (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetArity (-> FSig Int FSig))
 (fn (fsigSetArity e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.arity v)
     e
   })
 
-(:: fsigStash (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigStash (-> FSig Int))
 (fn (fsigStash e)
-  {
-    (let s (as e FSig))
-    s.stash
-  })
+  e.stash)
 
-(:: fsigSetStash (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetStash (-> FSig Int FSig))
 (fn (fsigSetStash e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.stash v)
     e
   })
 
-(:: fsigRet (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigRet (-> FSig Int))
 (fn (fsigRet e)
-  {
-    (let s (as e FSig))
-    s.ret
-  })
+  e.ret)
 
-(:: fsigSetRet (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetRet (-> FSig Int FSig))
 (fn (fsigSetRet e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.ret v)
     e
   })
 
-(:: fsigConsume (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigConsume (-> FSig Int))
 (fn (fsigConsume e)
-  {
-    (let s (as e FSig))
-    s.consume
-  })
+  e.consume)
 
-(:: fsigSetConsume (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetConsume (-> FSig Int FSig))
 (fn (fsigSetConsume e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.consume v)
     e
   })
 
-(:: fsigTransferOf (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigTransferOf (-> FSig Int))
 (fn (fsigTransferOf e)
-  {
-    (let s (as e FSig))
-    s.transfer
-  })
+  e.transfer)
 
-(:: fsigSetTransfer (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetTransfer (-> FSig Int FSig))
 (fn (fsigSetTransfer e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.transfer v)
     e
   })
 
-(:: fsigCallers (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigCallers (-> FSig Int))
 (fn (fsigCallers e)
-  {
-    (let s (as e FSig))
-    s.callers
-  })
+  e.callers)
 
-(:: fsigSetCallers (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetCallers (-> FSig Int FSig))
 (fn (fsigSetCallers e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.callers v)
     e
   })
 
-(:: fsigWrites (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fsigWrites (-> FSig Int))
 (fn (fsigWrites e)
-  {
-    (let s (as e FSig))
-    s.writes
-  })
+  e.writes)
 
-(:: fsigSetWrites (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: fsigSetWrites (-> FSig Int FSig))
 (fn (fsigSetWrites e v)
   {
-    (let s (as e FSig))
+    (let s e)
     (set s.writes v)
     e
   })
@@ -1810,10 +1750,10 @@
 (pub :: fsigTransfer (-> Int String Int))
 (pub fn (fsigTransfer cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      0
-      (fsigTransferOf e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigTransferOf e)
+      0)
   })
 
 ; Word 11 of an FSig: how many distinct declarations the caller
@@ -1823,7 +1763,7 @@
 ; index never resolved to. `cgMarkCallers` reads it as the fast
 ; answer to "nobody calls this" before it touches the index rows.
 ; Mark every FSig whose `::` or `fn` carries `result(owned)`.
-(pub :: markTransferSigs (-> (Vec ASTNode) Ints Int Int))
+(pub :: markTransferSigs (-> (Vec ASTNode) (Vec FSig) Int Int))
 (pub fn (markTransferSigs decls sigs i)
   (if (>= i (vecLen decls))
     0
@@ -1833,15 +1773,15 @@
         (if (|| (== (nodeTag d) TAG_D_SIG) (== (nodeTag d) TAG_D_FN))
           (if (== (declHasAxtag d "result(owned)") 1)
             {
-              (let e (findFSig sigs (nodeAName d)))
-              (if (! (== e 0))
+              (let eFound (findFSig sigs (nodeAName d)))
+              (if (let (Some e) eFound)
                 (fsigSetTransfer e 1))
             }))
         (markTransferSigs decls sigs (+ i 1))
       }
     }))
 
-(pub :: scanFloatSigs (-> (Vec ASTNode) Ints Int Ints))
+(pub :: scanFloatSigs (-> (Vec ASTNode) (Vec FSig) Int (Vec FSig)))
 (pub fn (scanFloatSigs decls sigs i)
   (if (>= i (vecLen decls))
     sigs
@@ -1850,20 +1790,20 @@
         (let d (vecGet decls i))
         (if (== (nodeTag d) TAG_D_SIG)
           (vecPush sigs
-            (as (FSig
-                  :name (nodeAName d)
-                  :nameLen (strLen (nodeAName d))
-                  :flags (nodeBWords d)
-                  :sigTy (nodeTyChild d)
-                  :takesEv (cgTakesEvidence (nodeTyChild d))
-                  :owned 1
-                  :arity (- 0 1)
-                  :stash 0
-                  :ret 0
-                  :consume 0
-                  :transfer 0
-                  :callers 0
-                  :writes 0) Int))
+            (FSig
+              :name (nodeAName d)
+              :nameLen (strLen (nodeAName d))
+              :flags (nodeBWords d)
+              :sigTy (nodeTyChild d)
+              :takesEv (cgTakesEvidence (nodeTyChild d))
+              :owned 1
+              :arity (- 0 1)
+              :stash 0
+              :ret 0
+              :consume 0
+              :transfer 0
+              :callers 0
+              :writes 0))
           ; an `extern` item is a signed global under its LINKER
           ; SYMBOL (what `mangledForCg` answers for its name), with
           ; the masks the boundary contract gives it: a Rust shim
@@ -1880,7 +1820,7 @@
       (scanFloatSigs decls sigs (+ i 1))
     }))
 
-(pub :: scanExternSigs (-> (Vec ASTNode) Ints Int Int))
+(pub :: scanExternSigs (-> (Vec ASTNode) (Vec FSig) Int Int))
 (pub fn (scanExternSigs items sigs i)
   (if (== (as items Int) 0)
     0
@@ -1891,39 +1831,39 @@
         {
           (if (! (== (nodeB f) 0))
             (vecPush sigs
-              (as (FSig
-                    :name (nodeCName f)
-                    :nameLen (strLen (nodeCName f))
-                    :flags cgNullVec
-                    :sigTy (nodeBChild f)
-                    :takesEv 0
-                    :owned 1
-                    :arity (arrowArity (nodeBChild f))
-                    :stash 0
-                    :ret 0
-                    :consume 0
-                    :transfer 0
-                    :callers 0
-                    :writes 1) Int)))
+              (FSig
+                :name (nodeCName f)
+                :nameLen (strLen (nodeCName f))
+                :flags cgNullVec
+                :sigTy (nodeBChild f)
+                :takesEv 0
+                :owned 1
+                :arity (arrowArity (nodeBChild f))
+                :stash 0
+                :ret 0
+                :consume 0
+                :transfer 0
+                :callers 0
+                :writes 1)))
           (scanExternSigs items sigs (+ i 1))
         }
       })))
 
-(pub :: findFSig (-> Ints String Int))
+(pub :: findFSig (-> (Vec FSig) String (Option FSig)))
 (pub fn (findFSig sigs name)
   {
     (let n (declSpellingOf name))
     (findFSigIn sigs n (strLen n) 0)
   })
 
-(pub :: findFSigIn (-> Ints String Int Int Int))
+(pub :: findFSigIn (-> (Vec FSig) String Int Int (Option FSig)))
 (pub fn (findFSigIn sigs name nl i)
   (if (>= i (vecLen sigs))
-    0
+    (None)
     {
       (let e (vecGet sigs i))
       (if (&& (== (fsigNameLen e) nl) (strEq (fsigName e) name))
-        e
+        (Some e)
         (findFSigIn sigs name nl (+ i 1)))
     }))
 
@@ -1975,7 +1915,7 @@
 (pub fn (buildNameIndexes cg)
   {
     (let sigs (cgFloatSigs cg))
-    (let si internNew)
+    (let si internNewTyped)
     (let byId vecNew)
     (let bares (cgMangleBares cg))
     (let bi internNew)
@@ -1994,10 +1934,13 @@
             {
               (let e (vecGet sigs i))
               {
-                (let id (internIntern si (fsigName e)))
+                (let id (internIntern (internWordOf si) (fsigName e)))
                 (if (== id (vecLen byId))
-                  (vecPush byId e)
-                  (as 0 (Vec Int)))
+                  {
+                    (vecPush byId e)
+                    0
+                  }
+                  0)
               }
             }
             (set i (+ i 1))
@@ -2171,16 +2114,25 @@
 
 ; `findFSig` through the index; the linear scan when no index has
 ; been built (the REPL's and LSP's partial paths).
-(pub :: findFSigCg (-> Int String Int))
+(pub :: findFSigCg (-> Int String (Option FSig)))
 (pub fn (findFSigCg cg name)
-  {
-    (let si (cgSigIntern cg))
-    (if (== si 0)
-      (findFSig (cgFloatSigs cg) name)
-      (if (let (Some id) (internFind si (declSpellingOf name)))
-        (vecGet (cgSigById cg) id)
-        0))
-  })
+  (if (let (Some si) (cgSigIntern cg))
+    (if (let (Some id) (internFind (internWordOf si) (declSpellingOf name)))
+      (Some (vecGet (cgSigById cg) id))
+      (None))
+    (findFSig (cgFloatSigs cg) name)))
+
+(:: hasFSigCg (-> Int String Bool))
+(fn (hasFSigCg cg name)
+  (if (let (Some _) (findFSigCg cg name))
+    true
+    false))
+
+(:: cgSigIndexBuilt (-> Int Bool))
+(fn (cgSigIndexBuilt cg)
+  (if (let (Some _) (cgSigIntern cg))
+    true
+    false))
 
 ; `mangledFor` through the index: the same answer, the module-local
 ; spelling first, then the first bare record, then the name itself.
@@ -2287,10 +2239,10 @@
 (pub :: fnArityCg (-> Int String Int))
 (pub fn (fnArityCg cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      (- 0 1)
-      (fsigArity e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigArity e)
+      (- 0 1))
   })
 
 ; ------------------------------------------------------------------
@@ -2474,8 +2426,10 @@
 ; the id.
 (pub :: fsigIdCg (-> Int String Int))
 (pub fn (fsigIdCg cg name)
-  (if (let (Some id) (internFind (cgSigIntern cg) (declSpellingOf name)))
-    id
+  (if (let (Some si) (cgSigIntern cg))
+    (if (let (Some id) (internFind (internWordOf si) (declSpellingOf name)))
+      id
+      (- 0 1))
     (- 0 1)))
 
 ; One edge: declaration `who` names `name`, which the module word
@@ -2573,15 +2527,17 @@
 (pub :: cgMarkCallers (-> Int Ints Ints Ints ASTNode Int))
 (pub fn (cgMarkCallers cg rows marks next d)
   {
-    (let e (findFSigCg cg (nodeAName d)))
-    (if (|| (== e 0) (== (fsigCallers e) 0))
-      0
-      {
-        (let id (fsigIdCg cg (nodeAName d)))
-        (if (< id 0)
-          0
-          (cgMarkEach marks next (vecGetVec rows id) 0))
-      })
+    (let eFound (findFSigCg cg (nodeAName d)))
+    (if (let (Some e) eFound)
+      (if (== (fsigCallers e) 0)
+        0
+        {
+          (let id (fsigIdCg cg (nodeAName d)))
+          (if (< id 0)
+            0
+            (cgMarkEach marks next (vecGetVec rows id) 0))
+        })
+      0)
   })
 
 (pub :: inferOwnership (-> Int (Vec ASTNode) Int))
@@ -2601,7 +2557,7 @@
 (pub fn (inferOwnershipRounds cg decls)
   (if (== (inferOwnershipPass cg decls 0 0) 0)
     0
-    (if (== (cgSigIntern cg) 0)
+    (if (! (cgSigIndexBuilt cg))
       (inferOwnershipRounds cg decls)
       (inferOwnershipWork cg decls (callersIdxBuildCg cg decls) (cgAllIndexes (vecLen decls))
         (cgFlagsNew (vecLen decls))))))
@@ -2662,20 +2618,22 @@
     {
       (let _m (cgSetModule cg (nodeModule d)))
       (let _d (cgSetCurDecl cg d))
-      (let e (findFSigCg cg (nodeAName d)))
-      (if (|| (== e 0) (== (fsigOwned e) 0))
-        0
-        (if (==
-              {
-                (let _a (fsigSetArity e (vecLen (nodeBNames d))))
-                (tailOwned cg (nodeCChild d) (nodeBNames d) vecNew)
-              }
-              1)
+      (let eFound (findFSigCg cg (nodeAName d)))
+      (if (let (Some e) eFound)
+        (if (== (fsigOwned e) 0)
           0
-          {
-            (fsigSetOwned e 0)
-            1
-          }))
+          (if (==
+                {
+                  (let _a (fsigSetArity e (vecLen (nodeBNames d))))
+                  (tailOwned cg (nodeCChild d) (nodeBNames d) vecNew)
+                }
+                1)
+            0
+            {
+              (fsigSetOwned e 0)
+              1
+            }))
+        0)
     }))
 
 ; One full pass: recompute every signed function; answer 1 if any
@@ -2695,10 +2653,10 @@
 (pub :: fnResultOwned (-> Int String Int))
 (pub fn (fnResultOwned cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      0
-      (fsigOwned e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigOwned e)
+      0)
   })
 
 ; Is every value `e` can answer owned? `params` are the enclosing
@@ -2815,7 +2773,7 @@
                     (if (!= (fldClass cg (checkedValueTy e)) 0)
                       1
                       0)
-                    (if (!= (findFSigCg cg (mangledForCg cg n)) 0)
+                    (if (hasFSigCg cg (mangledForCg cg n))
                       ; a reference-returning global answers ONE share by
                       ; construction - it retains a borrowed tail itself - so
                       ; its flag is its own business; a word-returning one or a
@@ -3039,7 +2997,7 @@
 (pub fn (inferFlowsRounds cg decls)
   (if (== (inferFlowsPass cg decls 0 0) 0)
     0
-    (if (== (cgSigIntern cg) 0)
+    (if (! (cgSigIndexBuilt cg))
       (inferFlowsRounds cg decls)
       (inferFlowsWork cg decls (callersIdxBuildCg cg decls) (cgAllIndexes (vecLen decls))
         (cgFlagsNew (vecLen decls))))))
@@ -3098,9 +3056,8 @@
     {
       (let _m (cgSetModule cg (nodeModule d)))
       (let _d (cgSetCurDecl cg d))
-      (let e (findFSigCg cg (nodeAName d)))
-      (if (== e 0)
-        0
+      (let eFound (findFSigCg cg (nodeAName d)))
+      (if (let (Some e) eFound)
         {
           (let cell regionNew)
           {
@@ -3146,7 +3103,8 @@
               }
             }
           }
-        })
+        }
+        0)
     }))
 
 ; One full pass: recompute every signed function; answer 1 if any
@@ -3170,7 +3128,7 @@
 ; reading `binderIsWord` gives a word-struct binder. Without it
 ; `(addrOf v)` read as a pointer into `v`, and the caller kept `v`
 ; alive for good: 48 bytes held per call.
-(pub :: fsigResultIsWord (-> Int Int Int))
+(pub :: fsigResultIsWord (-> Int FSig Int))
 ;@axiom:effect(unsafe)
 (pub fn (fsigResultIsWord cg e)
   {
@@ -3195,7 +3153,7 @@
 ; under the slot, and `(l1 s (asWord t) (- n 1))` handed the slot a
 ; pointer into `t`. Parked, the walk keeps it; the leak is the safe
 ; direction until the boundary retains by evidence.
-(pub :: tyvarSlotsMask (-> Int Int ASTNode Int))
+(pub :: tyvarSlotsMask (-> Int FSig ASTNode Int))
 (pub fn (tyvarSlotsMask cg e d)
   (if (== (tailCallsSelf (nodeCChild d) (bareOf (nodeAName d)) (vecLen (nodeBNames d))) 1)
     (tyvarSlotsFrom cg (fsigTy e) (vecLen (nodeBNames d)) 0)
@@ -3342,19 +3300,19 @@
 (pub :: fnStashMask (-> Int String Int))
 (pub fn (fnStashMask cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      0
-      (fsigStash e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigStash e)
+      0)
   })
 
 (pub :: fnRetMask (-> Int String Int))
 (pub fn (fnRetMask cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      0
-      (fsigRet e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigRet e)
+      0)
   })
 
 ; The RET mask of `name` as the call `e` reads it. A type-variable
@@ -3386,9 +3344,8 @@
 (pub :: refParamOwnerBits (-> Int String Int))
 (pub fn (refParamOwnerBits cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      0
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
       {
         (let n (fnArityCg cg name))
         (let mut i 0)
@@ -3402,7 +3359,8 @@
             })
           m
         }
-      })
+      }
+      0)
   })
 
 ; The parameters this function CONSUMES - releases a share of, so the
@@ -3420,10 +3378,10 @@
 (pub :: fnConsumeMask (-> Int String Int))
 (pub fn (fnConsumeMask cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      0
-      (fsigConsume e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigConsume e)
+      0)
   })
 
 ; The mask of parameters whose reference may be (part of) `e`'s
@@ -3586,12 +3544,12 @@
                 true))
           (paramBit i)
           {
-            (let e (findFSigCg cg (nodeAName d)))
-            (if (== e 0)
-              (paramBit i)
+            (let eFound (findFSigCg cg (nodeAName d)))
+            (if (let (Some e) eFound)
               (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 0)
                 (| (wordBit i) (ownerBit i))
-                (paramBit i)))
+                (paramBit i))
+              (paramBit i))
           }))
     }))
 
@@ -3643,7 +3601,7 @@
                         (if (flowIdentityCallback cg n)
                           0
                           (flowMaskAll cg e n_ params env 0))
-                        (if (!= (findFSigCg cg (mangledForCg cg n)) 0)
+                        (if (hasFSigCg cg (mangledForCg cg n))
                           (if (== (fnResultClass cg n) 2)
                             ; a counted reference of its own (event 2)
                             0
@@ -4485,7 +4443,7 @@
                   (if (flowIdentityCallback cg n)
                     0
                     (stashAdd cell (parkForms (flowMaskAll cg e n_ params env 0))))
-                  (if (!= (findFSigCg cg (mangledForCg cg n)) 0)
+                  (if (hasFSigCg cg (mangledForCg cg n))
                     {
                       (stashAdd cell (stashSel cg e n_ params env (fnStashMask cg n) 0))
                       ; and what the callee CONSUMES, by the same
@@ -4541,10 +4499,10 @@
         true)
         0
         {
-          (let en (findFSigCg cg (nodeAName d)))
-          (if (== en 0)
-            0
-            (selfSlotParksFrom cg e (readAstNode en 3) n_ params env cell 0))
+          (let enFound (findFSigCg cg (nodeAName d)))
+          (if (let (Some en) enFound)
+            (selfSlotParksFrom cg e (fsigTy en) n_ params env cell 0)
+            0)
         }))
   })
 
@@ -4722,9 +4680,8 @@
                 true))
           0
           {
-            (let e (findFSigCg cg (nodeAName d)))
-            (if (== e 0)
-              0
+            (let eFound (findFSigCg cg (nodeAName d)))
+            (if (let (Some e) eFound)
               {
                 (let t (arrowParamTy (fsigTy e) i))
                 (if (nodeSame t nilNode)
@@ -4736,7 +4693,8 @@
                         2
                         0))
                     0))
-              })
+              }
+              0)
           }))
     }))
 
@@ -4749,10 +4707,10 @@
       (if (!= (vecLen params) (vecLen (nodeBNames d)))
         2
         {
-          (let e (findFSigCg cg (nodeAName d)))
-          (if (== e 0)
-            2
-            (fldClass cg (arrowParamTy (fsigTy e) i)))
+          (let eFound (findFSigCg cg (nodeAName d)))
+          (if (let (Some e) eFound)
+            (fldClass cg (arrowParamTy (fsigTy e) i))
+            2)
         }))
   })
 
@@ -4773,15 +4731,15 @@
 (pub :: fnResultClass (-> Int String Int))
 (pub fn (fnResultClass cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      (- 0 1)
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
       {
         (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
         (if (nodeSame res nilNode)
           1
           (fldClass cg res))
-      })
+      }
+      (- 0 1))
   })
 
 ; Does this expression's VALUE carry a share of its own that the
@@ -5002,10 +4960,10 @@
 (pub :: fnTakesEvw (-> Int String Int))
 (pub fn (fnTakesEvw cg full)
   {
-    (let e (findFSigCg cg full))
-    (if (== e 0)
-      0
-      (fsigTakesEv e))
+    (let eFound (findFSigCg cg full))
+    (if (let (Some e) eFound)
+      (fsigTakesEv e)
+      0)
   })
 
 ; A stamp is a function of the node alone: a macro-spliced argument
@@ -5360,10 +5318,10 @@
   (if (let (Some flags) (checkedFloatFlags cg name))
     flags
     {
-      (let entry (findFSigCg cg name))
-      (if (== entry 0)
-        (as 0 Ints)
-        (fsigFlags entry))
+      (let entryFound (findFSigCg cg name))
+      (if (let (Some entry) entryFound)
+        (fsigFlags entry)
+        (as 0 Ints))
     }))
 
 ; Whether function `name` (already mangled) returns a bare float.
@@ -14578,37 +14536,32 @@
   ; the entry file's `main` under the spelling every lookup answers
   ; for it
   {
-    (let e (findFSigCg cg "__axiom_user_main"))
-    (if (== e 0)
-      0
+    (let eFound (findFSigCg cg "__axiom_user_main"))
+    (if (let (Some e) eFound)
       (if (== (isResultIntErrorTy (fsigTy e)) 0)
         0
-        {
-          (let ee (findFSigCg cg (mainResultErrorText cg)))
-          (if (== ee 0)
-            0
-            ; the rendering takes an `Error` and answers a `String` -
-            ; anything else bearing the name is not this call
-            {
-              (let ety (fsigTy ee))
-              (if (!= (nodeTag ety) TAG_T_ARR)
+        (if (let (Some ee) (findFSigCg cg (mainResultErrorText cg)))
+          {
+            (let ety (fsigTy ee))
+            (if (!= (nodeTag ety) TAG_T_ARR)
+              0
+              (if (|| (== (isNamedConTy (nodeAChild ety) "Err$Error") 0)
+                    (== (isNamedConTy (nodeBChild ety) "String") 0))
                 0
-                (if (|| (== (isNamedConTy (nodeAChild ety) "Err$Error") 0)
-                      (== (isNamedConTy (nodeBChild ety) "String") 0))
-                  0
-                  {
-                    (let okEFound (lookupType (cgTypes cg) "Err$Ok"))
-                    (let errEFound (lookupType (cgTypes cg) "Err$Err"))
-                    (if (let (Some okE) okEFound)
-                      (if (let (Some errE) errEFound)
-                        (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
-                          0
-                          1)
-                        0)
+                {
+                  (let okEFound (lookupType (cgTypes cg) "Err$Ok"))
+                  (let errEFound (lookupType (cgTypes cg) "Err$Err"))
+                  (if (let (Some okE) okEFound)
+                    (if (let (Some errE) errEFound)
+                      (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
+                        0
+                        1)
                       0)
-                  }))
-            })
-        }))
+                    0)
+                }))
+          }
+          0))
+      0)
   })
 
 ; The `@main` tail for a `Result` answer: `%r` holds the cell. `wind`
@@ -19807,10 +19760,9 @@
 (pub :: borrowedTailLeaves (-> Int String ASTNode Names (Vec ASTNode)))
 (pub fn (borrowedTailLeaves cg name body params)
   {
-    (let e (findFSigCg cg name))
+    (let eFound (findFSigCg cg name))
     (let acc vecNew)
-    (if (== e 0)
-      acc
+    (if (let (Some e) eFound)
       (if (== (fsigOwned e) 1)
         acc
         {
@@ -19823,7 +19775,8 @@
                 (collectTails cg body params vecNew name acc)
                 acc
               }))
-        }))
+        })
+      acc)
   })
 
 (pub :: collectTails (-> Int ASTNode Names Ints String (Vec ASTNode) Int))
@@ -20009,12 +19962,12 @@
       (if (nodeSame d nilNode)
         0
         {
-          (let e (findFSigCg cg (nodeAName d)))
-          (if (== e 0)
-            0
+          (let eFound (findFSigCg cg (nodeAName d)))
+          (if (let (Some e) eFound)
             (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 2)
               1
-              0))
+              0)
+            0)
         })
     }))
 
@@ -20036,9 +19989,8 @@
       (if (nodeSame d nilNode)
         (- 0 1)
         {
-          (let e (findFSigCg cg (nodeAName d)))
-          (if (== e 0)
-            (- 0 1)
+          (let eFound (findFSigCg cg (nodeAName d)))
+          (if (let (Some e) eFound)
             (if (== (fsigTakesEv e) 0)
               (- 0 1)
               {
@@ -20054,7 +20006,8 @@
                         (strVecIdx vars (nodeAName tn))
                       }
                     }))
-              }))
+              })
+            (- 0 1))
         })
     }))
 
@@ -20260,10 +20213,10 @@
     (if (nodeSame d nilNode)
       0
       {
-        (let e (findFSigCg cg (nodeAName d)))
-        (if (== e 0)
-          0
-          (fsigStash e))
+        (let eFound (findFSigCg cg (nodeAName d)))
+        (if (let (Some e) eFound)
+          (fsigStash e)
+          0)
       })
   })
 
@@ -20274,10 +20227,10 @@
     (if (nodeSame d nilNode)
       0
       {
-        (let e (findFSigCg cg (nodeAName d)))
-        (if (== e 0)
-          0
-          (fsigRet e))
+        (let eFound (findFSigCg cg (nodeAName d)))
+        (if (let (Some e) eFound)
+          (fsigRet e)
+          0)
       })
   })
 
@@ -21958,10 +21911,10 @@
     (if (== (strLen hn) 0)
       nilNode
       {
-        (let e (findFSigCg cg (mangledForCg cg hn)))
-        (if (== e 0)
-          nilNode
-          (arrowResultTy (fsigTy e)))
+        (let eFound (findFSigCg cg (mangledForCg cg hn)))
+        (if (let (Some e) eFound)
+          (arrowResultTy (fsigTy e))
+          nilNode)
       })
   })
 
@@ -27508,8 +27461,9 @@
                                       (concat (llvmSym (strDup full)) "$pair")))
                                   (concat "(i64 " (concat argStrT (concat evStr ")")))))
                               (releaseOwnedArgs cgE fnName args argRegs 0)
-                              (emitPairBox cgE
-                                (arrowResultTy (readAstNode (findFSigCg cgE full) 3)) r)
+                              (if (let (Some signature) (findFSigCg cgE full))
+                                (emitPairBox cgE (arrowResultTy (fsigTy signature)) r)
+                                (dieCodegenDiag "missing pair function signature: " full))
                             }
                             (if (== (mustTailOK cgE mt0 takesEv fnName args) 1)
                               ; MM-EXEC-6c: a MUTUAL tail call, guaranteed. The
@@ -27671,10 +27625,10 @@
 (pub :: fnMayWrite (-> Int String Int))
 (pub fn (fnMayWrite cg name)
   {
-    (let e (findFSigCg cg (mangledForCg cg name)))
-    (if (== e 0)
-      1
-      (fsigWrites e))
+    (let eFound (findFSigCg cg (mangledForCg cg name)))
+    (if (let (Some e) eFound)
+      (fsigWrites e)
+      1)
   })
 
 ; The least fixed point of "may write" over the call graph: each
@@ -27692,8 +27646,8 @@
           {
             (let _m (cgSetModule cg (nodeModule d)))
             (let _d (cgSetCurDecl cg d))
-            (let e (findFSigCg cg (nodeAName d)))
-            (if (!= e 0)
+            (let eFound (findFSigCg cg (nodeAName d)))
+            (if (let (Some e) eFound)
               {
                 (let bound (writesBound (nodeCChild d) (nodeBNames d)))
                 (let names vecNew)
@@ -27735,8 +27689,10 @@
       (for n in names
         (if (! hit)
           {
-            (let e (findFSigCg cg n))
-            (if (|| (== e 0) (== (fsigWrites e) 1))
+            (let eFound (findFSigCg cg n))
+            (if (let (Some e) eFound)
+              (if (== (fsigWrites e) 1)
+                (set hit true))
               (set hit true))
           }))
       hit
@@ -27896,15 +27852,17 @@
                 argsWrite
                 {
                   (let full (mangledForCg cg n))
-                  (let sig (findFSigCg cg full))
+                  (let sigFound (findFSigCg cg full))
                   ; surplus arguments call the closure the function
                   ; answers, which may do anything
-                  (if (|| (== sig 0) (> (spineArity e) (arrowArity (fsigTy sig))))
-                    true
-                    {
-                      (vecPush names full)
-                      argsWrite
-                    })
+                  (if (let (Some sig) sigFound)
+                    (if (> (spineArity e) (arrowArity (fsigTy sig)))
+                      true
+                      {
+                        (vecPush names full)
+                        argsWrite
+                      })
+                    true)
                 }))))
       })
   })
@@ -29475,12 +29433,12 @@
               (if (== (pairNamesHas (pairNames cg) full) 0)
                 0
                 {
-                  (let sig (findFSigCg cg full))
-                  (if (== sig 0)
-                    0
+                  (let sigFound (findFSigCg cg full))
+                  (if (let (Some sig) sigFound)
                     (if (== (spineArgs e 0) (arrowArity (fsigTy sig)))
                       1
-                      0))
+                      0)
+                    0)
                 })
             })
         })
@@ -29599,10 +29557,10 @@
 (pub :: pairRetTyOf (-> Int ASTNode ASTNode))
 (pub fn (pairRetTyOf cg node)
   {
-    (let e (findFSigCg cg (nodeAName node)))
-    (if (== e 0)
-      nilNode
-      (arrowResultTy (fsigTy e)))
+    (let eFound (findFSigCg cg (nodeAName node)))
+    (if (let (Some e) eFound)
+      (arrowResultTy (fsigTy e))
+      nilNode)
   })
 
 (pub :: pairFnOK (-> Int ASTNode Int))
@@ -29612,9 +29570,8 @@
     (if (strEq name "main")
       0
       {
-        (let e (findFSigCg cg name))
-        (if (== e 0)
-          0
+        (let eFound (findFSigCg cg name))
+        (if (let (Some e) eFound)
           (if (!= (fsigTakesEv e) 0)
             0
             (if (== (pairRetOK cg (arrowResultTy (fsigTy e))) 0)
@@ -29627,7 +29584,8 @@
                   (if (== (tailCallsSelf body (bareOf name) (vecLen (nodeBNames node))) 1)
                     0
                     1))
-              })))
+              }))
+          0)
       })
   })
 
@@ -30704,7 +30662,7 @@
           (let n (nodeAName hd))
           (if (|| (isCastName n) (|| (isPrimName n) (isLocalValue cg n)))
             0
-            (if (|| (== (findFSigCg cg (mangledForCg cg n)) 0) (!= (fnResultClass cg n) 1))
+            (if (|| (! (hasFSigCg cg (mangledForCg cg n))) (!= (fnResultClass cg n) 1))
               0
               (if (!= (spineArity valExpr) (fnArityCg cg n))
                 0
@@ -30750,25 +30708,27 @@
           (if (|| (isCastName n) (|| (isPrimName n) (isLocalValue cg n)))
             0
             {
-              (let e (findFSigCg cg (mangledForCg cg n)))
-              (if (|| (== e 0) (!= (spineArity valExpr) (fnArityCg cg n)))
-                0
-                {
-                  (let res (fnDeclaredResultTy (fsigTy e) (fnArityCg cg n)))
-                  (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_VAR))
-                    0
-                    {
-                      (let st (nodeBinderTyChild valExpr))
-                      (if (if (nodeSame st nilNode)
-                        true
-                        (|| (!= (nodeTag st) TAG_EVSTAMP)
-                          (! (nodeSame (nodeCChild st) (cgCurDecl cg)))))
-                        0
-                        (if (== (fldClass cg (pinnedTy (nodeAChild st) 64)) 0)
-                          1
-                          0))
-                    })
-                })
+              (let eFound (findFSigCg cg (mangledForCg cg n)))
+              (if (let (Some e) eFound)
+                (if (!= (spineArity valExpr) (fnArityCg cg n))
+                  0
+                  {
+                    (let res (fnDeclaredResultTy (fsigTy e) (fnArityCg cg n)))
+                    (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_VAR))
+                      0
+                      {
+                        (let st (nodeBinderTyChild valExpr))
+                        (if (if (nodeSame st nilNode)
+                          true
+                          (|| (!= (nodeTag st) TAG_EVSTAMP)
+                            (! (nodeSame (nodeCChild st) (cgCurDecl cg)))))
+                          0
+                          (if (== (fldClass cg (pinnedTy (nodeAChild st) 64)) 0)
+                            1
+                            0))
+                      })
+                  })
+                0)
             })
         })
     }))
@@ -30803,16 +30763,18 @@
       (if (nodeSame d nilNode)
         (- 0 1)
         {
-          (let e (findFSigCg cg (nodeAName d)))
-          (if (|| (== e 0) (== (fsigTakesEv e) 0))
-            (- 0 1)
-            {
-              (let vars vecNew)
+          (let eFound (findFSigCg cg (nodeAName d)))
+          (if (let (Some e) eFound)
+            (if (== (fsigTakesEv e) 0)
+              (- 0 1)
               {
-                (cgSigVarsInto (fsigTy e) vars)
-                (strVecIdx vars n)
-              }
-            })
+                (let vars vecNew)
+                {
+                  (cgSigVarsInto (fsigTy e) vars)
+                  (strVecIdx vars n)
+                }
+              })
+            (- 0 1))
         })
     }))
 
@@ -31249,7 +31211,7 @@
                     0)))
               (if (== (headIsLocal cg n bound) 1)
                 (mentionsArgs name e n_ 0)
-                (if (!= (findFSigCg cg (mangledForCg cg n)) 0)
+                (if (hasFSigCg cg (mangledForCg cg n))
                   ; the STASH mask pairs by form - a word-form park counts
                   ; a typed arrival (`__retainref`), a typed park does not
                   ; catch a word - but the RET mask names what the RESULT
@@ -33706,10 +33668,10 @@
               (if (let (Some entry) entryFound)
                 (dropFreeFields cg entry 16 0 (vecPush vecNew n))
                 {
-                  (let sig (findFSigCg cg (mangledForCg cg n)))
-                  (if (== sig 0)
-                    false
-                    (dropFreeTy cg (fnDeclaredResultTy (fsigTy sig) (fsigArity sig)) 16))
+                  (let sigFound (findFSigCg cg (mangledForCg cg n)))
+                  (if (let (Some sig) sigFound)
+                    (dropFreeTy cg (fnDeclaredResultTy (fsigTy sig) (fsigArity sig)) 16)
+                    false)
                 })
             }
             false)
