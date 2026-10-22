@@ -104,6 +104,7 @@ stdlib/Fmt.ax
 stdlib/IO.ax
 stdlib/Intern.ax
 stdlib/Cereal.ax
+stdlib/Link.ax
 stdlib/Map.ax
 stdlib/Mem.ax
 stdlib/Net.ax

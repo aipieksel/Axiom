@@ -45,15 +45,6 @@ its changelog too.
   struct or `data` field is reported once, where it was reported
   twice.
 
-- A vector that grows past a megabyte grows in place. The runtime gives
-  each block of that size its own address reservation, so a growing
-  `Vec` raises its capacity instead of copying everything into a block
-  twice the size, and a large push peaks at its data rather than twice
-  it: 16 M elements took 0.075 s and 248 MiB where they took 0.101 s and
-  502 MiB. A released block's memory goes back to the operating system.
-  Windows and static-arena targets copy as before. Tested by
-  `tests/stdlib/996-vec-grow-large.ax`.
-
 - Reading a field or a vector element no longer counts when nothing can
   overwrite it. Passed to a function that writes nothing (`strLen`,
   `vecLen`, `strEq`), or bound by a `let` or a `for` whose body writes

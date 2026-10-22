@@ -342,7 +342,10 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # from Alloc,IO,Mut,Unsafe to Alloc,IO,Mut), and the borrowed-read
 # analysis (`fnMayWrite`, `inferWrites` and its helpers) adds pure rows.
 # In the library, `StrList` adds three Alloc,Mut rows and five pure ones.
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3501 "exactly Alloc,Mut"
+# Links move both views again without a new required effect: the
+# compiler gains the link-width check and its emitter, and the library
+# gains `Link`'s five functions.
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3516 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 471 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 245 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 129 "exactly Alloc"
@@ -377,7 +380,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2473 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2464 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 33 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"
@@ -450,7 +453,7 @@ have "$(bucket "$work/lib.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut,Spawn')" 4 "Alloc,IO,Mut,Spawn"
 have "$(bucket "$work/lib.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/lib.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1173 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/lib.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 1178 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/lib.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 38 "distinct stdlib effect rows"
 have "$(grep -c '#effects-incomplete' "$work/lib.axsym" || true)" 25 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/lib.axsym" || true)" 64 "effect-params rows"

@@ -188,7 +188,13 @@ def main():
             # declaration is an expression there, so an unknown declaration
             # head (AX3027 in a file) is an undefined variable at the prompt.
             expected = errors - {'AX3006', 'AX3015', 'AX3027'}
-            if expected and declarations(fx.read_text(encoding='utf-8')) <= 2 and not fx.name.endswith('-import.ax'):
+            # A session types each form on one line, where a line comment
+            # can't stand, so a tag inside a form, such as a field's
+            # `;@axiom:effect(...)`, can't be typed and the session would
+            # check a different program.
+            source = fx.read_text(encoding='utf-8')
+            nested_tag = re.search(r'^[ \t]+;@axiom:', source, re.M) is not None
+            if expected and declarations(source) <= 2 and not nested_tag and not fx.name.endswith('-import.ax'):
                 got = repl_codes(compiler, fx, env)
                 repl += 1
                 # A declaration macro invoked at the prompt is an expression

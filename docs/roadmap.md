@@ -59,6 +59,8 @@ integrator would still need.
 | `vecFree` and `mapFree` leave safe code, so an early drop can't free a block still in use | Done | `tests/stdlib/406-array-form-large-block.ax`, `tests/stdlib/489-map-free.ax` |
 | CI builds the compiler with a poisoned allocator and checks it still reaches its fixpoint | Done | `scripts/check-poisoned-alloc.sh` |
 | Released blocks larger than 64 KiB can be reused | Done | `MM-ALLOC-25`, `tests/stdlib/974-large-block-reuse.ax` |
+| A vector past a megabyte grows inside an address reservation of its own, without copying | Planned | `MM-ALLOC-26` |
+| Linked data holds no shares: a link is an index into a vector, stored in the width its type names, and links that form a cycle are freed with their vector | Done | `MM-VAL-10b`, `tests/stdlib/997-links.ax` |
 | Stack overflow reports a named runtime trap | Native POSIX entry, worker and task stacks; Windows threads; bare-metal guard | `tests/stdlib/977-native-stack-overflow.ax`; host-owned archive stacks remain |
 | No cast, `Int` container or raw store lets a heap value become an untracked word in safe code | Not started | `MM-VAL-24` |
 | The raw memory layer and the word-to-reference accessors are internal to the library, so safe code can't read memory at an address or forge a reference from a word | Done | `MM-EXEC-9g`, `tests/diagnostics/1470-internal-import.ax` |
@@ -69,7 +71,7 @@ integrator would still need.
 | Handler invocations cannot retain references reclaimed by an operation's region or recovery scope; unseen handler bodies are conservatively refused across shorter extents | Done | `MM-RGN-3`, `tests/diagnostics/1474-handler-keeps-argument.ax`, `tests/region/handler-unseen.ax` |
 | Backing views, captures and scalar stores retain valid lifetimes through vector growth, recovery and immutable parallel borrowing | Tested shapes | `tests/region/lifetime-controls.ax`, `scripts/check-region-escape.sh` |
 | Typed promotion of owned values out of a region, preserving nested ownership, aliases and sharing | Planned | `MM-RGN-7` |
-| Cycles leak until an arena reset | Accepted for 1.0 | `MM-LIFE-3` |
+| Cycles of references leak until an arena reset; cycles of links don't | Accepted for 1.0 | `MM-LIFE-3`, `MM-VAL-10b` |
 
 ## Checks and claims
 

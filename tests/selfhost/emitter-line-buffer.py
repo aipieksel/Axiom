@@ -151,11 +151,19 @@ def check_hoisted_routes(binary):
             raise RuntimeError(f"{name}: direct line birth must retire after emitLine returns")
         if body.index(cleanup) >= body.rindex("ret i64 "):
             raise RuntimeError(f"{name}: direct line cleanup must precede return")
+    # The String a typed getter reads is either borrowed, when nothing in
+    # its scope can write (no share taken, none given back), or held by
+    # one temporary share given back once. Either is balanced; a share
+    # taken and never returned, or returned twice, is not.
     for name in ("joinAllocas", "joinAllocasSize"):
         body = emitted_function(module, "codegen$" + name)
         reads = re.findall(r'(%\S+) = call i64 @Vec\$vecGet\(i64 [^,]+, i64 [^,]+, i64 1\)', body)
-        if len(reads) != 1 or body.count(f"call void @axiom_release(i64 {reads[0]})") != 1:
-            raise RuntimeError(f"{name}: typed String getter needs one balanced temporary share")
+        if len(reads) != 1:
+            raise RuntimeError(f"{name}: expected one typed String getter")
+        taken = body.count(f"call void @axiom_retain(i64 {reads[0]})")
+        given = body.count(f"call void @axiom_release(i64 {reads[0]})")
+        if taken != given or given > 1:
+            raise RuntimeError(f"{name}: typed String getter takes {taken} share(s) and gives back {given}")
 
 
 def check(axiom, repo, work):

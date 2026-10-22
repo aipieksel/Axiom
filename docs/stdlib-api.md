@@ -1757,6 +1757,20 @@ Raw consumers require live Cereal handles; new code uses typed values.
 | `cerealSerializeWith` | value | `(-> CerealFormat CerealLimits (Codec a) a (Result String Error))` | `Alloc,Mut (incomplete)` |  | `cerealSerialize` under the given limits. |
 | `cerealDeserializeWith` | value | `(-> CerealFormat CerealLimits (Codec a) String (Result a Error))` | `Alloc,Mut (incomplete)` |  | `cerealDeserialize` under the given limits. |
 
+## `Link`
+
+`stdlib/Link.ax` — 5 public names
+
+Link - a typed index into a vector, stored in the bytes you choose.
+
+| Name | Kind | Type | Effects | Contracts | Summary |
+|---|---|---|---|---|---|
+| `linkTo` | value | `(-> (Vec t) Int (Link t w))` |  |  | A link to the element at `i`. An index outside `0 .. (vecLen v) - 1` stops the program with status 77, as `vecGet` does. |
+| `linkNone` | value | `(Link t w)` |  |  | The link to nothing: what `linkIsSome` answers `false` for, and what a zeroed field holds. |
+| `linkIsSome` | value | `(-> (Link t w) Bool)` |  |  | Whether the link names an element. |
+| `linkIndex` | value | `(-> (Link t w) Int)` |  |  | The index the link names. `linkNone` names none and stops the program with status 77. |
+| `linkGet` | value | `(-> (Vec t) (Link t w) t)` |  |  | The element the link names in `v`. `linkNone`, or an index `v` no longer holds, stops the program with status 77. |
+
 ## `Map`
 
 `stdlib/Map.ax` — 22 public names

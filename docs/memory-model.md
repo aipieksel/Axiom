@@ -1883,9 +1883,8 @@ chunk.
 
 **MM-ALLOC-4a (H).** Chunks come from a raw inline-assembly `mmap`
 (`PROT_READ|PROT_WRITE`, `MAP_PRIVATE|MAP_ANON`, no address hint, no
-guard pages) and are **never unmapped**. The only reuse is the free
-list. A reserved block (`MM-ALLOC-26`) is the one allocation whose
-mapping goes back to the operating system.
+guard pages) and are **never unmapped**. `munmap` appears nowhere in
+the emitted runtime. The only reuse is the free list.
 
 **MM-ALLOC-4c (H).** That is one of **two** backing strategies. Which
 one a program carries is decided at emission time by
@@ -2161,29 +2160,29 @@ request rounding turns red (`scripts/check-runtime-model.sh`), and by
 the soak in `scripts/check-reclaim-soak.sh` section 2, whose ablation of
 the same rounding must see memory grow.
 
-**MM-ALLOC-26 (H). A large block of a megabyte or more lives in an
+**MM-ALLOC-26 (P). A large block of a megabyte or more lives in an
 address reservation of its own, and a vector grows inside it.** On a
-target whose chunks come from a syscall `mmap`, `axiom_alloc` maps
-such a block a reservation of eight times its class capacity, at least
-64 MiB (and takes the ordinary path past 1 TiB or when the mapping is
-refused). Linux maps it `MAP_NORESERVE`, so untouched pages are not
-charged. The reservation is linked onto the active chunk list, so an
-arena or region reset reclaims it like any chunk, but it never becomes
-the bump chunk, so its block stays the last thing in it. The block's
-prefix records its capacity and the class `-1`.
+target whose chunks come from a syscall `mmap`, a large block up to
+128 GiB gets a reservation of eight times its capacity, at least
+64 MiB, and `vecReserveExactly` grows it by raising its capacity: no
+copy, and the data's address never changes. A reservation is charged
+for its block, not its address space, and a program that sets an arena
+cap reserves nothing.
 
-`vecReserveExactly` grows such a block by raising the capacity in its
-prefix: no copy, and the data's address never changes. Every byte past
-the old capacity is a fresh page, so `MM-ALLOC-6`'s zeroing holds. A
-block whose count reaches zero is unlinked from the active list and
-unmapped, never filed, so no page of it is reused unzeroed. A static
-arena (`MM-ALLOC-4c`) and Windows, where a reservation would commit its
-whole size, keep copying. A program built by a compiler that reserves
-nothing never sees the class `-1`, and its vectors copy as before.
+Reservations sit on a list of their own, each numbered as it is made.
+A mark records the next number, and a reset unmaps every reservation
+numbered after it, wherever it is on the list, so a reservation freed
+between the mark and the reset leaves the mark valid. A block that a
+reset keeps (`MM-ALLOC-15`) keeps its reservation
+instead of being copied out of it.
 
-A 16 M-element `(Vec Int)` push measured 0.101 s and a 501.7 MiB peak
-before, 0.075 s and 248.4 MiB with it. Tested by
-`tests/stdlib/996-vec-grow-large.ax`.
+Today a vector that outgrows its block allocates one twice the size
+and copies, and the old block goes to its size class's free list. A
+first version linked each reservation onto the active chunk list; a
+mark taken while a reservation headed that list was lost when the
+block was released, and the reset stopped with status 75.
+`tests/stdlib/996-vec-grow-large.ax` holds the answers growth must
+keep.
 
 ### 3.2 What allocates
 
