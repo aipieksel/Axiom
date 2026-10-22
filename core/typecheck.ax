@@ -10122,22 +10122,23 @@
       (tyPoisonUnknownVec tc xs out (+ i 1))
     }))
 
-; A struct's field type by name, or nilNode when absent. Fields are the
+; A struct's declared field type, or None when the name is absent. Fields are the
 ; parser's TAG_FIELD nodes: name in a, parsed type in ty.
-(pub :: structFieldTy (-> StructEnt String ASTNode))
+(pub :: structFieldTy (-> StructEnt String (Option ASTNode)))
 (pub fn (structFieldTy ent fname)
   (structFieldTyFrom (structEntFields ent) fname 0))
 
-(pub :: structFieldTyFrom (-> (Vec ASTNode) String Int ASTNode))
+(pub :: structFieldTyFrom (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (structFieldTyFrom fields fname i)
   (if (>= i (vecLen fields))
-    nilNode
+    None
     {
       (let f (vecGet fields i))
       (if (strEq (nodeAName f) fname)
-        (if (== (nodeTy f) 0)
-          mkSilentWild
-          (nodeTyChild f))
+        (Some
+          (if (== (nodeTy f) 0)
+            mkSilentWild
+            (nodeTyChild f)))
         (structFieldTyFrom fields fname (+ i 1)))
     }))
 
@@ -18780,8 +18781,11 @@
   (if (>= i (vecLen structs))
     0
     {
-      (let ty (structFieldTy (vecGet structs i) fname))
-      (if (&& (! (nodeSame ty nilNode)) (== (tyIsCallable ty) 1))
+      (let callable
+        (match (structFieldTy (vecGet structs i) fname)
+          ((None) 0)
+          ((Some ty) (tyIsCallable ty))))
+      (if (== callable 1)
         1
         (fieldNameCallableIn structs fname (+ i 1)))
     }))
@@ -19148,13 +19152,11 @@
   {
     (let mut all true)
     (for s in (tcStructsVec tc)
-      {
-        (let ty (structFieldTy s name))
-        (if (&& (! (nodeSame ty nilNode)) (== (tyIsCallable ty) 1))
+      (if (let (Some ty) (structFieldTy s name))
+        (if (== (tyIsCallable ty) 1)
           (if (let (Some _) (fieldDeclFor u s name))
             ()
-            (set all false)))
-      })
+            (set all false)))))
     all
   })
 
@@ -19487,7 +19489,9 @@
     ; it.
     (if (&& (strEq what "the lambda")
           (&& (== (effIn effs (builtinEff "Alloc")) 1)
-            (== (tyIsArrow (nodeBChild (structFieldTy sent d.name))) 1)))
+            (match (structFieldTy sent d.name)
+              ((None) false)
+              ((Some ty) (== (tyIsArrow (nodeBChild ty)) 1)))))
       (diagAddNote diag
         "a lambda of two or more parameters allocates the closure for each argument but the last, so calling it performs `Alloc`; a field of two or more parameters declares `effect(alloc)` at least"))
     (emitDiag tc diag)
@@ -22762,6 +22766,18 @@
 ; count differs from the declaration is a type this checker did not
 ; build, and substituting positionally through it would invent a
 ; correspondence.
+(struct ResolvedFieldType
+  (owner : StructEnt)
+  (ty : ASTNode))
+
+(:: resolveStructFieldType (-> (Option StructEnt) String Nodes (Option ResolvedFieldType)))
+(fn (resolveStructFieldType owner name args)
+  (if (let (Some ent) owner)
+    (if (let (Some ty) (structFieldTy ent name))
+      (Some (ResolvedFieldType :owner ent :ty (structSubstField ent ty args)))
+      None)
+    None))
+
 (pub :: structSubstField (-> StructEnt ASTNode (Vec ASTNode) ASTNode))
 (pub fn (structSubstField ent fty args)
   {
@@ -22827,14 +22843,13 @@
             ; A struct with no parameters substitutes nothing and takes
             ; the same path it always did.
             {
-              (let fty
-                (if (let (Some ent) entFound)
-                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))
-                  nilNode))
-              (if (let (Some ent) (if (nodeSame fty nilNode)
-                None
-                entFound))
+              (let fieldFound
+                (:: (resolveStructFieldType entFound (nodeBName e)
+                      (nodeBChildren baseTy)) (Option ResolvedFieldType)))
+              (if (let (Some field) fieldFound)
                 {
+                  (let ent (:: field.owner StructEnt))
+                  (let fty (:: field.ty ASTNode))
                   (stampFieldStruct e ent)
                   ; A legacy word's field is the word. A packed word's
                   ; field is the shift and mask that unpack it.
@@ -22864,7 +22879,7 @@
                   (if (let (Some dent) dentFound)
                     {
                       (let ctors (dataEntCtors dent))
-                      (if (nodeSame (dataFieldTyInCtors ctors (nodeBName e) 0) nilNode)
+                      (if (isNone (dataFieldTyInCtors ctors (nodeBName e) 0))
                         {
                           (emitFieldNotFound tc (nodeBName e) (nodeAName baseTy) (nodeSpan e))
                           (nodeBuildTErrPlain 0 0 0)
@@ -22883,27 +22898,23 @@
                             (nodeBuildTErrPlain 0 0 0)
                           }
                           {
-                            (let agreed (dataAgreedFieldTy ctors (nodeBName e)))
-                            (if (nodeSame agreed nilNode)
-                              {
-                                (emitFieldNotOnAllCtors tc (nodeBName e) (nodeAName baseTy)
-                                  (nodeSpan e))
-                                (nodeBuildTErrPlain 0 0 0)
-                              }
-                              ; Stamped EMPTY: "not a struct field", so
-                              ; the emitter skips its struct scan and
-                              ; reads the data field it resolved here
-                              ; (`resolveStructField`).
+                            (let agreedFound (dataAgreedFieldTy ctors (nodeBName e)))
+                            (if (let (Some agreed) agreedFound)
                               {
                                 (stampFieldData e dent)
                                 (tyEnvSubst agreed
                                   (ctorPatEnv (ctorEntResTy (vecGet ctors 0)) baseTy vecNew))
+                              }
+                              {
+                                (emitFieldNotOnAllCtors tc (nodeBName e) (nodeAName baseTy)
+                                  (nodeSpan e))
+                                (nodeBuildTErrPlain 0 0 0)
                               })
                           }))
                     }
                     {
-                      (let dty (dataFieldTy tc (nodeBName e)))
-                      (if (! (nodeSame dty nilNode))
+                      (let dtyFound (dataFieldTy tc (nodeBName e)))
+                      (if (let (Some dty) dtyFound)
                         {
                           (let ownFound (dataFieldOwner tc (nodeBName e)))
                           (if (let (Some own) (if (let (Some owner) ownFound)
@@ -22974,7 +22985,7 @@
 
 ; The type of a named constructor field, searching every data type in
 ; declaration order, or 0. Mirrors stage0's `find_data_field_by_name`.
-(pub :: dataFieldTy (-> TC String ASTNode))
+(pub :: dataFieldTy (-> TC String (Option ASTNode)))
 (pub fn (dataFieldTy tc fname)
   (dataFieldTyFrom (tcDatasVec tc) fname 0))
 
@@ -22988,7 +22999,7 @@
 (pub fn (dataFieldOwnerFrom datas fname i)
   (if (>= i (vecLen datas))
     None
-    (if (! (nodeSame (dataFieldTyInCtors (dataEntCtors (vecGet datas i)) fname 0) nilNode))
+    (if (isSome (dataFieldTyInCtors (dataEntCtors (vecGet datas i)) fname 0))
       (Some (vecGet datas i))
       (dataFieldOwnerFrom datas fname (+ i 1)))))
 
@@ -23015,20 +23026,17 @@
 ; `dataAgreedFieldTy` answers the field's declared type when that
 ; holds, else 0. Type agreement compares renderings, which observe
 ; without unifying: `tyCompat` would pin where this must only look.
-(pub :: dataAgreedFieldTy (-> (Vec CtorEnt) String ASTNode))
+(pub :: dataAgreedFieldTy (-> (Vec CtorEnt) String (Option ASTNode)))
 (pub fn (dataAgreedFieldTy ctors fname)
   {
     (let idx (dataFirstDeclIdx ctors fname 0))
     (if (< idx 0)
-      nilNode
-      {
-        (let ty0 (dataFieldTyInCtors ctors fname 0))
-        (if (nodeSame ty0 nilNode)
-          nilNode
-          (if (== (dataCtorsAgree ctors fname 0 idx ty0) 1)
-            ty0
-            nilNode))
-      })
+      None
+      (if (let (Some ty0) (dataFieldTyInCtors ctors fname 0))
+        (if (== (dataCtorsAgree ctors fname 0 idx ty0) 1)
+          (Some ty0)
+          None)
+        None))
   })
 
 ; The declared index of fname in the first constructor that declares
@@ -23114,21 +23122,18 @@
     0
   })
 
-(pub :: dataFieldTyFrom (-> (Vec DataEnt) String Int ASTNode))
+(pub :: dataFieldTyFrom (-> (Vec DataEnt) String Int (Option ASTNode)))
 (pub fn (dataFieldTyFrom datas fname i)
   (if (>= i (vecLen datas))
-    nilNode
-    {
-      (let r (dataFieldTyInCtors (dataEntCtors (vecGet datas i)) fname 0))
-      (if (! (nodeSame r nilNode))
-        r
-        (dataFieldTyFrom datas fname (+ i 1)))
-    }))
+    None
+    (if (let (Some ty) (dataFieldTyInCtors (dataEntCtors (vecGet datas i)) fname 0))
+      (Some ty)
+      (dataFieldTyFrom datas fname (+ i 1)))))
 
-(pub :: dataFieldTyInCtors (-> (Vec CtorEnt) String Int ASTNode))
+(pub :: dataFieldTyInCtors (-> (Vec CtorEnt) String Int (Option ASTNode)))
 (pub fn (dataFieldTyInCtors ctors fname i)
   (if (>= i (vecLen ctors))
-    nilNode
+    None
     {
       (let c (vecGet ctors i))
       {
@@ -23141,9 +23146,10 @@
               (dataFieldTyInCtors ctors fname (+ i 1))
               {
                 (let tys c.fieldTys)
-                (if (< j (vecLen tys))
-                  (vecGet tys j)
-                  mkTErr)
+                (Some
+                  (if (< j (vecLen tys))
+                    (vecGet tys j)
+                    mkTErr))
               })
           })
       }
@@ -23190,13 +23196,10 @@
             (emitWordSealedAccess tc (findStructAnyVis tc (nodeAName baseTy)) (nodeBName e)
               (nodeSpan e) "write")
             {
-              (let fty
-                (if (let (Some ent) entFound)
-                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))
-                  nilNode))
-              (if (let (Some ent) (if (nodeSame fty nilNode)
-                None
-                entFound))
+              (let fieldFound
+                (:: (resolveStructFieldType entFound (nodeBName e)
+                      (nodeBChildren baseTy)) (Option ResolvedFieldType)))
+              (if (let (Some field) fieldFound)
                 ; Field found: the VALUE is checked, against the
                 ; field's type. On a miss the value is NEVER checked
                 ; - stage0's rule, probed; its diagnostics are lost.
@@ -23212,6 +23215,8 @@
                 ; stored into any field would pass in silence
                 ; with its body unchecked.
                 {
+                  (let ent (:: field.owner StructEnt))
+                  (let fty (:: field.ty ASTNode))
                   (let vty
                     {
                       (let vty1 (checkExprH tc (nodeCChild e) 0))
@@ -23805,18 +23810,18 @@
       ; dropped `match` whose arms disagree.
       {
         (let exhTy
-          (if (== (nodeTag scrutTy) TAG_T_CON)
-            scrutTy
+          (:: (if (== (nodeTag scrutTy) TAG_T_CON)
+            (Some scrutTy)
             (if (&& (== (nodeTag scrutTy) TAG_T_VAR) (== (tyIsSrcVar scrutTy) 0))
               (armsCtorTy tc (nodeBChildren e) 0)
-              nilNode)))
+              None)) (Option ASTNode)))
         {
           (let tys vecNew)
           (let resTy0
             (checkArms tc (nodeBChildren e) 0 covered catchall (freshTVar tc 0) scrutTy
-              (if (nodeSame exhTy nilNode)
-                scrutTy
-                exhTy)
+              (match exhTy
+                ((None) scrutTy)
+                ((Some ty) ty))
               nilNode tys disc))
           {
             (let resTy
@@ -23833,17 +23838,20 @@
               ; Sq" beside it would be a guess about a typo.
               {
                 (let ctorChecked
-                  (if (&& (== (memGetWord catchall 0) 0) (! (nodeSame exhTy nilNode)))
-                    {
-                      (let dentFound (findData tc (nodeAName exhTy)))
-                      (if (let (Some dent) dentFound)
-                        {
-                          (if (! (armsNameUnknownCtor tc (nodeBChildren e) 0))
-                            (checkExhaustiveMatrix tc (nodeBChildren e) exhTy (nodeAChild e)))
-                          1
-                        }
-                        0)
-                    }
+                  (if (let (Some exhaustiveTy) exhTy)
+                    (if (== (memGetWord catchall 0) 0)
+                      {
+                        (let dentFound (findData tc (nodeAName exhaustiveTy)))
+                        (if (let (Some dent) dentFound)
+                          {
+                            (if (! (armsNameUnknownCtor tc (nodeBChildren e) 0))
+                              (checkExhaustiveMatrix tc (nodeBChildren e) exhaustiveTy
+                                (nodeAChild e)))
+                            1
+                          }
+                          0)
+                      }
+                      0)
                     0))
                 (if (&& (== ctorChecked 0)
                       (&& (== (memGetWord catchall 0) 0)
@@ -23871,51 +23879,46 @@
 ; `Color` for `((Red) 1)`, `Option a` for `((Some x) x)` - or 0 when
 ; no arm is a constructor pattern or none resolves. The shapes are
 ; the three `checkPatternTyped` dispatches as constructors.
-(pub :: armsCtorTy (-> TC (Vec ASTNode) Int ASTNode))
-;@axiom:effect(unsafe)
+(pub :: armsCtorTy (-> TC (Vec ASTNode) Int (Option ASTNode)))
 (pub fn (armsCtorTy tc arms i)
   (if (>= i (vecLen arms))
-    nilNode
+    None
     {
       (let arm (vecGet arms i))
-      {
-        (let cname
-          (if (== (nodeTag arm) TAG_M_FOR)
-            0
-            (patCtorHeadName (nodeAChild arm))))
+      (let cname
+        (:: (if (== (nodeTag arm) TAG_M_FOR)
+          None
+          (patCtorHeadName (nodeAChild arm))) (Option String)))
+      (let ctor
+        (:: (if (let (Some name) cname)
+          (findCtor tc name)
+          None) (Option CtorEnt)))
+      (if (let (Some entry) ctor)
         {
-          (let ctor
-            (if (== cname 0)
-              None
-              (findCtor tc (as cname String))))
-          (if (let (Some entry) ctor)
-            {
-              (let resTy entry.resTy)
-              (if (== (nodeTag resTy) TAG_T_CON)
-                resTy
-                (armsCtorTy tc arms (+ i 1)))
-            }
+          (let resTy entry.resTy)
+          (if (== (nodeTag resTy) TAG_T_CON)
+            (Some resTy)
             (armsCtorTy tc arms (+ i 1)))
         }
-      }
+        (armsCtorTy tc arms (+ i 1)))
     }))
 
 ; The constructor a pattern names, or 0 for a binder, a literal, or
 ; a shape that names none.
-(pub :: patCtorHeadName (-> ASTNode Int))
+(pub :: patCtorHeadName (-> ASTNode (Option String)))
 (pub fn (patCtorHeadName pat)
   {
     (let tag (nodeTag pat))
     (if (|| (== tag TAG_P_CON0) (== tag TAG_P_CONNAMED))
-      (as (nodeA pat) Int)
+      (Some (nodeAName pat))
       (if (== tag TAG_E_APP)
         {
           (let head (spineHead pat))
           (if (== (nodeTag head) TAG_E_VAR)
-            (as (nodeA head) Int)
-            0)
+            (Some (nodeAName head))
+            None)
         }
-        0))
+        None))
   })
 
 ; Every arm a literal `true`/`false` test, both present - the one
