@@ -250,12 +250,11 @@ if ! python3 - "$abl/core/namespace.ax" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-old = """;@axiom:effect(unsafe)
-(pub fn (mangleIdxHas idx bares name)
+old = """(pub fn (mangleIdxHas idx bares name)
   {
-    (let m (as idx MangleIdx))
+    (let m idx)
     (mangleIdxSync idx bares)
-    (if (let (Some _) (internFind m.names name))
+    (if (let (Some _) (internFind (internWordOf m.names) name))
       true
       false)
   })"""
