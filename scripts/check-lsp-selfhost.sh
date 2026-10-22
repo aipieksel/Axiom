@@ -576,6 +576,7 @@ bless="${AXIOM_BLESS:-0}"
 # itself: this gate exists to watch core/, and `$axiom` may be an
 # older seed-descended binary that predates the change being tested.
 gate_build_axc stage1
+python3 "$repo_root/tests/lsp/bucket-options.py" --axiom "$stage1" || exit 1
 
 # `.axbad` is the deliberately-unparseable fixture; it is not `.ax`
 # because check-fmt.sh and check-tree-sitter.sh sweep every `*.ax` file
