@@ -8538,12 +8538,12 @@
       (mkDiag SEV_ERROR "AX3125" "type-parameter" (nodeSpan d) message 0 0
         "declare each lowercase type parameter once on the type; every variable in its target or fields must be declared there"))))
 
-; The first recursive alias on a declaration path, or zero. Arguments
+; The first recursive alias on a declaration path, or None. Arguments
 ; are walked before entering the target; `Id (Id Int)` is finite.
-(pub :: aliasCycle (-> TC ASTNode Nodes ASTNode))
+(pub :: aliasCycle (-> TC ASTNode Nodes (Option ASTNode)))
 (pub fn (aliasCycle tc t seen)
   (if (nodeSame t nilNode)
-    nilNode
+    None
     {
       (let tg (nodeTag t))
       (if (== tg TAG_T_CON)
@@ -8552,16 +8552,16 @@
           (if (if (let (Some alias) alias)
             (== (nodeTag (nodeBChild alias)) TAG_T_ERR)
             false)
-            nilNode
+            None
             {
               (let argCycle (aliasCycleVec tc (nodeBChildren t) seen 0))
-              (if (! (nodeSame argCycle nilNode))
-                argCycle
+              (if (let (Some argCycle) argCycle)
+                (Some argCycle)
                 {
                   (let al (tcAliasFind tc (nodeAName t)))
                   (if (let (Some al) al)
                     (if (== (aliasPathHas seen al 0) 1)
-                      al
+                      (Some al)
                       {
                         (let saved (tcCurModule tc))
                         (let next (vecAppendFrom seen vecNew 0))
@@ -8577,34 +8577,34 @@
                           }
                         }
                       })
-                    nilNode)
+                    None)
                 })
             })
         }
         (if (== tg TAG_T_ARR)
           {
             (let bad (aliasCycle tc (nodeAChild t) seen))
-            (if (! (nodeSame bad nilNode))
-              bad
+            (if (let (Some bad) bad)
+              (Some bad)
               (aliasCycle tc (nodeBChild t) seen))
           }
           (if (== tg TAG_T_TUP)
             (aliasCycleVec tc (nodeAChildren t) seen 0)
             (if (== tg TAG_T_PTR)
               (aliasCycle tc (nodeAChild t) seen)
-              nilNode))))
+              None))))
     }))
 
-(pub :: aliasCycleVec (-> TC (Vec ASTNode) Nodes Int ASTNode))
+(pub :: aliasCycleVec (-> TC (Vec ASTNode) Nodes Int (Option ASTNode)))
 (pub fn (aliasCycleVec tc xs seen i)
   (if (== (as xs Int) 0)
-    nilNode
+    None
     (if (>= i (vecLen xs))
-      nilNode
+      None
       {
         (let bad (aliasCycle tc (vecGet xs i) seen))
-        (if (! (nodeSame bad nilNode))
-          bad
+        (if (let (Some bad) bad)
+          (Some bad)
           (aliasCycleVec tc xs seen (+ i 1)))
       })))
 
@@ -8622,7 +8622,7 @@
             {
               (tcSetCurModule tc (nodeModuleOpt d))
               (vecPush seen d)
-              (if (! (nodeSame (aliasCycle tc (nodeBChild d) seen) nilNode))
+              (if (isSome (aliasCycle tc (nodeBChild d) seen))
                 (if (!= (nodeSpan d) 0)
                   (emitDiag tc
                     (mkDiag SEV_ERROR "AX3126" "recursive-alias" (nodeSpan d)
