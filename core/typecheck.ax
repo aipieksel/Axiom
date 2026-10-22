@@ -13287,19 +13287,19 @@
   })
 
 ; The borrow block of the form numbered `id`: the most recent placeholder
-; whose record is named `parallel$b` and that number, or 0.
-(pub :: capBorrowBlock (-> TC String ASTNode))
+; whose record is named `parallel$b` and that number, or None.
+(pub :: capBorrowBlock (-> TC String (Option ASTNode)))
 (pub fn (capBorrowBlock tc id)
   {
     (let v (tcParLends tc))
     (let want (concat "parallel$b" id))
     (let mut i (- (vecLen v) 2))
-    (let mut found nilNode)
+    (let mut found (:: None (Option ASTNode)))
     {
-      (while (&& (>= i 0) (nodeSame found nilNode))
+      (while (&& (>= i 0) (isNone found))
         {
           (if (strEq (nodeAName (vecGet v i)) want)
-            (set found (vecGet v (+ i 1))))
+            (set found (Some (vecGet v (+ i 1)))))
           (set i (- i 2))
         })
       found
@@ -13312,19 +13312,16 @@
 ; freeze its count.
 (pub :: capBorrowLend (-> TC String String Int Int))
 (pub fn (capBorrowLend tc id name span)
-  {
-    (let blk (capBorrowBlock tc id))
-    (if (nodeSame blk nilNode)
-      0
+  (if (let (Some blk) (capBorrowBlock tc id))
+    {
+      (let xs (nodeAChildren blk))
       {
-        (let xs (nodeAChildren blk))
-        {
-          (if (! (capBlockNames xs name 0))
-            (vecPush xs (mkEVarAt name span)))
-          1
-        }
-      })
-  })
+        (if (! (capBlockNames xs name 0))
+          (vecPush xs (mkEVarAt name span)))
+        1
+      }
+    }
+    0))
 
 (pub :: capBlockNames (-> (Vec ASTNode) String Int Bool))
 (pub fn (capBlockNames xs name i)
@@ -13658,16 +13655,13 @@
   (if (!= (nodeTag val) TAG_E_APP)
     0
     (if (divHeadIsCast val)
-      {
-        (let oty (storeOperandTy tc (storeCastOperand val)))
-        (if (nodeSame oty nilNode)
+      (if (let (Some oty) (storeOperandTy tc (storeCastOperand val)))
+        (if (== (tyIsErr oty) 1)
           0
-          (if (== (tyIsErr oty) 1)
+          (if (!= (evClassOf tc oty) 1)
             0
-            (if (!= (evClassOf tc oty) 1)
-              0
-              (emitStoreWordUnretained tc e val oty))))
-      }
+            (emitStoreWordUnretained tc e val oty)))
+        0)
       0)))
 
 ; Through nested casts to the original value: `(cast Int (cast Int
@@ -13693,61 +13687,67 @@
 ; resolved the way `checkVar` resolves it but silently (a name
 ; nothing declares already drew its diagnostic from the normal
 ; flow, and this arm adds none), or a literal, whose type is its
-; tag. Anything else is 0 - not a type, but the absence of an
-; answer this site may act on.
-(pub :: storeOperandTy (-> TC ASTNode ASTNode))
+; tag. Anything else is None, the absence of an answer this site
+; may act on.
+(pub :: storeOperandTy (-> TC ASTNode (Option ASTNode)))
 (pub fn (storeOperandTy tc op)
   {
     (let tag (nodeTag op))
     (if (== tag TAG_E_VAR)
       (storeVarTy tc op)
       (if (== tag TAG_E_INT)
-        mkIntTy
+        (Some mkIntTy)
         (if (== tag TAG_E_FLT)
-          mkFloatTy
+          (Some mkFloatTy)
           (if (== tag TAG_E_CHAR)
-            mkCharTy
+            (Some mkCharTy)
             (if (== tag TAG_E_STR)
-              mkStringTy
-              nilNode)))))
+              (Some mkStringTy)
+              None)))))
   })
 
 ; `checkVar`'s resolution without its diagnostics: the local scope
 ; (never for a template-owned reference, which resolves where the
 ; template was written), then the function table, then the
 ; constructors. `true` and `false` are Bool spellings, not names,
-; and a miss is 0 rather than a second AX3001.
-(pub :: storeVarTy (-> TC ASTNode ASTNode))
+; and a miss is None rather than a second AX3001.
+(:: storeKnownTy (-> ASTNode (Option ASTNode)))
+(fn (storeKnownTy ty)
+  (if (nodeSame ty nilNode)
+    None
+    (Some ty)))
+
+(pub :: storeVarTy (-> TC ASTNode (Option ASTNode)))
 (pub fn (storeVarTy tc v)
   {
     (let name (nodeAName v))
     (if (|| (strEq name "true") (strEq name "false"))
-      nilNode
+      None
       (if (== (nodeDefScope v) 1)
         {
           (let entFound (findFnEnt tc name))
           (if (let (Some ent) entFound)
-            (fnEntTy ent)
+            (storeKnownTy (fnEntTy ent))
             {
               (let ctorFound (findCtor tc name))
               (if (let (Some ctor) ctorFound)
-                ctor.ctorTy
-                nilNode)
+                (storeKnownTy ctor.ctorTy)
+                None)
             })
         }
         {
           (let found (scopeFindFrame tc name))
           (if (let (Some fr) found)
-            fr.ty
+            (storeKnownTy fr.ty)
             {
               (let entFound (findFnEnt tc name))
               (if (let (Some ent) entFound)
-                (fnEntTy ent)
+                (storeKnownTy (fnEntTy ent))
                 {
                   (let ctorFound (findCtor tc name))
                   (if (let (Some ctor) ctorFound)
-                    ctor.ctorTy
-                    nilNode)
+                    (storeKnownTy ctor.ctorTy)
+                    None)
                 })
             })
         }))
@@ -13799,28 +13799,25 @@
         (if (if (== (nodeB wantArg) 0)
           true
           (== (vecLen (nodeBChildren wantArg)) 0))
-          {
-            (let oty (storeOperandTy tc (storeCastOperand arg)))
-            (if (== (as oty Int) 0)
+          (if (let (Some oty) (storeOperandTy tc (storeCastOperand arg)))
+            (if (== (tyIsErr oty) 1)
               0
-              (if (== (tyIsErr oty) 1)
-                0
-                (if (== (evClassOf tc oty) 1)
-                  (if (== span 0)
-                    0
-                    {
-                      (emitDiag tc
-                        (diagSetLabel
-                          (mkDiagNote SEV_ERROR "AX3043" "error-payload-untyped" span
-                            (concat (concat "storing a `" (tyRender oty))
-                              "` through a field declared `Int` hides it from the release walk, which follows declared types")
-                            0 0 "declare the field's real type"
-                            "an `Int` slot holding a reference is invisible to reclamation, and leaks (error-model.md ERR-TYPE-5/ERR-MEM-1)")
-                          (concat (concat "this holds a `" (tyRender oty)) "`")))
-                      1
-                    })
-                  0)))
-          }
+              (if (== (evClassOf tc oty) 1)
+                (if (== span 0)
+                  0
+                  {
+                    (emitDiag tc
+                      (diagSetLabel
+                        (mkDiagNote SEV_ERROR "AX3043" "error-payload-untyped" span
+                          (concat (concat "storing a `" (tyRender oty))
+                            "` through a field declared `Int` hides it from the release walk, which follows declared types")
+                          0 0 "declare the field's real type"
+                          "an `Int` slot holding a reference is invisible to reclamation, and leaks (error-model.md ERR-TYPE-5/ERR-MEM-1)")
+                        (concat (concat "this holds a `" (tyRender oty)) "`")))
+                    1
+                  })
+                0))
+            0)
           0)
         0)
       0)))
@@ -32965,27 +32962,24 @@
 ; or its index when the declaration is not at hand.
 (pub :: rgnCalleeParamName (-> TC String Int String))
 (pub fn (rgnCalleeParamName tc callee i)
-  {
-    (let d (rgnDeclOf tc callee))
-    (if (nodeSame d nilNode)
-      (fmtInt i)
-      (if (< i (vecLen (nodeBNames d)))
-        (vecGetStr (nodeBNames d) i)
-        (fmtInt i)))
-  })
+  (if (let (Some d) (rgnDeclOf tc callee))
+    (if (< i (vecLen (nodeBNames d)))
+      (vecGetStr (nodeBNames d) i)
+      (fmtInt i))
+    (fmtInt i)))
 
-(pub :: rgnDeclOf (-> TC String ASTNode))
+(pub :: rgnDeclOf (-> TC String (Option ASTNode)))
 (pub fn (rgnDeclOf tc name)
   (rgnDeclOfFrom (tcAllDeclsVec tc) name 0))
 
-(pub :: rgnDeclOfFrom (-> (Vec ASTNode) String Int ASTNode))
+(pub :: rgnDeclOfFrom (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (rgnDeclOfFrom decls name i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_FN) (strEq (nodeAName d) name))
-        d
+        (Some d)
         (rgnDeclOfFrom decls name (+ i 1)))
     }))
 
@@ -34351,13 +34345,10 @@
             (if (let (Some ent) entFound)
               (if (&& (== (fnEntParamCount ent) 1)
                     (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))
-                {
-                  (let d (rgnDeclOf tc (fnEntName ent)))
-                  (if (nodeSame d nilNode)
-                    (emitCompute tc (nodeSpan e) "compute callback has no visible function body")
-                    (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModuleOpt d)
-                      (unitIndexFor (tcUnits tc) (nodeModuleOpt d)) (nodeSpan e)))
-                }
+                (if (let (Some d) (rgnDeclOf tc (fnEntName ent)))
+                  (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModuleOpt d)
+                    (unitIndexFor (tcUnits tc) (nodeModuleOpt d)) (nodeSpan e))
+                  (emitCompute tc (nodeSpan e) "compute callback has no visible function body"))
                 (emitCompute tc (nodeSpan e)
                   "compute callback must be a non-nullary numeric function with a visible body"))
               (emitCompute tc (nodeSpan e)
@@ -34430,27 +34421,32 @@
   (|| (== (isNumOp name) 1)
     (sizedTyIn name "&& || ! __intToFloat __floatToInt __floatToBits __floatFromBits")))
 
+(:: computeOpaqueHelper (-> ComputeWalk FnEnt Int))
+(fn (computeOpaqueHelper walk ent)
+  (computeFail walk
+    (concat "compute callback reaches an opaque or foreign function `"
+      (concat (fnEntName ent) "`"))))
+
 (:: computeWalkHelper (-> ComputeWalk FnEnt Int))
 (fn (computeWalkHelper walk ent)
   (if (== (fnEntryIn walk.seen ent 0) 1)
     0
     {
       (let tc walk.tc)
-      (let d (rgnDeclOf walk.tc (fnEntName ent)))
-      (if (|| (nodeSame d nilNode) (!= (fnEntIsEffectOp ent) 0))
-        (computeFail walk
-          (concat "compute callback reaches an opaque or foreign function `"
-            (concat (fnEntName ent) "`")))
-        {
-          (let savedModule (tcCurModule tc))
+      (if (let (Some d) (rgnDeclOf walk.tc (fnEntName ent)))
+        (if (!= (fnEntIsEffectOp ent) 0)
+          (computeOpaqueHelper walk ent)
           {
-            (vecPush walk.seen ent)
-            (tcSetCurModule tc (nodeModuleOpt d))
-            (computeWalkExpr walk (nodeCChild d) (capBoundOf (nodeBNames d)) vecNew)
-            (tcSetCurModule tc savedModule)
-            0
-          }
-        })
+            (let savedModule (tcCurModule tc))
+            {
+              (vecPush walk.seen ent)
+              (tcSetCurModule tc (nodeModuleOpt d))
+              (computeWalkExpr walk (nodeCChild d) (capBoundOf (nodeBNames d)) vecNew)
+              (tcSetCurModule tc savedModule)
+              0
+            }
+          })
+        (computeOpaqueHelper walk ent))
     }))
 
 (:: computeWalkVar (-> ComputeWalk ASTNode Names Int))

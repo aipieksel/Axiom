@@ -1,0 +1,169 @@
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: nodes (-> String Nodes))
+(fn (nodes source)
+  (pResNodes (parseModuleWith (lex source) (scanAxtags source))))
+
+(:: expression (-> String ASTNode))
+(fn (expression source)
+  (nodeCChild (vecGet (nodes (concat "(fn (expression) " (concat source ")"))) 0)))
+
+(:: sameFound (-> (Option ASTNode) ASTNode Bool))
+(fn (sameFound found wanted)
+  (if (let (Some value) found)
+    (nodeSame value wanted)
+    false))
+
+(:: typeIs (-> (Option ASTNode) String Bool))
+(fn (typeIs found wanted)
+  (if (let (Some ty) found)
+    (strEq (tyRender ty) wanted)
+    false))
+
+(:: borrowChecks ())
+;@axiom:effect(io)
+(fn (borrowChecks)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (let first (expression "{ 0 }"))
+    (vecClear (nodeAChildren first))
+    (say 1 (isNone (capBorrowBlock checker "42")))
+    (say 2 (== (capBorrowLend checker "42" "missing" 0) 0))
+    (probeRememberBorrow checker "parallel$b42" first)
+    (say 3 (sameFound (capBorrowBlock checker "42") first))
+    (say 4 (== (capBorrowLend checker "42" "one" 0) 1))
+    (say 5 (== (vecLen (nodeAChildren first)) 1))
+    (capBorrowLend checker "42" "one" 0)
+    (say 6 (== (vecLen (nodeAChildren first)) 1))
+    (capBorrowLend checker "42" "two" 0)
+    (say 7 (== (vecLen (nodeAChildren first)) 2))
+    (let second (expression "{ 0 }"))
+    (vecClear (nodeAChildren second))
+    (probeRememberBorrow checker "parallel$b42" second)
+    (say 8 (sameFound (capBorrowBlock checker "42") second))
+    (say 9 (isNone (capBorrowBlock checker "other")))
+    (say 10 (== (vecLen (nodeAChildren first)) 2))
+  })
+
+(:: storeChecks ())
+;@axiom:effect(io)
+(fn (storeChecks)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (say 11 (typeIs (storeOperandTy checker (expression "5")) "Int"))
+    (say 12 (typeIs (storeOperandTy checker (expression "1.25")) "Float"))
+    (say 13 (typeIs (storeOperandTy checker (expression "'A'")) "Char"))
+    (say 14 (typeIs (storeOperandTy checker (expression "\"text\"")) "String"))
+    (say 15 (isNone (storeOperandTy checker (expression "(unseen 1)"))))
+    (say 16 (isNone (storeOperandTy checker (mkEVar "unseen"))))
+    (say 17 (isNone (storeVarTy checker (mkEVar "true"))))
+    (say 18 (isNone (storeVarTy checker (mkEVar "false"))))
+    (let functions (tcFnsVec checker))
+    (regFn functions "shadow" mkIntTy)
+    (fnIdxNote checker (vecLast functions))
+    (pushScope (tcScopeVec checker) "shadow" 0 0 mkStringTy)
+    (say 19 (typeIs (storeVarTy checker (mkEVar "shadow")) "String"))
+    (say 20 (typeIs (storeVarTy checker (setNodeDefScope (mkEVar "shadow"))) "Int"))
+    (say 21
+      (if (let (Some ty) (storeVarTy checker (mkEVar "Some")))
+        (== (nodeTag ty) TAG_T_ARR)
+        false))
+    (pushScope (tcScopeVec checker) "poison" 0 0 mkTErr)
+    (say 22
+      (if (let (Some ty) (storeVarTy checker (mkEVar "poison")))
+        (== (tyIsErr ty) 1)
+        false))
+    (pushScope (tcScopeVec checker) "inferred" 0 0 mkSilentWild)
+    (say 23
+      (if (let (Some ty) (storeVarTy checker (mkEVar "inferred")))
+        (&& (== (tyIsErr ty) 0) (== (nodeTag ty) TAG_T_VAR))
+        false))
+    (pushScope (tcScopeVec checker) "without-type" 0 0 nilNode)
+    (say 24 (isNone (storeVarTy checker (mkEVar "without-type"))))
+    (say 25 (isNone (storeVarTy checker (mkEVar "not-present"))))
+  })
+
+(:: declarationChecks ())
+;@axiom:effect(io)
+(fn (declarationChecks)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (say 26 (isNone (rgnDeclOf checker "missing")))
+    (let first (mkDFnAt "Module$run" (vecPush vecNew "first") (mkEInt 1) 0))
+    (let second (mkDFnAt "Module$run" (vecPush vecNew "second") (mkEInt 2) 0))
+    (let declarations (vecPush (vecPush vecNew first) second))
+    (say 27 (sameFound (rgnDeclOfFrom declarations "Module$run" 0) first))
+    (say 28 (sameFound (rgnDeclOfFrom declarations "Module$run" 1) second))
+    (say 29 (isNone (rgnDeclOfFrom declarations "run" 0)))
+    (say 30 (isNone (rgnDeclOfFrom declarations "Other$run" 0)))
+    (say 31 (strEq (rgnCalleeParamName checker "missing" 3) "3"))
+    (vecPush (tcAllDeclsVec checker) first)
+    (say 32 (strEq (rgnCalleeParamName checker "Module$run" 0) "first"))
+    (say 33 (strEq (rgnCalleeParamName checker "Module$run" 8) "8"))
+    (say 34 (sameFound (rgnDeclOf checker "Module$run") first))
+  })
+
+(:: checkedDiags (-> String Diags))
+(fn (checkedDiags source)
+  {
+    (let declarations (nodes source))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "lookup.ax" :src source :name "" :imports vecNew :library false)))
+    (tcOutVec (checkModuleTcTyped declarations declarations units))
+  })
+
+(:: countCode (-> Diags String Int))
+(fn (countCode diagnostics code)
+  {
+    (let mut count 0)
+    (for diagnostic in diagnostics
+      (if (strEq (diagCode diagnostic) code)
+        (set count (+ count 1))))
+    count
+  })
+
+(:: refusalChecks ())
+;@axiom:effect(io)
+(fn (refusalChecks)
+  {
+    (let raw
+      (checkedDiags
+        "(:: main ())\n;@axiom:effect(unsafe)\n(pub fn (main) { (let s \"held\") (__store64 (__alloc 16) 0 (as s Int)) })\n"))
+    (say 35 (== (countCode raw "AX3071") 1))
+    (let payload
+      (checkedDiags
+        "(struct Box (v : Int))\n(:: main ())\n(pub fn (main) { (let s \"held\") (let box (Box :v (as s Int))) () })\n"))
+    (say 36 (== (countCode payload "AX3043") 1))
+    (let scalar
+      (checkedDiags
+        "(:: main ())\n;@axiom:effect(unsafe)\n(pub fn (main) (__store64 (__alloc 16) 0 (as 5 Int)))\n"))
+    (say 37 (== (countErrorDiags scalar) 0))
+    (let unknown
+      (checkedDiags
+        "(:: main ())\n;@axiom:effect(unsafe)\n(pub fn (main) { (let value missing) (__store64 (__alloc 16) 0 (as value Int)) })\n"))
+    (say 38 (&& (== (countCode unknown "AX3001") 1) (== (countCode unknown "AX3071") 0)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (borrowChecks)
+    (storeChecks)
+    (declarationChecks)
+    (refusalChecks)
+    0
+  })
