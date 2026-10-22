@@ -179,9 +179,9 @@
 
 (pub :: tyRenderIn (-> ASTNode Strings String))
 (pub fn (tyRenderIn t0 names)
-  (tyRenderScoped t0 names 0))
+  (tyRenderScoped t0 names None))
 
-(:: tyRenderScoped (-> ASTNode Strings Int String))
+(:: tyRenderScoped (-> ASTNode Strings (Option String) String))
 (fn (tyRenderScoped t0 names owner)
   ; render what a placeholder was PINNED to, not the placeholder
   {
@@ -212,7 +212,7 @@
       })
   })
 
-(:: tyRenderAppScoped (-> String (Vec ASTNode) Strings Int String))
+(:: tyRenderAppScoped (-> String (Vec ASTNode) Strings (Option String) String))
 (fn (tyRenderAppScoped head args names owner)
   {
     (let out (strBuilderPush strBuilderNew head))
@@ -224,7 +224,7 @@
     (strBuilderFinish out)
   })
 
-(:: tyRenderJoinScoped (-> (Vec ASTNode) Strings Int String))
+(:: tyRenderJoinScoped (-> (Vec ASTNode) Strings (Option String) String))
 (fn (tyRenderJoinScoped xs names owner)
   {
     (let out strBuilderNew)
@@ -237,7 +237,7 @@
     (strBuilderFinish out)
   })
 
-(:: typeNameForScope (-> String Int String))
+(:: typeNameForScope (-> String (Option String) String))
 (fn (typeNameForScope name owner)
   (if (== (typeModuleSame (modOf name) owner) 1)
     (bareOf name)
@@ -2987,7 +2987,8 @@
     0
     {
       (let d (vecGet allDecls i))
-      (if (&& (!= (nodeModule d) 0) (&& (strEq (nodeModuleName d) modName) (moduleDeclNames d n)))
+      (if (&& (isSome (nodeModuleOpt d))
+            (&& (strEq (nodeModuleName d) modName) (moduleDeclNames d n)))
         1
         (declaredInModule allDecls modName n (+ i 1)))
     }))
@@ -2999,7 +3000,7 @@
     {
       (let d (vecGet allDecls i))
       (if (&& (== (nodeVis d) 1)
-            (&& (!= (nodeModule d) 0)
+            (&& (isSome (nodeModuleOpt d))
               (&& (strEq (nodeModuleName d) modName) (moduleDeclExports d n))))
         1
         (exportedFromModule allDecls modName n (+ i 1)))
@@ -3138,8 +3139,8 @@
   (ctorTy : ASTNode)
   (fieldNames : Names))
 
-; `module` is the module that DECLARED this type, or 0 for the entry
-; file and for builtins. It exists so a QUALIFIED reference can be
+; `module` is Some declaring module, or None for the entry file and
+; builtins. It exists so a QUALIFIED reference can be
 ; checked rather than merely stripped: `mangleDecl` rewrites `fn` and
 ; `::` declarations to `Mod$name`, so `Mod::f` resolves by matching a
 ; rewritten declaration - but it does not rewrite `data` or `struct`,
@@ -3149,13 +3150,13 @@
 (pub struct DataEnt
   (name : String)
   (ctors : (Vec CtorEnt))
-  (module : Int)
+  (module : (Option String))
   (arity : Int))
 
 (pub struct StructEnt
   (name : String)
   (fields : Nodes)
-  (module : Int)
+  (module : (Option String))
   (tyvars : Names)
   (repr : Int))
 
@@ -3176,16 +3177,17 @@
 (pub fn (structEntFields ent)
   ent.fields)
 
-(pub :: structEntModule (-> StructEnt Int))
+(pub :: structEntModule (-> StructEnt (Option String)))
 (pub fn (structEntModule ent)
   ent.module)
 
 ; The declaring module's name. Only ask it when `structEntModule` is
 ; not 0, which is the entry file.
 (pub :: structEntModuleName (-> StructEnt String))
-;@axiom:effect(unsafe)
 (pub fn (structEntModuleName ent)
-  (as ent.module String))
+  (match ent.module
+    ((None) "")
+    ((Some name) name)))
 
 (pub :: structEntTyvars (-> StructEnt Names))
 (pub fn (structEntTyvars ent)
@@ -3199,7 +3201,7 @@
 (pub fn (dataEntName ent)
   ent.name)
 
-(pub :: dataEntModule (-> DataEnt Int))
+(pub :: dataEntModule (-> DataEnt (Option String)))
 (pub fn (dataEntModule ent)
   ent.module)
 
@@ -3379,7 +3381,7 @@
 
 (struct ExprChecks
   (formatChecked : (Vec ASTNode))
-  (computeRequests : (Vec Int))
+  (computeRequests : (Vec ComputeRequest))
   (mut computeEnabled : Int)
   (mut validatingEffects : Bool)
   (mut unsignedParams : Nodes))
@@ -3400,13 +3402,13 @@
   (mut curCallable : (Vec Int))
   (units : Units)
   (mut curUnit : Int)
-  (ambTbl : (Vec Int))
-  (mut curModule : Int)
+  (ambTbl : (Vec AmbEnt))
+  (mut curModule : (Option String))
   (aliases : Nodes)
   (mut pairFns : Names)
   (privates : Int)
   (mut fnIdx : (Option FnIndex))
-  (mut ambIdx : Ints)
+  (mut ambIdx : (Option AmbIndex))
   (mut lamBase : Int)
   (mut curSigVars : Int)
   (mut curDeclNode : ASTNode)
@@ -3667,7 +3669,7 @@
 ; Subtype declarations, collected for lookup by name. Each entry is
 ; a TAG_D_SUBTYPE node carrying the subtype's name, base type, and
 ; range constraint.
-; The module whose body is being checked, or 0 for the
+; The module whose body is being checked, or None for the
 ; entry file. A bare reference inside it resolves to
 ; that module's own definition first - the same rule
 ; codegen's `mangledFor` and stage0's
@@ -3920,7 +3922,7 @@
     tc
   })
 
-(:: tcAmbTbl (-> Int (Vec Int)))
+(:: tcAmbTbl (-> Int (Vec AmbEnt)))
 ;@axiom:effect(unsafe)
 (fn (tcAmbTbl tc)
   {
@@ -3928,8 +3930,8 @@
     t.ambTbl
   })
 
-; The module being checked as a word, 0 for the entry file.
-(:: tcCurModule (-> Int Int))
+; The module being checked, or None for the entry file.
+(:: tcCurModule (-> Int (Option String)))
 ;@axiom:effect(unsafe)
 (fn (tcCurModule tc)
   {
@@ -3937,16 +3939,7 @@
     t.curModule
   })
 
-; The same module's name; `""` for the entry file.
-(:: tcCurModuleName (-> Int String))
-;@axiom:effect(unsafe)
-(fn (tcCurModuleName tc)
-  {
-    (let t (as tc TC))
-    (as t.curModule String)
-  })
-
-(:: tcSetCurModule (-> Int Int Int))
+(:: tcSetCurModule (-> Int (Option String) Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetCurModule tc v)
   {
@@ -4016,7 +4009,7 @@
     tc
   })
 
-(:: tcAmbIdx (-> Int Ints))
+(:: tcAmbIdx (-> Int (Option AmbIndex)))
 ;@axiom:effect(unsafe)
 (fn (tcAmbIdx tc)
   {
@@ -4024,12 +4017,12 @@
     t.ambIdx
   })
 
-(:: tcSetAmbIdx (-> Int Ints Int))
+(:: tcSetAmbIdx (-> Int AmbIndex Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetAmbIdx tc v)
   {
     (let t (as tc TC))
-    (set t.ambIdx v)
+    (set t.ambIdx (Some v))
     tc
   })
 
@@ -4565,7 +4558,7 @@
     t.exprChecks.formatChecked
   })
 
-(:: tcComputeRequests (-> Int (Vec Int)))
+(:: tcComputeRequests (-> Int (Vec ComputeRequest)))
 ;@axiom:effect(unsafe)
 (fn (tcComputeRequests tc)
   {
@@ -4849,13 +4842,13 @@
     0
     {
       (let d (vecGet decls i))
-      (if (&& (!= (nodeModule d) 0)
+      (if (&& (isSome (nodeModuleOpt d))
             (&& (== (nodeVis d) 1) (== (strInVec internals (nodeModuleName d) 0) 1)))
         {
           (let k
             (if (|| (== (nodeTag d) TAG_D_FN) (== (nodeTag d) TAG_D_SIG))
               (nodeAName d)
-              (privKey (nodeModule d) (nodeAName d))))
+              (privKey (nodeModuleOpt d) (nodeAName d))))
           (vecPush out k)
           (vecPush out (concat "internal " k))
         })
@@ -4962,7 +4955,7 @@
     {
       (let d (vecGet decls i))
       (countPrivates decls (+ i 1)
-        (if (== (nodeModule d) 0)
+        (if (isNone (nodeModuleOpt d))
           acc
           (if (== (nodeTag d) TAG_D_EXTERN)
             (countPrivateExtern (nodeCChildren d) 0 acc)
@@ -4980,15 +4973,15 @@
     {
       (let d (vecGet decls i))
       {
-        (if (!= (nodeModule d) 0)
+        (if (isSome (nodeModuleOpt d))
           (if (== (nodeTag d) TAG_D_EXTERN)
-            (collectPrivateExtern (nodeCChildren d) (nodeModule d) out seen 0)
+            (collectPrivateExtern (nodeCChildren d) (nodeModuleOpt d) out seen 0)
             (if (== (nodeVis d) 0)
               {
                 (let k
                   (if (|| (== (nodeTag d) TAG_D_FN) (== (nodeTag d) TAG_D_SIG))
                     (nodeAName d)
-                    (privKey (nodeModule d) (nodeAName d))))
+                    (privKey (nodeModuleOpt d) (nodeAName d))))
                 (if (! (== (privIdxHas seen k) 1))
                   {
                     (defIdxPut seen k)
@@ -5009,7 +5002,7 @@
         (+ acc 1)
         acc))))
 
-(pub :: collectPrivateExtern (-> (Vec ASTNode) Int Strings StringRows Int Int))
+(pub :: collectPrivateExtern (-> (Vec ASTNode) (Option String) Strings StringRows Int Int))
 (pub fn (collectPrivateExtern items mod out seen i)
   (if (>= i (vecLen items))
     0
@@ -5446,7 +5439,7 @@
               :resTy optRes
               :ctorTy optRes
               :fieldNames nilNames))
-          (vecPush datas (DataEnt :name "Option" :ctors optCtors :module 0 :arity 1))
+          (vecPush datas (DataEnt :name "Option" :ctors optCtors :module None :arity 1))
           ; `Vec`, ABSTRACT AND PARAMETERISED. No constructors: a `Vec`
           ; is made by `vecNew` and read by `vecGet`, never matched, so
           ; there is nothing for a pattern to name. What the entry buys
@@ -5459,12 +5452,12 @@
           ; type-level change only, which is what makes it separable
           ; from the reference-class question - `fldClass` answers for
           ; `Vec` exactly what it answered for the `Int` it replaces.
-          (vecPush datas (DataEnt :name "Vec" :ctors vecNew :module 0 :arity 1))
+          (vecPush datas (DataEnt :name "Vec" :ctors vecNew :module None :arity 1))
           ; `(Link T W)`, abstract like `Vec`: an index into a `(Vec T)`
           ; that a struct field stores in `W` bytes (MM-VAL-10b). The
           ; entry gives it its two parameters; `stdlib/Link.ax` makes
           ; and follows one, and every classifier answers "word".
-          (vecPush datas (DataEnt :name "Link" :ctors vecNew :module 0 :arity 2))
+          (vecPush datas (DataEnt :name "Link" :ctors vecNew :module None :arity 2))
         }
       }
       ; The exact-name index, before collection rather than after:
@@ -5493,13 +5486,13 @@
                 :units units
                 :curUnit 0
                 :ambTbl vecNew
-                :curModule 0
+                :curModule None
                 :aliases vecNew
                 :pairFns vecNew
                 :privates
                   (withInternalVisibility allDecls units (collectPrivates allDecls vecNew 0))
                 :fnIdx None
-                :ambIdx nilWords
+                :ambIdx None
                 :lamBase 0
                 :curSigVars 0
                 :curDeclNode nilNode
@@ -5591,8 +5584,8 @@
           ; The ambiguity table, once: builtins are module-less
           ; winners and have no declaration to walk, so they are
           ; seeded rather than collected.
-          (ambRecord tc "None" 0)
-          (ambRecord tc "Some" 0)
+          (ambRecord tc "None" None)
+          (ambRecord tc "Some" None)
           (ambBuild tc allDecls 0)
           ; Every function's place in the unsafe boundary, read off its
           ; tags, BEFORE the fixpoint: a trusted callee's `Unsafe` stops
@@ -5774,12 +5767,12 @@
                       (StructEnt
                         :name (nodeAName d)
                         :fields (nodeBChildren d)
-                        :module (nodeModule d)
+                        :module (nodeModuleOpt d)
                         :tyvars (nodeTyNames d)
                         :repr (structReprOf d)))
                     {
                       (vecPush (tcStructsVec tc) sent)
-                      (tyIdxPut tc (nodeAName d) (nodeModule d) (TyStruct sent))
+                      (tyIdxPut tc (nodeAName d) (nodeModuleOpt d) (TyStruct sent))
                     }
                   }
                 }
@@ -5824,14 +5817,14 @@
                         ; silent wildcard at arity -1, which made
                         ; `(two 3 4 5)` check clean and SIGSEGV and
                         ; `(two 3)` check clean and answer a heap address.
-                        (tcCollectEffectOps tc (nodeCChildren d) 0 (nodeAName d) (nodeModule d))
+                        (tcCollectEffectOps tc (nodeCChildren d) 0 (nodeAName d) (nodeModuleOpt d))
                       }
                       (if (== tag TAG_D_EXTERN)
                         ; Slot c, the TYPED items - the same choice the effect
                         ; arm above records: slot b is the bare names, and
                         ; registering those would mean a silent wildcard at
                         ; arity -1 and no saturation checking at all.
-                        (tcCollectExternItems tc (nodeCChildren d) 0 (nodeModuleName d))
+                        (tcCollectExternItems tc (nodeCChildren d) 0 (nodeModuleOpt d))
                         (if (== tag TAG_D_MACRO)
                           ; The NODE, not the name: a macro its module does not
                           ; export is not a macro name HERE, and deciding that
@@ -5975,8 +5968,7 @@
 ; arity -1 instead. One site discarding a type the parser already
 ; kept, which is the same sentence the self-hosting record writes
 ; about `parseSigDecl`.
-(pub :: tcCollectEffectOps (-> Int (Vec ASTNode) Int String a Int))
-;@axiom:effect(unsafe)
+(pub :: tcCollectEffectOps (-> Int (Vec ASTNode) Int String (Option String) Int))
 (pub fn (tcCollectEffectOps tc fields i effName modName)
   (if (== (as fields Int) 0)
     0
@@ -5986,14 +5978,14 @@
         (let f (vecGet fields i))
         {
           (tcAddEffectOp tc (nodeAName f) (nodeBChild f) effName)
-          (if (! (== (as modName Int) 0))
+          (if (let (Some moduleName) modName)
             ; `concat` twice, from `Str`: nothing from codegen.ax
             ; is imported here - stage0's flat
             ; namespace resolves it across the merged declaration list
             ; and stage1 refuses it, which is the open B4 item and the
             ; stricter of the two answers.
-            (tcAddEffectOp tc (concat (concat (as modName String) "$") (nodeAName f))
-              (nodeBChild f) effName))
+            (tcAddEffectOp tc (concat (concat moduleName "$") (nodeAName f)) (nodeBChild f)
+              effName))
           (tcCollectEffectOps tc fields (+ i 1) effName modName)
         }
       })))
@@ -6118,7 +6110,7 @@
 ; ordinary imported function. Bare references resolve through the module
 ; view. Registering a second bare entry loses declaration provenance
 ; when several modules export the same name.
-(pub :: tcCollectExternItems (-> Int (Vec ASTNode) Int String Int))
+(pub :: tcCollectExternItems (-> Int (Vec ASTNode) Int (Option String) Int))
 (pub fn (tcCollectExternItems tc fields i modName)
   (if (== (as fields Int) 0)
     0
@@ -6126,12 +6118,8 @@
       0
       {
         (let f (vecGet fields i))
-        {
-          (if (== (as modName Int) 0)
-            (tcAddExtern tc (nodeAName f) (nodeBChild f))
-            (tcAddExtern tc (concat (concat (as modName String) "$") (nodeAName f)) (nodeBChild f)))
-          (tcCollectExternItems tc fields (+ i 1) modName)
-        }
+        (tcAddExtern tc (privKey modName (nodeAName f)) (nodeBChild f))
+        (tcCollectExternItems tc fields (+ i 1) modName)
       })))
 
 ; ------------------------------------------------------------------
@@ -6196,7 +6184,7 @@
       {
         (tvNamesToNodes tvs tvNodes 0)
         {
-          (let resTy (mkTCon (nominalName (nodeAName d) (nodeModule d)) tvNodes))
+          (let resTy (mkTCon (nominalName (nodeAName d) (nodeModuleOpt d)) tvNodes))
           (let ctors vecNew)
           {
             (tcCollectCtors (nodeBChildren d) resTy ctors 0)
@@ -6205,7 +6193,7 @@
                 (DataEnt
                   :name (nodeAName d)
                   :ctors ctors
-                  :module (nodeModule d)
+                  :module (nodeModuleOpt d)
                   :arity
                     (if (== (as tvs Int) 0)
                       0
@@ -6316,18 +6304,19 @@
         (let ty (fnEntTy ent))
         (if (&& (== (nodeTag ty) TAG_T_VAR) (strStartsWith (nodeAName ty) "_fn_"))
           false
-          (sigEarlier decls i (nodeAName d) (nodeModule d) 0))
+          (sigEarlier decls i (nodeAName d) (nodeModuleOpt d) 0))
       }
       false)
   })
 
-(pub :: sigEarlier (-> (Vec ASTNode) Int String Int Int Bool))
+(pub :: sigEarlier (-> (Vec ASTNode) Int String (Option String) Int Bool))
 (pub fn (sigEarlier decls i name m j)
   (if (>= j i)
     false
     {
       (let e (vecGet decls j))
-      (if (&& (== (nodeTag e) TAG_D_SIG) (&& (== (nodeModule e) m) (strEq (nodeAName e) name)))
+      (if (&& (== (nodeTag e) TAG_D_SIG)
+            (&& (== (typeModuleSame (nodeModuleOpt e) m) 1) (strEq (nodeAName e) name)))
         true
         (sigEarlier decls i name m (+ j 1)))
     }))
@@ -6433,12 +6422,11 @@
 ; `fn` and `::` are - so their key is built from the module recorded
 ; beside them.
 ; ------------------------------------------------------------------
-(pub :: privKey (-> a String String))
-;@axiom:effect(unsafe)
+(pub :: privKey (-> (Option String) String String))
 (pub fn (privKey declMod name)
-  (if (== (as declMod Int) 0)
-    name
-    (concat (concat (as declMod String) "$") name)))
+  (if (let (Some nameOfModule) declMod)
+    (concat (concat nameOfModule "$") name)
+    name))
 
 ; 1 when a reference made from `curMod` may NOT name `key`.
 ;
@@ -6456,21 +6444,20 @@
 ; module of private helpers is most of them, and
 ; `(concat curMod "$")` allocated a prefix per call on an allocator
 ; that never frees.
-(pub :: privBlocks (-> (Option StringRows) String a Int))
-;@axiom:effect(unsafe)
+(pub :: privBlocks (-> (Option StringRows) String (Option String) Int))
 (pub fn (privBlocks privs key curMod)
   (if (let (Some rows) privs)
     (if (== (privIdxHas rows key) 0)
       0
-      (if (== (as curMod Int) 0)
+      (if (let (Some moduleName) curMod)
+        (if (== (privOwnedBy key moduleName) 1)
+          0
+          (if (privLibraryReach rows key moduleName)
+            0
+            1))
         (if (privLibraryReach rows key "")
           0
-          1)
-        (if (== (privOwnedBy key (as curMod String)) 1)
-          0
-          (if (privLibraryReach rows key (as curMod String))
-            0
-            1))))
+          1)))
     0))
 
 ; A public name of an `Internal` module, reached from another module of
@@ -6540,12 +6527,13 @@
         (defIdxHas v key 0))
     }))
 
-(pub :: findFnEntVisibleExact (-> (Option StringRows) (Vec FnEnt) String String (Option FnEnt)))
+(pub :: findFnEntVisibleExact
+  (-> (Option StringRows) (Vec FnEnt) String (Option String) (Option FnEnt)))
 (pub fn (findFnEntVisibleExact privs fns name curMod)
   (findFnEntVisibleExactFrom privs fns name curMod 0))
 
 (pub :: findFnEntVisibleExactFrom
-  (-> (Option StringRows) (Vec FnEnt) String String Int (Option FnEnt)))
+  (-> (Option StringRows) (Vec FnEnt) String (Option String) Int (Option FnEnt)))
 (pub fn (findFnEntVisibleExactFrom privs fns name curMod i)
   (if (>= i (vecLen fns))
     None
@@ -6556,12 +6544,13 @@
         (findFnEntVisibleExactFrom privs fns name curMod (+ i 1)))
     }))
 
-(pub :: findFnEntVisibleSuffix (-> (Option StringRows) (Vec FnEnt) String String (Option FnEnt)))
+(pub :: findFnEntVisibleSuffix
+  (-> (Option StringRows) (Vec FnEnt) String (Option String) (Option FnEnt)))
 (pub fn (findFnEntVisibleSuffix privs fns name curMod)
   (findFnEntVisibleSuffixFrom privs fns name curMod 0))
 
 (pub :: findFnEntVisibleSuffixFrom
-  (-> (Option StringRows) (Vec FnEnt) String String Int (Option FnEnt)))
+  (-> (Option StringRows) (Vec FnEnt) String (Option String) Int (Option FnEnt)))
 (pub fn (findFnEntVisibleSuffixFrom privs fns name curMod i)
   (if (>= i (vecLen fns))
     None
@@ -6618,7 +6607,7 @@
       (if (&& (! (signatureEntryOnly candidate))
             (&& (== (nameMatches candidate.name name) 1)
               (&& (== (fnEntOutOfModuleScope tc (tcCurModule tc) candidate.name candidate) 0)
-                (== (privBlocks (tcPrivIdx tc) candidate.name (tcCurModuleName tc)) 0))))
+                (== (privBlocks (tcPrivIdx tc) candidate.name (tcCurModule tc)) 0))))
         candidate
         (signatureDefinitionIn tc entries name (+ i 1) fallback))
     }))
@@ -6628,8 +6617,8 @@
   {
     (let m (tcCurModule tc))
     (let local
-      (if (!= m 0)
-        (fnEntQual tc (tcCurModuleName tc) name)
+      (if (let (Some localModule) m)
+        (fnEntQual tc localModule name)
         None))
     (if (let (Some entry) local)
         (Some entry)
@@ -6639,11 +6628,11 @@
             (Some entry)
             (fnEntModuleSuffix tc name))
           (fnEntSuffix tc name))
-      (if (let (Some entry) (fnEntVisibleExact tc (tcPrivIdx tc) name (tcCurModuleName tc)))
+      (if (let (Some entry) (fnEntVisibleExact tc (tcPrivIdx tc) name (tcCurModule tc)))
         (if (== (fnEntOutOfModuleScope tc m name entry) 0)
           (Some entry)
           (fnEntModuleSuffix tc name))
-        (fnEntVisibleSuffix tc (tcPrivIdx tc) name (tcCurModuleName tc))))
+        (fnEntVisibleSuffix tc (tcPrivIdx tc) name (tcCurModule tc))))
   })
 
 ; 1 when `e`, the exact match for a BARE reference made inside module
@@ -6657,9 +6646,9 @@
 ; also registered as `Mod$name`, so the suffix pass answers the same
 ; declaration for them. `mangledForCg` makes the same choice, through
 ; the module view `mangleRecordModuleView` records.
-(pub :: fnEntOutOfModuleScope (-> Int Int String FnEnt Int))
+(pub :: fnEntOutOfModuleScope (-> Int (Option String) String FnEnt Int))
 (pub fn (fnEntOutOfModuleScope tc m name e)
-  (if (== m 0)
+  (if (isNone m)
     0
     (if (!= (fnEntIsBuiltin e) 0)
       0
@@ -6685,7 +6674,7 @@
       (let e (vecGet fns i))
       (if (&& (== (nameMatches e.name name) 1)
             (&& (== (fnEntOutOfModuleScope tc (tcCurModule tc) e.name e) 0)
-              (== (privBlocks (tcPrivIdx tc) e.name (tcCurModuleName tc)) 0)))
+              (== (privBlocks (tcPrivIdx tc) e.name (tcCurModule tc)) 0)))
         (Some e)
         (fnEntModuleSuffixIn tc fns name (+ i 1)))
     }))
@@ -6858,17 +6847,18 @@
 ; over rather than ending the search, exactly as before.
 ;
 ; The suffix pass is deliberately left alone; see the index's note.
-(pub :: fnEntVisibleExact (-> Int (Option StringRows) String String (Option FnEnt)))
+(pub :: fnEntVisibleExact (-> Int (Option StringRows) String (Option String) (Option FnEnt)))
 (pub fn (fnEntVisibleExact tc privs name curMod)
   (if (let (Some buckets) (tcFnIdx tc))
     (fnIdxGetVisible buckets privs name curMod)
     (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)))
 
-(pub :: fnIdxGetVisible (-> FnIndex (Option StringRows) String String (Option FnEnt)))
+(pub :: fnIdxGetVisible (-> FnIndex (Option StringRows) String (Option String) (Option FnEnt)))
 (pub fn (fnIdxGetVisible bs privs name curMod)
   (fnIdxScanVisible (vecGet bs (% (fnIdxHash name) (vecLen bs))) privs name curMod 0))
 
-(pub :: fnIdxScanVisible (-> (Vec FnEnt) (Option StringRows) String String Int (Option FnEnt)))
+(pub :: fnIdxScanVisible
+  (-> (Vec FnEnt) (Option StringRows) String (Option String) Int (Option FnEnt)))
 (pub fn (fnIdxScanVisible v privs name curMod i)
   (if (>= i (vecLen v))
     None
@@ -7043,11 +7033,12 @@
         (fnSufIdxScan v name (+ i 1)))
     }))
 
-(pub :: fnSufIdxGetVisible (-> FnIndex (Option StringRows) String String (Option FnEnt)))
+(pub :: fnSufIdxGetVisible (-> FnIndex (Option StringRows) String (Option String) (Option FnEnt)))
 (pub fn (fnSufIdxGetVisible bs privs name curMod)
   (fnSufIdxScanVisible (vecGet bs (% (fnIdxHash name) (vecLen bs))) privs name curMod 0))
 
-(pub :: fnSufIdxScanVisible (-> (Vec FnEnt) (Option StringRows) String String Int (Option FnEnt)))
+(pub :: fnSufIdxScanVisible
+  (-> (Vec FnEnt) (Option StringRows) String (Option String) Int (Option FnEnt)))
 (pub fn (fnSufIdxScanVisible v privs name curMod i)
   (if (>= i (vecLen v))
     None
@@ -7067,7 +7058,7 @@
     (fnSufIdxGet buckets name)
     (findFnEntSuffix (tcFnsVec tc) name 0)))
 
-(pub :: fnEntVisibleSuffix (-> Int (Option StringRows) String String (Option FnEnt)))
+(pub :: fnEntVisibleSuffix (-> Int (Option StringRows) String (Option String) (Option FnEnt)))
 (pub fn (fnEntVisibleSuffix tc privs name curMod)
   (if (let (Some buckets) (tcFnSufIdx tc))
     (fnSufIdxGetVisible buckets privs name curMod)
@@ -7134,7 +7125,7 @@
       {
         (let d (vecGet decls i))
         (if (== (declNamespace (nodeTag d)) NS_TYPE)
-          (tyIdxPut tc (nodeAName d) (nodeModule d) (TyDecl d)))
+          (tyIdxPut tc (nodeAName d) (nodeModuleOpt d) (TyDecl d)))
       }
       (tcIndexTypeDecls tc decls (+ i 1))
     }))
@@ -7142,16 +7133,15 @@
 ; A checked nominal name includes its declaring module. Every type
 ; transformation keeps this string, so substitution and instantiation
 ; cannot resolve an imported type again in a caller's namespace.
-(:: nominalName (-> String Int String))
-;@axiom:effect(unsafe)
+(:: nominalName (-> String (Option String) String))
 (fn (nominalName name owner)
-  (if (== owner 0)
-    (bareOf name)
-    (concat (as owner String) (concat "$" (bareOf name)))))
+  (if (let (Some moduleName) owner)
+    (concat moduleName (concat "$" (bareOf name)))
+    (bareOf name)))
 
 (:: tyNominalName (-> Int String String))
 (fn (tyNominalName tc name)
-  (if (|| (!= (as (typeKeywordCanon name) Int) 0) (!= (modOf name) 0))
+  (if (|| (!= (as (typeKeywordCanon name) Int) 0) (isSome (modOf name)))
     name
     (if (== (tySourceAmbiguous tc name) 1)
       name
@@ -7159,7 +7149,7 @@
         (let d (tyCanonicalDecl tc name))
         (if (|| (nodeSame d nilNode) (== (nodeTag d) TAG_D_ALIAS))
           name
-          (nominalName (nodeAName d) (nodeModule d)))
+          (nominalName (nodeAName d) (nodeModuleOpt d)))
       })))
 
 ; Public signatures can expose an opaque private type. When no visible
@@ -7176,7 +7166,7 @@
         (let last (tyFindAnyVisFromSyntax tc TY_DECL name 1))
         (if (|| (! (nodeSame first last)) (nodeSame first nilNode))
           nilNode
-          (if (&& (!= (tcCurModule tc) 0) (== (nodeModule first) 0))
+          (if (&& (isSome (tcCurModule tc)) (isNone (nodeModuleOpt first)))
             nilNode
             first))
       })
@@ -7184,18 +7174,16 @@
 
 (:: tySourceAmbiguous (-> Int String Int))
 (fn (tySourceAmbiguous tc name)
-  (if (|| (!= (modOf name) 0) (== (tyMultiDecl tc TY_DECL name) 0))
+  (if (|| (isSome (modOf name)) (== (tyMultiDecl tc TY_DECL name) 0))
     0
     (if (>= (vecLen (tyAmbigMods tc TY_DECL name)) 2)
       1
       0)))
 
-; `module` is the module that DECLARED it, 0 for the entry file and
-; for builtins. `ent` is what the lookup answers - a `StructEnt`, a
-; `DataEnt`, a `CtorEnt`, or an alias declaration node. `owner` is the
-; `DataEnt` a constructor belongs to and 0 otherwise: a constructor's
-; VISIBILITY is its data type's, so the privacy key has to be built
-; from the owner and not from the constructor's own name.
+; A typed payload retains its declaration and, for a constructor, its
+; owning data type. Constructor visibility uses the owner's module and
+; name. None names the entry file or a builtin; Some retains a module
+; name even when that string is empty.
 (pub data TyPayload
   (TyStruct StructEnt)
   (TyData DataEnt)
@@ -7206,7 +7194,7 @@
 
 (pub struct TyEnt
   (name : String)
-  (module : Int)
+  (module : (Option String))
   (payload : TyPayload))
 
 (pub type TypeIndex (Vec (Vec TyEnt)))
@@ -7225,7 +7213,7 @@
     ((TySubtype _) TY_SUBTYPE)
     ((TyDecl _) TY_DECL)))
 
-(:: tyEntModule (-> TyEnt Int))
+(:: tyEntModule (-> TyEnt (Option String)))
 (fn (tyEntModule te)
   te.module)
 
@@ -7245,7 +7233,7 @@
 ; Appended AS EACH DECLARATION IS COLLECTED, beside the `vecPush` that
 ; puts it in `tcDatas`/`tcStructs`/`tcAliases`, so the index and the
 ; Vec can never be out of step - collection itself looks names up.
-(pub :: tyIdxPut (-> Int String Int TyPayload Int))
+(pub :: tyIdxPut (-> Int String (Option String) TyPayload Int))
 (pub fn (tyIdxPut tc name m payload)
   (if (let (Some buckets) (tcTyIdx tc))
     {
@@ -7317,10 +7305,10 @@
     ((TySubtype _) (privKey te.module te.name))
     ((TyDecl _) (privKey te.module te.name))))
 
-(pub :: tyVisible (-> (Option StringRows) TyEnt Int Int))
+(pub :: tyVisible (-> (Option StringRows) TyEnt (Option String) Int))
 (pub fn (tyVisible privs te curMod)
   (if (let (Some _) privs)
-    (if (&& (!= curMod 0) (&& (== (tyEntModule te) 0) (== (tyBuiltinEntry te) 0)))
+    (if (&& (isSome curMod) (&& (isNone (tyEntModule te)) (== (tyBuiltinEntry te) 0)))
       0
       (if (== (privBlocks privs (tyPrivKey te) curMod) 1)
         0
@@ -7351,22 +7339,22 @@
 ; Which of rules (a), (b) and (c)/(d) this pass is asking for:
 ; 1 = declared by the referencing module, 2 = declared by nobody,
 ; 0 = any candidate at all.
-(pub :: tyTierOk (-> TyEnt Int Int Int))
-;@axiom:effect(unsafe)
+(pub :: tyTierOk (-> TyEnt (Option String) Int Int))
 (pub fn (tyTierOk te curMod tier)
   (if (== tier 0)
     1
     (if (== tier 2)
-      (if (== (tyEntModule te) 0)
+      (if (isNone te.module)
         1
         0)
-      (if (|| (== (tyEntModule te) 0) (== curMod 0))
+      (if (isNone te.module)
         0
-        (if (strEq (as (tyEntModule te) String) (as curMod String))
-          1
-          0)))))
+        (if (isNone curMod)
+          0
+          (typeModuleSame te.module curMod))))))
 
-(pub :: tyScanFwd (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int (Option TyEnt)))
+(pub :: tyScanFwd
+  (-> (Vec TyEnt) Int String (Option StringRows) (Option String) Int Int (Option TyEnt)))
 (pub fn (tyScanFwd v kind ref privs curMod tier i)
   (if (>= i (vecLen v))
     None
@@ -7382,7 +7370,8 @@
 ; bare-value and saturation path and the difference is observable when
 ; two `data` declarations in one module name the same constructor, so
 ; the direction is preserved WITHIN each tier rather than dropped.
-(pub :: tyScanRev (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int (Option TyEnt)))
+(pub :: tyScanRev
+  (-> (Vec TyEnt) Int String (Option StringRows) (Option String) Int Int (Option TyEnt)))
 (pub fn (tyScanRev v kind ref privs curMod tier i)
   (if (< i 0)
     None
@@ -7394,7 +7383,8 @@
         (tyScanRev v kind ref privs curMod tier (- i 1)))
     }))
 
-(pub :: tyPick (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int (Option TyEnt)))
+(pub :: tyPick
+  (-> (Vec TyEnt) Int String (Option StringRows) (Option String) Int Int (Option TyEnt)))
 (pub fn (tyPick v kind ref privs curMod last tier)
   (if (== last 0)
     (tyScanFwd v kind ref privs curMod tier 0)
@@ -7415,7 +7405,7 @@
     (let entries (tyIdxBucket tc name))
     (let privs (tcPrivIdx tc))
     (let curMod (tcCurModule tc))
-    (if (!= (modOf name) 0)
+    (if (isSome (modOf name))
         (tyPick entries kind name privs curMod last 0)
       (let (Some own) (tyPick entries kind name privs curMod last 1))
         (Some own)
@@ -7430,7 +7420,7 @@
 ; one that exists.
 (pub :: tyIdxHas (-> Int Int String Int))
 (pub fn (tyIdxHas tc kind name)
-  (if (isSome (tyScanFwd (tyIdxBucket tc name) kind name None 0 0 0))
+  (if (isSome (tyScanFwd (tyIdxBucket tc name) kind name None None 0 0))
     1
     0))
 
@@ -7456,7 +7446,7 @@
         0))
   })
 
-(pub :: tyMatchCount (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int Int))
+(pub :: tyMatchCount (-> (Vec TyEnt) Int String (Option StringRows) (Option String) Int Int Int))
 (pub fn (tyMatchCount v kind ref privs curMod acc i)
   (if (>= i (vecLen v))
     acc
@@ -7473,13 +7463,13 @@
 ; exactly rule (d) and nothing else. The value namespace's
 ; `definingModules` answers the same question from a table built at
 ; collection; this one reads the bucket, which is the same one entry.
-(pub :: tyAmbigMods (-> Int Int String Ints))
+(pub :: tyAmbigMods (-> Int Int String Names))
 (pub fn (tyAmbigMods tc kind name)
   {
     (let v (tyIdxBucket tc name))
     (if (== (as v Int) 0)
       vecNew
-      (if (!= (modOf name) 0)
+      (if (isSome (modOf name))
         vecNew
         {
           (let privs (tcPrivIdx tc))
@@ -7492,20 +7482,17 @@
         }))
   })
 
-(pub :: tyModsOf (-> (Vec TyEnt) Int String (Option StringRows) Int Ints Int Ints))
-;@axiom:effect(unsafe)
+(pub :: tyModsOf (-> (Vec TyEnt) Int String (Option StringRows) (Option String) Names Int Names))
 (pub fn (tyModsOf v kind ref privs curMod acc i)
   (if (>= i (vecLen v))
     acc
     {
       (let te (vecGet v i))
-      {
-        (if (&& (== (tyEntMatches te kind ref) 1)
-              (&& (== (tyVisible privs te curMod) 1) (!= (tyEntModule te) 0)))
-          (if (! (== (strInVec acc (as (tyEntModule te) String) 0) 1))
-            (vecPush acc (tyEntModule te))))
-        (tyModsOf v kind ref privs curMod acc (+ i 1))
-      }
+      (if (&& (== (tyEntMatches te kind ref) 1) (== (tyVisible privs te curMod) 1))
+        (if (let (Some moduleName) te.module)
+          (if (== (strInVec acc moduleName 0) 0)
+            (vecPush acc moduleName))))
+      (tyModsOf v kind ref privs curMod acc (+ i 1))
     }))
 
 ; AX3044, the type namespace's AX3014. A separate code rather than a
@@ -7604,7 +7591,7 @@
       ; caret against the wrong source. Restored to 0, which is what
       ; the rest of the pass expects to find there.
       {
-        (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
+        (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
         {
           (let r (checkAmbiguousType tc TY_ANY (as bad String) (nodeSpan d)))
           {
@@ -7620,7 +7607,7 @@
 ; asks the question of a SINGLE declaration rather than of the
 ; program - `ctorHiddenModule`, which walks the datas a reference may
 ; NOT name in order to say "private" instead of "no such name".
-(pub :: ctorInData (-> (Vec CtorEnt) Int String Int (Option CtorEnt)))
+(pub :: ctorInData (-> (Vec CtorEnt) (Option String) String Int (Option CtorEnt)))
 (pub fn (ctorInData ctors declMod name i)
   (if (>= i (vecLen ctors))
     None
@@ -7733,7 +7720,7 @@
   {
     (let entries (tyIdxBucket tc name))
     (let curMod (tcCurModule tc))
-    (if (!= (modOf name) 0)
+    (if (isSome (modOf name))
         (tyPick entries kind name None curMod last 0)
       (let (Some own) (tyPick entries kind name None curMod last 1))
         (Some own)
@@ -7767,8 +7754,8 @@
       ((TyDecl entry) None))
     None))
 
-; The word struct a type NAME denotes, or 0 - at once when the program
-; declares none (word 43).
+; The word struct a type name denotes, or None when no declaration
+; matches or the program declares no word structs.
 (pub :: tcWordEnt (-> Int String (Option StructEnt)))
 (pub fn (tcWordEnt tc n)
   (if (== (tcWordStructs tc) 0)
@@ -7834,18 +7821,22 @@
           1))
     }))
 
-; Two module words - a String or 0 for the entry file - naming one
-; module.
-(pub :: tcSameModule (-> Int Int Int))
-;@axiom:effect(unsafe)
+; Two optional module names identify the same declaring module.
+(pub :: tcSameModule (-> (Option String) (Option String) Int))
 (pub fn (tcSameModule a b)
-  (if (&& (== a 0) (== b 0))
-    1
-    (if (|| (== a 0) (== b 0))
-      0
-      (if (strEq (as a String) (as b String))
+  (match a
+    ((None)
+      (if (isNone b)
         1
-        0))))
+        0)
+    )
+    ((Some left)
+      (if (let (Some right) b)
+        (if (strEq left right)
+          1
+          0)
+        0)
+    )))
 
 ; Word structs and explicitly sealed heap structs expose operations,
 ; while their module owns construction and field access.
@@ -8286,9 +8277,9 @@
 ; `main` for the entry file.
 (pub :: wordEntModuleName (-> StructEnt String))
 (pub fn (wordEntModuleName ent)
-  (if (== (structEntModule ent) 0)
-    "the entry file"
-    (structEntModuleName ent)))
+  (match ent.module
+    ((None) "the entry file")
+    ((Some name) name)))
 
 ; ------------------------------------------------------------------
 ; The lowering. A word struct's constructor and field read are the
@@ -8381,18 +8372,18 @@
     nilNode
     {
       (let al (tyFindSyntax tc TY_ALIAS name 0))
-      (if (|| (nodeSame al nilNode) (!= (modOf name) 0))
+      (if (|| (nodeSame al nilNode) (isSome (modOf name)))
         al
         {
           (let here (tcCurModule tc))
-          (let owner (nodeModule al))
+          (let owner (nodeModuleOpt al))
           (if (== (typeModuleSame here owner) 1)
             al
             (if (== (typeNominalOwned tc name here 0) 1)
               nilNode
-              (if (== owner 0)
+              (if (isNone owner)
                 al
-                (if (&& (== here 0) (== (typeNominalOwned tc name 0 0) 1))
+                (if (&& (isNone here) (== (typeNominalOwned tc name None 0) 1))
                   nilNode
                   al))))
         })
@@ -8401,18 +8392,23 @@
 ; Aliases share the type namespace with nominal types. The declaration
 ; vector is available before field expansion registers data and structs,
 ; so it also resolves shadowing during that earlier pass.
-(:: typeModuleSame (-> Int Int Int))
-;@axiom:effect(unsafe)
+(:: typeModuleSame (-> (Option String) (Option String) Int))
 (fn (typeModuleSame a b)
-  (if (|| (== a 0) (== b 0))
-    (if (== a b)
-      1
-      0)
-    (if (strEq (as a String) (as b String))
-      1
-      0)))
+  (match a
+    ((None)
+      (if (isNone b)
+        1
+        0)
+    )
+    ((Some left)
+      (if (let (Some right) b)
+        (if (strEq left right)
+          1
+          0)
+        0)
+    )))
 
-(:: typeNominalOwned (-> Int String Int Int Int))
+(:: typeNominalOwned (-> Int String (Option String) Int Int))
 (fn (typeNominalOwned tc name owner i)
   {
     (let decls (tcAllDeclsVec tc))
@@ -8423,7 +8419,7 @@
         (let tag (nodeTag d))
         (if (&& (|| (== tag TAG_D_DATA) (|| (== tag TAG_D_STRUCT) (== tag TAG_D_SUBTYPE)))
               (&& (strEq (bareOf (nodeAName d)) (bareOf name))
-                (== (typeModuleSame (nodeModule d) owner) 1)))
+                (== (typeModuleSame (nodeModuleOpt d) owner) 1)))
           1
           (typeNominalOwned tc name owner (+ i 1)))
       })
@@ -8624,7 +8620,7 @@
                 (let next (vecAppendFrom seen vecNew 0))
                 {
                   (vecPush next al)
-                  (tcSetCurModule tc (nodeModule al))
+                  (tcSetCurModule tc (nodeModuleOpt al))
                   {
                     (let target (tyExpandAliasPath tc (nodeBChild al) next))
                     {
@@ -8764,7 +8760,7 @@
         (if (== (nodeTag d) TAG_D_ALIAS)
           {
             (vecPush (tcAliasesVec tc) d)
-            (tyIdxPut tc (nodeAName d) (nodeModule d) (TyAlias d))
+            (tyIdxPut tc (nodeAName d) (nodeModuleOpt d) (TyAlias d))
           })
       }
       (tcCollectAliasDecls tc decls (+ i 1))
@@ -8785,7 +8781,7 @@
             (let saved (tcCurModule tc))
             (let params (nodeCNames d))
             {
-              (tcSetCurModule tc (nodeModule d))
+              (tcSetCurModule tc (nodeModuleOpt d))
               {
                 (let badParam (aliasBadParam params 0))
                 (if (>= badParam 0)
@@ -8945,7 +8941,7 @@
                         (let next (vecAppendFrom seen vecNew 0))
                         {
                           (vecPush next al)
-                          (tcSetCurModule tc (nodeModule al))
+                          (tcSetCurModule tc (nodeModuleOpt al))
                           {
                             (let bad (aliasCycle tc (nodeBChild al) next))
                             {
@@ -8997,7 +8993,7 @@
             (let saved (tcCurModule tc))
             (let seen vecNew)
             {
-              (tcSetCurModule tc (nodeModule d))
+              (tcSetCurModule tc (nodeModuleOpt d))
               (vecPush seen d)
               (if (! (nodeSame (aliasCycle tc (nodeBChild d) seen) nilNode))
                 (if (!= (nodeSpan d) 0)
@@ -9232,7 +9228,7 @@
         (let d (vecGet decls i))
         (let saved (tcCurModule tc))
         {
-          (tcSetCurModule tc (nodeModule d))
+          (tcSetCurModule tc (nodeModuleOpt d))
           (if (== (nodeTag d) TAG_D_ALIAS)
             {
               (if (== (checkAmbiguousSigTy tc d (nodeBChild d)) 1)
@@ -9296,7 +9292,7 @@
 ; without depending on an AST word offset.
 (pub struct CtorDefinition
   (name : String)
-  (module : Int)
+  (module : (Option String))
   (span : Int))
 
 (pub :: tcCheckDupCtors (-> Int (Vec ASTNode) Int Int))
@@ -9310,11 +9306,11 @@
     {
       (let d (vecGet decls i))
       (if (== (nodeTag d) TAG_D_DATA)
-        (tcCheckDupCtorsIn tc (nodeBChildren d) (nodeModule d) 0 seen))
+        (tcCheckDupCtorsIn tc (nodeBChildren d) (nodeModuleOpt d) 0 seen))
       (tcCheckDupCtorsFrom tc decls (+ i 1) seen)
     }))
 
-(pub :: tcCheckDupCtorsIn (-> Int (Vec ASTNode) Int Int (Vec CtorDefinition) Int))
+(pub :: tcCheckDupCtorsIn (-> Int (Vec ASTNode) (Option String) Int (Vec CtorDefinition) Int))
 (pub fn (tcCheckDupCtorsIn tc ctors mod k seen)
   (if (>= k (vecLen ctors))
     0
@@ -9379,7 +9375,7 @@
         (if (== (nodeTag d) TAG_D_SUBTYPE)
           {
             (vecPush (tcSubtypesVec tc) d)
-            (tyIdxPut tc (nodeAName d) (nodeModule d) (TySubtype d))
+            (tyIdxPut tc (nodeAName d) (nodeModuleOpt d) (TySubtype d))
             (tcCheckSubtypeRange tc d)
           })
       }
@@ -9404,7 +9400,7 @@
       {
         (let d (vecGet decls i))
         {
-          (let _m (tcSetCurModule tc (nodeModule d)))
+          (let _m (tcSetCurModule tc (nodeModuleOpt d)))
           (let tg (nodeTag d))
           {
             (if (== tg TAG_D_STRUCT)
@@ -9415,7 +9411,7 @@
                   (writeNodeChild d 2 (tyExpandAliases tc (nodeBChild d) 0))
                   (if (== tg TAG_D_EFFECT)
                     (tcResolveOperationTypes tc (nodeCChildren d) 0)))))
-            (tcSetCurModule tc 0)
+            (tcSetCurModule tc None)
           }
         }
       }
@@ -9501,7 +9497,7 @@
       {
         (let d (vecGet decls i))
         {
-          (let _m (tcSetCurModule tc (nodeModule d)))
+          (let _m (tcSetCurModule tc (nodeModuleOpt d)))
           {
             (if (== (nodeTag d) TAG_D_SIG)
               ; Ambiguity FIRST, before expansion: expansion RESOLVES
@@ -9538,7 +9534,7 @@
               ; `Outcome` into it.
               (if (== (nodeTag d) TAG_D_EXTERN)
                 (tcCheckExternTypes tc (nodeCChildren d) 0)))
-            (tcSetCurModule tc 0)
+            (tcSetCurModule tc None)
           }
         }
       }
@@ -10174,7 +10170,7 @@
               ; nothing to report.
               (if (! (== diverges 1))
                 {
-                  (tcSetCurModule tc (nodeModule d))
+                  (tcSetCurModule tc (nodeModuleOpt d))
                   (emitResultOnlyVar tc d rv)
                 }))
             ; THE DEMANDED ARM YIELDS ONLY WHEN THE ARM ABOVE
@@ -10194,7 +10190,7 @@
               (if (&& (strEq dv rv) (== diverges 0))
                 0
                 {
-                  (tcSetCurModule tc (nodeModule d))
+                  (tcSetCurModule tc (nodeModuleOpt d))
                   (emitDemandedVar tc d dv)
                 })
               0)
@@ -11490,7 +11486,7 @@
 (pub fn (isMacroName tc n)
   {
     (let qm (modOf n))
-    (if (!= qm 0)
+    (if (isSome qm)
       ; A QUALIFIED reference - `Pre::when`, flattened by the parser
       ; to `Pre$when` - splits: bare part against the macro's name,
       ; module part against the declaration's module. MAC-LANG-12.
@@ -11511,8 +11507,8 @@
           ; being checked. MAC-HYG-8's third hole; the two sides
           ; have to agree or the checker types against one meaning
           ; while expansion produced the other.
-          (if (&& (!= (nodeModule m) 0)
-                (&& (== (macroSameMod (nodeModule m) (tcCurModule tc)) 0)
+          (if (&& (isSome (nodeModuleOpt m))
+                (&& (== (macroSameMod (nodeModuleOpt m) (tcCurModule tc)) 0)
                   (isSome (fnEntExact tc n))))
             0
             1))
@@ -11524,8 +11520,7 @@
 ; so a later declaration wins, exactly as `expFindMacroIn` walks. The
 ; same rule and the same veto apply in the expander - one side decides
 ; whether the name type-checks and the other whether it expands.
-(pub :: isMacroVisible (-> (Vec ASTNode) String a Int ASTNode))
-;@axiom:effect(unsafe)
+(pub :: isMacroVisible (-> (Vec ASTNode) String (Option String) Int ASTNode))
 (pub fn (isMacroVisible ms n curMod i)
   (if (< i 0)
     nilNode
@@ -11533,39 +11528,39 @@
       (let m (vecGet ms i))
       (if (&& (strEq (nodeAName m) n)
             (|| (== (nodeVis m) 1)
-              (|| (== (nodeModule m) 0)
-                (&& (!= (as curMod Int) 0) (strEq (nodeModuleName m) (as curMod String))))))
+              (|| (isNone (nodeModuleOpt m)) (== (typeModuleSame (nodeModuleOpt m) curMod) 1))))
         m
         (isMacroVisible ms n curMod (- i 1)))
     }))
 
-(pub :: macroQualVisible (-> (Vec ASTNode) String String a Int ASTNode))
-;@axiom:effect(unsafe)
+(pub :: macroQualVisible (-> (Vec ASTNode) String String (Option String) Int ASTNode))
 (pub fn (macroQualVisible ms bare qm curMod i)
   (if (< i 0)
     nilNode
     {
       (let m (vecGet ms i))
       (if (&& (strEq (nodeAName m) bare)
-            (&& (!= (nodeModule m) 0)
-              (&& (strEq (nodeModuleName m) qm)
-                (|| (== (nodeVis m) 1) (&& (!= (as curMod Int) 0) (strEq (as curMod String) qm))))))
+            (&& (== (typeModuleSame (nodeModuleOpt m) (Some qm)) 1)
+              (|| (== (nodeVis m) 1) (== (typeModuleSame curMod (Some qm)) 1))))
         m
         (macroQualVisible ms bare qm curMod (- i 1)))
     }))
 
-(pub :: macroSameMod (-> a b Int))
-;@axiom:effect(unsafe)
+(pub :: macroSameMod (-> (Option String) (Option String) Int))
 (pub fn (macroSameMod a b)
-  (if (== (as a Int) 0)
-    (if (== (as b Int) 0)
-      1
-      0)
-    (if (== (as b Int) 0)
-      0
-      (if (strEq (as a String) (as b String))
+  (match a
+    ((None)
+      (if (isNone b)
         1
-        0))))
+        0)
+    )
+    ((Some left)
+      (if (let (Some right) b)
+        (if (strEq left right)
+          1
+          0)
+        0)
+    )))
 
 ; Declared anywhere, visible or not - for telling "no such macro" from
 ; "a macro you may not name". Split-aware, so a QUALIFIED reference to
@@ -11574,7 +11569,7 @@
 (pub fn (isMacroAnywhere tc n)
   {
     (let qm (modOf n))
-    (if (!= qm 0)
+    (if (isSome qm)
       (isMacroQualNamedIn (tcMacrosVec tc) (bareOf n) (modOfName n) 0)
       (isMacroNamedIn (tcMacrosVec tc) n 0))
   })
@@ -11593,7 +11588,8 @@
     0
     {
       (let m (vecGet ms i))
-      (if (&& (strEq (nodeAName m) bare) (&& (!= (nodeModule m) 0) (strEq (nodeModuleName m) qm)))
+      (if (&& (strEq (nodeAName m) bare)
+            (&& (isSome (nodeModuleOpt m)) (strEq (nodeModuleName m) qm)))
         1
         (isMacroQualNamedIn ms bare qm (+ i 1)))
     }))
@@ -12515,12 +12511,15 @@
   ; hand.
   {
     (let mods (definingModules tc (bareOf name)))
-    (if (|| (!= (modOf name) 0)
+    (if (|| (isSome (modOf name))
           (|| (isSome (ownCtor tc name))
-            (if (== (tcCurModule tc) 0)
+            (if (isNone (tcCurModule tc))
               false
               {
-                (let localFound (fnEntQual tc (tcCurModuleName tc) name))
+                (let localFound
+                  (if (let (Some moduleName) (tcCurModule tc))
+                    (fnEntQual tc moduleName name)
+                    None))
                 (if (let (Some local) localFound)
                   (! (signatureEntryOnly local))
                   false)
@@ -12551,20 +12550,17 @@
 ; the list is the whole program, so once the walk covered imported
 ; modules too it went quadratic and stage1 stopped terminating on any
 ; stdlib-sized input. stage0 keeps a map for the same reason.
-(pub :: definingModules (-> Int String Ints))
+(pub :: definingModules (-> Int String Names))
 (pub fn (definingModules tc n)
-  {
-    (let e (ambFind tc n))
-    (if (== e 0)
+  (if (let (Some entry) (ambFind tc n))
+    (if (&& (== entry.moduleless 1) (rootNameVisibleHere tc n))
       vecNew
-      (if (&& (ambEntModuleless e) (rootNameVisibleHere tc n))
-        vecNew
-        (ambEntMods e)))
-  })
+      entry.mods)
+    vecNew))
 
 (pub :: rootNameVisibleHere (-> Int String Bool))
 (pub fn (rootNameVisibleHere tc name)
-  (if (== (tcCurModule tc) 0)
+  (if (isNone (tcCurModule tc))
     true
     {
       (let eFound (fnEntExact tc name))
@@ -12573,42 +12569,30 @@
         true)
     }))
 
+(pub type AmbIndex (Vec (Vec AmbEnt)))
+
 (pub struct AmbEnt
   (name : String)
-  (mods : Int)
+  (mods : Names)
   (mut moduleless : Int))
 
-(:: ambEntName (-> Int String))
-;@axiom:effect(unsafe)
+(:: ambEntName (-> AmbEnt String))
 (fn (ambEntName e)
-  {
-    (let a (as e AmbEnt))
-    a.name
-  })
+  e.name)
 
-(:: ambEntMods (-> Int (Vec b)))
-;@axiom:effect(unsafe)
+(:: ambEntMods (-> AmbEnt Names))
 (fn (ambEntMods e)
-  {
-    (let rec (as e AmbEnt))
-    (as rec.mods (Vec b))
-  })
+  e.mods)
 
-(:: ambEntModuleless (-> Int Bool))
-;@axiom:effect(unsafe)
+(:: ambEntModuleless (-> AmbEnt Bool))
 (fn (ambEntModuleless e)
-  {
-    (let a (as e AmbEnt))
-    (== a.moduleless 1)
-  })
+  (== e.moduleless 1))
 
-(:: ambSetModuleless (-> Int Int))
-;@axiom:effect(unsafe)
+(:: ambSetModuleless (-> AmbEnt Int))
 (fn (ambSetModuleless e)
   {
-    (let a (as e AmbEnt))
-    (set a.moduleless 1)
-    e
+    (set e.moduleless 1)
+    0
   })
 
 ; Buckets over the entries, keyed on the name. An entry is MUTATED
@@ -12616,99 +12600,68 @@
 ; flag set - but its NAME never changes, which is the same
 ; precondition the exact-name index over `tcFns` records and relies
 ; on.
-(pub :: ambIdxNew (-> Int Ints))
+(pub :: ambIdxNew (-> Int AmbIndex))
 (pub fn (ambIdxNew hint)
   {
     (let nb (fnIdxBuckets hint))
     (let bs vecNew)
-    {
-      (for i in 0..nb
-        (vecPush bs 0))
-      bs
-    }
+    (for i in 0..nb
+      (vecPush bs vecNew))
+    bs
   })
 
-(pub :: ambFind (-> Int String Int))
+(pub :: ambFind (-> Int String (Option AmbEnt)))
 (pub fn (ambFind tc n)
-  {
-    (let bs (tcAmbIdx tc))
-    (if (== (as bs Int) 0)
-      0
-      {
-        (let v (vecGetVec bs (% (fnIdxHash n) (vecLen bs))))
-        (if (== (as v Int) 0)
-          0
-          (ambFindIn v n 0))
-      })
-  })
+  (if (let (Some bs) (tcAmbIdx tc))
+    (ambFindIn (vecGet bs (% (fnIdxHash n) (vecLen bs))) n 0)
+    None))
 
-(pub :: ambFindIn (-> Ints String Int Int))
+(pub :: ambFindIn (-> (Vec AmbEnt) String Int (Option AmbEnt)))
 (pub fn (ambFindIn v n i)
   (if (>= i (vecLen v))
-    0
-    (if (strEq (ambEntName (vecGet v i)) n)
-      (vecGet v i)
-      (ambFindIn v n (+ i 1)))))
+    None
+    {
+      (let entry (vecGet v i))
+      (if (strEq entry.name n)
+        (Some entry)
+        (ambFindIn v n (+ i 1)))
+    }))
 
-(pub :: ambRecord (-> Int String a Int))
-;@axiom:effect(unsafe)
+(pub :: ambRecord (-> Int String (Option String) Int))
 (pub fn (ambRecord tc n m)
-  {
-    (let e (ambFind tc n))
-    (if (== e 0)
-      ; Both, in step: the Vec is what `symbols` and every other
-      ; reader walks, the buckets are what `ambFind` reads.
-      {
-        (let ent
-          (as (AmbEnt
-                :name n
-                :mods
-                  (as {
-                    (let v vecNew)
-                    {
-                      (if (!= (as m Int) 0)
-                        (vecPush v m)
-                        (as 0 (Vec a)))
-                      v
-                    }
-                  } Int)
-                :moduleless
-                  (if (== (as m Int) 0)
-                    1
-                    0)) Int))
+  (if (let (Some entry) (ambFind tc n))
+    (match m
+      ((None) (ambSetModuleless entry))
+      ((Some moduleName)
         {
-          (vecPush (tcAmbTbl tc) ent)
-          (ambIdxPut (tcAmbIdx tc) n ent)
+          (if (== (strInVec entry.mods moduleName 0) 0)
+            (vecPush entry.mods moduleName))
           0
         }
-      }
-      (if (== (as m Int) 0)
-        (ambSetModuleless e)
-        (if (== (strInVec (ambEntMods e) (as m String) 0) 1)
-          0
-          {
-            (vecPush (ambEntMods e) m)
-            0
-          })))
-  })
+      ))
+    {
+      (let modules vecNew)
+      (if (let (Some moduleName) m)
+        (vecPush modules moduleName))
+      (let entry
+        (AmbEnt
+          :name n
+          :mods modules
+          :moduleless
+            (if (isNone m)
+              1
+              0)))
+      (vecPush (tcAmbTbl tc) entry)
+      (if (let (Some bs) (tcAmbIdx tc))
+        (ambIdxPut bs n entry))
+      0
+    }))
 
-(pub :: ambIdxPut (-> Ints String Int Int))
+(pub :: ambIdxPut (-> AmbIndex String AmbEnt Int))
 (pub fn (ambIdxPut bs n ent)
   {
-    (let b (% (fnIdxHash n) (vecLen bs)))
-    (if (== (vecGet bs b) 0)
-      {
-        (let v vecNew)
-        {
-          (vecPush v ent)
-          (vecSet bs b (as v Int))
-          0
-        }
-      }
-      {
-        (vecPush (vecGetVec bs b) ent)
-        0
-      })
+    (vecPush (vecGet bs (% (fnIdxHash n) (vecLen bs))) ent)
+    0
   })
 
 ; One pass over the merged list, recording every DEFINER's module.
@@ -12735,7 +12688,7 @@
     0
     {
       (let tag (nodeTag d))
-      (let m (nodeModuleName d))
+      (let m (nodeModuleOpt d))
       (if (== tag TAG_D_FN)
         (ambRecord tc (bareOf (nodeAName d)) m)
         (if (== tag TAG_D_EFFECT)
@@ -12749,7 +12702,7 @@
               0))))
     }))
 
-(pub :: ambRecordExtern (-> Int (Vec ASTNode) Int String Int))
+(pub :: ambRecordExtern (-> Int (Vec ASTNode) Int (Option String) Int))
 (pub fn (ambRecordExtern tc items i mod)
   (if (>= i (vecLen items))
     0
@@ -12762,7 +12715,7 @@
       (ambRecordExtern tc items (+ i 1) mod)
     }))
 
-(pub :: ambRecordAll (-> Int Names Int String Int))
+(pub :: ambRecordAll (-> Int Names Int (Option String) Int))
 (pub fn (ambRecordAll tc v i m)
   (if (>= i (vecLen v))
     0
@@ -12771,7 +12724,7 @@
       (ambRecordAll tc v (+ i 1) m)
     }))
 
-(pub :: ambRecordCtors (-> Int (Vec ASTNode) Int String Int))
+(pub :: ambRecordCtors (-> Int (Vec ASTNode) Int (Option String) Int))
 (pub fn (ambRecordCtors tc ctors i m)
   (if (>= i (vecLen ctors))
     0
@@ -12793,12 +12746,11 @@
 ; cannot forget to do it.
 ; The unit a declaration's spans index: 0 (the entry file) when it
 ; carries no module stamp, else that module's entry.
-(pub :: unitIndexFor (-> Units a Int))
-;@axiom:effect(unsafe)
+(pub :: unitIndexFor (-> Units (Option String) Int))
 (pub fn (unitIndexFor units m)
-  (if (== (as m Int) 0)
-    0
-    (unitIndexForFrom units (as m String) 0)))
+  (if (let (Some moduleName) m)
+    (unitIndexForFrom units moduleName 0)
+    0))
 
 (pub :: unitIndexForFrom (-> Units String Int Int))
 (pub fn (unitIndexForFrom units m i)
@@ -12818,7 +12770,7 @@
     0
   })
 
-(:: joinModules (-> Ints String))
+(:: joinModules (-> Names String))
 (fn (joinModules v)
   {
     (let out strBuilderNew)
@@ -12831,7 +12783,7 @@
     (strBuilderFinish out)
   })
 
-(:: joinQualified (-> Ints String String))
+(:: joinQualified (-> Names String String))
 (fn (joinQualified v n)
   {
     (let out strBuilderNew)
@@ -13145,7 +13097,7 @@
           (privKey (macroModuleOf (tcMacrosVec tc) name 0) (bareOf name)))
       {
         (let cm (ctorHiddenModule tc name))
-        (if (!= cm 0)
+        (if (isSome cm)
           (emitPrivateVar tc name span (privKey cm name))
           (emitUndefinedVarPlain tc name span))
       })
@@ -13155,16 +13107,17 @@
 ; name, or 0. A private type's constructors are already refused - the
 ; lookup filters them - but as `AX3001`/`AX3003`, which say the name
 ; does not exist when it plainly does.
-(pub :: ctorHiddenModule (-> Int String Int))
+(pub :: ctorHiddenModule (-> Int String (Option String)))
 (pub fn (ctorHiddenModule tc name)
   (if (== (tcPrivates tc) 0)
-    0
-    (ctorHiddenIn (tcDatasVec tc) (tcPrivIdx tc) (tcCurModuleName tc) name 0)))
+    None
+    (ctorHiddenIn (tcDatasVec tc) (tcPrivIdx tc) (tcCurModule tc) name 0)))
 
-(pub :: ctorHiddenIn (-> (Vec DataEnt) (Option StringRows) String String Int Int))
+(pub :: ctorHiddenIn
+  (-> (Vec DataEnt) (Option StringRows) (Option String) String Int (Option String)))
 (pub fn (ctorHiddenIn datas privs curMod name i)
   (if (>= i (vecLen datas))
-    0
+    None
     {
       (let d (vecGet datas i))
       (if (&& (== (privBlocks privs (privKey d.module d.name) curMod) 1)
@@ -13173,19 +13126,19 @@
         (ctorHiddenIn datas privs curMod name (+ i 1)))
     }))
 
-(pub :: macroModuleOf (-> (Vec ASTNode) String Int Int))
+(pub :: macroModuleOf (-> Nodes String Int (Option String)))
 (pub fn (macroModuleOf ms n i)
   {
     (let bare (bareOf n))
     (macroModuleOfBare ms bare i)
   })
 
-(pub :: macroModuleOfBare (-> (Vec ASTNode) String Int Int))
+(pub :: macroModuleOfBare (-> Nodes String Int (Option String)))
 (pub fn (macroModuleOfBare ms n i)
   (if (>= i (vecLen ms))
-    0
+    None
     (if (strEq (nodeAName (vecGet ms i)) n)
-      (nodeModule (vecGet ms i))
+      (nodeModuleOpt (vecGet ms i))
       (macroModuleOfBare ms n (+ i 1)))))
 
 ; `Some`/`None` need no import; `Ok`/`Err`/`Result` need `(import Err)`.
@@ -17872,13 +17825,13 @@
                   (if (== (nodeTag d) TAG_D_FN)
                     (if (== (tcIsPairName pn (nodeAName d)) 0)
                       {
-                        (tcSetCurModule tc (nodeModule d))
+                        (tcSetCurModule tc (nodeModuleOpt d))
                         (if (== (tcPairFnOK tc d pn vecNew) 1)
                           {
                             (vecPush pn (nodeAName d))
                             (set grew 1)
                           })
-                        (tcSetCurModule tc 0)
+                        (tcSetCurModule tc None)
                       }))
                 }
                 (set m (+ m 1))
@@ -18979,7 +18932,7 @@
         (set closure.active true)
         (let module (tcCurModule tc))
         (let sink (tcUnsafeSink tc))
-        (tcSetCurModule tc (nodeModule closure.owner))
+        (tcSetCurModule tc (nodeModuleOpt closure.owner))
         ; The closure's unsafe operations belong to its defining boundary.
         (tcClearUnsafeSink tc)
         (let validation (tcCheckState tc))
@@ -19029,7 +18982,7 @@
   {
     (fieldStoresDecls tc (fieldStores tc) decls 0
       (FsStack :names vecNew :inits vecNew :envs vecNew))
-    (tcSetCurModule tc 0)
+    (tcSetCurModule tc None)
     0
   })
 
@@ -19044,7 +18997,7 @@
       {
         (if (== (nodeTag d) TAG_D_FN)
           {
-            (tcSetCurModule tc (nodeModule d))
+            (tcSetCurModule tc (nodeModuleOpt d))
             (fsPush st (nodeBNames d) 0)
             (fsWalk tc t d (nodeCChild d) st)
             (fsPopTo st 0)
@@ -19748,7 +19701,7 @@
 
 (pub :: fieldStructSpelling (-> StructEnt String))
 (pub fn (fieldStructSpelling s)
-  (if (== s.module 0)
+  (if (isNone s.module)
     s.name
     (concat (concat (structEntModuleName s) "$") s.name)))
 
@@ -22231,9 +22184,9 @@
       {
         (if (== (nodeTag d) TAG_D_FN)
           {
-            (let _m (tcSetCurModule tc (nodeModule d)))
+            (let _m (tcSetCurModule tc (nodeModuleOpt d)))
             (let entFound (findFnEnt tc (nodeAName d)))
-            (let _m0 (tcSetCurModule tc 0))
+            (let _m0 (tcSetCurModule tc None))
             (if (let (Some ent) entFound)
               (fnEntSetPending ent 1)
               ())
@@ -22311,7 +22264,7 @@
     ; drew `AX3010 effect(io) claim unsupported` the moment one
     ; import carried a name list.
     {
-      (let _m (tcSetCurModule tc (nodeModule d)))
+      (let _m (tcSetCurModule tc (nodeModuleOpt d)))
       (let entFound (findFnEnt tc (nodeAName d)))
       (if (let (Some ent) entFound)
         {
@@ -22324,7 +22277,7 @@
             (let _s0 (tcClearPairSites tc))
             (let _c0 (tcSetCurCalls tc None))
             (let _y0 (tcSetMayCalls tc None))
-            (let _m0 (tcSetCurModule tc 0))
+            (let _m0 (tcSetCurModule tc None))
             {
               (let g1 (effUnion (fnEntEffects ent) got 0))
               (let g2 (intUnion (fnEntEparams ent) (bsEparamsVec sc) 0))
@@ -22345,7 +22298,7 @@
           }
         }
         {
-          (tcSetCurModule tc 0)
+          (tcSetCurModule tc None)
           0
         })
     }))
@@ -23482,7 +23435,7 @@
     (let name (as (structEntName ent) String))
     (let m (structEntModule ent))
     (setNodeTyText e
-      (if (== m 0)
+      (if (isNone m)
         name
         (concat (concat (structEntModuleName ent) "$") name)))
   })
@@ -26138,7 +26091,7 @@
         ; A constructor of a type its module does not export is
         ; refused either way - the lookup filters it - but saying it
         ; does not exist is wrong about a name that plainly does.
-        (if (!= (ctorHiddenModule tc cname) 0)
+        (if (isSome (ctorHiddenModule tc cname))
           (emitPrivateVar tc cname span (privKey (ctorHiddenModule tc cname) cname))
           (emitDiag tc
             {
@@ -26367,39 +26320,31 @@
 ; `Nope::Red`. stage0 reports the source spelling; so does this now.
 (pub :: srcSpelling (-> String String))
 (pub fn (srcSpelling s)
-  {
-    (let m (modOf s))
-    (if (== m 0)
-      s
-      ; `modOfName` rather than a cast of `m`: `m` is a fresh
-      ; `strSlice`, and a cast at an argument root would classify its
-      ; evidence 0 and drop the release (MM-LIFE-2e). Re-derived only
-      ; on the qualified path, which is the rarer one.
-      (concat (concat (modOfName s) "::") (bareOf s)))
-  })
+  (if (let (Some moduleName) (modOf s))
+    (concat (concat moduleName "::") (bareOf s))
+    s))
 
-; The module prefix of a mangled `Mod$name`, as a word: the prefix when
-; there is one and 0 when there is not. Callers ask `(!= (modOf n) 0)`
-; first and `modOfName` second - the honest type is an option in a
-; machine word, the same shape `nodeModule` has.
-(pub :: modOf (-> String Int))
+; The module prefix of a mangled `Mod$name`. A missing separator is
+; None; a present separator retains its prefix, including an empty one.
+(pub :: modOf (-> String (Option String)))
 (pub fn (modOf s)
   (modOfFrom s (- (strLen s) 1)))
 
-(pub :: modOfFrom (-> String Int Int))
+(pub :: modOfFrom (-> String Int (Option String)))
 (pub fn (modOfFrom s i)
   (if (< i 0)
-    0
+    None
     (if (== (strByte s i) 36)
-      (as (strSlice s 0 i) Int)
+      (Some (strSlice s 0 i))
       (modOfFrom s (- i 1)))))
 
-; The String view. Only ask it where the word is known non-zero. See
-; `nodeCName` for why the cast is here and not at the call sites.
+; The module name for diagnostic text; an unqualified name renders
+; an empty prefix.
 (pub :: modOfName (-> String String))
-;@axiom:effect(unsafe)
 (pub fn (modOfName s)
-  (as (modOf s) String))
+  (match (modOf s)
+    ((None) "")
+    ((Some name) name)))
 
 ; Does a type or constructor named `declName`, declared by module
 ; `declMod`, answer to the reference `ref`?
@@ -26419,18 +26364,15 @@
 ; there, measured 2026-08-08. This is the stricter of the two answers,
 ; applied uniformly: a qualified reference names a module or it does
 ; not resolve.
-(pub :: declMatches (-> a String String Int))
-;@axiom:effect(unsafe)
+(pub :: declMatches (-> (Option String) String String Int))
 (pub fn (declMatches declMod declName ref)
-  {
-    (let m (modOf ref))
-    (if (== m 0)
-      (nameMatches declName ref)
-      (if (&& (!= (as declMod Int) 0)
-            (&& (strEq (as declMod String) (modOfName ref)) (strEq declName (bareOf ref))))
+  (if (let (Some moduleName) (modOf ref))
+    (if (let (Some owner) declMod)
+      (if (&& (strEq owner moduleName) (strEq declName (bareOf ref)))
         1
-        0))
-  })
+        0)
+      0)
+    (nameMatches declName ref)))
 
 ; ------------------------------------------------------------------
 ; The declaration walk: signatures park scope entries AS
@@ -26471,7 +26413,7 @@
       {
         (let d (vecGet decls i))
         {
-          (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d)))
+          (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d)))
           (checkBuiltinTypeDefinition tc d)
           {
             (let tag (nodeTag d))
@@ -26559,7 +26501,7 @@
       (if (signatureEntryOnly declared)
         {
           (let saved (tcCurModule tc))
-          (tcSetCurModule tc (nodeModule d))
+          (tcSetCurModule tc (nodeModuleOpt d))
           (if (let (Some definition) (resolveSignatureEntry tc (Some declared)))
             (if (!= (as definition Int) (as declared Int))
               {
@@ -26615,7 +26557,7 @@
     (let own (nodeAxtagsWords d))
     (let sig (sigAxtagsFor tc (nodeAName d)))
     {
-      (let _m (tcSetCurModule tc (nodeModule d)))
+      (let _m (tcSetCurModule tc (nodeModuleOpt d)))
       (let sc (bodyScopeOf tc d))
       {
         (let _s (tcSetPairSites tc (tcPairSitesOf tc d)))
@@ -26624,7 +26566,7 @@
         (let eff (validateEffects tc (nodeCChild d) sc))
         (let _k0 (tcClearUnsafeSink tc))
         (let _s0 (tcClearPairSites tc))
-        (let _m0 (tcSetCurModule tc 0))
+        (let _m0 (tcSetCurModule tc None))
         (let forges (unsafeForgeSitesOf tc))
         (let _f
           (if (> (vecLen forges) 0)
@@ -27678,11 +27620,11 @@
 (pub :: restrictOwnEnt (-> Int ASTNode (Option FnEnt)))
 (pub fn (restrictOwnEnt tc d)
   {
-    (let _m (tcSetCurModule tc (nodeModule d)))
+    (let _m (tcSetCurModule tc (nodeModuleOpt d)))
     {
       (let entFound (findFnEnt tc (nodeAName d)))
       {
-        (tcSetCurModule tc 0)
+        (tcSetCurModule tc None)
         entFound
       }
     }
@@ -28735,7 +28677,7 @@
     (if (nodeSame dd nilNode)
       (diagAddSecondaryIn dg 0 (graphShownName (fnEntName ent)) 0)
       (diagAddSecondaryIn dg (nodeSpan dd) (graphShownName (fnEntName ent))
-        (unitIndexFor (tcUnits tc) (nodeModule dd))))
+        (unitIndexFor (tcUnits tc) (nodeModuleOpt dd))))
   })
 
 ; The declaration behind an entry, or 0. `graphDeclCasts` asks the
@@ -29752,7 +29694,7 @@
       {
         (let d (vecGet pending i))
         {
-          (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
+          (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
           (let path (graphWitness tc (restrictOwnEnt tc d) "forge"))
           (if (! (== (vecLen path) 0))
             (emitRestrictViolated tc d "no-unsafe"
@@ -30530,7 +30472,7 @@
         (let dd (declByName (tcAllDeclsVec tc) (fnEntName (vecGet path (- (vecLen path) 1))) 0))
         (if (nodeSame dd nilNode)
           0
-          (if (== (nodeModule dd) (nodeModule d))
+          (if (== (typeModuleSame (nodeModuleOpt dd) (nodeModuleOpt d)) 1)
             (nodeSpan dd)
             0))
       })))
@@ -30619,7 +30561,7 @@
 (pub fn (strayAxtagsInUnit tc d)
   {
     (let was (tcCurUnit tc))
-    (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
+    (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
     (let _r (strayAxtagsOf tc d (nodeAxtagsWords d) 0))
     (tcSetCurUnit tc was)
   })
@@ -31393,7 +31335,7 @@
   ; mangled name, so the lookup is unaffected, but every reference the
   ; body makes below resolves module-locally.
   {
-    (let _m (tcSetCurModule tc (nodeModule d)))
+    (let _m (tcSetCurModule tc (nodeModuleOpt d)))
     (let entFound (findFnEnt tc (nodeAName d)))
     (let params (nodeBNames d))
     (let base (vecLen (tcScopeVec tc)))
@@ -31534,7 +31476,7 @@
                 (set state.unsignedParams nilNodes)
                 ; Every pin this body makes has been made.
                 (evSettle tc)
-                (tcSetCurModule tc 0)
+                (tcSetCurModule tc None)
                 (tcSetCurSigVars tc 0)
                 (tcSetCurDeclNode tc nilNode)
               }
@@ -33554,7 +33496,7 @@
 (pub :: rgnWalkFn (-> Int ASTNode FnEnt Int Int))
 (pub fn (rgnWalkFn tc d ent report)
   {
-    (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
+    (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
     (let rc (rgnCtxNew tc d ent report))
     (let params (nodeBNames d))
     (let mut i 0)
@@ -33680,14 +33622,14 @@
   (if (!= (nodeTag d) TAG_D_FN)
     0
     {
-      (let _m (tcSetCurModule tc (nodeModule d)))
+      (let _m (tcSetCurModule tc (nodeModuleOpt d)))
       (let entFound (findFnEnt tc (nodeAName d)))
-      (let _m0 (tcSetCurModule tc 0))
+      (let _m0 (tcSetCurModule tc None))
       (if (let (Some ent) entFound)
         {
-          (let _m1 (tcSetCurModule tc (nodeModule d)))
+          (let _m1 (tcSetCurModule tc (nodeModuleOpt d)))
           (let changed (rgnWalkFn tc d ent report))
-          (let _m2 (tcSetCurModule tc 0))
+          (let _m2 (tcSetCurModule tc None))
           changed
         }
         0)
@@ -34076,7 +34018,7 @@
   {
     (let saved (tcCurModule tc))
     {
-      (tcSetCurModule tc (nodeModule d))
+      (tcSetCurModule tc (nodeModuleOpt d))
       {
         (let r (f d))
         {
@@ -34781,7 +34723,7 @@
 (struct ComputeRequest
   (body : ASTNode)
   (bound : Names)
-  (module : Int)
+  (module : (Option String))
   (unit : Int)
   (site : Int)
   (siteUnit : Int))
@@ -34893,17 +34835,17 @@
     }
   })
 
-(:: computeRequest (-> Int ASTNode Names Int Int Int Int))
+(:: computeRequest (-> Int ASTNode Names (Option String) Int Int Int))
 (fn (computeRequest tc body bound module unit site)
   {
     (vecPush (tcComputeRequests tc)
-      (as (ComputeRequest
-            :body body
-            :bound bound
-            :module module
-            :unit unit
-            :site site
-            :siteUnit (tcCurUnit tc)) Int))
+      (ComputeRequest
+        :body body
+        :bound bound
+        :module module
+        :unit unit
+        :site site
+        :siteUnit (tcCurUnit tc)))
     0
   })
 
@@ -34937,8 +34879,8 @@
                   (let d (rgnDeclOf tc (fnEntName ent)))
                   (if (nodeSame d nilNode)
                     (emitCompute tc (nodeSpan e) "compute callback has no visible function body")
-                    (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModule d)
-                      (unitIndexFor (tcUnits tc) (nodeModule d)) (nodeSpan e)))
+                    (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModuleOpt d)
+                      (unitIndexFor (tcUnits tc) (nodeModuleOpt d)) (nodeSpan e)))
                 }
                 (emitCompute tc (nodeSpan e)
                   "compute callback must be a non-nullary numeric function with a visible body"))
@@ -35027,7 +34969,7 @@
           (let savedModule (tcCurModule tc))
           {
             (vecPush walk.seen ent)
-            (tcSetCurModule tc (nodeModule d))
+            (tcSetCurModule tc (nodeModuleOpt d))
             (computeWalkExpr walk (nodeCChild d) (capBoundOf (nodeBNames d)) vecNew)
             (tcSetCurModule tc savedModule)
             0
@@ -35159,16 +35101,11 @@
         (let savedModule (tcCurModule tc))
         (let savedUnit (tcCurUnit tc))
         {
-          (tcSetCurModule tc (memGetWord request 2))
-          (tcSetCurUnit tc (memGetWord request 3))
+          (tcSetCurModule tc request.module)
+          (tcSetCurUnit tc request.unit)
           (computeWalkExpr
-            (ComputeWalk
-              :tc tc
-              :site (memGetWord request 4)
-              :unit (memGetWord request 5)
-              :seen vecNew
-              :failed 0)
-            (readAstNode request 0) (memGetWordVec request 1) vecNew)
+            (ComputeWalk :tc tc :site request.site :unit request.siteUnit :seen vecNew :failed 0)
+            request.body request.bound vecNew)
           (tcSetCurModule tc savedModule)
           (tcSetCurUnit tc savedUnit)
           (computeCheckRequests tc (+ i 1))

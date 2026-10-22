@@ -1,0 +1,58 @@
+; expect 42
+; A missing module and an explicitly stored empty module remain distinct.
+; Qualification, privacy and ambiguity tables consume typed module names.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import Str)
+(import Vec)
+
+(:: moduleNameIs (-> (Option String) String Bool))
+(fn (moduleNameIs candidate expected)
+  (match candidate
+    ((None) false)
+    ((Some name) (strEq name expected))))
+
+(:: main Int)
+(fn (main)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (let declaration (nodeBuildDStruct "Example" vecNew vecNew 0))
+    (let absent (nodeModuleOpt declaration))
+    (writeNodeText declaration 8 "")
+    (let empty (nodeModuleOpt declaration))
+    (let privacy (privSetNew 2))
+    (defIdxPut privacy "Team$hidden")
+    (ambRecord tc "sharedName" (Some "First"))
+    (ambRecord tc "sharedName" (Some "First"))
+    (ambRecord tc "sharedName" (Some "Second"))
+    (ambRecord tc "emptyModule" (Some ""))
+    (let modules (definingModules tc "sharedName"))
+    (let emptyModules (definingModules tc "emptyModule"))
+    (if (&& (isNone absent)
+          (&& (moduleNameIs empty "")
+            (&& (== (tcSameModule absent empty) 0)
+              (&& (isNone (modOf "Name"))
+                (&& (moduleNameIs (modOf "Team$Name") "Team")
+                  (&& (moduleNameIs (modOf "$Name") "")
+                    (&& (strEq (srcSpelling "Team$Name") "Team::Name")
+                      (&& (strEq (privKey None "Name") "Name")
+                        (strEq (privKey (Some "") "Name") "$Name")))))))))
+      (if (&& (== (declMatches (Some "Team") "Name" "Other$Name") 0)
+            (&& (== (declMatches (Some "Team") "Name" "Team$Name") 1)
+              (&& (== (privBlocks (Some privacy) "Team$hidden" None) 1)
+                (&& (== (privBlocks (Some privacy) "Team$hidden" (Some "Team")) 0)
+                  (&& (== (vecLen modules) 2)
+                    (&& (strEq (vecGet modules 0) "First")
+                      (&& (strEq (vecGet modules 1) "Second")
+                        (&& (== (vecLen emptyModules) 1) (strEq (vecGet emptyModules 0) "")))))))))
+        {
+          (ambRecord tc "sharedName" None)
+          (if (== (vecLen (definingModules tc "sharedName")) 0)
+            42
+            3)
+        }
+        2)
+      1)
+  })
