@@ -2510,17 +2510,14 @@
 
 (pub :: dupIdxAddDecl (-> DupIdx ASTNode Int Int))
 (pub fn (dupIdxAddDecl idx d i)
-  {
-    (let fs (declFields d))
-    (if (!= (as fs Int) 0)
-      (dupIdxAddFields idx fs i 0)
-      {
-        (let ns (dupNamespace (nodeTag d)))
-        (if (== ns NS_NONE)
-          0
-          (dupIdxPut idx (nodeAName d) ns i))
-      })
-  })
+  (if (let (Some fields) (declFields d))
+    (dupIdxAddFields idx fields i 0)
+    {
+      (let ns (dupNamespace (nodeTag d)))
+      (if (== ns NS_NONE)
+        0
+        (dupIdxPut idx (nodeAName d) ns i))
+    }))
 
 (pub :: dupIdxAddFields (-> DupIdx (Vec ASTNode) Int Int Int))
 (pub fn (dupIdxAddFields idx fs i k)
@@ -2545,25 +2542,21 @@
   })
 
 ; The TAG_FIELD vector of a declaration that defines MORE THAN ONE
-; value name, or 0 for the ordinary kind that defines just `nodeA`.
+; value name, or None for the ordinary kind that defines just `nodeA`.
+; Some empty is a multi-name declaration with no fields.
 ;
 ; Two declarations were in this class and both were invisible to the
 ; duplicate check: an `effect` keeps its operations' names in slot b
 ; and the same names with their TYPES in slot c, which is the vector
 ; with the spans on it, and a `trait` kept its methods in slot b until
 ; 0.6.0 took traits out of the language.
-(pub :: declFields (-> ASTNode (Vec ASTNode)))
+(pub :: declFields (-> ASTNode (Option Nodes)))
 (pub fn (declFields d)
   (if (== (nodeTag d) TAG_D_EFFECT)
-    (nodeCChildren d)
-    ; an `extern` block defines one value name per ITEM (slot c,
-    ; the typed items with their spans); its slot a is the
-    ; library string, which until 2026-08-22 was what the
-    ; duplicate index held - so two blocks naming one library
-    ; were "duplicates" and a `fn` spelled like an item was not
+    (Some (nodeCChildren d))
     (if (== (nodeTag d) TAG_D_EXTERN)
-      (nodeCChildren d)
-      nilNodes)))
+      (Some (nodeCChildren d))
+      None)))
 
 ; The span to blame for that definition. For an effect it is the
 ; OPERATION name's span, not the declaration's own:
@@ -2571,17 +2564,11 @@
 ; change is the `where` entry.
 (pub :: declDefSpan (-> ASTNode String Int))
 (pub fn (declDefSpan d name)
-  {
-    (let fs (declFields d))
-    (if (== (as fs Int) 0)
-      (nodeSpan d)
-      {
-        (let f (findFieldNamed fs name 0))
-        (if (nodeSame f nilNode)
-          (nodeSpan d)
-          (nodeSpan f))
-      })
-  })
+  (if (let (Some fields) (declFields d))
+    (if (let (Some field) (findFieldNamed fields name 0))
+      (nodeSpan field)
+      (nodeSpan d))
+    (nodeSpan d)))
 
 ; ------------------------------------------------------------------
 ; Pass 1: duplicate definitions.
@@ -2605,8 +2592,8 @@
       (let d (vecGet decls i))
       {
         {
-          (let fs (declFields d))
-          (if (!= (as fs Int) 0)
+          (let fields (declFields d))
+          (if (let (Some fs) fields)
             ; An effect defines one value name per operation and
             ; an `extern` block one per item, so these are the
             ; declarations that need a loop here.
@@ -2643,7 +2630,6 @@
 ; `Mod$axiom_alloc`, a different symbol.
 ; ------------------------------------------------------------------
 (pub :: checkReservedNames (-> (Vec ASTNode) (Vec diag::Diag) Int Int))
-;@axiom:effect(unsafe)
 (pub fn (checkReservedNames decls out i)
   (if (>= i (vecLen decls))
     0
@@ -2678,8 +2664,8 @@
                     "rename the function - retain and release belong to the reference-counting runtime (docs/memory-model.md MM-LIFE-2b)"
                     "the backend emits its own definition unconditionally, exactly as it does `axiom_alloc`'s")
                   "this name belongs to the runtime"))
-              (as 0 (Vec Int))))
-          (as 0 (Vec Int)))
+              ()))
+          ())
         (checkReservedNames decls out (+ i 1))
       }
     }))
@@ -2960,18 +2946,15 @@
 (pub :: moduleDeclNames (-> ASTNode String Bool))
 (pub fn (moduleDeclNames d name)
   (if (== (nodeTag d) TAG_D_EXTERN)
-    (! (nodeSame (findFieldNamed (nodeCChildren d) name 0) nilNode))
+    (isSome (findFieldNamed (nodeCChildren d) name 0))
     (strEq (bareOf (nodeAName d)) name)))
 
 (pub :: moduleDeclExports (-> ASTNode String Bool))
 (pub fn (moduleDeclExports d name)
   (if (== (nodeTag d) TAG_D_EXTERN)
-    {
-      (let f (findFieldNamed (nodeCChildren d) name 0))
-      (if (nodeSame f nilNode)
-        false
-        (== (nodeVis f) 1))
-    }
+    (if (let (Some field) (findFieldNamed (nodeCChildren d) name 0))
+      (== (nodeVis field) 1)
+      false)
     (strEq (bareOf (nodeAName d)) name)))
 
 (pub :: checkMissingDefs (-> StringRows (Vec ASTNode) Diags Int Names Diags))
@@ -26466,7 +26449,6 @@
 ; restriction name, and reporting ` no-alloc` as unknown would be a
 ; diagnostic about the author's typing rather than their claim.
 (pub :: restrictCollect (-> Ints Strings Int Int))
-;@axiom:effect(unsafe)
 (pub fn (restrictCollect tags rs i)
   (if (== (as tags Int) 0)
     0
@@ -26493,7 +26475,7 @@
                     (strSlice content 0 op))
                   "restrict")
               (restrictSplit (axtagListValue content op) rs)
-              (as 0 (Vec String)))
+              ())
             (restrictCollect tags rs (+ i 1))
           }
         }
@@ -26517,7 +26499,6 @@
 ; that it is reported (AX3052) rather than read as a claim of
 ; nothing.
 (pub :: restrictSplit (-> String Strings Strings))
-;@axiom:effect(unsafe)
 (pub fn (restrictSplit val rs)
   {
     (let mut start 0)
@@ -26542,8 +26523,8 @@
           (set i (+ i 1))
         })
       (if (== any 0)
-        (vecPush rs "")
-        (as 0 (Vec String)))
+        (vecPush rs ""))
+      rs
     }
   })
 
@@ -29271,7 +29252,6 @@
 ; that made `axiom test` discovery a NAME rule; it unions them since
 ; 2026-08-29.)
 (pub :: deprecatedBuild (-> (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (deprecatedBuild decls acc i)
   (if (== (as decls Int) 0)
     acc
@@ -29283,7 +29263,7 @@
           (if (&& (|| (== (nodeTag d) TAG_D_SIG) (== (nodeTag d) TAG_D_FN))
                 (> (strLen (axtagValueOf d "deprecated")) 0))
             (vecPush acc d)
-            (as 0 (Vec Int)))
+            ())
         }
         (deprecatedBuild decls acc (+ i 1))
       })))
@@ -29302,7 +29282,6 @@
       })))
 
 (pub :: sigTagsBuild (-> (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (sigTagsBuild decls acc i)
   (if (== (as decls Int) 0)
     acc
@@ -29313,7 +29292,7 @@
           (let d (vecGet decls i))
           (if (&& (== (nodeTag d) TAG_D_SIG) (!= (nodeAxtagsWord d) 0))
             (vecPush acc d)
-            (as 0 (Vec Int)))
+            ())
         }
         (sigTagsBuild decls acc (+ i 1))
       })))
