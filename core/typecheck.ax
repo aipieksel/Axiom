@@ -27434,21 +27434,21 @@
       0
       {
         (let dd (declByName tc.allDecls (fnEntName ent) 0))
-        (if (nodeSame dd nilNode)
-          0
+        (if (let (Some dd) dd)
           (if (> (vecLen (castScanInto (nodeCChild dd) vecNew)) 0)
             1
-            0))
+            0)
+          0)
       })))
 
-(pub :: declByName (-> (Vec ASTNode) String Int ASTNode))
+(pub :: declByName (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (declByName decls name i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let dd (vecGet decls i))
       (if (&& (== (nodeTag dd) TAG_D_FN) (strEq (nodeAName dd) name))
-        dd
+        (Some dd)
         (declByName decls name (+ i 1)))
     }))
 
@@ -28177,13 +28177,13 @@
 (pub fn (restrictHopSec tc dg ent)
   {
     (let dd (restrictHopDecl tc ent))
-    (if (nodeSame dd nilNode)
-      (diagAddSecondaryIn dg 0 (graphShownName (fnEntName ent)) 0)
+    (if (let (Some dd) dd)
       (diagAddSecondaryIn dg (nodeSpan dd) (graphShownName (fnEntName ent))
-        (unitIndexFor (tcUnits tc) (nodeModuleOpt dd))))
+        (unitIndexFor (tcUnits tc) (nodeModuleOpt dd)))
+      (diagAddSecondaryIn dg 0 (graphShownName (fnEntName ent)) 0))
   })
 
-; The declaration behind an entry, or 0. `graphDeclCasts` asks the
+; The declaration behind an entry, or None. `graphDeclCasts` asks the
 ; same question the same way and for the same reason - a builtin
 ; (word 3) and an effect operation (word 4) have no declaration node,
 ; and neither does an `extern` item, which is why the name lookup can
@@ -28191,12 +28191,12 @@
 ; every unit's declarations, so a hop in `stdlib/` is found here as
 ; readily as one in the entry file; word 13 is the unit table the
 ; caller turns `nodeModule` into an index against.
-(pub :: restrictHopDecl (-> TC FnEnt ASTNode))
+(pub :: restrictHopDecl (-> TC FnEnt (Option ASTNode)))
 (pub fn (restrictHopDecl tc ent)
   (if (!= (fnEntIsBuiltin ent) 0)
-    nilNode
+    None
     (if (!= (fnEntIsEffectOp ent) 0)
-      nilNode
+      None
       (declByName tc.allDecls (fnEntName ent) 0))))
 
 ; AX3049 at the DECLARATION, for the transitive three: the violation
@@ -29796,18 +29796,18 @@
       0)
     0))
 
-; The entry file's `main`, or 0. `nodeAName` is the MANGLED name for
+; The entry file's `main`, or None. `nodeAName` is the MANGLED name for
 ; an imported declaration (`Mod$name`), so a bare `main` belongs to the
 ; module being compiled and to no other - the same test `declsHaveMain`
 ; makes before AX4001.
-(pub :: entryMainDecl (-> (Vec ASTNode) Int ASTNode))
+(pub :: entryMainDecl (-> (Vec ASTNode) Int (Option ASTNode)))
 (pub fn (entryMainDecl decls i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_FN) (strEq (nodeAName d) "main"))
-        d
+        (Some d)
         (entryMainDecl decls (+ i 1)))
     }))
 
@@ -29815,14 +29815,14 @@
 (pub fn (checkUnhandledAtMain tc decls)
   {
     (let d (entryMainDecl decls 0))
-    (if (nodeSame d nilNode)
-      0
+    (if (let (Some d) d)
       {
         (let entFound (restrictOwnEnt tc d))
         (if (let (Some ent) entFound)
           (checkUnhandledRow tc d ent (fnEntEffects ent) 0)
           0)
-      })
+      }
+      0)
   })
 
 ; AX3135. `main` answers the process's exit status, and the wrapper
@@ -29834,8 +29834,7 @@
 (pub fn (checkMainResultType tc decls)
   {
     (let d (entryMainDecl decls 0))
-    (if (nodeSame d nilNode)
-      0
+    (if (let (Some d) d)
       {
         (let entFound (restrictOwnEnt tc d))
         (if (let (Some ent) entFound)
@@ -29846,7 +29845,8 @@
               (emitMainResultType tc d ty))
           }
           0)
-      })
+      }
+      0)
   })
 
 ; A type `main` may answer. A type variable the declaration left open,
@@ -29985,11 +29985,11 @@
           {
             (let dd
               (declByName (tcAllDeclsVec tc) (fnEntName (vecGet path (- (vecLen path) 1))) 0))
-            (if (nodeSame dd nilNode)
-              0
+            (if (let (Some dd) dd)
               (if (== (typeModuleSame (nodeModuleOpt dd) (nodeModuleOpt d)) 1)
                 (nodeSpan dd)
-                0))
+                0)
+              0)
           }))
     )))
 
