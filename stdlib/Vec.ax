@@ -288,7 +288,34 @@
     cap
     (vecGrownCap (* cap 2) need)))
 
-; Move `v`'s elements into a fresh block of exactly `newCap` elements.
+; Whether `old`, a data block, can hold `bytes` where it is. The runtime
+; gives a block of a megabyte or more its own address reservation and
+; marks it with the class -1 (MM-ALLOC-26); such a block grows by raising
+; the capacity in its prefix, with no copy, because every byte past its
+; old capacity is a fresh page the kernel zeroes. The class word is read
+; only behind a large block's shape, whose word count is the sentinel 1,
+; so a small block's neighbour is never mistaken for a prefix. A program
+; built by a compiler that reserves nothing never sees -1 and copies.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: vecGrowsInPlace (-> Int Int Bool))
+(fn (vecGrowsInPlace old bytes)
+  (if (|| (< bytes 0) (!= (& (>> (rawGetWord old -1) 1) 16383) 1))
+    false
+    (if (!= (rawGetWord old -3) -1)
+      false
+      {
+        (let need (& (+ bytes 15) -16))
+        (if (> (+ need 48) (rawGetWord old -6))
+          false
+          {
+            (if (> need (rawGetWord old -4))
+              (rawSetWord old -4 need))
+            true
+          })
+      })))
+
+; Move `v`'s elements into a fresh block of exactly `newCap` elements,
+; unless the block it has can grow in place.
 ;
 ; Only `len` elements are copied, not `cap`: the words past `len` are
 ; unreachable through `vecGet`, so copying them would be pure cost. The
@@ -296,8 +323,17 @@
 ; than whatever the arena last held there.
 ;@axiom:restrict(no-io,no-foreign)
 (:: vecReserveExactly (-> (Vec a) Int (Vec a)))
-;@axiom:effect(unsafe)
 (fn (vecReserveExactly v newCap)
+  (if (vecGrowsInPlace (vecData v) (vecBytes newCap))
+    {
+      (rawSetWord (as v Int) 1 newCap)
+      v
+    }
+    (vecMoveTo v newCap)))
+
+(:: vecMoveTo (-> (Vec a) Int (Vec a)))
+;@axiom:effect(unsafe)
+(fn (vecMoveTo v newCap)
   {
     (let old (vecData v))
     (let bigger (rawAlloc (vecBytes newCap)))

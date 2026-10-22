@@ -14385,7 +14385,17 @@
     ; scrub wipes its old contents - link word included - and
     ; `wiped` rewrites the header. Zeroing (MM-ALLOC-6) is the same
     ; promise on the same path.
-    (emitLine cg "  br label %try_pop")
+    (if (reserveSupported cg)
+      {
+        ; A large block of a megabyte or more gets an address
+        ; reservation of its own, so a growing vector can extend it in
+        ; place (MM-ALLOC-26).
+        (emitLine cg "  %resok = icmp uge i64 %sz0, 1048576")
+        (emitLine cg "  %useres = and i1 %large, %resok")
+        (emitLine cg "  br i1 %useres, label %reserve, label %try_pop")
+        (emitReserveBlock cg)
+      }
+      (emitLine cg "  br label %try_pop"))
     (emitLine cg "try_pop:")
     (emitLine cg "  %slotp = getelementptr [4143 x i64], ptr @__axiom_slabs, i64 0, i64 %cls")
     (emitLine cg "  %shead = load i64, ptr %slotp")
@@ -33397,9 +33407,23 @@
     (emitLine cg "  %cla = add i64 %h, -24")
     (emitLine cg "  %clp = inttoptr i64 %cla to ptr")
     (emitLine cg "  %cls = load i64, ptr %clp")
+    (if (reserveSupported cg)
+      {
+        ; A reserved block is never filed: its mapping goes back to
+        ; the operating system, so nothing reuses its pages unzeroed.
+        (emitLine cg "  %reserved = icmp eq i64 %cls, -1")
+        (emitLine cg "  br i1 %reserved, label %unmap, label %file")
+        (emitLine cg "unmap:")
+        (emitLine cg "  call void @__axiom_unmap_reserved(i64 %h)")
+        (emitLine cg "  ret void")
+        (emitLine cg "file:")
+      })
     (emitLine cg "  %words = lshr i64 %cap, 3")
     (if (== (allocPoisonOn) 1)
-      (emitPoisonFill cg "pl" "%h" "%words" "entry"))
+      (emitPoisonFill cg "pl" "%h" "%words"
+        (if (reserveSupported cg)
+          "file"
+          "entry")))
     (emitLine cg "  %slot = getelementptr [4143 x i64], ptr @__axiom_slabs, i64 0, i64 %cls")
     (emitLine cg "  %old = load i64, ptr %slot")
     (emitLine cg "  %enc = sub i64 -2, %old")
@@ -33411,6 +33435,125 @@
     (emitLine cg "  %total = add i64 %cap, 32")
     (emitLine cg "  %filed1 = add i64 %filed, %total")
     (emitLine cg "  store i64 %filed1, ptr @__axiom_slabs")
+    (emitLine cg "  ret void")
+    (emitLine cg "}")
+    (if (reserveSupported cg)
+      (emitUnmapReserved cg))
+    cg
+  })
+
+; Whether the allocator gives a large block its own address
+; reservation: a target whose chunks come from a syscall `mmap`. A
+; static arena has no address space to reserve, and Windows would
+; commit the whole reservation (MM-ALLOC-26).
+(:: reserveSupported (-> Int Bool))
+;@axiom:effect(io)
+(fn (reserveSupported cg)
+  (&& (== (arenaStaticBytes (cgTarget cg)) 0) (== (targetUsesSyscallAsm (cgTarget cg)) 1)))
+
+; The `mmap` flags for a reservation: the chunks' own, and on Linux
+; `MAP_NORESERVE`, so untouched pages are not charged against the
+; overcommit limit.
+(:: reserveMapFlags (-> Int Int))
+(fn (reserveMapFlags t)
+  (if (|| (== t 2) (== t 3))
+    (+ (targetMapFlags t) 16384)
+    (targetMapFlags t)))
+
+; `reserve:` in `axiom_alloc`. The mapping is eight times the block's
+; capacity and at least 64 MiB; it is linked onto the active chunk
+; list, so an arena or region reset reclaims it like any chunk, but it
+; never becomes the bump chunk, so the block it holds stays last in it.
+; The block's prefix records its capacity and the class -1; its count
+; is 0 and its shape the large sentinel, as `handout` writes them. A
+; refused mapping, or one past 1 TiB, takes the ordinary path.
+(:: emitReserveBlock (-> Int Int))
+(fn (emitReserveBlock cg)
+  {
+    (let t (cgTarget cg))
+    {
+      (emitLine cg "reserve:")
+      (emitLine cg "  %rmul = shl i64 %sz0, 3")
+      (emitLine cg "  %rsmall = icmp ult i64 %rmul, 67108864")
+      (emitLine cg "  %rsz = select i1 %rsmall, i64 67108864, i64 %rmul")
+      (emitLine cg "  %rhuge = icmp ugt i64 %rsz, 1099511627776")
+      (emitLine cg "  br i1 %rhuge, label %try_pop, label %rmap")
+      (emitLine cg "rmap:")
+      (emitLine cg
+        (concat "  %raddr = "
+          (parSys cg (fmtInt (targetMmapNum t))
+            (concat "i64 0, i64 %rsz, i64 3, i64 "
+              (concat (fmtInt (reserveMapFlags t)) ", i64 -1, i64 0")))))
+      (emitLine cg "  %rfl = icmp ult i64 %raddr, 4096")
+      (emitLine cg "  %rfn = icmp ugt i64 %raddr, -4096")
+      (emitLine cg "  %rfail = or i1 %rfl, %rfn")
+      (emitLine cg "  br i1 %rfail, label %try_pop, label %rmapped")
+      (emitLine cg "rmapped:")
+      (emitLine cg "  %rbasep = inttoptr i64 %raddr to ptr")
+      (emitLine cg "  store i64 %rsz, ptr %rbasep")
+      (emitLine cg "  %rlink = add i64 %raddr, 8")
+      (emitLine cg "  %rlinkp = inttoptr i64 %rlink to ptr")
+      (emitLine cg "  %rhead = load i64, ptr @__axiom_chunk")
+      (emitLine cg "  store i64 %rhead, ptr %rlinkp")
+      (emitLine cg "  store i64 %raddr, ptr @__axiom_chunk")
+      (emitLine cg "  %rcapa = add i64 %raddr, 16")
+      (emitLine cg "  %rcapp = inttoptr i64 %rcapa to ptr")
+      (emitLine cg "  store i64 %sz0, ptr %rcapp")
+      (emitLine cg "  %rclsa = add i64 %raddr, 24")
+      (emitLine cg "  %rclsp = inttoptr i64 %rclsa to ptr")
+      (emitLine cg "  store i64 -1, ptr %rclsp")
+      (emitLine cg "  %rcnta = add i64 %raddr, 32")
+      (emitLine cg "  %rcntp = inttoptr i64 %rcnta to ptr")
+      (emitLine cg "  store i64 0, ptr %rcntp")
+      (emitLine cg "  %rshpa = add i64 %raddr, 40")
+      (emitLine cg "  %rshpp = inttoptr i64 %rshpa to ptr")
+      (emitLine cg "  store i64 2, ptr %rshpp")
+      (emitLine cg "  %ruser = add i64 %raddr, 48")
+      (emitLine cg "  ret i64 %ruser")
+      cg
+    }
+  })
+
+; A reserved block whose count reached zero: unlink its chunk from the
+; active list and unmap the whole reservation. A chunk not on the active
+; list was moved to the free list by a reset, which owns it now.
+(:: emitUnmapReserved (-> Int Int))
+(fn (emitUnmapReserved cg)
+  {
+    (emitLine cg "define internal void @__axiom_unmap_reserved(i64 %h) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %base = add i64 %h, -48")
+    (emitLine cg "  %basep = inttoptr i64 %base to ptr")
+    (emitLine cg "  %rsz = load i64, ptr %basep")
+    (emitLine cg "  %blink = add i64 %base, 8")
+    (emitLine cg "  %blinkp = inttoptr i64 %blink to ptr")
+    (emitLine cg "  %bnext = load i64, ptr %blinkp")
+    (emitLine cg "  %head = load i64, ptr @__axiom_chunk")
+    (emitLine cg "  %athead = icmp eq i64 %head, %base")
+    (emitLine cg "  br i1 %athead, label %unhead, label %walk")
+    (emitLine cg "unhead:")
+    (emitLine cg "  store i64 %bnext, ptr @__axiom_chunk")
+    (emitLine cg "  br label %unmap")
+    (emitLine cg "walk:")
+    (emitLine cg "  %c = phi i64 [ %head, %entry ], [ %cn, %look ]")
+    (emitLine cg "  %cz = icmp eq i64 %c, 0")
+    (emitLine cg "  br i1 %cz, label %gone, label %look")
+    (emitLine cg "look:")
+    (emitLine cg "  %cl = add i64 %c, 8")
+    (emitLine cg "  %clp = inttoptr i64 %cl to ptr")
+    (emitLine cg "  %cn = load i64, ptr %clp")
+    (emitLine cg "  %hit = icmp eq i64 %cn, %base")
+    (emitLine cg "  br i1 %hit, label %unmid, label %walk")
+    (emitLine cg "unmid:")
+    (emitLine cg "  store i64 %bnext, ptr %clp")
+    (emitLine cg "  br label %unmap")
+    (emitLine cg "unmap:")
+    (emitLine cg
+      (concat "  %u = "
+        (parSys cg (fmtInt (targetMunmapNum (cgTarget cg)))
+          "i64 %base, i64 %rsz, i64 0, i64 0, i64 0, i64 0")))
+    (emitLine cg "  ret void")
+    (emitLine cg "gone:")
     (emitLine cg "  ret void")
     (emitLine cg "}")
     cg
