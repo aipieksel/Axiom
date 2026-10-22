@@ -200,6 +200,14 @@
 (pub fn (nodeFieldNamesNames n)
   (as (nodeWord n 9) Names))
 
+; Preserve named-empty metadata separately from a positional constructor.
+; The packed parser slot alone uses zero for missing names.
+(pub :: nodeFieldNamesOpt (-> ASTNode (Option Names)))
+(pub fn (nodeFieldNamesOpt node)
+  (if (== (nodeFieldNamesWord node) 0)
+    None
+    (Some (nodeFieldNamesNames node))))
+
 (pub :: nodeFieldNamesWords (-> ASTNode Ints))
 ;@axiom:effect(unsafe)
 (pub fn (nodeFieldNamesWords n)
@@ -260,6 +268,16 @@
     (nodeStore n 3 c true)
     n
   })
+
+; The checker's current declaration is optional. Only this packed AST
+; boundary encodes None as nilNode; the call-stamp layout stays unchanged.
+(pub :: nodeBuildEvstampCallOptional (-> (Option ASTNode) Ints TypeEnv ASTNode))
+(pub fn (nodeBuildEvstampCallOptional declaration words env)
+  (nodeBuildEvstampCallPlain
+    (match declaration
+      ((None) nilNode)
+      ((Some node) node))
+    words env))
 
 (pub :: nodeBuildBinding (-> Int String ASTNode ASTNode Int ASTNode))
 (pub fn (nodeBuildBinding tag a b c sp)
@@ -390,6 +408,14 @@
     (writeNodeChild n 3 c)
     n
   })
+
+; The result stamp carries the same optional declaration at word 3.
+(pub :: nodeBuildEvstampResultOptional (-> ASTNode Int (Option ASTNode) ASTNode))
+(pub fn (nodeBuildEvstampResultOptional ty evidence declaration)
+  (nodeBuildEvstampResultPlain ty evidence
+    (match declaration
+      ((None) nilNode)
+      ((Some node) node))))
 
 (pub :: nodeBuildEIntPlain (-> Int Int Int ASTNode))
 (pub fn (nodeBuildEIntPlain a b c)
@@ -7965,7 +7991,7 @@
     }
     ""))
 
-; The TAG_FIELD named `name`, or 0.
+; The first TAG_FIELD named `name`, or None.
 ;
 ; It lives HERE rather than beside its caller because it used to have
 ; two, in `expand.ax` and `typecheck.ax`, and `parser.ax` is the module
@@ -7977,12 +8003,12 @@
 ; those two callers and went in 0.6.0; the survivor is the
 ; duplicate-definition check, which asks this of an `effect`'s
 ; operations.
-(pub :: findFieldNamed (-> (Vec ASTNode) String Int ASTNode))
+(pub :: findFieldNamed (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (findFieldNamed fields name i)
   (if (>= i (vecLen fields))
-    nilNode
+    None
     (if (strEq (nodeAName (vecGet fields i)) name)
-      (vecGet fields i)
+      (Some (vecGet fields i))
       (findFieldNamed fields name (+ i 1)))))
 
 ; Is this type node a type variable the PROGRAMMER wrote? A `_`-prefixed

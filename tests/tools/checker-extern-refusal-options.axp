@@ -1,0 +1,57 @@
+; Optional extern refusal reasons retain the first rejected leaf and owned text.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: refused (-> ASTNode Int String Bool))
+(fn (refused ty top expected)
+  (match (externTypeRefusal ty top)
+    ((Some reason) (strEq reason expected))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let word (mkTCon "Int" vecNew))
+    (let text (mkTCon "String" vecNew))
+    (let unknown (mkTCon "Choice" vecNew))
+    (say 1 (isNone (externTypeRefusal nilNode 1)))
+    (say 2 (isNone (externTypeRefusal (mkTCon "Int" vecNew) 1)))
+    (say 3 (isNone (externTypeRefusal (mkTCon "Float" vecNew) 1)))
+    (say 4 (isNone (externTypeRefusal (mkTCon "Bool" vecNew) 1)))
+    (say 5 (isNone (externTypeRefusal (mkTCon "Char" vecNew) 1)))
+    (say 6 (isNone (externTypeRefusal (mkTCon "String" vecNew) 1)))
+    (say 7 (isNone (externTypeRefusal (mkTCon "Foreign" vecNew) 1)))
+    (say 8 (isNone (externTypeRefusal (mkTArr word text) 1)))
+    (say 9 (isNone (externTypeRefusal (mkTArr word (mkTCon "Float" vecNew)) 0)))
+    (say 10 (refused (mkTVar "a") 1 "the type variable `a`"))
+    (say 11 (refused (mkTTup (vecPush vecNew word)) 1 "a tuple"))
+    (say 12 (refused unknown 1 "the type `Choice`"))
+    (say 13 (refused (mkTCon "UInt8" vecNew) 1 "the type `UInt8`"))
+    (say 14 (refused (mkTCon "Int" (vecPush vecNew word)) 1 "`Int` applied to type arguments"))
+    (say 15
+      (refused (mkTArr text word) 0
+        "a function-typed argument (a callback is an arrow over words only - `Int`, `Float`, `Bool`, `Char` - such as `(-> Int Float)`)"))
+    (say 16 (refused (mkTArr (mkTVar "first") unknown) 1 "the type variable `first`"))
+    (say 17 (refused (mkTArr word unknown) 1 "the type `Choice`"))
+    (say 18 (refused mkTErr 1 "this type"))
+    (say 19 (refused (mkTVar (concat "owned" "Name")) 1 "the type variable `ownedName`"))
+    (say 20 (isNone (externTypeRefusal (mkTArr (mkTArr word word) word) 1)))
+    0
+  })

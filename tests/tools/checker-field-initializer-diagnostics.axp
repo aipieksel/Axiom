@@ -1,0 +1,40 @@
+; A missing declared result differs from a present poison or inferred type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let nodes (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (tcWalkDecls tc 0)
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "initializer-captured.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let f dirty) (Hook :run (lambda (x) (f x))) })\n")
+    (checkSource "initializer-parameter.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> (-> Int Int) Hook))\n(pub fn (build f) (Hook :run (lambda (x) (f x))))\n")
+    (checkSource "initializer-mutable.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let mut f dirty) (Hook :run (lambda (x) (f x))) })\n")
+    (checkSource "initializer-alias.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let f dirty) (let alias f) (Hook :run (lambda (x) (alias x))) })\n")
+    (checkSource "initializer-pure.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: identity (-> Int Int))\n(pub fn (identity x) x)\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let f identity) (Hook :run (lambda (x) (f x))) })\n")
+    0
+  })

@@ -1,0 +1,110 @@
+; expect 42
+; None is exhaustive. Some empty is a real failure with unnamed values;
+; enumerated and nested failures retain their first witness order.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: exhaustivenessContext (-> String TC))
+(fn (exhaustivenessContext source)
+  {
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2
+        :file "exhaustiveness-options.ax"
+        :src source
+        :name ""
+        :imports vecNew
+        :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: onePattern (-> ASTNode NodesRows))
+(fn (onePattern pattern)
+  (vecPush vecNew (vecPush vecNew pattern)))
+
+(:: witnessesAre (-> (Option Names) Names Bool))
+(fn (witnessesAre found expected)
+  (match found
+    ((None) false)
+    ((Some names)
+      {
+        (let mut same (== (vecLen names) (vecLen expected)))
+        (if same
+          (for i in 0..(vecLen expected)
+            (if (! (strEq (vecGet names i) (vecGet expected i)))
+              (set same false))))
+        same
+      }
+    )))
+
+(:: scalarMatrixChecks (-> TC Bool))
+(fn (scalarMatrixChecks tc)
+  {
+    (let ints (vecPush vecNew mkIntTy))
+    (let bools (vecPush vecNew mkBoolTy))
+    (let both (vecPush (onePattern (mkEVar "true")) (vecPush vecNew (mkEVar "false"))))
+    (&& (witnessesAre (matExhaustive tc vecNew vecNew) vecNew)
+      (&& (isNone (matExhaustive tc (vecPush vecNew vecNew) vecNew))
+        (&& (witnessesAre (matExhaustive tc vecNew ints) vecNew)
+          (&& (witnessesAre (matExhaustive tc (onePattern (mkEInt 1)) ints) vecNew)
+            (&& (isNone (matExhaustive tc (onePattern (mkEVar "_")) ints))
+              (&& (isNone (matExhaustive tc both bools))
+                (&&
+                  (witnessesAre (matExhaustive tc (onePattern (mkEVar "true")) bools)
+                    (vecPush vecNew "false"))
+                  (witnessesAre (matExhaustive tc vecNew bools)
+                    (vecPush (vecPush vecNew "true") "false")))))))))
+  })
+
+(:: constructorMatrixChecks (-> TC Bool))
+(fn (constructorMatrixChecks tc)
+  {
+    (let optionInt (mkTCon "Option" (vecPush vecNew mkIntTy)))
+    (let optionOptionInt (mkTCon "Option" (vecPush vecNew optionInt)))
+    (let none (nodeBuildPCon0 "None" 0 0 0))
+    (let some (mkEApp (mkEVar "Some") (mkEVar "_")))
+    (let both (vecPush (onePattern some) (vecPush vecNew none)))
+    (let nested (vecPush (onePattern (mkEApp (mkEVar "Some") none)) (vecPush vecNew none)))
+    (&& (isNone (matExhaustive tc both (vecPush vecNew optionInt)))
+      (&&
+        (witnessesAre (matExhaustive tc (onePattern some) (vecPush vecNew optionInt))
+          (vecPush vecNew "None"))
+        (&&
+          (witnessesAre (matExhaustive tc vecNew (vecPush vecNew optionInt))
+            (vecPush (vecPush vecNew "Some") "None"))
+          (witnessesAre (matExhaustive tc nested (vecPush vecNew optionOptionInt))
+            (vecPush vecNew "Some")))))
+  })
+
+(:: matrixDiagnosticChecks Bool)
+(fn (matrixDiagnosticChecks)
+  {
+    (let source
+      "(pub data Wrapped (Wrap Int))\n(:: main Int)\n(pub fn (main) (match (Wrap 1) ((Wrap 2) 0)))\n")
+    (let context (exhaustivenessContext source))
+    (let checked (checkModuleTcTyped context.allDecls context.allDecls context.units))
+    (if (== (countErrorDiags (tcOutVec checked)) 1)
+      (&& (strEq (diagCode (vecGet (tcOutVec checked) 0)) "AX3005")
+        (strEq (diagMsg (vecGet (tcOutVec checked) 0))
+          "non-exhaustive pattern match: some `Wrapped` values are not covered"))
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let tc (exhaustivenessContext ""))
+    (if (scalarMatrixChecks tc)
+      (if (constructorMatrixChecks tc)
+        (if (matrixDiagnosticChecks)
+          42
+          3)
+        2)
+      1)
+  })

@@ -1,0 +1,125 @@
+; A missing declared result differs from a present poison or inferred type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: sameType (-> (Option ASTNode) ASTNode Bool))
+(fn (sameType candidate expected)
+  (match candidate
+    ((Some ty) (nodeSame ty expected))
+    ((None) false)))
+
+(:: checked (-> String TC))
+(fn (checked source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let nodes (pResNodes parsed))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "results.ax" :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (tcWalkDecls tc 0)
+    tc
+  })
+
+(:: countCode (-> Diags String Int))
+(fn (countCode diagnostics code)
+  {
+    (let mut count 0)
+    (for diagnostic in diagnostics
+      (if (strEq (diagCode diagnostic) code)
+        (set count (+ count 1))))
+    count
+  })
+
+(:: hasOnly (-> String String Bool))
+(fn (hasOnly source code)
+  {
+    (let tc (checked source))
+    (&& (== (countErrorDiags (tcOutVec tc)) 1) (== (countCode (tcOutVec tc) code) 1))
+  })
+
+(:: clean (-> String Bool))
+(fn (clean source)
+  (== (countErrorDiags (tcOutVec (checked source))) 0))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let word mkIntTy)
+    (let float (mkTCon "Float" vecNew))
+    (let unit mkUnitTy)
+    (let wild (mkTVar ""))
+    (let arrow (mkTArr word float))
+    (let nested (mkTArr word (mkTArr float unit)))
+    (let tuple (mkTTup (vecPush vecNew word)))
+    (let pointer (mkTPtr word))
+    (say 1 (isNone (peelArrows nilNode 0)))
+    (say 2 (isNone (peelArrows nilNode 1)))
+    (say 3 (sameType (peelArrows word 0) word))
+    (say 4 (sameType (peelArrows word -1) word))
+    (say 5 (isNone (peelArrows word 1)))
+    (say 6 (sameType (peelArrows arrow 1) float))
+    (say 7 (isNone (peelArrows arrow 2)))
+    (say 8 (sameType (peelArrows nested 2) unit))
+    (say 9 (isNone (peelArrows nested 3)))
+    (say 10
+      (if (let (Some ty) (peelArrows mkTErr 0))
+        (== (nodeTag ty) TAG_T_ERR)
+        false))
+    (say 11 (isNone (peelArrows mkTErr 1)))
+    (say 12
+      (if (let (Some ty) (peelArrows (mkTArr word mkTErr) 1))
+        (== (nodeTag ty) TAG_T_ERR)
+        false))
+    (say 13 (sameType (peelArrows wild 0) wild))
+    (say 14 (sameType (peelArrows (mkTArr word wild) 1) wild))
+    (say 15 (sameType (peelArrows tuple 0) tuple))
+    (say 16 (sameType (peelArrows pointer 0) pointer))
+    (say 17 (isNone (peelArrows (nodeBuildTArrPlain word nilNode 0) 1)))
+    (say 18 (isNone (peelArrows (nodeBuildTArrPlain word nilNode 0) 2)))
+    (say 19
+      (clean
+        ";@axiom:post((> result 0))\n(pub :: declared (-> Int Int))\n(pub fn (declared n) n)\n"))
+    (say 20 (clean "(pub fn (inferred n) (+ n 1))\n"))
+    (say 21 (hasOnly ";@axiom:post((> result 0))\n(pub fn (missing n) n)\n" "AX3050"))
+    (say 22
+      (hasOnly ";@axiom:pre((> result 0))\n(pub :: before (-> Int Int))\n(pub fn (before n) n)\n"
+        "AX3050"))
+    (say 23
+      (hasOnly
+        ";@axiom:post((> result 0))\n(pub :: short (-> Int Int))\n(pub fn (short first second) first)\n"
+        "AX3050"))
+    (say 24
+      (hasOnly ";@axiom:post((== result result))\n(pub :: poisoned Ghost)\n(pub fn (poisoned) 1)\n"
+        "AX3002"))
+    (say 25
+      (clean
+        ";@axiom:post((match result (_ true)))\n(pub :: polymorphic (-> a a))\n(pub fn (polymorphic value) value)\n"))
+    (say 26 (clean ";@axiom:post(true)\n(pub :: procedure ())\n(pub fn (procedure) 42)\n"))
+    (say 27
+      (clean
+        "(pub :: factory (-> Int (-> Int Int)))\n(pub fn (factory ignored) (lambda (value) (+ value 1)))\n"))
+    (say 28 (clean "(pub fn (factory ignored) (lambda (value) (+ value 1)))\n"))
+    (say 29
+      (clean
+        "(subtype Positive is Int range 1..10)\n(pub :: ranged Positive)\n(pub fn (ranged) 4)\n"))
+    (say 30 (hasOnly "(pub :: mismatch Int)\n(pub fn (mismatch) \"wrong\")\n" "AX3004"))
+    0
+  })

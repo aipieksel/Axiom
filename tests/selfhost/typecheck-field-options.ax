@@ -1,0 +1,140 @@
+; expect 42
+; A missing field is None. A present wildcard or poison type remains
+; Some, and constructor inference hints are distinct from no hint.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: fieldContext (-> String TC))
+(fn (fieldContext source)
+  {
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "field-options.ax" :src source :name "" :imports vecNew :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: fieldIs (-> (Option ASTNode) ASTNode Bool))
+(fn (fieldIs found expected)
+  (match found
+    ((None) false)
+    ((Some ty) (nodeSame ty expected))))
+
+(:: fieldTagIs (-> (Option ASTNode) Int Bool))
+(fn (fieldTagIs found expected)
+  (match found
+    ((None) false)
+    ((Some ty) (== (nodeTag ty) expected))))
+
+(:: structFieldChecks Bool)
+(fn (structFieldChecks)
+  {
+    (let known mkIntTy)
+    (let fields
+      (vecPush
+        (vecPush (vecPush vecNew (setNodeTyChild (mkField "known" 0) known)) (mkField "untyped" 0))
+        (setNodeTyChild (mkField "poison" 0) mkTErr)))
+    (let entry (StructEnt :name "Example" :fields fields :module None :tyvars vecNew :repr 0))
+    (&& (isNone (structFieldTy entry "missing"))
+      (&& (isNone (structFieldTyFrom vecNew "missing" 0))
+        (&& (fieldIs (structFieldTy entry "known") known)
+          (&& (fieldTagIs (structFieldTy entry "untyped") TAG_T_VAR)
+            (fieldTagIs (structFieldTy entry "poison") TAG_T_ERR)))))
+  })
+
+(:: fieldCtor (-> String String ASTNode ASTNode CtorEnt))
+(fn (fieldCtor name field ty result)
+  (CtorEnt
+    :name name
+    :fieldTys (vecPush vecNew ty)
+    :resTy result
+    :ctorTy (mkTArr ty result)
+    :fieldNames (Some (vecPush vecNew field))))
+
+(:: dataFieldChecks Bool)
+(fn (dataFieldChecks)
+  {
+    (let result (mkTCon "FieldExample" vecNew))
+    (let known mkIntTy)
+    (let first (fieldCtor "FieldFirst" "value" known result))
+    (let same (fieldCtor "FieldSame" "value" mkIntTy result))
+    (let other (fieldCtor "FieldOther" "other" mkIntTy result))
+    (let disagreement (fieldCtor "FieldWrong" "value" mkStringTy result))
+    (let malformed
+      (CtorEnt
+        :name "Malformed"
+        :fieldTys vecNew
+        :resTy result
+        :ctorTy result
+        :fieldNames (Some (vecPush vecNew "value"))))
+    (let ctors (vecPush (vecPush vecNew first) same))
+    (let tc (fieldContext ""))
+    (vecPush (tcDatasVec tc) (DataEnt :name "FieldExample" :ctors ctors :module None :arity 0))
+    (&& (isNone (dataFieldTyInCtors vecNew "value" 0))
+      (&& (isNone (dataFieldTy tc "missing"))
+        (&& (fieldIs (dataFieldTyInCtors ctors "value" 0) known)
+          (&& (fieldIs (dataFieldTy tc "value") known)
+            (&& (fieldIs (dataAgreedFieldTy ctors "value") known)
+              (&& (isNone (dataAgreedFieldTy (vecPush (vecPush vecNew first) other) "value"))
+                (&&
+                  (isNone (dataAgreedFieldTy (vecPush (vecPush vecNew first) disagreement) "value"))
+                  (fieldTagIs (dataFieldTyInCtors (vecPush vecNew malformed) "value" 0)
+                    TAG_T_ERR))))))))
+  })
+
+(:: constructorHintChecks Bool)
+(fn (constructorHintChecks)
+  {
+    (let tc (fieldContext ""))
+    (let result (mkTCon "HintExample" vecNew))
+    (let known (fieldCtor "HintKnown" "value" mkIntTy result))
+    (let invalid (fieldCtor "HintInvalid" "value" mkIntTy mkTErr))
+    (let ctors (vecPush (vecPush vecNew known) invalid))
+    (let entry (DataEnt :name "HintExample" :ctors ctors :module None :arity 0))
+    (vecPush (tcDatasVec tc) entry)
+    (tyIdxAddData tc entry)
+    (let unknownArm (nodeBuildMArmPlain (nodeBuildPCon0 "Missing" 0 0 0) (mkEInt 0) 0))
+    (let knownArm (nodeBuildMArmPlain (nodeBuildPCon0 "HintKnown" 0 0 0) (mkEInt 0) 0))
+    (let invalidArm (nodeBuildMArmPlain (nodeBuildPCon0 "HintInvalid" 0 0 0) (mkEInt 0) 0))
+    (let foundName
+      (match (patCtorHeadName (mkEApp (mkEVar "HintKnown") (mkEVar "value")))
+        ((None) false)
+        ((Some name) (strEq name "HintKnown"))))
+    (&& (isNone (armsCtorTy tc vecNew 0))
+      (&& (isNone (armsCtorTy tc (vecPush vecNew unknownArm) 0))
+        (&& (isNone (armsCtorTy tc (vecPush vecNew invalidArm) 0))
+          (&& (fieldIs (armsCtorTy tc (vecPush (vecPush vecNew unknownArm) knownArm) 0) result)
+            (&& (isNone (patCtorHeadName (mkEInt 1))) foundName)))))
+  })
+
+(:: fieldCheckingChecks Bool)
+(fn (fieldCheckingChecks)
+  {
+    (let goodSource
+      "(pub struct Item (mut value : Int))\n(:: main Int)\n(pub fn (main) { (let item (Item 7)) (set item.value 42) item.value })\n")
+    (let good (fieldContext goodSource))
+    (let goodChecked (checkModuleTcTyped good.allDecls good.allDecls good.units))
+    (let badSource
+      "(pub struct Item (value : Int))\n(:: main Int)\n(pub fn (main) { (let item (Item 7)) item.missing })\n")
+    (let bad (fieldContext badSource))
+    (let badChecked (checkModuleTcTyped bad.allDecls bad.allDecls bad.units))
+    (if (&& (== (countErrorDiags (tcOutVec goodChecked)) 0)
+          (== (countErrorDiags (tcOutVec badChecked)) 1))
+      (strEq (diagCode (vecGet (tcOutVec badChecked) 0)) "AX3007")
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (structFieldChecks)
+    (if (dataFieldChecks)
+      (if (constructorHintChecks)
+        42
+        3)
+      2)
+    1))

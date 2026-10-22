@@ -1,0 +1,115 @@
+; Declaration lookup keeps first-match identity and typed missing results.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: sameNode (-> (Option ASTNode) ASTNode Bool))
+(fn (sameNode candidate expected)
+  (match candidate
+    ((Some node) (nodeSame node expected))
+    ((None) false)))
+
+(:: hop (-> TC String (Option ASTNode)))
+(fn (hop tc name)
+  (if (let (Some entry) (findFnEnt tc name))
+    (restrictHopDecl tc entry)
+    None))
+
+(:: casts (-> TC String Int))
+(fn (casts tc name)
+  (if (let (Some entry) (findFnEnt tc name))
+    (graphDeclCasts tc entry)
+    -1))
+
+(:: hopLocation (-> TC String Int Bool))
+(fn (hopLocation tc name expectedSpan)
+  (if (let (Some entry) (findFnEnt tc name))
+    {
+      (let diagnostic (mkDiag SEV_ERROR "AX3049" "restriction-violated" 0 "probe" 0 0 ""))
+      (restrictHopSec tc diagnostic entry)
+      (&& (== (diagSecCount diagnostic) 1)
+        (&& (== (diagSecSpan diagnostic 0) expectedSpan) (strEq (diagSecMsg diagnostic 0) name)))
+    }
+    false))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let first (nodeBuildDFn "duplicate" vecNew (mkEInt 1) 0))
+    (let last (nodeBuildDFn "duplicate" vecNew (mkEInt 2) 0))
+    (let declarations (vecPush (vecPush vecNew first) last))
+    (let importedMain (nodeBuildDFn "Team$main" vecNew (mkEInt 3) 0))
+    (let alias (nodeBuildDAlias "main" (mkTCon "Int" vecNew) vecNew 0))
+    (let firstMain (nodeBuildDFn "main" vecNew (mkEInt 4) 0))
+    (let lastMain (nodeBuildDFn "main" vecNew (mkEInt 5) 0))
+    (let mains
+      (vecPush (vecPush (vecPush (vecPush vecNew importedMain) alias) firstMain) lastMain))
+    (say 1 (sameNode (declByName declarations "duplicate" 0) first))
+    (say 2 (sameNode (declByName declarations "duplicate" 1) last))
+    (say 3 (isNone (declByName declarations "missing" 0)))
+    (say 4 (isNone (declByName declarations "duplicate" 2)))
+    (say 5 (isNone (declByName vecNew "missing" 0)))
+    (say 6 (sameNode (declByName mains "Team$main" 0) importedMain))
+    (say 7 (sameNode (declByName mains "main" 0) firstMain))
+    (say 8 (sameNode (entryMainDecl mains 0) firstMain))
+    (say 9 (sameNode (entryMainDecl mains 3) lastMain))
+    (say 10 (isNone (entryMainDecl mains 4)))
+    (say 11 (isNone (entryMainDecl (vecPush (vecPush vecNew importedMain) alias) 0)))
+    (say 12 (isNone (entryMainDecl vecNew 0)))
+    (let source
+      "(effect Ask (ask :: (-> Int Int))) (extern \"demo\" (external :: (-> Int Int))) (pub :: plain (-> Int Int)) (pub fn (plain x) x) (pub :: casting (-> Int Int)) (pub fn (casting x) (as x Int)) (pub :: forwardOnly (-> Int Int))")
+    (let parsed (parseModule (lex source)))
+    (let nodes (pResNodes parsed))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "decls.ax" :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (say 13 (== (countErrorDiags (tcOutVec tc)) 0))
+    (say 14 (isNone (hop tc "+")))
+    (say 15 (isNone (hop tc "ask")))
+    (say 16 (isNone (hop tc "external")))
+    (say 17 (isNone (hop tc "forwardOnly")))
+    (say 18
+      (if (let (Some declaration) (hop tc "plain"))
+        (strEq (nodeAName declaration) "plain")
+        false))
+    (say 19
+      (if (let (Some declaration) (hop tc "casting"))
+        (strEq (nodeAName declaration) "casting")
+        false))
+    (say 20 (== (casts tc "+") 0))
+    (say 21 (== (casts tc "ask") 0))
+    (say 22 (== (casts tc "external") 0))
+    (say 23 (== (casts tc "forwardOnly") 0))
+    (say 24 (== (casts tc "plain") 0))
+    (say 25 (== (casts tc "casting") 1))
+    (say 26 (hopLocation tc "+" 0))
+    (say 27 (hopLocation tc "ask" 0))
+    (say 28 (hopLocation tc "external" 0))
+    (say 29 (hopLocation tc "forwardOnly" 0))
+    (say 30
+      (if (let (Some declaration) (hop tc "plain"))
+        (hopLocation tc "plain" (nodeSpan declaration))
+        false))
+    (let before (countErrorDiags (tcOutVec tc)))
+    (checkMainResultType tc nodes)
+    (checkUnhandledAtMain tc nodes)
+    (say 31 (== (countErrorDiags (tcOutVec tc)) before))
+    0
+  })

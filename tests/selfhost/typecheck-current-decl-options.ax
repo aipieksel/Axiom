@@ -1,0 +1,108 @@
+; expect 42
+; Current declarations remain optional through semantic checking. Only
+; the parser stamp boundary encodes None, preserving payload and map.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import Mem)
+
+(:: currentDeclContext TC)
+(fn (currentDeclContext)
+  {
+    (let source
+      "(:: identity (-> Int Int))\n(pub fn (identity value) value)\n(:: main Int)\n(pub fn (main) 42)\n")
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "current-decl.ax" :src source :name "" :imports vecNew :library false))
+    (checkModuleTcTyped declarations declarations units)
+  })
+
+(:: stampLayoutSame (-> ASTNode ASTNode Bool))
+(fn (stampLayoutSame left right)
+  {
+    (let a (as left Int))
+    (let b (as right Int))
+    (let mut same true)
+    (for slot in 0..13
+      (if (!= (memGetWord a slot) (memGetWord b slot))
+        (set same false)))
+    (&& same (== (>> (memGetWord (- a 8) 0) 16) (>> (memGetWord (- b 8) 0) 16)))
+  })
+
+(:: optionalStampChecks (-> ASTNode Bool))
+(fn (optionalStampChecks declaration)
+  {
+    (let ty mkIntTy)
+    (let words (vecPush vecNew 7))
+    (let env (vecPush vecNew (TypeBinding :name "a" :ty mkIntTy)))
+    (let callAbsent (nodeBuildEvstampCallOptional None words env))
+    (let callPresent (nodeBuildEvstampCallOptional (Some declaration) words env))
+    (let resultAbsent (nodeBuildEvstampResultOptional ty 2 None))
+    (let resultPresent (nodeBuildEvstampResultOptional ty 2 (Some declaration)))
+    (&& (stampLayoutSame callAbsent (nodeBuildEvstampCallPlain nilNode words env))
+      (&& (stampLayoutSame callPresent (nodeBuildEvstampCallPlain declaration words env))
+        (&& (stampLayoutSame resultAbsent (nodeBuildEvstampResultPlain ty 2 nilNode))
+          (stampLayoutSame resultPresent (nodeBuildEvstampResultPlain ty 2 declaration)))))
+  })
+
+(:: instantiatedStampChecks (-> TC ASTNode Bool))
+(fn (instantiatedStampChecks tc declaration)
+  {
+    (let generic (mkTArr (mkTVar "a") (mkTVar "a")))
+    (let absent (mkEVar "generic"))
+    (let present (mkEVar "generic"))
+    (set tc.curDeclNode None)
+    (tyInstStamped tc generic absent)
+    (set tc.curDeclNode (Some declaration))
+    (tyInstStamped tc generic present)
+    (&& (nodeSame (nodeAChild (nodeTyChild absent)) nilNode)
+      (nodeSame (nodeAChild (nodeTyChild present)) declaration))
+  })
+
+(:: checkedStampChecks (-> TC ASTNode Bool))
+(fn (checkedStampChecks tc declaration)
+  {
+    (let absent (mkEApp (mkEVar "identity") (mkEInt 42)))
+    (let present (mkEApp (mkEVar "identity") (mkEInt 42)))
+    (set tc.curDeclNode None)
+    (checkExprH tc absent 0)
+    (set tc.curDeclNode (Some declaration))
+    (checkExprH tc present 0)
+    (&& (nodeSame (nodeCChild (nodeBinderTyChild absent)) nilNode)
+      (nodeSame (nodeCChild (nodeBinderTyChild present)) declaration))
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let tc (currentDeclContext))
+    (let declaration (vecGet tc.allDecls 1))
+    (let initiallyNone (isNone tc.curDeclNode))
+    (let untrusted (== (curDeclTrusted tc) 0))
+    (if (&& initiallyNone (&& untrusted (== (countErrorDiags (tcOutVec tc)) 0)))
+      (if (let (Some entry) (findFnEnt tc "identity"))
+        {
+          (set entry.unsafe 1)
+          (set tc.curDeclNode (Some declaration))
+          (let trusted (== (curDeclTrusted tc) 1))
+          (if (&& trusted (optionalStampChecks declaration))
+            (if (instantiatedStampChecks tc declaration)
+              (if (checkedStampChecks tc declaration)
+                {
+                  (set tc.curDeclNode None)
+                  (if (&& (isNone tc.curDeclNode) (== (curDeclTrusted tc) 0))
+                    42
+                    5)
+                }
+                4)
+              3)
+            2)
+        }
+        1)
+      6)
+  })

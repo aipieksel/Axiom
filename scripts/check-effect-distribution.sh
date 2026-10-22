@@ -372,17 +372,22 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # existing rows; no required effect changes, arrives or leaves.
 # Optional specialised loop help removes forVecMismatch's forged null String
 # and lexical Unsafe. Its existing Alloc,Mut row and required effects remain.
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3571 "exactly Alloc,Mut"
+# Owning checker/body/region records, semantic Options and compact exact
+# indexes add 27 helpers and retire eight. A same-compiler comparison
+# accounts for 204 changed metadata rows, including removal of raw-reader
+# Unsafe operations. No IO, Block, Spawn or Entropy row changes, arrives or
+# leaves; incomplete and higher-order effect counts remain unchanged.
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3604 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 478 "Alloc,IO,Mut"
-have "$(bucket "$work/main.axsym" 'Mut')" 231 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 248 "exactly Alloc"
+have "$(bucket "$work/main.axsym" 'Mut')" 269 "exactly Mut"
+have "$(bucket "$work/main.axsym" 'Alloc')" 293 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 145 "Alloc,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Unsafe')" 213 "exactly Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 123 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Unsafe')" 133 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 47 "Alloc,IO,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 74 "Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 34 "Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 17 "Alloc,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Unsafe')" 18 "Alloc,IO,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Mut,Unsafe')" 0 "IO,Mut,Unsafe"
@@ -407,7 +412,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2438 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2483 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 33 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"

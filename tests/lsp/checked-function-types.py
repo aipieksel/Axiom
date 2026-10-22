@@ -81,11 +81,57 @@ def run(compiler):
             expected = {'start': boundaries.position(refused, span['char_start']),
                         'end': boundaries.position(refused, span['char_end'])}
             assert diagnostics[0]['range'] == expected, (diagnostics, cli)
-            client.change(path.as_uri(), source, 4)
+            # Expansion failure carries diagnostics without constructing a
+            # checker context. Ordinary source lint fixes still work, while
+            # signature assists must wait for a successful checked context.
+            expansion_refused = """(macro refuse ((refuse) (syntax/arity Ghost)))
+(fn (value) (refuse))
+(fn (choose yes) (if yes true false))
+"""
+            path.write_text(expansion_refused)
+            cli = boundaries.terminal(compiler, path)
+            assert [item['code'] for item in cli] == ['AX3028'], cli
+            client.change(path.as_uri(), expansion_refused, 4)
+            diagnostics = client.latest(path.as_uri())['diagnostics']
+            errors = [item for item in diagnostics if item['severity'] == 1]
+            assert [item['code'] for item in errors] == ['AX3028'], diagnostics
+            span = cli[0]['span']
+            expected = {'start': boundaries.position(expansion_refused, span['char_start']),
+                        'end': boundaries.position(expansion_refused, span['char_end'])}
+            assert errors[0]['range'] == expected, (errors, cli)
+            assert cli[0]['message'] in errors[0]['message'], (errors, cli)
+            actions = client.request('textDocument/codeAction', {
+                'textDocument': {'uri': path.as_uri()},
+                'range': {'start': boundaries.position(expansion_refused, 0),
+                          'end': boundaries.position(expansion_refused, len(expansion_refused))},
+                'context': {'diagnostics': diagnostics}})
+            assert not [action for action in actions
+                        if action['title'].startswith('Add type signature for `')], actions
+            fixes = [action for action in actions if action.get('kind') == 'quickfix'
+                     and [item['code'] for item in action.get('diagnostics', [])] == ['lint-bool-if']]
+            assert len(fixes) == 1, actions
+            edits = fixes[0]['edit']['changes'][path.as_uri()]
+            insertion = boundaries.position(expansion_refused, expansion_refused.index('(fn (choose'))
+            assert edits == [{'range': {'start': insertion, 'end': insertion},
+                              'newText': ';@axiom:nolint(lint-bool-if)\n'}], edits
+            lint_fixed = expansion_refused.replace('(fn (choose', edits[0]['newText'] + '(fn (choose')
+            client.change(path.as_uri(), lint_fixed, 5)
+            assert [item['code'] for item in client.latest(path.as_uri())['diagnostics']] == ['AX3028']
+
+            path.write_text(source)
+            client.change(path.as_uri(), source, 6)
             assert client.latest(path.as_uri())['diagnostics'] == []
+            actions = client.request('textDocument/codeAction', {
+                'textDocument': {'uri': path.as_uri()},
+                'range': {'start': boundaries.position(source, 0),
+                          'end': boundaries.position(source, len(source))},
+                'context': {'diagnostics': []}})
+            for name in ('value', 'fraction'):
+                assert any(action['title'] == 'Add type signature for `' + name + '`'
+                           for action in actions), actions
         finally:
             client.close()
-    print('ok   checked function types: CLI, signature assists and hover agree; edits refuse and recover')
+    print('ok   checked function types: CLI/signature/hover agree; checker and expansion errors preserve diagnostics, lint fixes and recovery')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,86 @@
+; expect 42
+; Lambda evidence and strict restrictions keep separate typed state.
+; Deferred signature names survive replacement, and taint-cache states
+; distinguish an unvisited function from recursive and completed walks.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: privateStateSource (-> String TC))
+(fn (privateStateSource source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "private-state.ax" :src source :name "" :imports vecNew :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: depthIs (-> TC String Int Bool))
+(fn (depthIs tc name expected)
+  (match (lamVarDepth tc name)
+    ((None) false)
+    ((Some depth) (== depth expected))))
+
+(:: main Int)
+(fn (main)
+  {
+    (let tc
+      (privateStateSource
+        "(:: identity (-> Int Int))\n;@axiom:ct(x)\n;@axiom:restrict(strict)\n(pub fn (identity x) x)\n(:: recursive (-> Int Int))\n;@axiom:ct(x)\n(pub fn (recursive x) (recursive x))\n"))
+    (let initiallyMissing (isNone (lamVarDepth tc "a")))
+    (lamVarPush tc "a")
+    (lamVarPush tc "")
+    (let identityDecl (vecGet tc.allDecls 1))
+    (checkRestricts tc identityDecl (nodeAxtagsWords identityDecl) nilWords vecNew)
+    (lamVarPush tc "a")
+    (let inner (depthIs tc "a" 0))
+    (lamVarTrunc tc 2)
+    (let outer (depthIs tc "a" 1))
+    (set tc.curSigVars (vecPush vecNew "signaturevar"))
+    (let witness
+      (nodeBuildEApp (nodeBuildEVarPlain "pending" 0 0) (nodeBuildEIntPlain 0 0 0) vecNew 0))
+    (evNotePending tc nilNode nilNode (mkTVar "signaturevar") witness)
+    (set tc.curSigVars vecNew)
+    (evSettle tc)
+    (let table (ctTable tc))
+    (let expression (nodeBuildEVarPlain "result" 0 0))
+    (writeNodeWord expression 4 (mkSpan 1 7))
+    (emitContractResult tc expression)
+    (let noContext (== (vecLen (tcOutVec tc)) 0))
+    (set tc.contractTag (Some ContractPre))
+    (emitContractResult tc expression)
+    (let pre (vecGet (tcOutVec tc) 0))
+    (set tc.contractTag (Some ContractPost))
+    (emitContractResult tc expression)
+    (let post (vecGet (tcOutVec tc) 1))
+    (set tc.contractTag None)
+    (if (&& initiallyMissing
+          (&& inner
+            (&& outer
+              (&& noContext
+                (&& (== (nodeTy witness) 2)
+                  (&& (== (vecLen (evPendingOf tc)) 0)
+                    (&& (== (vecLen table) 2)
+                      (&& (isNone (ctTableIndex table "missing"))
+                        (&& (strEq (diagCode pre) "AX3050")
+                          (&& (strEq (diagCode post) "AX3050")
+                            (&&
+                              (strEq (diagMsg pre)
+                                "`result` names nothing in a `pre`: a precondition is checked BEFORE the body runs, so there is no result yet")
+                              (strEq (diagMsg post)
+                                "`result` names nothing here: this declaration has no `::` signature, so it declares no result type for `result` to have"))))))))))))
+      (if (let (Some first) (ctTableIndex table "identity"))
+        (if (let (Some recursive) (ctTableIndex table "recursive"))
+          (if (&& (== (ctSummary tc first) 2) (== (ctSummary tc recursive) 2))
+            42
+            4)
+          3)
+        2)
+      1)
+  })

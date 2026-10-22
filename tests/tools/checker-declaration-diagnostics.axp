@@ -1,0 +1,40 @@
+; Declaration lookup keeps first-match identity and typed missing results.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew declarations declarations units))
+    (tcWalkDecls tc 0)
+    (checkMainResultType tc declarations)
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "373-restrict-no-cast.ax"
+      "; `restrict(no-cast)`: no `cast` head in THIS body. The one restriction\n; that is LOCAL, and the controls are what pin that:\n;\n;   `fabricates`  writes `(cast Int m)`                  -> AX3049 AT THE\n;                 CAST - the span covers the word `cast`, not the name\n;   `nested`      a cast inside a `let` inside a `match` -> AX3049, the\n;                 walk reaching every form\n;   `delegates`   calls `unwrap`, which casts            -> silent: a\n;                 callee's casts are the callee's claim to make\n;   `measures`    writes `(sizeof Int)`                  -> silent: it\n;                 reads a layout and reinterprets nothing\n;   `honest`      the tag on the `::`, no cast anywhere  -> silent\n;\n; Two casts in one body are two diagnostics: each has its own span,\n; and the fix is where the span is.\n(data Meters\n  (MkM Int))\n\n;@axiom:restrict(no-cast)\n(:: fabricates (-> Meters Int))\n(fn (fabricates m)\n  (+ (as m Int) (as m Int)))\n\n;@axiom:restrict(no-cast)\n(:: nested (-> Meters Int))\n(fn (nested m)\n  (match m\n    ((MkM v)\n      {\n        (let w (as m Int))\n        (+ v w)\n      }\n    )))\n\n(:: unwrap (-> Meters Int))\n(fn (unwrap m)\n  (as m Int))\n\n;@axiom:restrict(no-cast)\n(:: delegates (-> Meters Int))\n(fn (delegates m)\n  (unwrap m))\n\n(:: measures (-> Int Int))\n;@axiom:restrict(no-cast)\n(fn (measures n)\n  (+ n (sizeof Int)))\n\n;@axiom:restrict(no-cast)\n(:: honest (-> Meters Int))\n(fn (honest m)\n  (match m\n    ((MkM v) v)))\n\n(:: main Int)\n(fn (main)\n  {\n    (let m (MkM 7))\n    (+ (fabricates m) (+ (nested m) (+ (delegates m) (+ (measures 1) (honest m)))))\n  })\n")
+    (checkSource "378-restrict-no-cast-deep.ax"
+      "; `restrict(no-cast:deep)`: the closure, opted into by spelling it.\n; This body's casts are reported at their spans exactly as `no-cast`\n; reports them; the closure is reported ONCE, at the declaration, for\n; the nearest reachable function whose body casts, with the path.\n;\n;   `deepCaller`  calls `unwrap`, which casts          -> AX3049 at the\n;                 declaration: deepCaller -> unwrap\n;   `deepFar`     reaches `unwrap` two hops down       -> AX3049, the\n;                 path naming both hops\n;   `deepLocal`   casts in its own body AND reaches `unwrap`\n;                                                      -> two AX3049s:\n;                 the local one at the cast, the closure's at the decl\n;   `deepClean`   a closure with no cast in it         -> silent\n;   `shallow`     `no-cast` (local) calling `unwrap`   -> silent: the\n;                 control that keeps the two spellings distinct\n;   `deepPartial` calls a field filled by a parameter -> AX3051:\n;                 the factory's callable value cannot be enumerated\n;   `deepRefuted` `((b.f) n)` beside a call to `unwrap`\n;                                                      -> AX3049 alone:\n;                 a cast found refutes the claim whatever the walk\n;                 could not close\n(data Meters\n  (MkM Int))\n\n(struct Box\n  (f : (-> Int Int)))\n\n(:: unwrap (-> Meters Int))\n(fn (unwrap m)\n  (as m Int))\n\n(:: viaUnwrap (-> Meters Int))\n(fn (viaUnwrap m)\n  (unwrap m))\n\n;@axiom:restrict(no-cast:deep)\n(:: deepCaller (-> Meters Int))\n(fn (deepCaller m)\n  (unwrap m))\n\n;@axiom:restrict(no-cast:deep)\n(:: deepFar (-> Meters Int))\n(fn (deepFar m)\n  (viaUnwrap m))\n\n;@axiom:restrict(no-cast:deep)\n(:: deepLocal (-> Meters Int))\n(fn (deepLocal m)\n  (+ (as m Int) (unwrap m)))\n\n(:: plain (-> Meters Int))\n(fn (plain m)\n  (match m\n    ((MkM v) v)))\n\n;@axiom:restrict(no-cast:deep)\n(:: deepClean (-> Meters Int))\n(fn (deepClean m)\n  (plain m))\n\n;@axiom:restrict(no-cast)\n(:: shallow (-> Meters Int))\n(fn (shallow m)\n  (unwrap m))\n\n;@axiom:restrict(no-cast:deep)\n(:: deepPartial (-> Box Int Int))\n(fn (deepPartial b n)\n  (b.f n))\n\n;@axiom:restrict(no-cast:deep)\n(:: deepRefuted (-> Box Meters Int))\n(fn (deepRefuted b m)\n  (+ (b.f 1) (unwrap m)))\n\n(:: main Int)\n(fn (main)\n  {\n    (let m (MkM 7))\n    (let b (boxed (lambda (x) x)))\n    (+ (deepCaller m)\n      (+ (deepFar m)\n        (+ (deepLocal m)\n          (+ (deepClean m) (+ (shallow m) (+ (deepPartial b 1) (deepRefuted b m)))))))\n  })\n\n; The factory stores an opaque parameter, keeping the unresolved control.\n(:: boxed (-> (-> Int Int) Box))\n(fn (boxed f)\n  (Box :f f))\n")
+    (checkSource "1469-main-result-type.ax"
+      "; `main` answers the process's exit status. A `String` is a reference,\n; and its address would reach the status, so it is refused (AX3135).\n; `tests/stdlib/493-main-result-unit.ax` is the accepted `Result` form.\n(:: main String)\n(fn (main)\n  \"not a status\")\n")
+    (checkSource "unhandled-decl.ax"
+      "(effect Alert (alert :: (-> Int Int)))\n(pub :: deep (-> Int Int))\n(pub fn (deep value) (alert value))\n(pub :: main Int)\n(pub fn (main) (deep 1))\n")
+    (checkSource "missing-main.ax" "(pub :: helper Int) (pub fn (helper) 42)")
+    0
+  })

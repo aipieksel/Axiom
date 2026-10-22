@@ -1,0 +1,89 @@
+; expect 42
+; Multi-name declarations keep Some(empty), and lookups preserve the
+; first field and its span. Placeholder cleanup keeps diagnostic work.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: declarationFieldChecks Bool)
+(fn (declarationFieldChecks)
+  {
+    (let declarationSpan (mkSpan 1 4))
+    (let fieldSpan (mkSpan 8 10))
+    (let ordinary (nodeBuildDFn "single" vecNew (mkEInt 0) declarationSpan))
+    (let first (markPub (setNodeSpan (mkField "op" 0) fieldSpan)))
+    (let second (setNodeSpan (mkField "op" 0) (mkSpan 12 14)))
+    (let fields (vecPush (vecPush vecNew first) second))
+    (let effect (nodeBuildDEffect "Console" vecNew fields declarationSpan))
+    (let empty (nodeBuildDEffect "Empty" vecNew vecNew declarationSpan))
+    (let extern (nodeBuildDExtern "Library" vecNew fields declarationSpan))
+    (let emptyFields
+      (match (declFields empty)
+        ((None) false)
+        ((Some values) (== (vecLen values) 0))))
+    (let firstFound
+      (match (findFieldNamed fields "op" 0)
+        ((None) false)
+        ((Some field) (nodeSame field first))))
+    (&& (isNone (declFields ordinary))
+      (&& emptyFields
+        (&& firstFound
+          (&& (isNone (findFieldNamed fields "missing" 0))
+            (&& (== (declDefSpan effect "op") fieldSpan)
+              (&& (== (declDefSpan effect "missing") declarationSpan)
+                (&& (moduleDeclNames extern "op")
+                  (&& (! (moduleDeclNames extern "Library"))
+                    (&& (moduleDeclExports extern "op")
+                      (! (moduleDeclExports extern "missing")))))))))))
+  })
+
+(:: declarationDiagnosticChecks Bool)
+(fn (declarationDiagnosticChecks)
+  {
+    (let operation (setNodeSpan (mkField "op" 0) (mkSpan 3 5)))
+    (let effect (nodeBuildDEffect "Console" vecNew (vecPush vecNew operation) (mkSpan 1 2)))
+    (let function (nodeBuildDFn "op" vecNew (mkEInt 0) (mkSpan 10 12)))
+    (let declarations (vecPush (vecPush vecNew effect) function))
+    (let diagnostics (checkDuplicates (dupIdxBuild declarations) declarations vecNew 0))
+    (let reserved vecNew)
+    (checkReservedNames
+      (vecPush
+        (vecPush (vecPush vecNew (nodeBuildDFn "axiom_alloc" vecNew (mkEInt 0) (mkSpan 1 3)))
+          (nodeBuildDFn "normal" vecNew (mkEInt 0) (mkSpan 4 6)))
+        (nodeBuildDFn "axiom_release" vecNew (mkEInt 0) (mkSpan 7 9)))
+      reserved 0)
+    (if (&& (== (vecLen diagnostics) 1) (== (vecLen reserved) 2))
+      (&& (strEq (diagCode (vecGet diagnostics 0)) "AX3006")
+        (&& (strEq (diagMsg (vecGet diagnostics 0)) "duplicate definition `op`")
+          (&& (strEq (diagCode (vecGet reserved 0)) "AX3026")
+            (strEq (diagCode (vecGet reserved 1)) "AX3026"))))
+      false)
+  })
+
+(:: restrictionListChecks Bool)
+(fn (restrictionListChecks)
+  {
+    (let names vecNew)
+    (let empty vecNew)
+    (let returned (restrictSplit "first, second, first" names))
+    (let emptyReturned (restrictSplit "" empty))
+    (if (&& (== (vecLen names) 2) (== (vecLen empty) 1))
+      (&& (! (vecIsNull returned))
+        (&& (! (vecIsNull emptyReturned))
+          (&& (strEq (vecGet returned 0) "first")
+            (&& (strEq (vecGet returned 1) "second") (strEq (vecGet emptyReturned 0) "")))))
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (declarationFieldChecks)
+    (if (declarationDiagnosticChecks)
+      (if (restrictionListChecks)
+        42
+        3)
+      2)
+    1))

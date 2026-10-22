@@ -1,0 +1,37 @@
+; Optional extern refusal reasons retain the first rejected leaf and owned text.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew declarations declarations units))
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "702-extern-type-discipline.ax"
+      "; What an `extern` signature may name: one word each way.\n;\n; A type variable, a declared type such as `(Option Int)` and a\n; function-typed argument outside the three callback shapes (every\n; leaf `Int`, arity 1-3) are AX3036 at the item; a `fn` spelled like\n; an item is the duplicate it is (AX3006) - the block defines its\n; items, not its library string, so two blocks naming one library are\n; not duplicates of each other.\n(pub extern \"axiom_demo\"\n  (add :: (-> Int Int Int) (symbol \"axffi_add\"))\n  (poly :: (-> a Int) (symbol \"axffi_poly\"))\n  (opt :: (-> Int (Option Int)) (symbol \"axffi_opt\"))\n  (hof :: (-> (-> String Int) Int) (symbol \"axffi_hof\"))\n  (cb2 :: (-> (-> Int Int Int) Int) (symbol \"axffi_cb2\")))\n\n(pub extern \"axiom_demo\"\n  (sub :: (-> Int Int Int) (symbol \"axffi_sub\")))\n\n(:: add (-> Int Int Int))\n(fn (add a b)\n  (+ a b))\n\n(:: main ())\n(fn (main)\n  ())\n")
+    (checkSource "1433-fixed-width-extern.ax"
+      "(extern \"demo\"\n  (byteValue :: (-> UInt8 UInt8))\n  (wideValue :: (-> UInt64 UInt64))\n  (signedValue :: (-> Int16 Int16)))\n\n(:: main ())\n(fn (main)\n  ())\n")
+    (checkSource "unknown-first.ax"
+      "(extern \"demo\" (bad :: (-> Ghost (Option Int))))\n(:: main Int) (fn (main) 0)\n")
+    (checkSource "allowed.ax"
+      "(extern \"demo\" (good :: (-> (-> Int Float) String Foreign)))\n(:: main Int) (fn (main) 0)\n")
+    0
+  })

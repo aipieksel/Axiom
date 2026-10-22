@@ -1,0 +1,96 @@
+; expect 42
+; Lazy empty caches stay built, inactive collectors do not collect,
+; active empty collectors do, and unsigned defaults report once.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: collectorContext (-> String TC))
+(fn (collectorContext source)
+  {
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "collector-options.ax" :src source :name "" :imports vecNew :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: collectorChecks Bool)
+(fn (collectorChecks)
+  {
+    (let tc (collectorContext ""))
+    (let site (mkEVar "site"))
+    (let active vecNew)
+    (let initiallyNone (isNone tc.pairSites))
+    (tcSiteAdd tc site)
+    (let inactive (&& (isNone tc.pairSites) (== (tcSiteIn tc site) 0)))
+    (set tc.pairSites (Some active))
+    (let initiallyEmpty (== (tcSiteIn tc site) 0))
+    (tcSiteAdd tc site)
+    (let recorded (&& (== (vecLen active) 1) (== (tcSiteIn tc site) 1)))
+    (set tc.pairSites None)
+    (tcSiteAdd tc (mkEVar "later"))
+    (&& initiallyNone
+      (&& inactive
+        (&& initiallyEmpty
+          (&& recorded
+            (&& (== (vecLen active) 1)
+              (&& (isNone tc.pairSites) (== (vecLen (unsafeForgeSitesOf tc)) 0)))))))
+  })
+
+(:: cacheChecks Bool)
+(fn (cacheChecks)
+  {
+    (let tc (collectorContext ""))
+    (let initiallyNone (&& (isNone tc.sigTags) (isNone tc.deprecated)))
+    (sigAxtagsFor tc "missing")
+    (deprecatedFor tc "missing")
+    (let builtEmpty
+      (match tc.sigTags
+        ((None) false)
+        ((Some tags)
+          (match tc.deprecated
+            ((None) false)
+            ((Some names) (&& (== (vecLen tags) 0) (== (vecLen names) 0))))
+        )))
+    (let source
+      ";@axiom:effect(pure)\n;@axiom:deprecated(use replacement)\n(:: late Int)\n(pub fn (late) 1)\n")
+    (let late (collectorContext source))
+    (for declaration in late.allDecls
+      (vecPush tc.allDecls declaration))
+    (let stillEmpty (&& (vecIsNull (sigAxtagsFor tc "late")) (isNone (deprecatedFor tc "late"))))
+    (let fresh (collectorContext source))
+    (&& initiallyNone
+      (&& builtEmpty
+        (&& stillEmpty
+          (&& (! (vecIsNull (sigAxtagsFor fresh "late")))
+            (match (deprecatedFor fresh "late")
+              ((None) false)
+              ((Some replacement) (strEq replacement "use replacement")))))))
+  })
+
+(:: unsignedChecks Bool)
+(fn (unsignedChecks)
+  {
+    (let source
+      "(pub fn (field record) { record.missing record.again })\n(:: main Int)\n(pub fn (main) 42)\n")
+    (let tc (collectorContext source))
+    (let checked (checkModuleTcTyped tc.allDecls tc.allDecls tc.units))
+    (if (== (countErrorDiags (tcOutVec checked)) 1)
+      (strEq (diagCode (vecGet (tcOutVec checked) 0)) "AX3089")
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (collectorChecks)
+    (if (cacheChecks)
+      (if (unsignedChecks)
+        42
+        3)
+      2)
+    1))

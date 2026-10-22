@@ -1,0 +1,96 @@
+; Alias-cycle witnesses are optional and preserve first path and module state.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: sameNode (-> (Option ASTNode) ASTNode Bool))
+(fn (sameNode candidate expected)
+  (match candidate
+    ((Some node) (nodeSame node expected))
+    ((None) false)))
+
+(:: registerAlias (-> TC ASTNode ASTNode))
+(fn (registerAlias tc declaration)
+  {
+    (vecPush (tcAliasesVec tc) declaration)
+    (tyIdxPut tc (nodeAName declaration) (nodeModuleOpt declaration) (TyAlias declaration))
+    declaration
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (let word (mkTCon "Int" vecNew))
+    (let direct (registerAlias tc (nodeBuildDAlias "Direct" (mkTCon "Direct" vecNew) vecNew 0)))
+    (let first (registerAlias tc (nodeBuildDAlias "First" (mkTCon "Second" vecNew) vecNew 0)))
+    (let second (registerAlias tc (nodeBuildDAlias "Second" (mkTCon "First" vecNew) vecNew 0)))
+    (let finite (registerAlias tc (nodeBuildDAlias "Finite" word vecNew 0)))
+    (let identity
+      (registerAlias tc (nodeBuildDAlias "Identity" (mkTVar "a") (vecPush vecNew "a") 0)))
+    (let poison (registerAlias tc (nodeBuildDAlias "Poison" mkTErr vecNew 0)))
+    (let seen (:: vecNew Nodes))
+    (let directTy (mkTCon "Direct" vecNew))
+    (let firstTy (mkTCon "First" vecNew))
+    (say 1 (isNone (aliasCycle tc nilNode seen)))
+    (say 2 (isNone (aliasCycle tc word seen)))
+    (say 3 (isNone (aliasCycle tc (mkTVar "a") seen)))
+    (say 4 (isNone (aliasCycle tc mkTErr seen)))
+    (say 5 (isNone (aliasCycle tc (mkTCon "Missing" vecNew) seen)))
+    (say 6 (isNone (aliasCycle tc (mkTCon "Finite" vecNew) seen)))
+    (say 7 (sameNode (aliasCycle tc directTy seen) direct))
+    (say 8 (sameNode (aliasCycle tc firstTy seen) first))
+    (say 9 (sameNode (aliasCycle tc firstTy (vecPush vecNew second)) second))
+    (say 10
+      (isNone
+        (aliasCycle tc
+          (mkTCon "Identity" (vecPush vecNew (mkTCon "Identity" (vecPush vecNew word)))) seen)))
+    (say 11 (sameNode (aliasCycle tc (mkTCon "Identity" (vecPush vecNew directTy)) seen) direct))
+    (say 12 (sameNode (aliasCycle tc (mkTCon "First" (vecPush vecNew directTy)) seen) direct))
+    (say 13 (sameNode (aliasCycle tc (mkTCon "Unknown" (vecPush vecNew directTy)) seen) direct))
+    (say 14 (isNone (aliasCycle tc (mkTCon "Poison" (vecPush vecNew directTy)) seen)))
+    (say 15 (sameNode (aliasCycle tc (mkTArr firstTy directTy) seen) first))
+    (say 16 (sameNode (aliasCycle tc (mkTArr word directTy) seen) direct))
+    (say 17
+      (sameNode (aliasCycle tc (mkTTup (vecPush (vecPush vecNew word) directTy)) seen) direct))
+    (say 18 (sameNode (aliasCycle tc (mkTPtr directTy) seen) direct))
+    (say 19 (isNone (aliasCycleVec tc vecNew seen 0)))
+    (say 20 (isNone (aliasCycleVec tc nilNodes seen 0)))
+    (say 21 (sameNode (aliasCycleVec tc (vecPush (vecPush vecNew word) directTy) seen 0) direct))
+    (say 22 (isNone (aliasCycleVec tc (vecPush vecNew directTy) seen 1)))
+    (say 23 (== (vecLen seen) 0))
+    (say 24 (isNone tc.curModule))
+    (let owned (nodeBuildDAlias "Cycle" (mkTCon "Cycle" vecNew) vecNew 0))
+    (writeNodeText owned 8 "Owner")
+    (writeNodeWord owned 5 1)
+    (registerAlias tc owned)
+    (let qualified (mkTCon "Owner$Cycle" vecNew))
+    (say 25 (sameNode (aliasCycle tc qualified seen) owned))
+    (say 26 (isNone tc.curModule))
+    (set tc.curModule (Some "Elsewhere"))
+    (say 27 (sameNode (aliasCycle tc qualified seen) owned))
+    (say 28
+      (if (let (Some moduleName) tc.curModule)
+        (strEq moduleName "Elsewhere")
+        false))
+    (set tc.curModule None)
+    (say 29 (sameNode (aliasCycle tc directTy (vecPush vecNew direct)) direct))
+    (say 30 (== (countErrorDiags (tcOutVec tc)) 0))
+    0
+  })

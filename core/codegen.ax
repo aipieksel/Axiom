@@ -4455,7 +4455,7 @@
             (parkForms f)
             0)
           (if (!= (& mask (wordBit i)) 0)
-            (| (parkForms (wordParts f)) (arrivalToWord (arrivalPart f)))
+            (| (parkForms (argumentWordFlow cg (spineArgAt e i) f)) (arrivalToWord (arrivalPart f)))
             0))
       }
       (stashSel cg e n_ params env mask (+ i 1)))))
@@ -4483,7 +4483,9 @@
       {
         (if (== (ctorFieldParks cg entry e tn i) 1)
           (stashAdd cell (parkForms f))
-          (stashAdd cell (parkForms (wordParts f))))
+          (stashAdd cell
+            (parkForms
+              (retainedFieldWordFlow (fieldRetainCode cg entry (nodeTyChild (spineHead e)) i) f))))
         (flowStashesFields cg entry e n_ params env cell (+ i 1))
       }
     }))
@@ -4500,10 +4502,34 @@
           true
           (== (fldClass cg tn) 0))
           (stashAdd cell (parkForms f))
-          (stashAdd cell (parkForms (wordParts f))))
+          (stashAdd cell
+            (parkForms (retainedFieldWordFlow (fieldRetainCode cg entry nilNode i) f))))
         (flowStashesFieldsVec cg entry args params env cell (+ i 1))
       }
     }))
+
+; A counted field takes a share of a typed child reference, including
+; a reference borrowed from a container. That share keeps the child
+; alive without keeping the container itself. Its owner-flow bit must
+; not turn `Some (vecGet entries i)` into an uncounted park of `entries`.
+; Use the emitter's unconditional retain decision, including a constructor
+; witness when a local variable has no separate expression type stamp.
+; Header words and conditional or absent retains remain conservative.
+(pub :: retainedFieldWordFlow (-> Int Int Int))
+(pub fn (retainedFieldWordFlow retainCode flow)
+  (if (== retainCode 1)
+    (wordPart flow)
+    (wordParts flow)))
+
+; A weak park keeps raw words but counts a typed argument. A checked
+; reference read from a container is that typed child, so the callee's
+; share protects the child without keeping the source container. A
+; missing stamp stays conservative; strong parks still keep all forms.
+(pub :: argumentWordFlow (-> CG ASTNode Int Int))
+(pub fn (argumentWordFlow cg argument flow)
+  (if (== (fldClass cg (checkedValueTy argument)) 2)
+    (wordPart flow)
+    (wordParts flow)))
 
 ; The declared type node of field `j` of a constructor or struct
 ; entry, or 0.
@@ -31278,7 +31304,7 @@
     {
       (let f (bindingFlow cg name (spineArgAt e i)))
       (if (|| (&& (!= (& mask (| (paramBit i) (ownerBit i))) 0) (!= f 0))
-            (&& (!= (& mask (wordBit i)) 0) (!= (wordParts f) 0)))
+            (&& (!= (& mask (wordBit i)) 0) (!= (argumentWordFlow cg (spineArgAt e i) f) 0)))
         1
         (argsEscapeByMask cg name e n_ mask (+ i 1)))
     }))

@@ -35,11 +35,28 @@ gate_init
 gate_build_axc axc
 
 python3 tests/tools/compiler-representation.py "$axc"
-python3 tests/selfhost/typecheck-type-registry.py --axiom "$axc"
+python3 tests/selfhost/typecheck-type-registry.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/typecheck-bound-scope.py --axiom "$axc"
+python3 tests/selfhost/typecheck-lookup-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-result-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-region-records.py --axiom "$axc"
+python3 tests/selfhost/typecheck-compact-index.py --axiom "$axc"
+python3 tests/selfhost/retained-constructor-child.py --axiom "$axc"
 python3 tests/tools/format-option-specifiers.py "$axc"
 python3 tests/tools/expansion-option-frames.py "$axc"
 python3 tests/tools/expansion-option-bindings.py "$axc"
+python3 tests/tools/checker-type-syntax-options.py "$axc"
+python3 tests/tools/checker-effect-macro-options.py "$axc"
+python3 tests/tools/checker-recursion-witness-options.py "$axc"
+python3 tests/tools/checker-declaration-options.py "$axc"
+python3 tests/tools/checker-current-signature-options.py "$axc"
+python3 tests/tools/checker-alias-cycle-options.py "$axc"
 python3 tests/tools/checker-for-help-options.py "$axc"
+python3 tests/tools/checker-declared-result-options.py "$axc"
+python3 tests/tools/checker-field-refusal-options.py "$axc"
+python3 tests/tools/checker-renderer-options.py "$axc"
+python3 tests/tools/checker-syscall-effect-options.py "$axc"
+python3 tests/tools/checker-field-initializer-options.py "$axc"
 python3 tests/tools/expansion-option-sequences.py "$axc"
 
 failed=0

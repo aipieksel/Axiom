@@ -142,9 +142,11 @@ checking remains a separate obligation.
 
 | Invariant | Enforcement and evidence | Limit |
 |---|---|---|
-| Function tables retain checked entries and distinguish an absent name from an entry | `Vec FnEnt`, `Option FnEnt`; `tests/selfhost/typecheck-function-registry.ax` | Checker context carriers still need migration |
+| Checker contexts and function tables retain their typed children and distinguish missing entries | Owning `TC`, typed body scopes and `Option FnEnt`; `tests/selfhost/typecheck-function-registry.ax`, `tests/selfhost/typecheck-bound-scope.py` | Parser arena handles and mutable checked stamps remain trusted boundaries |
 | Expansion preserves present empty repetitions and keeps binding and frame owners | Typed matches, binding vectors and `Option` results; `tests/tools/expansion-option-sequences.py`, `tests/tools/expansion-option-frames.py` | Syntax-identity metadata still crosses the raw AST arena boundary |
 | Emitter metadata keeps each live share through replacement and restoration | Owning `CG` context and typed tables; `tests/selfhost/emitter-symbol-scope.py`, `tests/selfhost/emitter-type-registry.py` | Remaining packed state and reference erasures require separate review |
+| Region facts retain their buffers without a cached checker backedge | Typed facts and scratch records; `tests/selfhost/typecheck-region-records.py`, `tests/selfhost/region-fact-projections.ax` | This checks representation and cleanup, not lifetime-analysis completeness |
+| Compact exact-name indexes preserve entry ownership, lookup order and missing results | Sealed owning tables with `UInt32` Links and an overflow scan fallback; `tests/selfhost/typecheck-compact-index.py` | The measured layout is for a 64-bit host; suffix indexes retain full-width owners |
 | Failed pattern tests continue without exposing branch bindings | `Some` and `None` paths; `tests/selfhost/typecheck-if-let-control-flow.ax`, `tests/diagnostics/1496-if-let-scope.ax` | Conditional matching does not require an `else` |
 
 The compiler representation probes run natively at optimisation levels
