@@ -24690,45 +24690,49 @@
     }))
 
 ; The byte just past the `)` closing the form that opens at `o`, or
-; -1 when the source ends first.
-(pub :: formEndFrom (-> String Int Int))
+; None when no complete form opens at that position.
+(pub :: formEndFrom (-> String Int (Option Int)))
 (pub fn (formEndFrom src o)
-  {
-    (let n (strLen src))
-    (let mut i o)
-    (let mut depth 0)
-    (let mut stop (- 0 1))
-    {
-      (while (if (< i n)
-        (< stop 0)
-        false)
+  (if (|| (< o 0) (>= o (strLen src)))
+    None
+    (if (!= (strByte src o) 40)
+      None
+      {
+        (let n (strLen src))
+        (let mut i o)
+        (let mut depth 0)
+        (let mut stop (:: None (Option Int)))
         {
-          (let ch (strByte src i))
-          (if (== ch 34)
-            (set i (skipStringBody src (+ i 1) n))
-            (if (isIdentStart ch)
-              (set i (skipIdent src (+ i 1) n))
-              (if (== ch 39)
-                (set i (skipCharBody src (+ i 1) n))
-                (if (&& (== ch 35) (isBlockOpen src i n))
-                  (set i (skipBlockComment src (+ i 2) n))
-                  (if (== ch 59)
-                    (set i (findNewline src i n))
-                    {
-                      (if (== ch 40)
-                        (set depth (+ depth 1)))
-                      (if (== ch 41)
+          (while (if (< i n)
+            (isNone stop)
+            false)
+            {
+              (let ch (strByte src i))
+              (if (== ch 34)
+                (set i (skipStringBody src (+ i 1) n))
+                (if (isIdentStart ch)
+                  (set i (skipIdent src (+ i 1) n))
+                  (if (== ch 39)
+                    (set i (skipCharBody src (+ i 1) n))
+                    (if (&& (== ch 35) (isBlockOpen src i n))
+                      (set i (skipBlockComment src (+ i 2) n))
+                      (if (== ch 59)
+                        (set i (findNewline src i n))
                         {
-                          (set depth (- depth 1))
-                          (if (<= depth 0)
-                            (set stop (+ i 1)))
-                        })
-                      (set i (+ i 1))
-                    })))))
-        })
-      stop
-    }
-  })
+                          (if (== ch 40)
+                            (set depth (+ depth 1)))
+                          (if (== ch 41)
+                            {
+                              (set depth (- depth 1))
+                              (if (<= depth 0)
+                                (set stop (Some (+ i 1))))
+                            })
+                          (set i (+ i 1))
+                        })))))
+            })
+          stop
+        }
+      })))
 
 ; The first byte at or after `i` that is neither whitespace nor a
 ; comment, or -1 when only those remain.
@@ -24762,69 +24766,73 @@
 
 ; The `(` opening the OUTERMOST form whose head token starts at `p`:
 ; back over the run of `(` and blanks before `p`, then forward to the
-; first `(` of that run. -1 when no `(` sits between the previous
+; first `(` of that run. None when no `(` sits between the previous
 ; token and `p` - a bare token, which is its own form.
-(pub :: formOpenBefore (-> String Int Int))
+(pub :: formOpenBefore (-> String Int (Option Int)))
 (pub fn (formOpenBefore src p)
-  {
-    (let mut i (- p 1))
+  (if (|| (< p 0) (> p (strLen src)))
+    None
     {
-      (while (if (>= i 0)
-        (|| (== (strByte src i) 40) (isBlankByte (strByte src i)))
-        false)
-        (set i (- i 1)))
+      (let mut i (- p 1))
       {
-        (let mut j (+ i 1))
+        (while (if (>= i 0)
+          (|| (== (strByte src i) 40) (isBlankByte (strByte src i)))
+          false)
+          (set i (- i 1)))
         {
-          (while (if (< j p)
-            (isBlankByte (strByte src j))
-            false)
-            (set j (+ j 1)))
-          (if (&& (< j p) (== (strByte src j) 40))
-            j
-            (- 0 1))
+          (let mut j (+ i 1))
+          {
+            (while (if (< j p)
+              (isBlankByte (strByte src j))
+              false)
+              (set j (+ j 1)))
+            (if (&& (< j p) (== (strByte src j) 40))
+              (Some j)
+              None)
+          }
         }
       }
-    }
-  })
+    }))
 
 ; The `(` opening the form `(kw ...)` whose second token starts at
 ; `p` - `(match` before a scrutinee, `(import` before a module path -
-; or -1 when the word before `p` is not `kw` or no `(` precedes it.
-(pub :: headOpenBefore (-> String Int String Int))
+; or None when the word before `p` is not `kw` or no `(` precedes it.
+(pub :: headOpenBefore (-> String Int String (Option Int)))
 (pub fn (headOpenBefore src p kw)
-  {
-    (let mut i (- p 1))
+  (if (|| (< p 0) (> p (strLen src)))
+    None
     {
-      (while (if (>= i 0)
-        (|| (isBlankByte (strByte src i)) (|| (== (strByte src i) 10) (== (strByte src i) 13)))
-        false)
-        (set i (- i 1)))
+      (let mut i (- p 1))
       {
-        (let mut j i)
+        (while (if (>= i 0)
+          (|| (isBlankByte (strByte src i)) (|| (== (strByte src i) 10) (== (strByte src i) 13)))
+          false)
+          (set i (- i 1)))
         {
-          (while (if (>= j 0)
-            (isIdentChar (strByte src j))
-            false)
-            (set j (- j 1)))
-          (if (strEq (strSlice src (+ j 1) (- i j)) kw)
-            {
-              (let mut k j)
+          (let mut j i)
+          {
+            (while (if (>= j 0)
+              (isIdentChar (strByte src j))
+              false)
+              (set j (- j 1)))
+            (if (strEq (strSlice src (+ j 1) (- i j)) kw)
               {
-                (while (if (>= k 0)
-                  (isBlankByte (strByte src k))
-                  false)
-                  (set k (- k 1)))
-                (if (&& (>= k 0) (== (strByte src k) 40))
-                  k
-                  (- 0 1))
+                (let mut k j)
+                {
+                  (while (if (>= k 0)
+                    (isBlankByte (strByte src k))
+                    false)
+                    (set k (- k 1)))
+                  (if (&& (>= k 0) (== (strByte src k) 40))
+                    (Some k)
+                    None)
+                }
               }
-            }
-            (- 0 1))
+              None)
+          }
         }
       }
-    }
-  })
+    }))
 
 (pub :: spacesOf (-> Int String))
 (pub fn (spacesOf n)
@@ -24877,73 +24885,64 @@
 (pub fn (matchFixHelps tc d arms scrutTy scrut matrix missing)
   {
     (let src (tcEntrySrc tc))
-    {
-      (let close
-        (if (== (strLen src) 0)
-          (- 0 1)
-          (matchCloseAt src scrut arms)))
-      {
-        (let indent
-          (if (< close 0)
-            (- 0 1)
-            (matchArmIndent src scrut arms)))
+    (let mut offered false)
+    (if (let (Some close) (if (== (strLen src) 0)
+      None
+      (matchCloseAt src scrut arms)))
+      (if (let (Some indent) (matchArmIndent src scrut arms))
         {
-          (let text
-            (if (< indent 0)
-              ""
-              (missingArmsText tc scrutTy matrix missing indent)))
-          (if (== (strLen text) 0)
-            (diagAddHelp d "add the missing arms, or a wildcard `_` arm to catch the rest")
+          (let text (missingArmsText tc scrutTy matrix missing indent))
+          (if (> (strLen text) 0)
             {
               (diagAddFixHelp d "add the missing arms, each a `todo` until it is written"
                 (mkSpan close close) text)
+              (set offered true)
               (if (isNone (findFnEnt tc "todo"))
                 (importTodoHelp tc d src))
             })
-        }
-      }
-    }
+        }))
+    (if (! offered)
+      (diagAddHelp d "add the missing arms, or a wildcard `_` arm to catch the rest"))
+    ()
   })
 
-; The byte of the `)` closing the match, or -1.
-(pub :: matchCloseAt (-> String ASTNode (Vec ASTNode) Int))
+; The byte of the `)` closing the match, or None.
+(pub :: matchCloseAt (-> String ASTNode Nodes (Option Int)))
 (pub fn (matchCloseAt src scrut arms)
   {
     (let anchor
       (if (== (vecLen arms) 0)
         (scrutFormEnd src scrut)
         (armFormEnd src (vecGet arms (- (vecLen arms) 1)))))
-    (if (< anchor 0)
-      (- 0 1)
+    (if (let (Some end) anchor)
       {
-        (let k (skipTrivia src anchor))
-        (if (&& (>= k 0) (== (strByte src k) 41))
-          k
-          (- 0 1))
-      })
+        ; skipTrivia retains its lower-level exhausted-input cursor.
+        (let next (skipTrivia src end))
+        (if (&& (>= next 0) (== (strByte src next) 41))
+          (Some next)
+          None)
+      }
+      None)
   })
 
-; The `(` opening an arm, from its pattern's head token; -1 for a
+; The `(` opening an arm, from its pattern's head token; None for a
 ; `syntax/for` arm or a pattern with no span.
-(pub :: armOpenOf (-> String ASTNode Int))
+(pub :: armOpenOf (-> String ASTNode (Option Int)))
 (pub fn (armOpenOf src arm)
   (if (!= (nodeTag arm) TAG_M_ARM)
-    (- 0 1)
+    None
     {
       (let sp (spanOf (nodeAChild arm)))
       (if (== sp 0)
-        (- 0 1)
+        None
         (formOpenBefore src (spanStart sp)))
     }))
 
-(pub :: armFormEnd (-> String ASTNode Int))
+(pub :: armFormEnd (-> String ASTNode (Option Int)))
 (pub fn (armFormEnd src arm)
-  {
-    (let o (armOpenOf src arm))
-    (if (< o 0)
-      (- 0 1)
-      (formEndFrom src o))
-  })
+  (if (let (Some opening) (armOpenOf src arm))
+    (formEndFrom src opening)
+    None))
 
 ; Whether `spanOf` this scrutinee is the head token of its own
 ; outermost form - the shapes the zero-arm walk may start from.
@@ -24964,47 +24963,44 @@
         false))
   })
 
-; The byte past the scrutinee's whole form, or -1.
-(pub :: scrutFormEnd (-> String ASTNode Int))
+; The byte past the scrutinee's whole form, or None.
+(pub :: scrutFormEnd (-> String ASTNode (Option Int)))
 (pub fn (scrutFormEnd src scrut)
   (if (scrutHeadIsOwn scrut)
     {
       (let sp (spanOf scrut))
-      {
-        (let o (formOpenBefore src (spanStart sp)))
-        (if (< o 0)
-          (spanEnd sp)
-          (formEndFrom src o))
-      }
+      (if (== sp 0)
+        None
+        (if (|| (< (spanStart sp) 0)
+              (|| (< (spanEnd sp) (spanStart sp)) (> (spanEnd sp) (strLen src))))
+          None
+          (if (let (Some opening) (formOpenBefore src (spanStart sp)))
+            (formEndFrom src opening)
+            (Some (spanEnd sp)))))
     }
-    (- 0 1)))
+    None))
 
-; The column the inserted arms take, or -1.
-(pub :: matchArmIndent (-> String ASTNode (Vec ASTNode) Int))
+; The column the inserted arms take, or None.
+(pub :: matchArmIndent (-> String ASTNode Nodes (Option Int)))
 (pub fn (matchArmIndent src scrut arms)
   (if (> (vecLen arms) 0)
+    (if (let (Some opening) (armOpenOf src (vecGet arms 0)))
+      (Some (- opening (lineStartOf src opening)))
+      None)
     {
-      (let o (armOpenOf src (vecGet arms 0)))
-      (if (< o 0)
-        (- 0 1)
-        (- o (lineStartOf src o)))
-    }
-    {
-      (let p (spanStart (spanOf scrut)))
-      {
-        (let o2 (formOpenBefore src p))
+      (let sp (spanOf scrut))
+      (if (== sp 0)
+        None
         {
-          (let o
-            (headOpenBefore src
-              (if (< o2 0)
-                p
-                o2)
-              "match"))
-          (if (< o 0)
-            (- 0 1)
-            (+ 2 (- o (lineStartOf src o))))
-        }
-      }
+          (let position (spanStart sp))
+          (let head
+            (match (formOpenBefore src position)
+              ((None) position)
+              ((Some opening) opening)))
+          (if (let (Some opening) (headOpenBefore src head "match"))
+            (Some (+ 2 (- opening (lineStartOf src opening))))
+            None)
+        })
     }))
 
 ; The arms, or "" when one of the missing names is not this type's
@@ -25069,26 +25065,14 @@
 (pub :: importTodoHelp (-> TC diag::Diag String ()))
 (pub fn (importTodoHelp tc d src)
   (if (let (Some imp) (lastImportOf (tcEntryDecls tc) (Some "IO") 0 None))
-    {
-      (let lo (importListOpen src imp))
-      (if (>= lo 0)
-        {
-          (let end (formEndFrom src lo))
-          (if (>= end 0)
-            (diagAddFixHelp d "add `todo` to the names imported from IO"
-              (mkSpan (- end 1) (- end 1)) " todo"))
-        })
-    }
+    (if (let (Some opening) (importListOpen src imp))
+      (if (let (Some end) (formEndFrom src opening))
+        (diagAddFixHelp d "add `todo` to the names imported from IO" (mkSpan (- end 1) (- end 1))
+          " todo")))
     (if (let (Some last) (lastImportOf (tcEntryDecls tc) None 0 None))
-      {
-        (let opening (headOpenBefore src (spanStart (nodeSpan last)) "import"))
-        (if (>= opening 0)
-          {
-            (let end (formEndFrom src opening))
-            (if (>= end 0)
-              (diagAddFixHelp d "import `todo` from IO" (mkSpan end end) "\n(import IO (todo))"))
-          })
-      }
+      (if (let (Some opening) (headOpenBefore src (spanStart (nodeSpan last)) "import"))
+        (if (let (Some end) (formEndFrom src opening))
+          (diagAddFixHelp d "import `todo` from IO" (mkSpan end end) "\n(import IO (todo))")))
       (diagAddFixHelp d "import `todo` from IO" (mkSpan 0 0) "(import IO (todo))\n"))))
 
 ; The entry file's LAST `(import ...)` by position - of module `mod`,
@@ -25114,27 +25098,31 @@
     }))
 
 ; The `(` of an import's name list: past the rest of a dotted path
-; (the span covers its first segment only), then blanks. -1 for a
+; (the span covers its first segment only), then blanks. None for a
 ; bare import, which has no list to extend.
-(pub :: importListOpen (-> String ASTNode Int))
+(pub :: importListOpen (-> String ASTNode (Option Int)))
 (pub fn (importListOpen src imp)
-  {
-    (let n (strLen src))
-    (let mut i (spanEnd (nodeSpan imp)))
-    {
-      (while (if (< i n)
-        (|| (isIdentChar (strByte src i)) (== (strByte src i) 46))
-        false)
-        (set i (+ i 1)))
-      (while (if (< i n)
-        (isBlankByte (strByte src i))
-        false)
-        (set i (+ i 1)))
-      (if (&& (< i n) (== (strByte src i) 40))
-        i
-        (- 0 1))
-    }
-  })
+  (if (== (nodeSpan imp) 0)
+    None
+    (if (|| (< (spanEnd (nodeSpan imp)) 0) (> (spanEnd (nodeSpan imp)) (strLen src)))
+      None
+      {
+        (let n (strLen src))
+        (let mut i (spanEnd (nodeSpan imp)))
+        {
+          (while (if (< i n)
+            (|| (isIdentChar (strByte src i)) (== (strByte src i) 46))
+            false)
+            (set i (+ i 1)))
+          (while (if (< i n)
+            (isBlankByte (strByte src i))
+            false)
+            (set i (+ i 1)))
+          (if (&& (< i n) (== (strByte src i) 40))
+            (Some i)
+            None)
+        }
+      })))
 
 ; One column wide, one row per arm - the entry point from checkMatch.
 ; `scrut` is the scrutinee NODE: its span is the anchor, and its shape
@@ -28743,15 +28731,15 @@
       {
         (let at
           (if (== (strLen src) 0)
-            (- 0 1)
+            None
             (effectTagInsertAt src (spanStart (nodeSpan d)))))
         {
           {
             (let tag (concat ";@axiom:effect(" (concat (strLower name) ")")))
-            (if (< at 0)
-              (diagAddHelp dg (concat "write `" (concat tag "` above the declaration")))
+            (if (let (Some position) at)
               (diagAddFixHelp dg (concat "write `" (concat tag "` above the declaration"))
-                (mkSpan at at) (concat tag "\n")))
+                (mkSpan position position) (concat tag "\n"))
+              (diagAddHelp dg (concat "write `" (concat tag "` above the declaration"))))
           }
           (diagAddNote dg
             "effects are INFERRED transitively, so this fires on every function up the call chain, and each one is a place a reader would otherwise have to open the callee to learn it. If the effect is not wanted here the fix is to stop performing it, not to stop saying so. `IO`, `Entropy`, `Spawn` and `Block` are required; `Alloc` and `Mut` are ambient and never need declaring")
@@ -28761,12 +28749,14 @@
     }))
 
 ; The byte the tag line is inserted at for a declaration whose name
-; starts at `p`, or -1 when `p` is not where a declaration is written.
-(pub :: effectTagInsertAt (-> String Int Int))
+; starts at `p`, or None when `p` is not where a declaration is written.
+(pub :: effectTagInsertAt (-> String Int (Option Int)))
 (pub fn (effectTagInsertAt src p)
-  (if (declNameWritten src p)
-    (lineStartOf src p)
-    (- 0 1)))
+  (if (|| (< p 0) (>= p (strLen src)))
+    None
+    (if (declNameWritten src p)
+      (Some (lineStartOf src p))
+      None)))
 
 (pub :: declNameWritten (-> String Int Bool))
 (pub fn (declNameWritten src p)
@@ -28937,13 +28927,13 @@
           {
             (let at
               (if (== (strLen src) 0)
-                (- 0 1)
+                None
                 (effectTagInsertAt src (spanStart (nodeSpan d)))))
             {
-              (if (< at 0)
-                (diagAddHelp dg "write `;@axiom:effect(unsafe)` above the declaration")
+              (if (let (Some position) at)
                 (diagAddFixHelp dg "write `;@axiom:effect(unsafe)` above the declaration"
-                  (mkSpan at at) ";@axiom:effect(unsafe)\n"))
+                  (mkSpan position position) ";@axiom:effect(unsafe)\n")
+                (diagAddHelp dg "write `;@axiom:effect(unsafe)` above the declaration"))
               (if (== kind 2)
                 {
                   {
