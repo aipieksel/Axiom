@@ -9406,7 +9406,7 @@
 ;                              ; type ARGUMENT to anything else here
 ;
 ; Neither shape occurs in this tree, so the corpus does not move.
-(pub :: resultOnlyVarOf (-> ASTNode String))
+(pub :: resultOnlyVarOf (-> ASTNode (Option String)))
 (pub fn (resultOnlyVarOf d)
   ; ONLY A BARE RESULT VARIABLE, which is what this rule's own sentence
   ; says: "returns type variable `a`". A variable NESTED in the result
@@ -9422,9 +9422,9 @@
   {
     (let r (sigArrowResultTy (nodeTyChild d)))
     (if (nodeSame r nilNode)
-      ""
+      None
       (if (!= (nodeTag r) TAG_T_VAR)
-        ""
+        None
         {
           (let pos vecNew)
           (let neg vecNew)
@@ -9453,15 +9453,15 @@
 ; variance. A variable on a left side can still be one the CALLEE
 ; produces, and one in the result can be witnessed by a function this
 ; signature hands back.
-(pub :: firstResultOnly (-> Names Names Int String))
+(pub :: firstResultOnly (-> Names Names Int (Option String)))
 (pub fn (firstResultOnly neg rs i)
   (if (>= i (vecLen rs))
-    ""
-    (if (== (strVecHas neg (as (vecGet rs i) String)) 1)
+    None
+    (if (== (strVecHas neg (vecGet rs i)) 1)
       (firstResultOnly neg rs (+ i 1))
-      (as (vecGet rs i) String))))
+      (Some (vecGet rs i)))))
 
-; The `(fn (name ...) body)` for `name`, or 0.
+; The first function declaration for a bare name, when present.
 ;
 ; A linear scan. It was asked about the result-only-tyvar signatures
 ; alone, a single-digit set, until R-B6's forging rule began asking the
@@ -9470,27 +9470,23 @@
 ; (`bareNameIs`): it built `bareOf` of every declaration it passed,
 ; which was 11.6% of `check core/main.ax` and most of the 15% that
 ; check lost that day.
-(pub :: findFnDecl (-> (Vec ASTNode) String ASTNode))
+(pub :: findFnDecl (-> Nodes String (Option ASTNode)))
 (pub fn (findFnDecl decls name)
   {
     (let n (vecLen decls))
     (let mut i 0)
-    (let mut hit nilNode)
-    {
-      (while (< i n)
-        {
-          (let d (vecGet decls i))
+    (let mut hit (:: None (Option ASTNode)))
+    (while (< i n)
+      {
+        (let d (vecGet decls i))
+        (if (&& (== (nodeTag d) TAG_D_FN) (== (bareNameIs (nodeAName d) name) 1))
           {
-            (if (&& (== (nodeTag d) TAG_D_FN) (== (bareNameIs (nodeAName d) name) 1))
-              {
-                (set hit d)
-                (set i n)
-              })
-            (set i (+ i 1))
-          }
-        })
-      hit
-    }
+            (set hit (Some d))
+            (set i n)
+          })
+        (set i (+ i 1))
+      })
+    hit
   })
 
 ; `(strEq (bareOf full) name)`, without building the bare name. A
@@ -9512,30 +9508,38 @@
             0)))
     }))
 
-(pub :: findFnBody (-> Nodes String ASTNode))
+(pub :: findFnBody (-> Nodes String (Option ASTNode)))
 (pub fn (findFnBody decls name)
-  {
-    (let d (findFnDecl decls name))
-    (if (nodeSame d nilNode)
-      nilNode
-      (nodeCChild d))
-  })
+  (if (let (Some declaration) (findFnDecl decls name))
+    {
+      (let body (nodeCChild declaration))
+      (if (nodeSame body nilNode)
+        None
+        (Some body))
+    }
+    None))
 
-; The name at the bottom of an application spine, or "" when the head
-; is not a plain name. Spelled `divHeadName` and not `spineHeadName`
+; The name at the bottom of an application spine, when its head
+; is a plain name. Spelled `divHeadName` and not `spineHeadName`
 ; because `codegen.ax` already has the latter, and a name two modules
 ; both declare is `AX3014` - which is how this one introduced itself. `(cast a w)` parses as `((cast a) w)`, so the
 ; spine bottoms out at the variable `cast` and this answers `"cast"` -
 ; which is the whole distinction this pass turns on.
-(pub :: divHeadName (-> ASTNode String))
+(pub :: divHeadName (-> ASTNode (Option String)))
 (pub fn (divHeadName e)
   (if (nodeSame e nilNode)
-    ""
+    None
     (if (== (nodeTag e) TAG_E_APP)
       (divHeadName (nodeAChild e))
       (if (== (nodeTag e) TAG_E_VAR)
-        (bareOf (nodeAName e))
-        ""))))
+        (Some (bareOf (nodeAName e)))
+        None))))
+
+(:: divHeadIsCast (-> ASTNode Bool))
+(fn (divHeadIsCast expression)
+  (if (let (Some name) (divHeadName expression))
+    (isValueCastForm name)
+    false))
 
 ; Does evaluating `e` never yield a value?
 ;
@@ -9563,7 +9567,7 @@
 ; A form this does not know is NOT a diverging tail, which is the safe
 ; direction for a check that refuses: it reports rather than accepts,
 ; and the three ways out are in the help.
-(pub :: divTailOk (-> Nodes ASTNode (Vec a) Int Int))
+(pub :: divTailOk (-> Nodes ASTNode Names Int Int))
 (pub fn (divTailOk decls e names depth)
   (if (nodeSame e nilNode)
     0
@@ -9600,11 +9604,13 @@
                     (divTailOk decls (nodeBChild e) names depth)
                     (divConstTrue (nodeAChild e)))
                   (if (== tag TAG_E_APP)
-                    (if (isValueCastForm (divHeadName e))
+                    (if (divHeadIsCast e)
                       ; The value being coerced. `(cast a x)` parses as
                       ; `((cast a) x)`, so it is this node's argument.
                       (divTailOk decls (nodeBChild e) names depth)
-                      (divCall decls (divHeadName e) names depth))
+                      (if (let (Some name) (divHeadName e))
+                        (divCall decls name names depth)
+                        0))
                     0)))))))
     }))
 
@@ -9615,7 +9621,7 @@
 ; already answered by `names` (the fixpoint assumes it diverges), and a
 ; cycle outside it cannot end in `sysExitWith` at all. Eight is deeper
 ; than `die` -> `exit` -> `sysExitWith` by five.
-(pub :: divCall (-> (Vec ASTNode) String (Vec a) Int Int))
+(pub :: divCall (-> (Vec ASTNode) String Names Int Int))
 (pub fn (divCall decls name names depth)
   (if (>= depth 8)
     0
@@ -9623,15 +9629,12 @@
       1
       (if (== (strInVec names name 0) 1)
         1
-        {
-          (let b (findFnBody decls name))
-          (if (nodeSame b nilNode)
-            0
-            (divTailOk decls b names (+ depth 1)))
-        }))))
+        (if (let (Some body) (findFnBody decls name))
+          (divTailOk decls body names (+ depth 1))
+          0)))))
 
 ; Does ANY expression in `xs` never return?
-(pub :: divAnyOk (-> Nodes Nodes (Vec a) Int Int Int))
+(pub :: divAnyOk (-> Nodes Nodes Names Int Int Int))
 (pub fn (divAnyOk decls xs names depth i)
   (if (>= i (vecLen xs))
     0
@@ -9654,7 +9657,7 @@
           1)
         0))))
 
-(pub :: divArmsOk (-> Nodes (Vec ASTNode) (Vec a) Int Int Int))
+(pub :: divArmsOk (-> Nodes (Vec ASTNode) Names Int Int Int))
 (pub fn (divArmsOk decls arms names depth i)
   (if (>= i (vecLen arms))
     ; No arm at all is not a diverging tail; an empty `match` produces
@@ -9668,28 +9671,21 @@
 
 ; One round of the fixpoint: strike out every name whose body can
 ; produce a value. Answers the survivors.
-(pub :: divRound (-> (Vec ASTNode) (Vec a) Ints))
-;@axiom:effect(unsafe)
+(pub :: divRound (-> Nodes Names Names))
 (pub fn (divRound decls names)
   {
     (let out vecNew)
-    (let n (vecLen names))
-    {
-      (for i in 0..n
-        {
-          (let nm (vecGetStr names i))
-          (if (== (divTailOk decls (findFnBody decls nm) names 0) 1)
-            (vecPush out (as nm Int))
-            (as 0 (Vec Int)))
-        })
-      out
-    }
+    (for name in names
+      (if (let (Some body) (findFnBody decls name))
+        (if (== (divTailOk decls body names 0) 1)
+          (vecPush out name))))
+    out
   })
 
 ; Iterate to a fixed point. Each round can only shrink the set, so it
 ; terminates in at most `|names|` rounds; this repository reaches it
 ; in one.
-(pub :: divFixpoint (-> Nodes (Vec a) Ints))
+(pub :: divFixpoint (-> Nodes Names Names))
 (pub fn (divFixpoint decls names)
   {
     (let next (divRound decls names))
@@ -9724,18 +9720,18 @@
     {
       (let d (vecGet decls i))
       {
-        (if (&& (== (nodeTag d) TAG_D_SIG) (> (strLen (resultOnlyVarOf d)) 0))
+        (if (&& (== (nodeTag d) TAG_D_SIG) (isSome (resultOnlyVarOf d)))
           (vecPush out d))
         (resultOnlyCandidates decls out (+ i 1))
       }
     }))
 
-(pub :: candNames (-> (Vec ASTNode) Ints Int Ints))
+(pub :: candNames (-> Nodes Names Int Names))
 (pub fn (candNames cands out i)
   (if (>= i (vecLen cands))
     out
     {
-      (vecPush out (as (bareOf (nodeAName (vecGet cands i))) Int))
+      (vecPush out (bareOf (nodeAName (vecGet cands i))))
       (candNames cands out (+ i 1))
     }))
 
@@ -9748,7 +9744,7 @@
 ; showed line 57 above line 40. Nothing sorts diagnostics after the
 ; fact in this compiler; emission order IS report order, which is why
 ; the merge happens here rather than in the printer.
-(pub :: tyvarEmit (-> TC (Vec ASTNode) (Vec a) Int Int))
+(pub :: tyvarEmit (-> TC (Vec ASTNode) Names Int Int))
 (pub fn (tyvarEmit tc decls div i)
   (if (>= i (vecLen decls))
     0
@@ -9767,62 +9763,33 @@
 ; `b` for its caller - and those are two mistakes, not one seen twice.
 ; The sets are disjoint by construction (`firstDemanded` subtracts the
 ; result's variables), so the common shapes still draw exactly one.
-(pub :: emitTyvarFor (-> TC (Vec ASTNode) (Vec a) ASTNode Int))
+(pub :: emitTyvarFor (-> TC Nodes Names ASTNode Int))
 (pub fn (emitTyvarFor tc decls div d)
-  ; THE CHEAP TEST FIRST, and it is a performance rule rather than a
-  ; style one. The lookup below, `findFnBody`, reaches
-  ; `findFnDecl`, which scans `decls` linearly, and this
-  ; function is called for every signature in the program. `findFnBody`
-  ; used to be the OUTER test here, behind no guard at all, which made
-  ; the pass O(n^2) over a tree with ~2,400 declarations: measured
-  ; 2026-08-25, 0.852s -> 1.352s per self-check, spent asking about
-  ; declarations with nothing to report. The two walks above are over
-  ; one type tree each and cost nothing beside a scan of the program.
-  ;
-  ; No declaration in this repository reaches past this line.
   {
-    (let rv (resultOnlyVarOf d))
-    (let dv (demandedVarOf d))
-    (if (== (+ (strLen rv) (strLen dv)) 0)
+    (let result (resultOnlyVarOf d))
+    (let demanded (demandedVarOf d))
+    (if (&& (isNone result) (isNone demanded))
       0
-      ; A signature with NO definition is `AX3015`, which says the
-      ; real thing. Reporting this one too would be a cascade from
-      ; one mistake, which the diagnostics document forbids.
-      (if (nodeSame (findFnBody decls (bareOf (nodeAName d))) nilNode)
+      (if (isNone (findFnBody decls (bareOf (nodeAName d))))
         0
         {
           (let diverges (strInVec div (bareOf (nodeAName d)) 0))
-          {
-            (if (> (strLen rv) 0)
-              ; It diverges. `for all a` is honest here and there is
-              ; nothing to report.
-              (if (! (== diverges 1))
-                {
-                  (tcSetCurModule tc (nodeModuleOpt d))
-                  (emitResultOnlyVar tc d rv)
-                }))
-            ; THE DEMANDED ARM YIELDS ONLY WHEN THE ARM ABOVE
-            ; ACTUALLY SPOKE, AND ABOUT THE SAME VARIABLE. Two
-            ; conditions, and both are load-bearing:
-            ;
-            ;   same variable - `(-> (-> a Int) b)` fabricates an `a`
-            ;   for the callback and a `b` for its caller, which are
-            ;   two mistakes and draw two diagnostics;
-            ;
-            ;   actually spoke - if the result arm went silent
-            ;   because the function DIVERGES, nothing has been said
-            ;   about the `a` handed to the callback, and a
-            ;   divergence that happens after the call does not
-            ;   unmake it.
-            (if (> (strLen dv) 0)
-              (if (&& (strEq dv rv) (== diverges 0))
-                0
-                {
-                  (tcSetCurModule tc (nodeModuleOpt d))
-                  (emitDemandedVar tc d dv)
-                })
-              0)
-          }
+          (if (let (Some variable) result)
+            (if (!= diverges 1)
+              {
+                (tcSetCurModule tc (nodeModuleOpt d))
+                (emitResultOnlyVar tc d variable)
+              }))
+          (if (let (Some variable) demanded)
+            (if (if (let (Some returned) result)
+              (&& (strEq variable returned) (== diverges 0))
+              false)
+              0
+              {
+                (tcSetCurModule tc (nodeModuleOpt d))
+                (emitDemandedVar tc d variable)
+              })
+            0)
         }))
   })
 
@@ -9923,7 +9890,7 @@
       })
     0))
 
-; The first UNWITNESSED variable that is not the result's, or "".
+; The first unwitnessed variable that is not supplied by a negative position.
 ;
 ; Two sets are subtracted, and the second is what keeps this arm and
 ; the returned-variable arm from reporting one declaration twice: a
@@ -9932,15 +9899,15 @@
 ; produced it. That reading is not available here. `apply1` returns
 ; an `Int` perfectly well; it fabricates on the way, and a body that
 ; also looped forever would fabricate just the same.
-(pub :: firstDemanded (-> Names Names Int String))
+(pub :: firstDemanded (-> Names Names Int (Option String)))
 (pub fn (firstDemanded pos neg i)
   (if (>= i (vecLen pos))
-    ""
+    None
     {
-      (let v (as (vecGet pos i) String))
-      (if (== (strVecHas neg v) 1)
+      (let variable (vecGet pos i))
+      (if (== (strVecHas neg variable) 1)
         (firstDemanded pos neg (+ i 1))
-        v)
+        (Some variable))
     }))
 
 ; The positive positions reachable through a PARAMETER: what this
@@ -9977,7 +9944,7 @@
       }
       0)))
 
-(pub :: demandedVarOf (-> ASTNode String))
+(pub :: demandedVarOf (-> ASTNode (Option String)))
 (pub fn (demandedVarOf d)
   {
     (let ppos vecNew)
@@ -13709,7 +13676,7 @@
 (pub fn (checkStoreWordRefusal tc e val)
   (if (!= (nodeTag val) TAG_E_APP)
     0
-    (if (isValueCastForm (divHeadName val))
+    (if (divHeadIsCast val)
       {
         (let oty (storeOperandTy tc (storeCastOperand val)))
         (if (nodeSame oty nilNode)
@@ -13732,7 +13699,7 @@
 (pub fn (storeCastOperand v)
   (if (!= (nodeTag v) TAG_E_APP)
     v
-    (if (isValueCastForm (divHeadName v))
+    (if (divHeadIsCast v)
       {
         (let args (spineArgVec v vecNew))
         (if (!= (vecLen args) 2)
@@ -25073,46 +25040,35 @@
     (concat " _" (wildsOf (- n 1)))))
 
 ; The import that brings `todo` in, as a second fix help on the same
-; diagnostic. `mod` is the module the import must name, or "" for the
-; last import of any module.
+; diagnostic. The search selects IO first, then the last import of any module.
 (pub :: importTodoHelp (-> TC diag::Diag String ()))
 (pub fn (importTodoHelp tc d src)
-  {
-    (let imp (lastImportOf (tcEntryDecls tc) "IO" 0 nilNode))
-    (if (! (nodeSame imp nilNode))
+  (if (let (Some imp) (lastImportOf (tcEntryDecls tc) (Some "IO") 0 None))
+    {
+      (let lo (importListOpen src imp))
+      (if (>= lo 0)
+        {
+          (let end (formEndFrom src lo))
+          (if (>= end 0)
+            (diagAddFixHelp d "add `todo` to the names imported from IO"
+              (mkSpan (- end 1) (- end 1)) " todo"))
+        })
+    }
+    (if (let (Some last) (lastImportOf (tcEntryDecls tc) None 0 None))
       {
-        (let lo (importListOpen src imp))
-        (if (< lo 0)
-          ()
+        (let opening (headOpenBefore src (spanStart (nodeSpan last)) "import"))
+        (if (>= opening 0)
           {
-            (let le (formEndFrom src lo))
-            (if (< le 0)
-              ()
-              (diagAddFixHelp d "add `todo` to the names imported from IO"
-                (mkSpan (- le 1) (- le 1)) " todo"))
+            (let end (formEndFrom src opening))
+            (if (>= end 0)
+              (diagAddFixHelp d "import `todo` from IO" (mkSpan end end) "\n(import IO (todo))"))
           })
       }
-      {
-        (let last (lastImportOf (tcEntryDecls tc) "" 0 nilNode))
-        (if (nodeSame last nilNode)
-          (diagAddFixHelp d "import `todo` from IO" (mkSpan 0 0) "(import IO (todo))\n")
-          {
-            (let o (headOpenBefore src (spanStart (nodeSpan last)) "import"))
-            (if (< o 0)
-              ()
-              {
-                (let e (formEndFrom src o))
-                (if (< e 0)
-                  ()
-                  (diagAddFixHelp d "import `todo` from IO" (mkSpan e e) "\n(import IO (todo))"))
-              })
-          })
-      })
-  })
+      (diagAddFixHelp d "import `todo` from IO" (mkSpan 0 0) "(import IO (todo))\n"))))
 
 ; The entry file's LAST `(import ...)` by position - of module `mod`,
-; or of any module when `mod` is "" - or 0.
-(pub :: lastImportOf (-> (Vec ASTNode) String Int ASTNode ASTNode))
+; or of any module when `mod` is None.
+(pub :: lastImportOf (-> Nodes (Option String) Int (Option ASTNode) (Option ASTNode)))
 (pub fn (lastImportOf decls mod i best)
   (if (>= i (vecLen decls))
     best
@@ -25120,12 +25076,15 @@
       (let d (vecGet decls i))
       (lastImportOf decls mod (+ i 1)
         (if (&& (== (nodeTag d) TAG_D_IMPORT)
-              (&& (!= (nodeSpan d) 0) (|| (== (strLen mod) 0) (strEq (nodeAName d) mod))))
-          (if (nodeSame best nilNode)
-            d
-            (if (> (spanStart (nodeSpan d)) (spanStart (nodeSpan best)))
-              d
-              best))
+              (&& (!= (nodeSpan d) 0)
+                (if (let (Some name) mod)
+                  (strEq (nodeAName d) name)
+                  true)))
+          (if (let (Some previous) best)
+            (if (> (spanStart (nodeSpan d)) (spanStart (nodeSpan previous)))
+              (Some d)
+              best)
+            (Some d))
           best))
     }))
 
