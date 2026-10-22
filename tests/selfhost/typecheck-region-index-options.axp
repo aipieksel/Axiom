@@ -1,0 +1,136 @@
+(import core)
+(import parser)
+(import typecheck)
+(import Vec)
+(import Str)
+(import IO)
+(import Sys)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs found wanted)
+  (match found
+    ((None) false)
+    ((Some index) (== index wanted))))
+
+(:: context RgnCtx)
+(fn (context)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (let parameters (vecPush (vecPush vecNew "first") "second"))
+    (let declaration (nodeBuildDFn "probe" parameters (mkEInt 0) 0))
+    (let entry
+      (FnEnt
+        :name "probe"
+        :ty mkIntTy
+        :paramCount 2
+        :isBuiltin 0
+        :isEffectOp 0
+        :effects vecNew
+        :eparams vecNew
+        :calls vecNew
+        :rgn None
+        :unsafe 0
+        :uses vecNew
+        :mayCalls vecNew
+        :pending 0
+        :scoped vecNew
+        :compute vecNew
+        :restrictions vecNew
+        :lambdaCast NoLambdaCast))
+    (rgnCtxNew checker declaration entry 0)
+  })
+
+(:: checks ())
+;@axiom:effect(io)
+(fn (checks)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (say 1 (isNone (rgInnerMark checker)))
+    (rgCheckStore checker 0 (mkTCon "String" vecNew) 0 "outer" 0)
+    (say 2 (== (vecLen checker.out) 0))
+    (rgPush checker "zero" 0 0)
+    (say 3 (indexIs (rgInnerMark checker) 0))
+    (rgPush checker "inner" 7 0)
+    (say 4 (indexIs (rgInnerMark checker) 7))
+    (rgPop checker)
+    (say 5 (indexIs (rgInnerMark checker) 0))
+    (rgPop checker)
+    (say 6 (isNone (rgInnerMark checker)))
+    (say 7 (isNone (rgRootIdx checker (mkEVar "root"))))
+    (pushScope checker.scope "root" 1 0 mkIntTy)
+    (say 8 (indexIs (rgRootIdx checker (mkEVar "root")) 0))
+    (let path (nodeBuildEField (nodeBuildEField (mkEVar "root") "a" 0 0) "b" 0 0))
+    (say 9 (indexIs (rgRootIdx checker path) 0))
+    (say 10 (isNone (rgRootIdx checker (mkEInt 0))))
+    (pushScope checker.scope "root" 1 0 mkIntTy)
+    (say 11 (indexIs (rgRootIdx checker path) 1))
+    (say 12 (isNone (rgRootIdx checker (nodeBuildEField (mkEVar "missing") "a" 0 0))))
+    (let rc context)
+    (say 13 (isNone (rgnEnvFind rc "first")))
+    (rgnBind rc "first" 2 0)
+    (say 14 (indexIs (rgnEnvFind rc "first") 0))
+    (say 15 (== (rgnVar rc (mkEVar "first")) 2))
+    (vecPush rc.ent.scoped 0)
+    (say 16 (== (rgnScopedParam rc (mkEVar "first")) 1))
+    (say 17 (== (rgnScopedParam rc (mkEVar "missing")) 0))
+    (rgnBind rc "second" 4 0)
+    (say 18 (indexIs (rgnEnvFind rc "second") 1))
+    (rgnBind rc "first" 8 0)
+    (say 19 (indexIs (rgnEnvFind rc "first") 2))
+    (say 20 (== (rgnVar rc (mkEVar "first")) 8))
+    (say 21 (== (rgnScopedParam rc (mkEVar "first")) 0))
+    (say 22 (indexIs (rgnEnvFindFrom rc "first" 1) 0))
+    (say 23 (isNone (rgnEnvFindFrom rc "first" -1)))
+    (rgnEnvTrunc rc 2)
+    (say 24 (indexIs (rgnEnvFind rc "first") 0))
+    (rgnBind rc "" 16 0)
+    (say 25 (indexIs (rgnEnvFind rc "") 2))
+    (say 26 (== (rgnVar rc (mkEVar "unknown")) 0))
+    (tcPushFn rc.tc rc.ent)
+    (say 27 (== (rgnScopedStatic rc (mkEVar "probe")) 1))
+    (rgnBind rc "probe" 32 0)
+    (say 28 (== (rgnScopedStatic rc (mkEVar "probe")) 0))
+    (rgnSet rc (nodeBuildESet "first" (mkEVar "second") 0 0))
+    (say 29 (== (vecGet rc.origs 0) 6))
+    (rgnSet rc (nodeBuildESet "missing" (mkEInt 0) 0 0))
+    (say 30 (== (rgnEnvLen rc) 4))
+    (say 31 (== (rgnScopedParam rc (mkEInt 0)) 0))
+    (vecPop checker.scope)
+    (say 32 (indexIs (rgRootIdx checker path) 0))
+    (let facts (rgnFactsNew 2))
+    (say 33 (isNone (rgnResolvedCulprit facts 0)))
+    (set facts.flowsCUR 1)
+    (say 34 (indexIs (rgnResolvedCulprit facts 0) 0))
+    (vecSet facts.culprits 0 "<unresolved call>")
+    (say 35 (isNone (rgnResolvedCulprit facts 0)))
+    (set facts.flowsCUR 3)
+    (vecSet facts.culprits 1 "secondCallee")
+    (say 36 (indexIs (rgnResolvedCulprit facts 0) 1))
+    (vecSet facts.culprits 0 "firstCallee")
+    (say 37 (indexIs (rgnResolvedCulprit facts 0) 0))
+    (say 38 (indexIs (rgnResolvedCulprit facts 1) 1))
+    (say 39 (isNone (rgnResolvedCulprit facts 2)))
+    (set facts.flowsCUR 0)
+    (say 40 (isNone (rgnResolvedCulprit facts 0)))
+    (set facts.flowsCUR 2)
+    (say 41 (indexIs (rgnResolvedCulprit facts 0) 1))
+    (say 42 (isNone (rgnResolvedCulprit (rgnFactsNew 0) 0)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if (> sysArgc 1)
+    {
+      (writeStr stdout (probeDiagnosticText (strToInt (sysArg 1))))
+      0
+    }
+    {
+      (checks)
+      0
+    }))

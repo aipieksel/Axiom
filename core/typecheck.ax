@@ -10419,15 +10419,15 @@
 (pub fn (rgInner tc)
   (- (vecLen (tcRegionsVec tc)) 1))
 
-; The scope length when the innermost region opened, or -1 outside
+; The scope length when the innermost region opened, or None outside
 ; any: a scope entry below it was bound OUTSIDE the region.
-(pub :: rgInnerMark (-> TC Int))
+(pub :: rgInnerMark (-> TC (Option Int)))
 (pub fn (rgInnerMark tc)
   (if (< (rgInner tc) 0)
-    (- 0 1)
+    None
     {
       (let entry (vecGet (tcRegionsVec tc) (rgInner tc)))
-      entry.mark
+      (Some entry.mark)
     }))
 
 (pub :: rgInnerName (-> TC String))
@@ -10583,27 +10583,24 @@
 ; is silent, the cascade rule.
 (pub :: rgCheckStore (-> TC Int ASTNode Int String Int Int))
 (pub fn (rgCheckStore tc idx valTy span bname suppressed)
-  {
-    (let mark (rgInnerMark tc))
-    (if (|| (< mark 0) (|| (>= idx mark) (!= suppressed 0)))
+  (if (let (Some mark) (rgInnerMark tc))
+    (if (|| (>= idx mark) (!= suppressed 0))
       0
       (if (|| (== (tyIsErr valTy) 1)
             (|| (== (tyIsSilentWild valTy) 1) (== (rgTyScalar tc valTy) 1)))
         0
         (emitRegionStoreEscape tc (rgInnerName tc) bname valTy span)))
-  })
+    0))
 
 ; The scope index of the binding at the root of a field path -
-; `a.b.c` is a store into `a` - or -1 when the base is not a name.
-(pub :: rgRootIdx (-> TC ASTNode Int))
+; `a.b.c` is a store into `a` - or None when no binding is found.
+(pub :: rgRootIdx (-> TC ASTNode (Option Int)))
 (pub fn (rgRootIdx tc e)
   (if (== (nodeTag e) TAG_E_VAR)
-    (if (let (Some i) (scopeFindIdx (tcScopeVec tc) (nodeAName e)))
-      i
-      (- 0 1))
+    (scopeFindIdx (tcScopeVec tc) (nodeAName e))
     (if (== (nodeTag e) TAG_E_FIELD)
       (rgRootIdx tc (nodeAChild e))
-      (- 0 1))))
+      None)))
 
 (pub :: rgRootName (-> ASTNode String))
 (pub fn (rgRootName e)
@@ -10613,12 +10610,9 @@
 
 (pub :: rgCheckFieldStore (-> TC ASTNode ASTNode Int Int))
 (pub fn (rgCheckFieldStore tc base vty span)
-  {
-    (let idx (rgRootIdx tc base))
-    (if (< idx 0)
-      0
-      (rgCheckStore tc idx vty span (rgRootName base) 0))
-  })
+  (if (let (Some index) (rgRootIdx tc base))
+    (rgCheckStore tc index vty span (rgRootName base) 0)
+    0))
 
 ; The form itself. The name is checked against the stack BEFORE it is
 ; pushed, the body is checked with it open, and the value's type is
@@ -31545,14 +31539,13 @@
 (pub fn (rgnScopedParam rc e)
   (if (!= (nodeTag e) TAG_E_VAR)
     0
-    {
-      (let pos (rgnEnvFind rc (nodeAName e)))
-      (if (|| (< pos 0) (>= pos rc.nparams))
+    (if (let (Some position) (rgnEnvFind rc (nodeAName e)))
+      (if (>= position rc.nparams)
         0
-        (if (== (intInVec rc.ent.scoped pos 0) 1)
+        (if (== (intInVec rc.ent.scoped position 0) 1)
           1
           0))
-    }))
+      0)))
 
 (pub :: rgnCheckScopedArgs (-> RgnCtx FnEnt Nodes Int Int))
 (pub fn (rgnCheckScopedArgs rc ent args span)
@@ -31582,7 +31575,7 @@
 ; nullary factory executes and can return a closure with mutable captures.
 (pub :: rgnScopedStatic (-> RgnCtx ASTNode Int))
 (pub fn (rgnScopedStatic rc e)
-  (if (|| (!= (nodeTag e) TAG_E_VAR) (>= (rgnEnvFind rc (nodeAName e)) 0))
+  (if (|| (!= (nodeTag e) TAG_E_VAR) (isSome (rgnEnvFind rc (nodeAName e))))
     0
     {
       (let entFound (findFnEnt (rgnTc rc) (nodeAName e)))
@@ -32022,17 +32015,17 @@
       (rgnEnvTrunc rc n)
     }))
 
-; The innermost binding of `name`, or -1.
-(pub :: rgnEnvFind (-> RgnCtx String Int))
+; The innermost binding of `name`, or None.
+(pub :: rgnEnvFind (-> RgnCtx String (Option Int)))
 (pub fn (rgnEnvFind rc name)
   (rgnEnvFindFrom rc name (- (vecLen (rgnNames rc)) 1)))
 
-(pub :: rgnEnvFindFrom (-> RgnCtx String Int Int))
+(pub :: rgnEnvFindFrom (-> RgnCtx String Int (Option Int)))
 (pub fn (rgnEnvFindFrom rc name i)
   (if (< i 0)
-    (- 0 1)
+    None
     (if (strEq (vecGet (rgnNames rc) i) name)
-      i
+      (Some i)
       (rgnEnvFindFrom rc name (- i 1)))))
 
 ; ---- facts recording ----
@@ -32202,7 +32195,23 @@
 (pub fn (rgnVar rc e)
   {
     (let idx (rgnEnvFind rc (nodeAName e)))
-    (if (< idx 0)
+    (if (let (Some idx) idx)
+      {
+        ; A read below the innermost lambda's base is a CAPTURE, and
+        ; the closure's origins grow by it.
+        (if (&& (>= rc.lamBase 0) (< idx rc.lamBase))
+          (if (!= (vecGet (rgnOrigs rc) idx) 0)
+            {
+              (set rc.capMask (| rc.capMask (vecGet (rgnOrigs rc) idx)))
+              (if (< (strVecIdx rc.capNames (nodeAName e)) 0)
+                {
+                  (let names rc.capNames)
+                  (vecPush names (nodeAName e))
+                  (vecPush rc.capOrigins (vecGet (rgnOrigs rc) idx))
+                })
+            }))
+        (vecGet (rgnOrigs rc) idx)
+      }
       ; A global: a function's name, a constructor, a builtin - static,
       ; with one exception. A NULLARY function written bare, `vecNew`,
       ; is a call, and its answer is fresh in the caller's region like
@@ -32225,22 +32234,6 @@
             (rgnApp rc e)
             0)
         }
-      }
-      {
-        ; A read below the innermost lambda's base is a CAPTURE, and
-        ; the closure's origins grow by it.
-        (if (&& (>= rc.lamBase 0) (< idx rc.lamBase))
-          (if (!= (vecGet (rgnOrigs rc) idx) 0)
-            {
-              (set rc.capMask (| rc.capMask (vecGet (rgnOrigs rc) idx)))
-              (if (< (strVecIdx rc.capNames (nodeAName e)) 0)
-                {
-                  (let names rc.capNames)
-                  (vecPush names (nodeAName e))
-                  (vecPush rc.capOrigins (vecGet (rgnOrigs rc) idx))
-                })
-            }))
-        (vecGet (rgnOrigs rc) idx)
       })
   })
 
@@ -32396,14 +32389,14 @@
   {
     (let v (rgnExpr rc (nodeBChild e)))
     (let idx (rgnEnvFind rc (nodeAName e)))
-    (if (< idx 0)
-      0
+    (if (let (Some idx) idx)
       {
         (rgnEmitEscape rc (rgnStoreBad rc v (vecGet (rgnBinds rc) idx)) (nodeSpan e)
           (concat (concat "the binding `" (nodeAName e)) "`") "" (nodeBChild e))
         (vecSet (rgnOrigs rc) idx (| (vecGet (rgnOrigs rc) idx) v))
         0
-      })
+      }
+      0)
   })
 
 ; `(set b.f v)`: the field's owner is the place. Walk the value even
@@ -32690,7 +32683,7 @@
         (rgnFormWalk rc thunk "#recover" span)
         (if (!
               (&& (== (nodeTag thunk) TAG_E_VAR)
-                (&& (< (rgnEnvFind rc (nodeAName thunk)) 0)
+                (&& (isNone (rgnEnvFind rc (nodeAName thunk)))
                   (isSome (findFnEnt (rgnTc rc) (nodeAName thunk))))))
           (if (! (|| (== span 0) (== (rgnReport rc) 0)))
             (emitDiag (rgnTc rc)
@@ -32793,7 +32786,7 @@
         (rgnUnknownCall rc args (spanOf e) (rgnExpr rc head))
         {
           (let n (nodeAName head))
-          (if (>= (rgnEnvFind rc n) 0)
+          (if (isSome (rgnEnvFind rc n))
             (if (== (rgnScopedParam rc head) 1)
               {
                 (let v (rgnUnknownCall rc args (spanOf e) 0))
@@ -33363,18 +33356,18 @@
 ; `strict`) when the body calls something the walk cannot resolve,
 ; silent when proven.
 ; The first parameter a fresh value flows into through a RESOLVED
-; door - this body or a named callee - or -1. A flow recorded by an
+; door - this body or a named callee - or None. A flow recorded by an
 ; unresolved call is the conservative assumption, not a finding, and
 ; the claim over it is unverifiable rather than refuted.
-(pub :: rgnResolvedCulprit (-> RgnFacts Int Int))
+(pub :: rgnResolvedCulprit (-> RgnFacts Int (Option Int)))
 (pub fn (rgnResolvedCulprit f i)
   (if (>= i (rgnNparams f))
-    (- 0 1)
+    None
     (if (&& (!= (& (rgnFlowsCUR f) (<< 1 i)) 0)
           (if (strEq (vecGet (rgnCulprits f) i) "<unresolved call>")
             false
             true))
-      i
+      (Some i)
       (rgnResolvedCulprit f (+ i 1)))))
 
 (pub :: restrictNoEscape (-> TC ASTNode String Int))
@@ -33389,7 +33382,7 @@
           (if (let (Some f) factsFound)
             {
               (let i (rgnResolvedCulprit f 0))
-              (if (>= i 0)
+              (if (let (Some i) i)
                 (emitRestrictViolated tc d r
                   (concat
                     (concat
