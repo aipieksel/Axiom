@@ -370,14 +370,16 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # Typed checker definition/module tables and optional graph searches add
 # three helpers and retire three. A same-compiler comparison changes 51
 # existing rows; no required effect changes, arrives or leaves.
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3570 "exactly Alloc,Mut"
+# Optional specialised loop help removes forVecMismatch's forged null String
+# and lexical Unsafe. Its existing Alloc,Mut row and required effects remain.
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3571 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 478 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 231 "exactly Mut"
 have "$(bucket "$work/main.axsym" 'Alloc')" 248 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 146 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 145 "Alloc,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Unsafe')" 213 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 47 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 74 "Mut,Unsafe"
