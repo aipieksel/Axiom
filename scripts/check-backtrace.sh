@@ -665,7 +665,7 @@ PROBE
 "$axc" build --input "$work/nullary.ax" --output "$work/nullary" --opt 0 >"$work/build.log" 2>&1 \
   || { bad "the nullary probe would not build"; sed 's/^/    /' "$work/build.log" | head -6; }
 {
-  echo "boom nullary.ax:$(lineno "$work/nullary.ax" '/ 1 0)'):$(linecol "$work/nullary.ax" '/ 1 0)')"
+  echo "boom nullary.ax:$(lineno "$work/nullary.ax" '/ 1 z)'):$(linecol "$work/nullary.ax" '/ 1 z)')"
   wline="$(lineno "$work/nullary.ax" '(boom) 1)')"
   echo "wrap nullary.ax:$wline:$(colat "$work/nullary.ax" "$wline" 'boom')"
   mline="$(lineno "$work/nullary.ax" '(wrap) 1)')"
