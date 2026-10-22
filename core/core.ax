@@ -17,13 +17,8 @@
   (start : Int)
   (end : Int))
 
-; `no-alloc` CAME OFF on 2026-08-31, and the body did not change: this
-; function's whole body is a struct construction, and a struct
-; construction allocates. The claim was accepted until then only
-; because a constructor application contributed nothing to the effect
-; row (`MM-EXEC-9a`'s second open row), so `no-alloc` was checked
-; against a set that could not hold the one effect it names. `no-io`
-; and `no-foreign` are unchanged and still true.
+; The claim has no `no-alloc`: the whole body is a struct construction,
+; and a construction allocates (`MM-EXEC-9a`).
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: mkSpan (-> Int Int Int))
 (pub fn (mkSpan start end)
@@ -107,8 +102,24 @@
 (pub type StringRows (Vec (Vec String)))
 
 ; ------------------------------------------------------------------
-; TokenKind — nullary constructors, one per token shape.
-; Every value is just a tag; the lexeme string lives in the Token struct.
+; TokenKind: one nullary constructor per token shape. A value is only a
+; tag; the lexeme lives in the `Token`. A new kind is appended, so no
+; existing tag moves.
+;
+;   TK_LPAREN `(`  TK_RPAREN `)`  TK_IDENT an identifier or keyword
+;   TK_INT, TK_FLOAT, TK_STRING, TK_CHARLIT  literals; a character
+;     literal keeps its quotes and escape
+;   TK_COLON `:`  TK_DOUBLE_COLON `::`  TK_RARROW `->`  TK_DOT `.`
+;   TK_QUOTE `'`  TK_LBRACE `{`  TK_RBRACE `}`  TK_EOF  TK_ERROR
+;   TK_LBRACKET `[`  TK_RBRACKET `]`  TK_COMMA `,`  TK_QUESTION `?`
+;   TK_ERROR_ESC an invalid escape `\x`, x not one of the seven
+;
+; Brackets are tokens, never skipped: a skipped delimiter makes a
+; different program, `[(Box Int)]` read as `(Box Int)`. The comma
+; separates a struct variant's fields; a byte the lexer does not know is
+; AX1001, never silently dropped. TK_ERROR_ESC is its own kind because
+; `lexErrDiag` reads a TK_ERROR's code off the span's first byte, and a
+; bare `\` (AX1001) and an escape (AX1005) both start with `\`.
 ; ------------------------------------------------------------------
 (pub data TokenKind
   (TK_LPAREN)
@@ -133,42 +144,6 @@
   (TK_ERROR_ESC)
   (TK_QUESTION))
 
-; (
-; )
-; identifier or keyword
-; integer literal
-; string literal
-; :
-; ::
-; ->
-; .
-; '
-; {
-; }
-; float literal - appended, so no existing tag moves
-; character literal, quotes and escape included
-; Brackets were SKIPPED by the lexer until `symbols` needed the
-; list type `[T]` rendered: a skipped delimiter is not a smaller
-; token stream, it is a different program - `[(Box Int)]` arrived
-; as `(Box Int)` and the list-ness vanished with no diagnostic.
-; Appended, so no existing tag moves.
-; [
-; ]
-; The comma separates the fields of a struct variant, and was the
-; last byte the lexer's final fallthrough silently swallowed:
-; `(Rect { w : Int, h : Int })` arrived as `{ w : Int h : Int }` and
-; parsed by luck, because S-expression fields are whitespace
-; separated anyway. Turning that fallthrough into AX1001 is what
-; asked the question - three corpus files failed at once.
-; ,
-; An invalid escape sequence, as opposed to any other lexical error.
-; `lexErrDiag` reads the CODE off the first byte of a TK_ERROR span,
-; which works for four of the five conditions - only `"` can open a
-; string, only `'` a char, only a digit a number - but not for the
-; fifth: a bare `\` is an unexpected character AND an escape starts
-; with one. Measured: `\` alone drew AX1005 where stage0 says
-; AX1001. A separate kind is the distinction the span cannot carry.
-; \x, x not one of the seven
 ; ------------------------------------------------------------------
 ; Token: the product of lexing a single lexical item.
 ;   kind   — TokenKind tag
@@ -180,38 +155,59 @@
   (lexeme : String)
   (span : Int))
 
-; `no-alloc` came off with `mkSpan`'s, for the same reason and on the
-; same day: the body is one `Token` construction, which allocates.
+; No `no-alloc`, for `mkSpan`'s reason: the body is one `Token`
+; construction, which allocates.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: mkToken (-> TokenKind String Int Int))
 (pub fn (mkToken kind lexeme span)
   (as (Token :kind kind :lexeme lexeme :span span) Int))
 
-; Token accessors for readability.
+; Token and span readers. Every phase holds a token and a span as a
+; word; each reader views it through the struct's declaration.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: tokenKind (-> Int TokenKind))
+;@axiom:effect(unsafe)
 (pub fn (tokenKind t)
-  (as (memGetWord t 0) TokenKind))
+  {
+    (let v (as t Token))
+    v.kind
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: tokenLexeme (-> Int String))
+;@axiom:effect(unsafe)
 (pub fn (tokenLexeme t)
-  (memGetWordStr t 1))
+  {
+    (let v (as t Token))
+    v.lexeme
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: tokenSpan (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (tokenSpan t)
-  (memGetWord t 2))
+  {
+    (let v (as t Token))
+    v.span
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: spanStart (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (spanStart s)
-  (memGetWord s 0))
+  {
+    (let v (as s Span))
+    v.start
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: spanEnd (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (spanEnd s)
-  (memGetWord s 1))
+  {
+    (let v (as s Span))
+    v.end
+  })
 
 ; ------------------------------------------------------------------
 ; Decode a lexer-validated decimal Int. Stop at the first non-digit;
@@ -260,15 +256,14 @@
 ; ------------------------------------------------------------------
 ; A UTF-8 byte order mark. Three bytes, EF BB BF, that a BOM-emitting
 ; editor puts before the first character of a file and that no reader
-; of the file is meant to see. Until 2026-08-21 the lexer saw it: a
-; file saved that way failed to lex at all, with `AX1001: unexpected
-; character` pointing at an invisible character at 1:1 (the QA
-; sweep). It is skipped where a file's text is entered - the lexer's
-; entry, and the two column counters in `diag` and `render` - and
-; nowhere else: spans stay byte offsets into the text as read, so the
-; mark costs three bytes of offset and zero columns, which is the
-; position an editor that hides it reports too. Asked of a LINE START
-; rather than of the text, so a column on any later line is untouched.
+; of the file is meant to see; read as text, it would fail the whole
+; file as `AX1001` at an invisible 1:1. It is skipped where a file's
+; text is entered - the lexer's entry, and the two column counters in
+; `diag` and `render` - and nowhere else: spans stay byte offsets into
+; the text as read, so the mark costs three bytes of offset and zero
+; columns, which is the position an editor that hides it reports too.
+; Asked of a LINE START rather than of the text, so a column on any
+; later line is untouched.
 ; `fmt` reads through its own scanner (`fscan`) and lifts the mark off
 ; before it, restoring it on the result (`fmtFormat`); `check`,
 ; `build`, `run`, `symbols` and the language server all come through
@@ -329,17 +324,11 @@
 ;@axiom:effect(unsafe)
 (pub fn (strVecHas xs n)
   {
-    (let mut i 0)
     (let mut found 0)
-    {
-      (while (< i (vecLen xs))
-        {
-          (if (strEq (as (vecGet xs i) String) n)
-            (set found 1))
-          (set i (+ i 1))
-        })
-      found
-    }
+    (for i in 0..(vecLen xs)
+      (if (strEq (as (vecGet xs i) String) n)
+        (set found 1)))
+    found
   })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
@@ -347,17 +336,11 @@
 ;@axiom:effect(unsafe)
 (pub fn (strVecIdx xs n)
   {
-    (let mut i 0)
     (let mut found (- 0 1))
-    {
-      (while (< i (vecLen xs))
-        {
-          (if (&& (== found (- 0 1)) (strEq (as (vecGet xs i) String) n))
-            (set found i))
-          (set i (+ i 1))
-        })
-      found
-    }
+    (for i in 0..(vecLen xs)
+      (if (&& (== found (- 0 1)) (strEq (as (vecGet xs i) String) n))
+        (set found i)))
+    found
   })
 
 ; Append every element of `src` to `acc`, answering `acc`.
