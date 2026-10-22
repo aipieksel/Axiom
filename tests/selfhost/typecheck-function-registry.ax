@@ -41,6 +41,36 @@
     :restrictions vecNew
     :lambdaCast NoLambdaCast))
 
+(:: callerIndexChecks (-> TC Bool))
+(fn (callerIndexChecks tc)
+  {
+    (let index (callersIdxBuild tc tc.allDecls))
+    (if (&& (isNone (callersIdxFind index "missingCallee"))
+          (isNone (callersIdxFind vecNew "missingCallee")))
+      (if (let (Some helper) (callersIdxFind index "helper"))
+        (if (let (Some writer) (callersIdxFind index "write"))
+          {
+            (let mainIndex (vecGet helper.idxs 0))
+            (let helperIndex (vecGet writer.idxs 0))
+            (callersIdxPut index "helper" mainIndex)
+            (callersIdxPut index "helper" mainIndex)
+            (callersIdxPut index "insertionOrder" mainIndex)
+            (callersIdxPut index "insertionOrder" helperIndex)
+            (callersIdxPut index "insertionOrder" mainIndex)
+            (if (let (Some ordered) (callersIdxFind index "insertionOrder"))
+              (&& (== (vecLen helper.idxs) 1)
+                (&& (strEq (nodeAName (vecGet tc.allDecls mainIndex)) "main")
+                  (&& (strEq (nodeAName (vecGet tc.allDecls helperIndex)) "helper")
+                    (&& (== (vecLen ordered.idxs) 2)
+                      (&& (== (vecGet ordered.idxs 0) mainIndex)
+                        (== (vecGet ordered.idxs 1) helperIndex))))))
+              false)
+          }
+          false)
+        false)
+      false)
+  })
+
 (:: graphOptionChecks (-> TC Bool))
 (fn (graphOptionChecks tc)
   {
@@ -99,7 +129,9 @@
                       (&& (strEq (fnEntName (vecGet path 1)) "helper")
                         (strEq (fnEntName (vecGet path 2)) "write")))
                   (if (graphOptionChecks tc)
-                    42
+                    (if (callerIndexChecks tc)
+                      42
+                      9)
                     8)
                   5)
                 4)

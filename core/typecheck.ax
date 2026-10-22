@@ -22002,6 +22002,8 @@
 ; asserts byte-identical `symbols --calls` against a compiler with the
 ; filter ablated rather than taking that argument's word for it.
 ; A callee's callers, by the resolved name every edge already carries.
+(pub type CallerIndex (Vec (Vec CallerEnt)))
+
 (pub struct CallerEnt
   (name : String)
   (idxs : (Vec Int)))
@@ -22012,8 +22014,7 @@
 ; An INDEX rather than a field on `FnEnt`: the memory note prices a
 ; new FnEnt word at about 6% of a self-check, and this one is needed
 ; by a single walk that already holds the declaration list.
-(pub :: callersIdxBuild (-> TC (Vec ASTNode) IntRows))
-;@axiom:effect(unsafe)
+(pub :: callersIdxBuild (-> TC (Vec ASTNode) CallerIndex))
 (pub fn (callersIdxBuild tc decls)
   {
     (let nb (fnIdxBuckets (vecLen decls)))
@@ -22022,7 +22023,7 @@
     {
       (while (< i nb)
         {
-          (vecPush bs (as 0 (Vec Int)))
+          (vecPush bs vecNew)
           (set i (+ i 1))
         })
       (set i 0)
@@ -22040,7 +22041,7 @@
 ; `restrictOwnEnt` for the lookup, and for the reason
 ; `inferEffectsOne` states: a private function is invisible to a
 ; lookup made from nowhere, so the module has to be set first.
-(pub :: callersIdxAddDecl (-> TC IntRows (Vec ASTNode) Int Int))
+(pub :: callersIdxAddDecl (-> TC CallerIndex (Vec ASTNode) Int Int))
 (pub fn (callersIdxAddDecl tc bs decls i)
   {
     (let d (vecGet decls i))
@@ -22057,7 +22058,7 @@
       })
   })
 
-(pub :: callersIdxAddEdges (-> IntRows Names Int Int Int))
+(pub :: callersIdxAddEdges (-> CallerIndex Names Int Int Int))
 (pub fn (callersIdxAddEdges bs calls i who)
   (if (== (as calls Int) 0)
     0
@@ -22068,64 +22069,42 @@
         (callersIdxAddEdges bs calls (+ i 1) who)
       })))
 
-(pub :: callersIdxPut (-> IntRows String Int Int))
+(pub :: callersIdxPut (-> CallerIndex String Int Int))
 (pub fn (callersIdxPut bs name who)
-  {
-    (let e (callersIdxFind bs name))
-    (if (== e 0)
-      {
-        (let v vecNew)
-        {
-          (vecPush v who)
-          (callersIdxInsert bs name v)
-        }
-      }
-      {
-        (intPushUnique (memGetWordVec e 1) who)
-        0
-      })
-  })
-
-(pub :: callersIdxInsert (-> IntRows String Ints Int))
-(pub fn (callersIdxInsert bs name v)
-  {
-    (let b (% (fnIdxHash name) (vecLen bs)))
+  (if (let (Some entry) (callersIdxFind bs name))
     {
-      (let ent (as (CallerEnt :name name :idxs v) Int))
-      (if (== (as (vecGet bs b) Int) 0)
-        {
-          (let nv vecNew)
-          {
-            (vecPush nv ent)
-            (vecSet bs b nv)
-            0
-          }
-        }
-        {
-          (vecPush (vecGet bs b) ent)
-          0
-        })
+      (intPushUnique entry.idxs who)
+      0
     }
-  })
-
-(pub :: callersIdxFind (-> IntRows String Int))
-(pub fn (callersIdxFind bs name)
-  (if (== (as bs Int) 0)
-    0
     {
-      (let v (vecGet bs (% (fnIdxHash name) (vecLen bs))))
-      (if (== (as v Int) 0)
-        0
-        (callersIdxFindIn v name 0))
+      (let indexes vecNew)
+      (vecPush indexes who)
+      (callersIdxInsert bs name indexes)
     }))
 
-(pub :: callersIdxFindIn (-> Ints String Int Int))
+(pub :: callersIdxInsert (-> CallerIndex String Ints Int))
+(pub fn (callersIdxInsert bs name v)
+  {
+    (vecPush (vecGet bs (% (fnIdxHash name) (vecLen bs))) (CallerEnt :name name :idxs v))
+    0
+  })
+
+(pub :: callersIdxFind (-> CallerIndex String (Option CallerEnt)))
+(pub fn (callersIdxFind bs name)
+  (if (== (vecLen bs) 0)
+    None
+    (callersIdxFindIn (vecGet bs (% (fnIdxHash name) (vecLen bs))) name 0)))
+
+(pub :: callersIdxFindIn (-> (Vec CallerEnt) String Int (Option CallerEnt)))
 (pub fn (callersIdxFindIn v name i)
   (if (>= i (vecLen v))
-    0
-    (if (strEq (memGetWordStr (vecGet v i) 0) name)
-      (vecGet v i)
-      (callersIdxFindIn v name (+ i 1)))))
+    None
+    {
+      (let entry (vecGet v i))
+      (if (strEq entry.name name)
+        (Some entry)
+        (callersIdxFindIn v name (+ i 1)))
+    }))
 
 ; A declaration index appended once. The edge list `tcNoteCall` builds
 ; is already deduplicated per caller, but one caller may reach the same
@@ -22186,7 +22165,7 @@
 ; frontier size: the initial pass can contain every declaration in
 ; the compiler. Processing the body after a recursive call retained
 ; one frame per entry, even at --opt 1.
-(pub :: inferEffectsDirtyPass (-> TC (Vec ASTNode) IntRows Ints Ints Ints Int Int))
+(pub :: inferEffectsDirtyPass (-> TC (Vec ASTNode) CallerIndex Ints Ints Ints Int Int))
 (pub fn (inferEffectsDirtyPass tc decls bs work marks next i)
   {
     (let mut j (- (vecLen work) 1))
@@ -22208,17 +22187,14 @@
 ; frontier. A declaration whose entry has gone is not an error here -
 ; the same `0` guard `inferEffectsOne` makes - it simply has no callers
 ; to wake.
-(pub :: markCallers (-> TC IntRows Ints Ints ASTNode Int))
+(pub :: markCallers (-> TC CallerIndex Ints Ints ASTNode Int))
 (pub fn (markCallers tc bs marks next d)
   {
     (let entFound (restrictOwnEnt tc d))
     (if (let (Some ent) entFound)
-      {
-        (let e (callersIdxFind bs (fnEntName ent)))
-        (if (== e 0)
-          0
-          (markEach marks next (memGetWordVec e 1) 0))
-      }
+      (if (let (Some entry) (callersIdxFind bs (fnEntName ent)))
+        (markEach marks next entry.idxs 0)
+        0)
       0)
   })
 
@@ -22289,7 +22265,7 @@
   next)
 
 ; Rounds 2..limit, each over the previous round's frontier.
-(pub :: inferEffectsWork (-> TC (Vec ASTNode) IntRows Ints Ints Int Int Int))
+(pub :: inferEffectsWork (-> TC (Vec ASTNode) CallerIndex Ints Ints Int Int Int))
 (pub fn (inferEffectsWork tc decls bs work marks round limit)
   (if (>= round limit)
     0
@@ -33212,7 +33188,7 @@
 ; of every function whose facts grew into `next`. Answers 1 when
 ; anything grew. The frontier is visited from its last element, for
 ; the reason `inferEffectsDirtyPass` states.
-(pub :: rgnDirtyPass (-> TC (Vec ASTNode) IntRows Ints Ints Ints Int Int))
+(pub :: rgnDirtyPass (-> TC (Vec ASTNode) CallerIndex Ints Ints Ints Int Int))
 (pub fn (rgnDirtyPass tc decls bs work marks next i)
   {
     (let mut j (- (vecLen work) 1))
@@ -33233,7 +33209,7 @@
 ; Worklist rounds: each walks the previous round's frontier. A quiet
 ; frontier is verified by one full pass before convergence is
 ; claimed, and a change there restarts the ordinary rounds.
-(pub :: rgnWork (-> TC (Vec ASTNode) IntRows Ints Ints Int Int Int))
+(pub :: rgnWork (-> TC (Vec ASTNode) CallerIndex Ints Ints Int Int Int))
 (pub fn (rgnWork tc decls bs work marks round limit)
   (if (>= round limit)
     {
