@@ -34,6 +34,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 gate_build_axc axc
 
+python3 tests/tools/compiler-representation.py "$axc"
 python3 tests/tools/format-option-specifiers.py "$axc"
 python3 tests/tools/expansion-option-frames.py "$axc"
 python3 tests/tools/expansion-option-bindings.py "$axc"

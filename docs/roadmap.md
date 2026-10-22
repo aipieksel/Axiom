@@ -77,8 +77,8 @@ integrator would still need.
 
 | Item | State | Where it's specified or tested |
 |---|---|---|
-| Compiler data uses typed structures and checked effect boundaries across every phase | In progress | Typed AST and effect values cross every phase; the CLI and REPL handoff rejects declaration-list and structural syntax edits and supplies checked function types for numeric lowering. Mutable stamp and packed metadata internals, alias revision tracking, a typed semantic IR, and packed registry and frame storage remain |
-| Optional compiler lookups use typed results throughout the checker, emitter and tools | In progress | Checker scopes, emitter effect, constructor and signature tables, module filters, format specifiers and LSP bucket slots retain their types and use `Option` for absence. Checker definition tables, expander state and further tool lookups remain |
+| Compiler data uses typed structures and checked effect boundaries across every phase | In progress | Typed AST and effect values cross every phase. Function registries, codegen contexts, expansion frames, bindings and repetition matches keep typed owners. The CLI and REPL handoff rejects structural syntax edits and supplies checked function types for numeric lowering. Packed metadata, parser result carriers, alias revision tracking and a typed semantic IR remain |
+| Optional compiler lookups use typed results throughout the checker, emitter and tools | In progress | Checker scopes and function entries, emitter tables, module filters, format specifiers, expansion matches and LSP buckets use `Option` for absence. Other checker definition tables, optional emitter state, expander builders and further tool lookups remain |
 | Native tool arguments keep their string vector type to the syscall boundary | Done | `scripts/check-driver.sh`, `scripts/check-bootstrap.sh` |
 | Known callback arguments honour effect restrictions through forwarding and captures | Done | `tests/diagnostics/1463-callback-restrictions.ax` |
 | Opaque callback aliases preserve incomplete effect rows through forwarding, captures and mutable bindings | Done | `tests/diagnostics/1482-callback-alias-effects.ax`, `tests/selfhost/1042-callback-alias-effects.ax` |
@@ -251,5 +251,50 @@ work; they do not claim full feature parity.
 | Windows seeds and an installer bootstrap the compiler locally | Native Windows x64 and ARM64 seed bootstraps reach the fixpoint; transactional preview installation validation is pending |
 | The embedded checks run on a named board | Not started |
 | Compatibility rules enforced at 1.0 (`COMPAT-6`) | Planned |
+
+### Scale target support
+
+A compiler's host is the platform that runs the compiler. Its output
+target is the platform selected by `--target`; cross-compilation keeps
+those choices separate. LLVM instruction selection is one part of a
+port. Axiom also needs a matching ABI, linker, startup code, allocator,
+trap and exception paths, atomics and a tested library subset.
+
+The current target queries live in `core/codegen.ax`, linking in
+`core/driver.ax`, and host selection in the `core/Host.*.ax` modules.
+Platform library modules provide the kernel or host interfaces.
+The [embedded guide](embedded-guide.md) describes the existing
+`baremetal-aarch64` QEMU configuration and its hardware limits.
+
+| Work | Acceptance |
+|---|---|
+| Replace repeated target conditionals with typed target descriptors and capabilities | One validated descriptor records word and pointer layout, ABI, object format, CPU features, atomics, allocation, threading and trap strategies; unsupported combinations are refused |
+| Share backend, ABI and runtime implementations across targets | Small architecture, operating-system and board adapters supply the differences; a new port reuses the common checker and language syntax |
+| Keep hosted and freestanding profiles explicit | Hosted services are available through platform modules; freestanding builds declare startup, memory, interrupts, device access and the permitted library subset |
+| Keep optional runtime features out of unused programs | Measure stripped executable size and retained symbols for minimal, embedded and feature-enabled builds; profiles select capabilities without retaining unused services |
+| Record each port's evidence and maintenance | Separate compile/link, emulator, hardware and maintained support states; record tool versions, CI coverage, known gaps and an owner before promotion |
+
+Prioritise reusable runtime work, available emulators, accessible boards,
+and maintainers who can reproduce failures. The next embedded set is
+bounded; these are candidates, not accepted target names or support claims.
+
+| Priority | Candidate | First evidence and limit |
+|---|---|---|
+| 1 | A named Cortex-A72 board for the existing AArch64 port | Select a board and owner, then validate its boot, memory map, UART, interrupts and fault paths on hardware; QEMU `virt` does not establish board support |
+| 2 | A 64-bit RISC-V freestanding port, starting with QEMU `virt` | Prove compile/link, calling convention, startup, atomics and traps before emulator execution; hardware and a maintained CI configuration follow |
+| 3 | A Cortex-M microcontroller profile | First resolve the compiler's current 64-bit word and metadata assumptions, small-memory allocation and interrupt ABI; select one board before implementing the port |
+
+Each candidate advances through compile/link checks, emulator execution
+where available, real hardware and maintained CI coverage. A port without
+a runner stays labelled with the evidence it has. Promotion requires an
+owner and a reproducible configuration; hardware evidence cannot be
+inferred from another board or LLVM backend availability.
+
+Full Windows support is a prospective v0.8.1 goal. Preview limitations
+remain in the table above, including terminal input after mode
+cancellation and guarded executable-worker stack budgets. Arbitrary
+captured-closure tasks remain outside the encoded-worker design.
+Windows completion is separate from the v0.8.0 gates: compiler-wide
+type migration and an evidence-backed memory-model assessment.
 
 The maintainer cuts releases.

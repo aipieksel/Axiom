@@ -275,13 +275,18 @@ echo "--- 1. user-level cast count does not grow ---"
 # Nine numeric conversions exercise UInt8 format radix payloads and their
 # invalid-value controls, including emitted source. None forges a reference;
 # these are MM-VAL-23 compiler-boundary and numeric-conversion subjects.
+# Owning CG parameters make 110 existing raw ownership observations explicit:
+# 107 context-to-word bases, two returned-context identity observations and
+# one held Names-vector truncation control. These test-only MM-VAL-23
+# subjects inspect field headers/counts without adding a typed getter share;
+# their live typed owners remain held. Production removes 93 CG bridges.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1270 ]; then
-  ok "user-level (cast count $cast_count <= 1270)"
+elif [ "$cast_count" -le 1380 ]; then
+  ok "user-level (cast count $cast_count <= 1380)"
 else
-  bad "user-level (cast count $cast_count > 1270): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1380): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -455,7 +460,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # typed navigation, highlight and lint records leave 646. Typed scopes,
 # constructor/signature tables and namespace owners remove another 91
 # reference erasures, leaving 555.
-erasure_pin=555
+# Typed contexts, function entries, expansion owners and renderer rows
+# remove 58 more reference erasures in a same-compiler comparison.
+erasure_pin=497
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)

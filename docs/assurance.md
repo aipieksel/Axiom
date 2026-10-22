@@ -132,6 +132,28 @@ including through imports. Tested by
 Not yet: the backend's full semantic representation is
 [on the roadmap](roadmap.md#checks-and-claims).
 
+### Compiler representation
+
+Typed compiler containers keep their owners through lookups, sorting
+and replacement. An optional lookup returns `Some` or `None`; a
+required emitter lookup reports `AX4002` when its entry is missing.
+An `if let` chooses a branch and may fall through. Exhaustive `match`
+checking remains a separate obligation.
+
+| Invariant | Enforcement and evidence | Limit |
+|---|---|---|
+| Function tables retain checked entries and distinguish an absent name from an entry | `Vec FnEnt`, `Option FnEnt`; `tests/selfhost/typecheck-function-registry.ax` | Other checker definition tables still use word carriers |
+| Expansion preserves present empty repetitions and keeps binding and frame owners | Typed matches, binding vectors and `Option` results; `tests/tools/expansion-option-sequences.py`, `tests/tools/expansion-option-frames.py` | Syntax-identity metadata still crosses the raw AST arena boundary |
+| Emitter metadata keeps each live share through replacement and restoration | Owning `CG` context and typed tables; `tests/selfhost/emitter-symbol-scope.py`, `tests/selfhost/emitter-type-registry.py` | Remaining packed state and reference erasures require separate review |
+| Failed pattern tests continue without exposing branch bindings | `Some` and `None` paths; `tests/selfhost/typecheck-if-let-control-flow.ax`, `tests/diagnostics/1496-if-let-scope.ax` | Conditional matching does not require an `else` |
+
+The compiler representation probes run natively at optimisation levels
+0 and 2 with allocation poisoning. They check the named ownership and
+absence cases; they do not establish memory-model soundness. Raw arena
+stores, alias revision tracking and the trusted interfaces above remain
+outside that claim. Qualification also requires evidence for a frozen
+application and target configuration.
+
 ### Effects, rule by rule
 
 The effect walk infers each function's row from its body and its
