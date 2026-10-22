@@ -3170,6 +3170,142 @@
   (tyvars : Names)
   (repr : Int))
 
+; Typed reads of a function entry. The function tables hold each
+; `FnEnt` as a word; a reader views it through the struct's declaration
+; and answers the field at its type. A writer stores through
+; `memSetWord`, as the entry's other writers do.
+(pub :: fnEntName (-> Int String))
+;@axiom:effect(unsafe)
+(pub fn (fnEntName ent)
+  {
+    (let e (as ent FnEnt))
+    e.name
+  })
+
+(pub :: fnEntTy (-> Int ASTNode))
+;@axiom:effect(unsafe)
+(pub fn (fnEntTy ent)
+  {
+    (let e (as ent FnEnt))
+    e.ty
+  })
+
+(pub :: fnEntParamCount (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (fnEntParamCount ent)
+  {
+    (let e (as ent FnEnt))
+    e.paramCount
+  })
+
+(pub :: fnEntIsBuiltin (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (fnEntIsBuiltin ent)
+  {
+    (let e (as ent FnEnt))
+    e.isBuiltin
+  })
+
+(pub :: fnEntIsEffectOp (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (fnEntIsEffectOp ent)
+  {
+    (let e (as ent FnEnt))
+    e.isEffectOp
+  })
+
+(pub :: fnEntEffects (-> Int Strings))
+;@axiom:effect(unsafe)
+(pub fn (fnEntEffects ent)
+  {
+    (let e (as ent FnEnt))
+    e.effects
+  })
+
+(pub :: fnEntEparams (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(pub fn (fnEntEparams ent)
+  {
+    (let e (as ent FnEnt))
+    e.eparams
+  })
+
+(pub :: fnEntCalls (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(pub fn (fnEntCalls ent)
+  {
+    (let e (as ent FnEnt))
+    e.calls
+  })
+
+(pub :: fnEntRgn (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (fnEntRgn ent)
+  {
+    (let e (as ent FnEnt))
+    e.rgn
+  })
+
+(pub :: fnEntUnsafe (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (fnEntUnsafe ent)
+  {
+    (let e (as ent FnEnt))
+    e.unsafe
+  })
+
+(pub :: fnEntUses (-> Int (Vec EpUse)))
+;@axiom:effect(unsafe)
+(pub fn (fnEntUses ent)
+  {
+    (let e (as ent FnEnt))
+    e.uses
+  })
+
+(pub :: fnEntPending (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (fnEntPending ent)
+  {
+    (let e (as ent FnEnt))
+    e.pending
+  })
+
+(pub :: fnEntScoped (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(pub fn (fnEntScoped ent)
+  {
+    (let e (as ent FnEnt))
+    e.scoped
+  })
+
+(pub :: fnEntCompute (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(pub fn (fnEntCompute ent)
+  {
+    (let e (as ent FnEnt))
+    e.compute
+  })
+
+(:: fnEntSetTy (-> Int ASTNode Int))
+(fn (fnEntSetTy ent v)
+  (memSetWord ent 1 v))
+
+(:: fnEntSetParamCount (-> Int Int Int))
+(fn (fnEntSetParamCount ent v)
+  (memSetWord ent 2 v))
+
+(:: fnEntSetRgn (-> Int Int Int))
+(fn (fnEntSetRgn ent v)
+  (memSetWord ent 8 v))
+
+(:: fnEntSetUnsafe (-> Int Int Int))
+(fn (fnEntSetUnsafe ent v)
+  (memSetWord ent 9 v))
+
+(:: fnEntSetPending (-> Int Int Int))
+(fn (fnEntSetPending ent v)
+  (memSetWord ent 12 v))
+
 ; A struct's representation, from its markers (`parser.ax`'s
 ; `structIsWord` and `structIsShared`): 0 a heap block, 1 a word
 ; (MM-VAL-10a), 3 a word a `parallel` binding may capture. Word 4 of
@@ -4373,8 +4509,8 @@
     (if (== ent 0)
       0
       {
-        (vecPush (memGetWordVec ent 6) i)
-        (epUseNote (memGetWordVec ent 10) i vecNew 0)
+        (vecPush (fnEntEparams ent) i)
+        (epUseNote (fnEntUses ent) i vecNew 0)
       })
   })
 
@@ -6036,7 +6172,7 @@
                 :compute vecNew
                 :restrictions vecNew
                 :lambdaCast NoLambdaCast) Int))
-        (memSetWord ent 1 ty))
+        (fnEntSetTy ent ty))
     }
   })
 
@@ -6053,7 +6189,7 @@
     (if (== ent 0)
       false
       {
-        (let ty (readAstNode ent 1))
+        (let ty (fnEntTy ent))
         (if (&& (== (nodeTag ty) TAG_T_VAR) (strStartsWith (nodeAName ty) "_fn_"))
           false
           (sigEarlier decls i (nodeAName d) (nodeModule d) 0))
@@ -6117,7 +6253,7 @@
                       :lambdaCast NoLambdaCast) Int))
             }
           }))
-      (memSetWord ent 2 (vecLen (nodeBNames d)))
+      (fnEntSetParamCount ent (vecLen (nodeBNames d)))
     }
   })
 
@@ -6341,14 +6477,14 @@
 (fn (signatureEntryOnly ent)
   (if (== ent 0)
     false
-    (&& (< (memGetWord ent 2) 0) (&& (== (memGetWord ent 3) 0) (== (memGetWord ent 4) 0)))))
+    (&& (< (fnEntParamCount ent) 0) (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))))
 
 (:: resolveSignatureEntry (-> Int Int Int))
 (fn (resolveSignatureEntry tc ent)
   (if (! (signatureEntryOnly ent))
     ent
     {
-      (let name (bareOf (memGetWordStr ent 0)))
+      (let name (bareOf (fnEntName ent)))
       (let bucket
         (if (== (tcFnSufIdx tc) 0)
           (tcFnsVec tc)
@@ -6596,7 +6732,7 @@
 (pub :: fnIdxAdd (-> Ints Int Int))
 (pub fn (fnIdxAdd bs ent)
   {
-    (let b (% (fnIdxHash (memGetWordStr ent 0)) (vecLen bs)))
+    (let b (% (fnIdxHash (fnEntName ent)) (vecLen bs)))
     (if (== (vecGet bs b) 0)
       {
         (let v vecNew)
@@ -6827,8 +6963,8 @@
 (pub :: fnSufIdxAdd (-> Ints Int Int))
 (pub fn (fnSufIdxAdd bs ent)
   {
-    (fnSufIdxPut bs (memGetWordStr ent 0) ent)
-    (fnSufIdxAddSuffixes bs (memGetWordStr ent 0) ent 1)
+    (fnSufIdxPut bs (fnEntName ent) ent)
+    (fnSufIdxAddSuffixes bs (fnEntName ent) ent 1)
   })
 
 ; From 1, not from 0: `nameMatches` demands the `$` be past the first
@@ -9091,7 +9227,7 @@
                     {
                       (setNodeTyChild d poisoned)
                       (if (!= ent 0)
-                        (memSetWord ent 1 poisoned))
+                        (fnEntSetTy ent poisoned))
                     }
                   })
                 (tcExpandSigAliases tc d)
@@ -9235,8 +9371,8 @@
       (let ex (tyExpandAliases tc (nodeTyChild d) 0))
       (let ent (fnEntExact tc (nodeAName d)))
       (let n
-        (if (&& (!= ent 0) (>= (memGetWord ent 2) 0))
-          (+ (memGetWord ent 2) 1)
+        (if (&& (!= ent 0) (>= (fnEntParamCount ent) 0))
+          (+ (fnEntParamCount ent) 1)
           (if (== (nodeB d) 0)
             0
             (vecLen (nodeBWords d)))))
@@ -9248,7 +9384,7 @@
           (let ent (fnEntExact tc (nodeAName d)))
           (if (== ent 0)
             0
-            (memSetWord ent 1 ex))
+            (fnEntSetTy ent ex))
         }
       }
     }))
@@ -10059,7 +10195,7 @@
           (let ent (fnEntExact tc (nodeAName d)))
           (if (== ent 0)
             0
-            (memSetWord ent 1 (tyPoisonUnknown tc (nodeTyChild d))))
+            (fnEntSetTy ent (tyPoisonUnknown tc (nodeTyChild d))))
         }
       })
   })
@@ -12456,7 +12592,7 @@
                         ; (MM-LIFE-2d): the stamped variant also
                         ; hangs a TAG_EVSTAMP on this reference
                         ; when the declaration is polymorphic.
-                        (tyInstStamped tc (readAstNode ent 1) e)
+                        (tyInstStamped tc (fnEntTy ent) e)
                       }
                       {
                         (let ctor (findCtor tc name))
@@ -12521,7 +12657,7 @@
   {
     (let ent (findFnEnt tc name))
     (if (!= ent 0)
-      (if (== (memGetWord ent 4) 1)
+      (if (== (fnEntIsEffectOp ent) 1)
         ; An effect operation cannot be a bare value: it is
         ; dispatch, not data, so there is no closure to hand
         ; around. stage0 refuses with AX3017 and returns poison,
@@ -12572,7 +12708,7 @@
             ; refused (`tests/fuzz/primitive-value.axfuzz`, found by
             ; the seeded fuzzer 2026-09-27). Every built-in of two or
             ; more took the arm above already.
-            (if (&& (== ar 1) (== (memGetWord ent 3) 1))
+            (if (&& (== ar 1) (== (fnEntIsBuiltin ent) 1))
               (refuseBareForm tc name 1 span
                 (concat
                   (concat "call it, or wrap it in a lambda to pass it as a value: `(lambda (x) ("
@@ -13788,7 +13924,7 @@
         {
           (let ent (findFnEnt tc name))
           (if (!= ent 0)
-            (readAstNode ent 1)
+            (fnEntTy ent)
             {
               (let ctor (findCtor tc name))
               (if (! (== ctor 0))
@@ -13803,7 +13939,7 @@
             {
               (let ent (findFnEnt tc name))
               (if (!= ent 0)
-                (readAstNode ent 1)
+                (fnEntTy ent)
                 {
                   (let ctor (findCtor tc name))
                   (if (! (== ctor 0))
@@ -13956,7 +14092,7 @@
     (let ent (fnEntExact tc hname))
     (if (== ent 0)
       0
-      (checkSubtypeLiteralArgs tc args (readAstNode ent 1) 0))
+      (checkSubtypeLiteralArgs tc args (fnEntTy ent) 0))
   })
 
 ; Each literal argument against the subtype its parameter declares.
@@ -16006,7 +16142,7 @@
         (let ent (findFnEnt tc (nodeAName d)))
         (if (== ent 0)
           0
-          (memGetWord ent 9))
+          (fnEntUnsafe ent))
       })
   })
 
@@ -16712,14 +16848,14 @@
             {
               (let ar (repArity ent))
               (let arLim
-                (if (> (arrowArity (readAstNode ent 1)) ar)
-                  (arrowArity (readAstNode ent 1))
+                (if (> (arrowArity (fnEntTy ent)) ar)
+                  (arrowArity (fnEntTy ent))
                   ar))
               (let got (spineArgs e 0))
               (if (< ar 0)
                 0
-                (if (&& (> got arLim) (== (fnResultClosed (readAstNode ent 1)) 1))
-                  (if (|| (== (nodeSpan head) 0) (!= (memGetWord ent 4) 0))
+                (if (&& (> got arLim) (== (fnResultClosed (fnEntTy ent)) 1))
+                  (if (|| (== (nodeSpan head) 0) (!= (fnEntIsEffectOp ent) 0))
                     0
                     {
                       (emitDiag tc
@@ -17248,7 +17384,7 @@
 (pub fn (tcIsPairEnt tc ent)
   (if (== ent 0)
     0
-    (tcIsPairName (tcPairFns tc) (memGetWordStr ent 0))))
+    (tcIsPairName (tcPairFns tc) (fnEntName ent))))
 
 ; `pairFwdOK`: a saturated direct call to a pair function whose head
 ; no `let` on the path and no parameter has bound.
@@ -17268,9 +17404,9 @@
               (let ent (findFnEnt tc n))
               (if (== ent 0)
                 0
-                (if (== (tcIsPairName pn (memGetWordStr ent 0)) 0)
+                (if (== (tcIsPairName pn (fnEntName ent)) 0)
                   0
-                  (if (== (spineArgs e 0) (arrowArity (readAstNode ent 1)))
+                  (if (== (spineArgs e 0) (arrowArity (fnEntTy ent)))
                     1
                     0)))
             })
@@ -17401,7 +17537,7 @@
           (if (== ent 0)
             0
             {
-              (let ty (readAstNode ent 1))
+              (let ty (fnEntTy ent))
               (if (nodeSame ty nilNode)
                 0
                 (if (== (tcParamPosVars ty) 1)
@@ -17552,7 +17688,7 @@
                 0
                 (if (== (tcIsPairEnt tc ent) 0)
                   0
-                  (if (!= (spineArgs s 0) (arrowArity (readAstNode ent 1)))
+                  (if (!= (spineArgs s 0) (arrowArity (fnEntTy ent)))
                     0
                     (tcPairArmsOK tc (nodeBChildren e) 0))))
             }))
@@ -17664,7 +17800,7 @@
       (let sig
         (if (== ent 0)
           nilNode
-          (readAstNode ent 1)))
+          (fnEntTy ent)))
       (bsMake vecNew (nodeBNames d) (paramCallablesOf sig (vecLen (nodeBNames d))) vecNew sig
         (bodyCtxReset tc))
     }
@@ -18234,7 +18370,7 @@
         (let ent (findFnEnt tc n))
         (if (&& (!= ent 0)
               (&& (== (isSyscallPrim n) 0)
-                (&& (== (tyIsArrow (readAstNode ent 1)) 1) (!= (memGetWord ent 2) 0))))
+                (&& (== (tyIsArrow (fnEntTy ent)) 1) (!= (fnEntParamCount ent) 0))))
           {
             (unsafeSinkNote tc e bound)
             (Some (fnValsOne (fnValNamed ent)))
@@ -20240,7 +20376,7 @@
 (pub fn (walkCallEnt tc n ent args bound acc unboxed certain)
   {
     (noteLambdaCast bound (fnLambdaCast ent) certain)
-    (tcNoteCall tc (memGetWordStr ent 0))
+    (tcNoteCall tc (fnEntName ent))
     ; A signature with no definition (AX3015) has no body to give it a
     ; row, so the call is unresolved, not effect-free (ERR-DIAG-3).
     (if (tcIsUnknownCallee tc n)
@@ -20265,7 +20401,7 @@
       (effAdd acc (builtinEff "Unsafe")))
     ; Instantiate the callee's transparent positions
     ; with what this call passes there.
-    (instantiateEparams bound ent (memGetWordVec ent 6) args 0 acc)
+    (instantiateEparams bound ent (fnEntEparams ent) args 0 acc)
     ; OVER-APPLICATION. More arguments than the callee's own
     ; parameters means the callee's RESULT is applied to the
     ; rest - `((handoff 1) n)` spines to `handoff` with two
@@ -20481,7 +20617,7 @@
         (if (== ent 0)
           0
           {
-            (tcNoteCall tc (memGetWordStr ent 0))
+            (tcNoteCall tc (fnEntName ent))
             ; NULLARY OR NOT is the whole question, and it is the
             ; difference between naming a function and calling one.
             ;
@@ -20521,7 +20657,7 @@
             ; effect. Nothing in this repository names an arrow-typed
             ; function without calling it.
             (effUnionCallee acc ent
-              (if (&& (== mark 1) (== (tyIsArrow (readAstNode ent 1)) 1))
+              (if (&& (== mark 1) (== (tyIsArrow (fnEntTy ent)) 1))
                 1
                 0))
             ; A raw-memory primitive named without being called carries
@@ -20529,7 +20665,7 @@
             ; possible where the row arrives possible, definite where
             ; it arrives definite.
             (if (== (isUnsafePrim n) 1)
-              (if (&& (== mark 1) (== (tyIsArrow (readAstNode ent 1)) 1))
+              (if (&& (== mark 1) (== (tyIsArrow (fnEntTy ent)) 1))
                 (effAdd acc (effPossibleOf (builtinEff "Unsafe")))
                 (effAdd acc (builtinEff "Unsafe"))))
             ; A pair function reached by NAME is reached through `@F`,
@@ -20538,7 +20674,7 @@
             ; value boxes wherever it is later applied, which is the
             ; same possible/definite split the row above just took.
             (if (== (tcIsPairEnt tc ent) 1)
-              (if (&& (== mark 1) (== (tyIsArrow (readAstNode ent 1)) 1))
+              (if (&& (== mark 1) (== (tyIsArrow (fnEntTy ent)) 1))
                 (effUnionPossible acc (tcAllocRow) 0)
                 (effAdd acc (builtinEff "Alloc")))
               0)
@@ -20743,11 +20879,11 @@
 ; performs the raw store, its callers do not.
 (pub :: effUnionCallee (-> Strings Int Int Int))
 (pub fn (effUnionCallee acc ent possible)
-  (if (== (memGetWord ent 9) 1)
-    (effUnionTrusted acc (memGetWordVec ent 5) possible 0)
+  (if (== (fnEntUnsafe ent) 1)
+    (effUnionTrusted acc (fnEntEffects ent) possible 0)
     (if (== possible 1)
-      (effUnionPossible acc (memGetWordVec ent 5) 0)
-      (effUnion acc (memGetWordVec ent 5) 0))))
+      (effUnionPossible acc (fnEntEffects ent) 0)
+      (effUnion acc (fnEntEffects ent) 0))))
 
 (pub :: effUnionTrusted (-> Strings Strings Int Int Int))
 (pub fn (effUnionTrusted acc src possible i)
@@ -20999,11 +21135,11 @@
           (emitUndefinedVar tc (nodeAName a) (nodeSpan a))
           mkIntTy
         }
-        (if (|| (!= (memGetWord ent 3) 0) (== (memGetWord ent 4) 1))
+        (if (|| (!= (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 1))
           (checkAsmSymBad tc a
             (concat (concat "`" (srcSpelling (nodeAName a)))
               "` has no symbol of its own; a `sym` operand names a function the program defines, or an `extern` item"))
-          (if (== (tyHasSrcVar (readAstNode ent 1)) 1)
+          (if (== (tyHasSrcVar (fnEntTy ent)) 1)
             (checkAsmSymBad tc a
               (concat (concat "`" (srcSpelling (nodeAName a)))
                 "` is polymorphic, so it takes a hidden evidence word the instructions would have to supply; name a function whose signature has no type variable"))
@@ -21579,11 +21715,11 @@
 (pub fn (fnPending ent)
   (if (== ent 0)
     0
-    (memGetWord ent 12)))
+    (fnEntPending ent)))
 
 (pub :: epUseFor (-> Int Int (Option EpUse)))
 (pub fn (epUseFor ent j)
-  (epUseFind (memGetWordVec ent 10) j 0))
+  (epUseFind (fnEntUses ent) j 0))
 
 ; A use of the current function's parameter `pidx`, made by handing it
 ; to a callee position whose own record is `o` (`None`: a position the
@@ -21918,7 +22054,7 @@
             (let ent (findFnEnt tc (nodeAName d)))
             (let _m0 (tcSetCurModule tc 0))
             (if (! (== ent 0))
-              (memSetWord ent 12 1))
+              (fnEntSetPending ent 1))
           })
         (effMarkPending tc decls (+ i 1))
       }
@@ -22406,7 +22542,7 @@
     (if (== ent 0)
       0
       {
-        (let e (callersIdxFind bs (memGetWordStr ent 0)))
+        (let e (callersIdxFind bs (fnEntName ent)))
         (if (== e 0)
           0
           (markEach marks next (memGetWordVec e 1) 0))
@@ -22735,7 +22871,7 @@
         (let ent (findFnEnt tc (nodeAName d)))
         (if (== ent 0)
           nilNode
-          (readAstNode ent 1))
+          (fnEntTy ent))
       })
   })
 
@@ -26715,7 +26851,7 @@
       0
       (if (== ent 0)
         1
-        (isrIntArrows (readAstNode ent 1) 5)))
+        (isrIntArrows (fnEntTy ent) 5)))
   })
 
 ; `t` is `n` arrows from `Int`, ending in `Int`.
@@ -29298,7 +29434,7 @@
               {
                 (let ent (restrictOwnEnt tc d))
                 (if (! (== ent 0))
-                  (memSetWord ent 9 role))
+                  (fnEntSetUnsafe ent role))
               })
           })
       }
@@ -29581,7 +29717,7 @@
           (let ent (findFnEnt tc (nodeAName node)))
           (if (== ent 0)
             0
-            (if (== (memGetWord ent 4) 2)
+            (if (== (fnEntIsEffectOp ent) 2)
               {
                 (vecPush sink node)
                 0
@@ -30052,10 +30188,10 @@
       (if (== ent 0)
         0
         {
-          (let ty (readAstNode ent 1))
+          (let ty (fnEntTy ent))
           (if (&& (! (nodeSame ty nilNode))
                 (&& (== (nodeTag ty) TAG_T_VAR)
-                  (&& (!= (strLen (nodeAName ty)) 0) (> (memGetWord ent 2) 0))))
+                  (&& (!= (strLen (nodeAName ty)) 0) (> (fnEntParamCount ent) 0))))
             1
             0)
         })
@@ -30157,7 +30293,7 @@
         (let ent (restrictOwnEnt tc d))
         (if (== ent 0)
           0
-          (checkUnhandledRow tc d ent (memGetWordVec ent 5) 0))
+          (checkUnhandledRow tc d ent (fnEntEffects ent) 0))
       })
   })
 
@@ -30177,7 +30313,7 @@
         (if (== ent 0)
           0
           {
-            (let ty (tyResolve (readAstNode ent 1)))
+            (let ty (tyResolve (fnEntTy ent)))
             (if (tcMainAnswerOk ty)
               0
               (emitMainResultType tc d ty))
@@ -30230,13 +30366,13 @@
 ; to `c:incomplete`. So one equality skips the builtins, the possible
 ; spellings and the marker together, and it cannot fall behind a new
 ; tag the way three separate tests could.
-(pub :: checkUnhandledRow (-> Int ASTNode Int Ints Int Int))
+(pub :: checkUnhandledRow (-> Int ASTNode Int Strings Int Int))
 (pub fn (checkUnhandledRow tc d ent eff i)
   (if (>= i (vecLen eff))
     0
     {
       {
-        (let e (vecGetStr eff i))
+        (let e (vecGet eff i))
         (if (strEq e (customEff (effRender e)))
           (emitUnhandledAtMain tc d ent (effRender e)))
       }
@@ -31196,7 +31332,7 @@
         (paramCallablesOf
           (if (== ent 0)
             nilNode
-            (readAstNode ent 1))
+            (fnEntTy ent))
           (vecLen params)))
       ; MM-LIFE-2d: the body's evidence context - this function's
       ; own ordered tyvars (what a symbolic witness indexes into)
@@ -31205,7 +31341,7 @@
         (let sigTy
           (if (== ent 0)
             nilNode
-            (readAstNode ent 1)))
+            (fnEntTy ent)))
         (let ptys vecNew)
         {
           (tcSetCurDeclNode tc d)
@@ -31313,9 +31449,9 @@
                 (checkContracts tc d resTy)
                 (emitUnsignedSignature tc)
                 (if (&& (!= ent 0)
-                      (&& (! (nodeSame (readAstNode ent 1) nilNode))
-                        (== (nodeTag (readAstNode ent 1)) TAG_T_VAR)))
-                  (memSetWord ent 1 (ctorArrowOf ptys bodyTy (- (vecLen ptys) 1))))
+                      (&& (! (nodeSame (fnEntTy ent) nilNode))
+                        (== (nodeTag (fnEntTy ent)) TAG_T_VAR)))
+                  (fnEntSetTy ent (ctorArrowOf ptys bodyTy (- (vecLen ptys) 1))))
                 (scopeTrunc (tcScopeVec tc) base)
                 (set state.unsignedParams nilNodes)
                 ; Every pin this body makes has been made.
@@ -31622,12 +31758,12 @@
 ; The facts of an entry, made on first demand.
 (pub :: rgnFactsOf (-> Int Int Int))
 (pub fn (rgnFactsOf ent n)
-  (if (!= (memGetWord ent 8) 0)
-    (memGetWord ent 8)
+  (if (!= (fnEntRgn ent) 0)
+    (fnEntRgn ent)
     {
       (let f (rgnFactsNew n))
       {
-        (memSetWord ent 8 f)
+        (fnEntSetRgn ent f)
         f
       }
     }))
@@ -31704,8 +31840,7 @@
         (if (== ent 0)
           0
           {
-            (let ty
-              (tyExpandAliases tc (tyResolve (nthParamTy (readAstNode ent 1) pos nilNode)) 0))
+            (let ty (tyExpandAliases tc (tyResolve (nthParamTy (fnEntTy ent) pos nilNode)) 0))
             (if (|| (nodeSame ty nilNode) (!= (nodeTag ty) TAG_T_ARR))
               (emitScopedCallback tc (nodeSpan d)
                 "a scoped parameter must have a declared function type")
@@ -31734,10 +31869,10 @@
 (pub :: rgnCheckScopedArgs (-> Int Int Nodes Int Int))
 (pub fn (rgnCheckScopedArgs rc ent args span)
   {
-    (let indices (memGetWordVec ent 13))
+    (let indices (fnEntScoped ent))
     {
       (let _sat
-        (if (&& (> (vecLen indices) 0) (< (vecLen args) (memGetWord ent 2)))
+        (if (&& (> (vecLen indices) 0) (< (vecLen args) (fnEntParamCount ent)))
           (if (== (rgnReport rc) 1)
             (emitScopedCallback (rgnTc rc) span
               "a function with a scoped callback contract requires all declared arguments in one call")
@@ -31771,7 +31906,8 @@
       (let ent (findFnEnt (rgnTc rc) (nodeAName e)))
       (if (== ent 0)
         0
-        (if (&& (> (memGetWord ent 2) 0) (&& (== (memGetWord ent 3) 0) (== (memGetWord ent 4) 0)))
+        (if (&& (> (fnEntParamCount ent) 0)
+              (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))
           1
           0))
     }))
@@ -32314,12 +32450,13 @@
         (let ent (findFnEnt (rgnTc rc) (nodeAName e)))
         {
           (if (!= ent 0)
-            (if (&& (> (vecLen (memGetWordVec ent 13)) 0) (== (rgnReport rc) 1))
+            (if (&& (> (vecLen (fnEntScoped ent)) 0) (== (rgnReport rc) 1))
               (emitScopedCallback (rgnTc rc) (nodeSpan e)
                 "a function with a scoped callback contract must be called directly; a function value would erase its precondition")))
           (if (if (== ent 0)
             false
-            (&& (== (memGetWord ent 2) 0) (&& (== (memGetWord ent 3) 0) (== (memGetWord ent 4) 0))))
+            (&& (== (fnEntParamCount ent) 0)
+              (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0))))
             (rgnApp rc e)
             0)
         }
@@ -32827,8 +32964,8 @@
             0))
         {
           (if (!= ent 0)
-            (if (!= (memGetWord ent 8) 0)
-              (rgnNoteReclaim rc (memGetWord (memGetWord ent 8) 8))))
+            (if (!= (fnEntRgn ent) 0)
+              (rgnNoteReclaim rc (memGetWord (fnEntRgn ent) 8))))
           (if (&& (== (rgnReport rc) 1) (!= (spanOf h) 0))
             (if (== ent 0)
               (emitDiag (rgnTc rc)
@@ -32836,7 +32973,7 @@
                   "region safety cannot be proved: the handler's body is not visible at its installation"
                   0 0
                   "write the handler as a lambda at the handle form, or name a top-level function; an operation may run inside a shorter region or recovery point, so its handler must retain none of that extent's references or allocations"))
-              (if (== (rgnFactsKeep (memGetWord ent 8)) 1)
+              (if (== (rgnFactsKeep (fnEntRgn ent)) 1)
                 (emitDiag (rgnTc rc)
                   (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan h)
                     (concat (concat "the handler `" (nodeAName h))
@@ -32904,14 +33041,14 @@
                       (let ent (findFnEnt tc n))
                       (if (== ent 0)
                         (rgnUnknownCall rc args (spanOf e) 0)
-                        (if (== (memGetWord ent 3) 1)
+                        (if (== (fnEntIsBuiltin ent) 1)
                           (rgnBuiltinCall rc n args (spanOf e))
-                          (if (== (memGetWord ent 4) 1)
+                          (if (== (fnEntIsEffectOp ent) 1)
                             ; The installed handler supplies any nested
                             ; reclamation fact. Dispatch alone enters no
                             ; region, while argument stores stay unknown.
                             (rgnOpaqueCall rc args (spanOf e) 0 0)
-                            (if (== (memGetWord ent 4) 2)
+                            (if (== (fnEntIsEffectOp ent) 2)
                               {
                                 (rgnArgsUnion rc args 0 0)
                                 (memGetWord rc 7)
@@ -33051,9 +33188,9 @@
     ; (`Vec$vecPush`); the spelling at the call may be bare or qualified
     {
       (let masks (rgnIntVec))
-      (let callee (memGetWordStr ent 0))
-      (let sig (readAstNode ent 1))
-      (let f (memGetWord ent 8))
+      (let callee (fnEntName ent))
+      (let sig (fnEntTy ent))
+      (let f (fnEntRgn ent))
       (let tc (rgnTc rc))
       (let mut i 0)
       (let mut res 0)
@@ -33758,7 +33895,7 @@
     (let ent (findFnEnt tc n))
     (if (== ent 0)
       n
-      (memGetWordStr ent 0))
+      (fnEntName ent))
   })
 
 ; Run `f` over `d` with the checker's current module set to `d`'s,
@@ -34544,7 +34681,7 @@
         (concat "compute contract names no parameter: `" (concat name "`")))
       (if (== ent 0)
         0
-        (if (computeWordArrow tc (nthParamTy (readAstNode ent 1) pos nilNode))
+        (if (computeWordArrow tc (nthParamTy (fnEntTy ent) pos nilNode))
           0
           (emitCompute tc (nodeSpan d)
             "a compute parameter requires the declared callback type (-> Int Int)"))))
@@ -34568,7 +34705,7 @@
             (let index (+ (tcFrameBase tc) pos))
             (&& (< index (vecLen (tcScopeVec tc)))
               (&& (== frame (vecGet (tcScopeVec tc) index))
-                (== (intInVec (memGetWordVec ent 14) pos 0) 1)))
+                (== (intInVec (fnEntCompute ent) pos 0) 1)))
           })
       })
   })
@@ -34639,10 +34776,10 @@
             (let ent (findFnEnt tc (nodeAName e)))
             (if (if (== ent 0)
               false
-              (&& (== (memGetWord ent 2) 1)
-                (&& (== (memGetWord ent 3) 0) (== (memGetWord ent 4) 0))))
+              (&& (== (fnEntParamCount ent) 1)
+                (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0))))
               {
-                (let d (rgnDeclOf tc (memGetWordStr ent 0)))
+                (let d (rgnDeclOf tc (fnEntName ent)))
                 (if (nodeSame d nilNode)
                   (emitCompute tc (nodeSpan e) "compute callback has no visible function body")
                   (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModule d)
@@ -34670,7 +34807,7 @@
           (if (== ent 0)
             0
             {
-              (let indices (memGetWordVec ent 14))
+              (let indices (fnEntCompute ent))
               (if (== (vecLen indices) 0)
                 0
                 (if (!= (nodeTag e) TAG_E_APP)
@@ -34679,7 +34816,7 @@
                   {
                     (let args (spineArgVec e vecNew))
                     {
-                      (if (< (vecLen args) (memGetWord ent 2))
+                      (if (< (vecLen args) (fnEntParamCount ent))
                         (emitCompute tc (nodeSpan e)
                           "a function with a compute contract requires all declared arguments in one call"))
                       (for i in 0..(vecLen indices)
@@ -34724,11 +34861,11 @@
     0
     {
       (let tc (memGetWord walk 0))
-      (let d (rgnDeclOf (memGetWord walk 0) (memGetWordStr ent 0)))
-      (if (|| (nodeSame d nilNode) (!= (memGetWord ent 4) 0))
+      (let d (rgnDeclOf (memGetWord walk 0) (fnEntName ent)))
+      (if (|| (nodeSame d nilNode) (!= (fnEntIsEffectOp ent) 0))
         (computeFail walk
           (concat "compute callback reaches an opaque or foreign function `"
-            (concat (memGetWordStr ent 0) "`")))
+            (concat (fnEntName ent) "`")))
         {
           (let savedModule (tcCurModule tc))
           {
@@ -34751,10 +34888,10 @@
         (let ent (findFnEnt (memGetWord walk 0) name))
         (if (if (== ent 0)
           true
-          (!= (memGetWord ent 2) 0))
+          (!= (fnEntParamCount ent) 0))
           (computeFail walk
             (concat "compute callback uses an opaque or function value `" (concat name "`")))
-          (if (!= (memGetWord ent 3) 0)
+          (if (!= (fnEntIsBuiltin ent) 0)
             (computeFail walk
               (concat "compute callback observes runtime state through `" (concat name "`")))
             (computeWalkHelper walk ent)))
@@ -34785,7 +34922,7 @@
           (if (&& (isValueCastForm name)
                 (if (== ent 0)
                   true
-                  (!= (memGetWord ent 3) 0)))
+                  (!= (fnEntIsBuiltin ent) 0)))
             (if (&& (> (vecLen args) 0) (computePrimitive tc (rgnCheckedTy e)))
               (computeWalkExpr walk (vecGet args (- (vecLen args) 1)) bound mutable)
               (computeFail walk "compute callback converts to a non-primitive type"))
@@ -34794,7 +34931,7 @@
               (if (== ent 0)
                 (computeFail walk
                   (concat "compute callback reaches unknown operation `" (concat name "`")))
-                (if (!= (memGetWord ent 3) 0)
+                (if (!= (fnEntIsBuiltin ent) 0)
                   (if (computeBuiltin name)
                     0
                     (computeFail walk
