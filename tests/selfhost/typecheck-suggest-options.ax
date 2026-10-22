@@ -1,0 +1,36 @@
+; expect 42
+; An absent candidate is distinct from a candidate string. Search order
+; breaks equal-distance ties, nearer names replace earlier ones, and a
+; primitive is suggested only when the query also names a primitive.
+(import typecheck)
+(import Str)
+
+(:: candidateIs (-> Suggest String Bool))
+(fn (candidateIs best expected)
+  (if (let (Some cand) best.cand)
+    (strEq cand expected)
+    false))
+
+(:: main Int)
+(fn (main)
+  {
+    (let best newBest)
+    (let empty newBest)
+    (let primitive newBest)
+    (offerCandidate empty "count" "count")
+    (offerCandidate empty "count" "__count")
+    (offerCandidate empty "count" "unrelated")
+    (offerCandidate best "count" (concat "cou" "rt"))
+    (offerCandidate best "count" "mount")
+    (offerCandidate primitive "__stor8" "__store8")
+    (if (&& (isNone empty.cand) (&& (candidateIs best "court") (candidateIs primitive "__store8")))
+      {
+        (let closer newBest)
+        (offerCandidate closer "count" "couch")
+        (offerCandidate closer "count" "court")
+        (if (&& (candidateIs closer "court") (== closer.dist 1))
+          42
+          2)
+      }
+      1)
+  })

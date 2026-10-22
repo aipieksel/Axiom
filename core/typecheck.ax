@@ -13493,13 +13493,13 @@
                   (concat "`"
                     (concat (srcSpelling name)
                       "` is defined in the `Err` module; add `(import Err)`")))
-                (if (== (memGetWord best 0) 0)
-                  (mkDiag SEV_ERROR "AX3001" "undefined-variable" span msg 0 0
-                    "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")
+                (if (let (Some cand) best.cand)
                   (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" span msg 0 0
-                    (concat (concat "a similarly named binding `" (memGetWordStr best 0))
+                    (concat (concat "a similarly named binding `" cand)
                       "` is in scope; did you mean this?")
-                    span (memGetWord best 0))))
+                    span cand)
+                  (mkDiag SEV_ERROR "AX3001" "undefined-variable" span msg 0 0
+                    "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")))
               (concat (concat "no binding named `" (srcSpelling name)) "` in scope"))
           }))
       (nodeBuildTErrPlain 0 0 0)
@@ -24254,13 +24254,13 @@
                     {
                       (let msg (concat (concat "undefined variable `" (srcSpelling name)) "`"))
                       (diagSetLabel
-                        (if (== (memGetWord best 0) 0)
-                          (mkDiag SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
-                            "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")
+                        (if (let (Some cand) best.cand)
                           (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
-                            (concat (concat "a similarly named binding `" (memGetWordStr best 0))
+                            (concat (concat "a similarly named binding `" cand)
                               "` is in scope; did you mean this?")
-                            (nodeSpan e) (memGetWord best 0)))
+                            (nodeSpan e) cand)
+                          (mkDiag SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
+                            "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos"))
                         (concat (concat "no binding named `" (srcSpelling name)) "` in scope"))
                     }))
                 (nodeBuildTErrPlain 0 0 0)
@@ -26533,13 +26533,13 @@
             {
               (let msg (concat (concat "undefined constructor `" cname) "`"))
               (diagSetLabel
-                (if (== (memGetWord best 0) 0)
-                  (mkDiag SEV_ERROR "AX3003" "undefined-constructor" span msg 0 0
-                    "check the `data` declaration for the correct constructor name")
+                (if (let (Some cand) best.cand)
                   (mkDiagFix SEV_ERROR "AX3003" "undefined-constructor" span msg 0 0
-                    (concat (concat "a similarly named constructor `" (memGetWordStr best 0))
+                    (concat (concat "a similarly named constructor `" cand)
                       "` is visible; did you mean this?")
-                    span (memGetWord best 0)))
+                    span cand)
+                  (mkDiag SEV_ERROR "AX3003" "undefined-constructor" span msg 0 0
+                    "check the `data` declaration for the correct constructor name"))
                 (concat (concat "no constructor named `" cname) "` is visible here"))
             }))
         0
@@ -26651,22 +26651,19 @@
     }
   })
 
-; A cell holding the best candidate found so far and its distance, so
-; the search can run over two sequences without rebuilding a list.
-(pub :: newBest Int)
+; Keep the candidate optional throughout the search. The distance is
+; an upper bound until a candidate wins; it is never a reference.
+(pub struct Suggest
+  (mut cand : (Option String))
+  (mut dist : Int))
+
+(pub :: newBest Suggest)
 (pub fn (newBest)
-  {
-    (let c (memAlloc 16))
-    {
-      (memSetWord c 0 0)
-      (memSetWord c 1 999)
-      c
-    }
-  })
+  (Suggest :cand None :dist 999))
 
 ; A `__` primitive is offered only to a `__` query: `__stor8` should
 ; hear about `__store8`, and `store` should not.
-(pub :: offerCandidate (-> Int String String Int))
+(pub :: offerCandidate (-> Suggest String String Int))
 (pub fn (offerCandidate best name cand)
   (if (|| (strEq cand name)
         (&& (strStartsWith cand "__")
@@ -26676,16 +26673,16 @@
     0
     {
       (let d (levenshtein name cand))
-      (if (&& (<= d (suggestThreshold (strLen name) (strLen cand))) (< d (memGetWord best 1)))
+      (if (&& (<= d (suggestThreshold (strLen name) (strLen cand))) (< d best.dist))
         {
-          (memSetWord best 0 cand)
-          (memSetWord best 1 d)
+          (set best.cand (Some cand))
+          (set best.dist d)
           0
         }
         0)
     }))
 
-(pub :: offerScope (-> Int String Ints Int Int))
+(pub :: offerScope (-> Suggest String Ints Int Int))
 (pub fn (offerScope best name scope i)
   ; MAC-HYG-3a: a scope entry introduced by a macro template is
   ; gensym-renamed (`tmpvar.0`), which no source can spell. Offering
@@ -26701,7 +26698,7 @@
   (if (>= i (vecLen scope))
     0
     {
-      (let raw (memGetWordStr (vecGet scope i) 0))
+      (let raw (sEntName (vecGet scope i)))
       {
         (let noDot
           (if (let (Some d) (strFindByte raw 46 0))
@@ -26720,30 +26717,30 @@
       }
     }))
 
-(pub :: offerFnEnts (-> Int String Ints Int Int))
+(pub :: offerFnEnts (-> Suggest String Ints Int Int))
 (pub fn (offerFnEnts best name fns i)
   (if (>= i (vecLen fns))
     0
     {
-      (offerCandidate best name (bareOf (memGetWordStr (vecGet fns i) 0)))
+      (offerCandidate best name (bareOf (fnEntName (vecGet fns i))))
       (offerFnEnts best name fns (+ i 1))
     }))
 
-(pub :: offerCtorEnts (-> Int String Ints Int Int))
+(pub :: offerCtorEnts (-> Suggest String Ints Int Int))
 (pub fn (offerCtorEnts best name datas i)
   (if (>= i (vecLen datas))
     0
     {
-      (offerCtorsOf best name (memGetWordVec (vecGet datas i) 1) 0)
+      (offerCtorsOf best name (dataEntCtors (vecGet datas i)) 0)
       (offerCtorEnts best name datas (+ i 1))
     }))
 
-(pub :: offerCtorsOf (-> Int String Ints Int Int))
+(pub :: offerCtorsOf (-> Suggest String Ints Int Int))
 (pub fn (offerCtorsOf best name ctors i)
   (if (>= i (vecLen ctors))
     0
     {
-      (offerCandidate best name (bareOf (memGetWordStr (vecGet ctors i) 0)))
+      (offerCandidate best name (bareOf (ctorEntName (vecGet ctors i))))
       (offerCtorsOf best name ctors (+ i 1))
     }))
 
