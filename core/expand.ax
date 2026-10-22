@@ -183,7 +183,7 @@
   (mut qsite : Int)
   (gens : (Vec Int))
   (callbs : Int)
-  (mut seqbinds : (Vec Int))
+  (mut seqbinds : SeqBinds)
   (mut tplbinds : Strings)
   (mut declnodes : Int)
   (midx : MangleIdx)
@@ -3473,8 +3473,15 @@
                   ; it back.
                   (if (== (expEllipsisAt env qargs i) 1)
                     {
-                      (expSpliceSeq env (expSeqLookup (expSeqBindsVec env) (nodeAName a)) params
-                        args isp out 0)
+                      (if (let (Some forms) (expSeqLookup (expSeqBindsVec env) (nodeAName a)))
+                        (expSpliceSeq env forms params args isp out 0)
+                        {
+                          (expEllipsisDiag env (nodeAName a)
+                            "has no repetition binding in this scope"
+                            "keep the repeated name under its matching ellipsis" isp)
+                          (vecPush out (mkEInt 0))
+                          0
+                        })
                       (set i (+ i 1))
                     }
                     ; MAC-LANG-16, second half: `(f a) ...` rebuilds the
@@ -3522,7 +3529,7 @@
       1
       (expTplBoundIn tb name (+ i 1)))))
 
-(pub :: expSeqBindsVec (-> MEnv Ints))
+(pub :: expSeqBindsVec (-> MEnv SeqBinds))
 (pub fn (expSeqBindsVec env)
   env.seqbinds)
 
@@ -3537,7 +3544,9 @@
       (if (&& (== (nodeTag a) TAG_E_VAR)
             (&& (== (nodeTag n) TAG_E_VAR)
               (&& (strEq (nodeAName n) "...")
-                (! (vecIsNull (expSeqLookup (expSeqBindsVec env) (nodeAName a)))))))
+                (if (let (Some _) (expSeqLookup (expSeqBindsVec env) (nodeAName a)))
+                  true
+                  false))))
         1
         0)
     }))
@@ -3573,14 +3582,14 @@
 ; Every sequence-bound name inside a template form, in first-seen
 ; order. Duplicates are harmless downstream (one index's value
 ; twice), so this collects rather than dedupes.
-(pub :: expNestedSeqNames (-> ASTNode Ints MEnv Ints))
+(pub :: expNestedSeqNames (-> ASTNode Names MEnv Names))
 (pub fn (expNestedSeqNames form acc env)
   {
     (let tg (nodeTag form))
     (if (== tg TAG_E_VAR)
-      (if (! (vecIsNull (expSeqLookup (expSeqBindsVec env) (nodeAName form))))
+      (if (let (Some _) (expSeqLookup (expSeqBindsVec env) (nodeAName form)))
         {
-          (vecPush acc (nodeA form))
+          (vecPush acc (nodeAName form))
           acc
         }
         acc)
@@ -3606,7 +3615,39 @@
 ; just one application level: a marker nested inside a `match`,
 ; an `if` or any other form would otherwise re-splice the whole
 ; sequence inside every element.
-(pub :: expSpliceNested (-> MEnv ASTNode Names (Vec ASTNode) Int (Vec ASTNode) Int))
+; Resolve every repeated name before mutating substitution arguments. Empty
+; bindings are present; missing names or unequal row lengths refuse the splice.
+(:: expSequenceRows (-> MEnv Names Int Int NodesRows (Option NodesRows)))
+(fn (expSequenceRows env names isp i rows)
+  (if (>= i (vecLen names))
+    (Some rows)
+    {
+      (let name (vecGet names i))
+      (if (let (Some forms) (expSeqLookup (expSeqBindsVec env) name))
+        {
+          (let compatible
+            (if (== (vecLen rows) 0)
+              true
+              (== (vecLen forms) (vecLen (vecGet rows 0)))))
+          (if compatible
+            {
+              (vecPush rows forms)
+              (expSequenceRows env names isp (+ i 1) rows)
+            }
+            {
+              (expEllipsisDiag env name "repeats a different number of forms"
+                "keep parallel repeated bindings at the same repetition depth" isp)
+              None
+            })
+        }
+        {
+          (expEllipsisDiag env name "has no repetition binding in this scope"
+            "keep the repeated name under its matching ellipsis" isp)
+          None
+        })
+    }))
+
+(pub :: expSpliceNested (-> MEnv ASTNode Names Nodes Int Nodes Int))
 (pub fn (expSpliceNested env app params args isp out)
   {
     (let names (expNestedSeqNames app vecNew env))
@@ -3624,36 +3665,28 @@
           (vecPush out (mkEInt 0))
           0
         }
-        {
-          (let n (vecLen (expSeqLookup (expSeqBindsVec env) (vecGetStr names 0))))
+        (if (let (Some rows) (expSequenceRows env names isp 0 vecNew))
           {
+            (let first (vecGet rows 0))
             (let markP (vecLen params))
-            {
-              (let markA (vecLen args))
+            (let markA (vecLen args))
+            (for j in 0..(vecLen first)
               {
-                (for j in 0..n
+                (for k in 0..(vecLen names)
                   {
-                    (let mut k 0)
-                    {
-                      (while (< k (vecLen names))
-                        {
-                          (vecPush params (vecGetStr names k))
-                          (vecPush args
-                            (vecGet (expSeqLookup (expSeqBindsVec env) (vecGetStr names k)) j))
-                          (set k (+ k 1))
-                        })
-                      (vecPush out (substTpl app params args env isp))
-                      (while (> (vecLen params) markP)
-                        (vecPop params))
-                      (while (> (vecLen args) markA)
-                        (vecPop args))
-                    }
+                    (vecPush params (vecGet names k))
+                    (vecPush args (vecGet (vecGet rows k) j))
                   })
-                0
-              }
-            }
+                (vecPush out (substTpl app params args env isp))
+                (expTrunc params markP)
+                (expTrunc args markA)
+              })
+            0
           }
-        }))
+          {
+            (vecPush out (mkEInt 0))
+            0
+          })))
   })
 
 (pub :: expRebuildSpine (-> ASTNode (Vec ASTNode) Int Int ASTNode))
@@ -3795,7 +3828,7 @@
                         ; free-identifier arm below and die as
                         ; `AX3001 undefined variable`, blaming
                         ; the name rather than the missing `...`.
-                        (if (! (vecIsNull (expSeqLookup (expSeqBindsVec env) (nodeAName tpl))))
+                        (if (let (Some _) (expSeqLookup (expSeqBindsVec env) (nodeAName tpl)))
                           {
                             (expEllipsisDiag env (nodeAName tpl)
                               "repeats, and this position takes one form"
@@ -4182,7 +4215,6 @@
 ; a parameter standing in binder position for a non-name still
 ; refused downstream as `AX3035`.
 (pub :: expSpliceOneArm (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (expSpliceOneArm arm params args env isp)
   {
     (let seqs (expSeqBindsVec env))
@@ -4210,7 +4242,8 @@
           }
         }
         {
-          (let n (vecLen (as (memGetWord (vecGet seqs 0) 1) (Vec Int))))
+          (let first (vecGet seqs 0))
+          (let n (vecLen first.forms))
           {
             (let markP (vecLen params))
             {
@@ -4230,8 +4263,9 @@
                             {
                               (while (< k (vecLen seqs))
                                 {
-                                  (vecPush params (memGetWordStr (vecGet seqs k) 0))
-                                  (vecPush args (vecGet (readAstNodes (vecGet seqs k) 1) j))
+                                  (let binding (vecGet seqs k))
+                                  (vecPush params binding.name)
+                                  (vecPush args (vecGet binding.forms j))
                                   (set k (+ k 1))
                                 })
                               ; The pattern with this element's values
@@ -4316,24 +4350,21 @@
 ; ordinary binder path below, which owns it (and refuses a
 ; parameter standing in binder position for a non-name, `AX3035`,
 ; rather than binding silently).
-(pub :: expSubstPatSeq (-> ASTNode Ints Int Int ASTNode))
+(pub :: expSubstPatSeq (-> ASTNode SeqBinds Int Int ASTNode))
 (pub fn (expSubstPatSeq p seqs j isp)
   (if (nodeSame p nilNode)
     p
     {
       (let tag (nodeTag p))
       (if (== tag TAG_E_VAR)
-        {
-          (let elems (expSeqLookup seqs (nodeAName p)))
-          (if (== (as elems Int) 0)
-            p
-            {
-              (let e (vecGet elems j))
-              (if (== (nodeTag e) TAG_E_VAR)
-                (nodeBuildPCon0 (nodeAName e) 0 0 (nodeSpan p))
-                p)
-            })
-        }
+        (if (let (Some elems) (expSeqLookup seqs (nodeAName p)))
+          {
+            (let e (vecGet elems j))
+            (if (== (nodeTag e) TAG_E_VAR)
+              (nodeBuildPCon0 (nodeAName e) 0 0 (nodeSpan p))
+              p)
+          }
+          p)
         (if (== tag TAG_E_APP)
           (expSubstPatSeqSpine p seqs j isp)
           (if (== tag TAG_P_CONNAMED)
@@ -4342,11 +4373,11 @@
             p)))
     }))
 
-(pub :: expSubstPatSeqVec (-> (Vec ASTNode) Ints Int Int (Vec ASTNode)))
+(pub :: expSubstPatSeqVec (-> (Vec ASTNode) SeqBinds Int Int (Vec ASTNode)))
 (pub fn (expSubstPatSeqVec ps seqs j isp)
   (expSubstPatSeqVecIn ps seqs j isp vecNew 0))
 
-(pub :: expSubstPatSeqVecIn (-> (Vec ASTNode) Ints Int Int (Vec ASTNode) Int (Vec ASTNode)))
+(pub :: expSubstPatSeqVecIn (-> (Vec ASTNode) SeqBinds Int Int (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (expSubstPatSeqVecIn ps seqs j isp acc i)
   (if (>= i (vecLen ps))
     acc
@@ -4357,7 +4388,7 @@
 ; survive as a reference (expRenamePatSpine's rule), so a
 ; sequence-bound head takes the element's name bare; every
 ; argument is a test position and takes the full rule above.
-(pub :: expSubstPatSeqSpine (-> ASTNode Ints Int Int ASTNode))
+(pub :: expSubstPatSeqSpine (-> ASTNode SeqBinds Int Int ASTNode))
 (pub fn (expSubstPatSeqSpine p seqs j isp)
   {
     (let head (spineHead p))
@@ -4365,17 +4396,14 @@
     {
       (let newHead
         (if (== (nodeTag head) TAG_E_VAR)
-          {
-            (let elems (expSeqLookup seqs (nodeAName head)))
-            (if (== (as elems Int) 0)
-              head
-              {
-                (let e (vecGet elems j))
-                (if (== (nodeTag e) TAG_E_VAR)
-                  (mkEVarAt (nodeAName e) (nodeSpan head))
-                  head)
-              })
-          }
+          (if (let (Some elems) (expSeqLookup seqs (nodeAName head)))
+            {
+              (let e (vecGet elems j))
+              (if (== (nodeTag e) TAG_E_VAR)
+                (mkEVarAt (nodeAName e) (nodeSpan head))
+                head)
+            }
+            head)
           head))
       (let out vecNew)
       {
@@ -6491,19 +6519,14 @@
 ; expression template. A macro with none at all keeps the refusal it
 ; has always drawn, before any rule is tried.
 (pub :: expandRuleApp (-> ASTNode String Nodes MEnv ScopeBinds Int ASTNode))
-;@axiom:effect(unsafe)
 (pub fn (expandRuleApp mac name args env bs isp)
   (if (expMacHasExprRule mac)
     {
       (let m
         (expRuleForForms (nodeFieldNamesRows mac) (expCaptureVec args env bs) 0
           (expMatchCtx (expDeclsVec env) env.site (nodeModule mac))))
-      (if (== m 0)
-        {
-          (expNoRuleDiag env name (expRuleShapes (nodeFieldNamesRows mac) name 0 "") isp)
-          (mkEInt 0)
-        }
-        (if (nodeSame (expRuleExpr (expMatchOf (as m (Vec Int)))) nilNode)
+      (if (let (Some m) m)
+        (if (nodeSame (expRuleExpr (expMatchOf m)) nilNode)
           {
             (expEmit env
               (expMarkUnit env
@@ -6516,7 +6539,11 @@
                 env.declmod))
             (mkEInt 0)
           }
-          (expandExprRuleInstantiate mac (as m (Vec Int)) env bs isp)))
+          (expandExprRuleInstantiate mac m env bs isp))
+        {
+          (expNoRuleDiag env name (expRuleShapes (nodeFieldNamesRows mac) name 0 "") isp)
+          (mkEInt 0)
+        })
     }
     {
       (expEmit env
@@ -6661,7 +6688,7 @@
 ; so a template invoking another macro expands too. Sequences ride
 ; on env word 20, exactly as declaration instantiation does, and the
 ; iteration stack starts empty for the same reason.
-(pub :: expandExprRuleInstantiate (-> ASTNode Ints MEnv ScopeBinds Int ASTNode))
+(pub :: expandExprRuleInstantiate (-> ASTNode ExpMatch MEnv ScopeBinds Int ASTNode))
 (pub fn (expandExprRuleInstantiate mac m env bs isp)
   {
     (let d (+ (expDepth env) 1))
@@ -8301,27 +8328,33 @@
       0
       (expMatchVec ps as (+ i 1) names vals lctx))))
 
-; A match record: the rule, the names, the forms.
-(pub :: expMatchOf (-> Ints Ints))
-(pub fn (expMatchOf m)
-  (vecGetVec m 0))
+; One successful rule owns every binding collected by matching it.
+(pub struct ExpMatch
+  (rule : Ints)
+  (names : Names)
+  (values : Nodes)
+  (sequences : SeqBinds))
 
-(pub :: expMatchNames (-> Ints Names))
-(pub fn (expMatchNames m)
-  (vecGetVec m 1))
+(pub :: expMatchOf (-> ExpMatch Ints))
+(pub fn (expMatchOf matched)
+  matched.rule)
 
-(pub :: expMatchVals (-> Ints (Vec ASTNode)))
-(pub fn (expMatchVals m)
-  (vecGetVec m 2))
+(pub :: expMatchNames (-> ExpMatch Names))
+(pub fn (expMatchNames matched)
+  matched.names)
+
+(pub :: expMatchVals (-> ExpMatch Nodes))
+(pub fn (expMatchVals matched)
+  matched.values)
 
 ; MAC-LANG-18: the rules are tried IN ORDER and the FIRST whose
 ; pattern matches wins. Arity is now a pre-filter rather than the
 ; selector - a rule whose element count differs cannot match, and
 ; skipping it is cheaper than walking it.
-(pub :: expRuleForForms (-> IntRows Nodes Int ExpMatchContext Int))
+(pub :: expRuleForForms (-> IntRows Nodes Int ExpMatchContext (Option ExpMatch)))
 (pub fn (expRuleForForms rules args i lctx)
   (if (>= i (vecLen rules))
-    0
+    None
     ; Arity is a pre-filter still, but a repeating rule's arity is
     ; a FLOOR rather than an equality: `(m a b ...)` takes one
     ; argument and then any number.
@@ -8338,16 +8371,7 @@
           (let seqs vecNew)
           (if (== (expMatchRuleAt r args names vals seqs lctx) 0)
             (expRuleForForms rules args (+ i 1) lctx)
-            {
-              (let m vecNew)
-              {
-                (vecPush m (as r Int))
-                (vecPush m (as names Int))
-                (vecPush m (as vals Int))
-                (vecPush m (as seqs Int))
-                (as m Int)
-              }
-            })
+            (Some (ExpMatch :rule r :names names :values vals :sequences seqs)))
         })
     }))
 
@@ -8355,7 +8379,7 @@
 ; repeating element if there is one. The elements BEFORE it match one
 ; argument each; the element itself absorbs every argument left, as a
 ; SEQUENCE binding rather than a value binding.
-(pub :: expMatchRuleAt (-> Ints Nodes Names Nodes Ints ExpMatchContext Int))
+(pub :: expMatchRuleAt (-> Ints Nodes Names Nodes SeqBinds ExpMatchContext Int))
 (pub fn (expMatchRuleAt r args names vals seqs lctx)
   {
     (let ps (expRulePats r))
@@ -8368,8 +8392,7 @@
           (let pk (vecGet ps k))
           (if (== (nodeTag pk) TAG_E_VAR)
             {
-              (vecPush seqs
-                (as (SeqBind :name (nodeAName pk) :forms (expTailFrom args k vecNew)) Int))
+              (vecPush seqs (SeqBind :name (nodeAName pk) :forms (expTailFrom args k vecNew)))
               1
             }
             ; A repeating PATTERN: every absorbed argument matches the
@@ -8416,7 +8439,7 @@
 ; over `_` is a shape filter with no sequences. `...` never appears
 ; either: a repeat beneath a repeat is refused at the macro's line
 ; before matching runs.
-(pub :: expMatchNestTail (-> ASTNode Nodes Int Ints ExpMatchContext Int))
+(pub :: expMatchNestTail (-> ASTNode Nodes Int SeqBinds ExpMatchContext Int))
 (pub fn (expMatchNestTail pat args i seqs lctx)
   {
     (let binders (expUniqueNames (expRuleBindersOf pat vecNew)))
@@ -8478,12 +8501,12 @@
     }))
 
 ; Accumulators into `SeqBind`s, in binder order.
-(pub :: expSealSeqs (-> Names NodesRows Ints Int Int))
+(pub :: expSealSeqs (-> Names NodesRows SeqBinds Int Int))
 (pub fn (expSealSeqs binders accs seqs i)
   (if (>= i (vecLen binders))
     1
     {
-      (vecPush seqs (as (SeqBind :name (vecGetStr binders i) :forms (vecGet accs i)) Int))
+      (vecPush seqs (SeqBind :name (vecGetStr binders i) :forms (vecGet accs i)))
       (expSealSeqs binders accs seqs (+ i 1))
     }))
 
@@ -8495,23 +8518,25 @@
   (name : String)
   (forms : Nodes))
 
-(pub :: expMatchSeqs (-> Ints Ints))
-(pub fn (expMatchSeqs m)
-  (vecGetVec m 3))
+(pub type SeqBinds (Vec SeqBind))
 
-; The forms `name` is bound to, or 0.
-(pub :: expSeqLookup (-> Ints String Nodes))
+(pub :: expMatchSeqs (-> ExpMatch SeqBinds))
+(pub fn (expMatchSeqs matched)
+  matched.sequences)
+
+; A present empty sequence still binds its name; a miss has no forms.
+(pub :: expSeqLookup (-> SeqBinds String (Option Nodes)))
 (pub fn (expSeqLookup seqs name)
   (expSeqLookupFrom seqs name 0))
 
-(pub :: expSeqLookupFrom (-> Ints String Int Nodes))
+(pub :: expSeqLookupFrom (-> SeqBinds String Int (Option Nodes)))
 (pub fn (expSeqLookupFrom seqs name i)
   (if (>= i (vecLen seqs))
-    nilNodes
+    None
     {
-      (let b (vecGet seqs i))
-      (if (strEq (memGetWordStr b 0) name)
-        (readAstNodes b 1)
+      (let binding (vecGet seqs i))
+      (if (strEq binding.name name)
+        (Some binding.forms)
         (expSeqLookupFrom seqs name (+ i 1)))
     }))
 
@@ -8983,7 +9008,6 @@
   })
 
 (pub :: expandDeclCall (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode Int))
-;@axiom:effect(unsafe)
 (pub fn (expandDeclCall entryDecls decls env d)
   ; A MODULE-SIDE invocation is expanded like an entry-file one and
   ; then put into the module's namespace by hand (`expModuleize`),
@@ -9035,21 +9059,21 @@
                     (expRuleForForms (nodeFieldNamesRows mac)
                       (expCaptureVec (nodeBChildren d) env vecNew) 0
                       (expMatchCtx decls (nodeModule d) (nodeModule mac))))
-                  (if (== m 0)
+                  (if (let (Some m) m)
+                    (if (== (vecLen (expRuleTpl (expMatchOf m))) 0)
+                      (expDeclCallErr env d
+                        (concat (concat "the rule of macro `" (expSrcSpelling (nodeAName d)))
+                          "` that matches here has an expression template, so it can't stand in declaration position")
+                        "invoke it where a value goes, or give the macro an earlier rule for this shape whose template is declarations"
+                        "each rule's template is declarations or one expression, and where the macro is invoked picks which it needs (macro-system.md MAC-LANG-14)")
+                      (expInstantiateDecl entryDecls decls env d mac m))
                     {
                       (expNoRuleDiag env (expSrcSpelling (nodeAName d))
                         (expRuleShapes (nodeFieldNamesRows mac) (expSrcSpelling (nodeAName d)) 0 "")
                         (nodeSpan d))
                       (writeNodeWord d 3 1)
                       0
-                    }
-                    (if (== (vecLen (expRuleTpl (expMatchOf (as m (Vec Int))))) 0)
-                      (expDeclCallErr env d
-                        (concat (concat "the rule of macro `" (expSrcSpelling (nodeAName d)))
-                          "` that matches here has an expression template, so it can't stand in declaration position")
-                        "invoke it where a value goes, or give the macro an earlier rule for this shape whose template is declarations"
-                        "each rule's template is declarations or one expression, and where the macro is invoked picks which it needs (macro-system.md MAC-LANG-14)")
-                      (expInstantiateDecl entryDecls decls env d mac (as m (Vec Int)))))
+                    })
                 }))
           })
         {
@@ -9064,7 +9088,7 @@
 ; and the invocation's own arguments. For an all-binder pattern those
 ; are the same contents in the same order, which is why the 49
 ; rule-form macros already in the tree emit identical IR.
-(pub :: expInstantiateDecl (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode ASTNode Ints Int))
+(pub :: expInstantiateDecl (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode ASTNode ExpMatch Int))
 (pub fn (expInstantiateDecl entryDecls decls env d mac m)
   ; What a deferred build (`expQueryMissing`) must leave as it found
   ; it: the diagnostics it emitted, the frame pushed below, and the
@@ -9309,7 +9333,8 @@
           (as 0 Nodes)
         }
         {
-          (let n (vecLen (as (memGetWord (vecGet seqs 0) 1) (Vec Int))))
+          (let first (vecGet seqs 0))
+          (let n (vecLen first.forms))
           {
             (let markP (vecLen params))
             {
@@ -9329,8 +9354,9 @@
                             {
                               (while (< k (vecLen seqs))
                                 {
-                                  (vecPush params (memGetWordStr (vecGet seqs k) 0))
-                                  (vecPush args (vecGet (readAstNodes (vecGet seqs k) 1) j))
+                                  (let binding (vecGet seqs k))
+                                  (vecPush params binding.name)
+                                  (vecPush args (vecGet binding.forms j))
                                   (set k (+ k 1))
                                 })
                               {
@@ -10299,87 +10325,50 @@
 ; onto the shared params/args (last wins) and pops them after:
 ; nothing appends to those vecs during substitution, so the
 ; truncation restores exactly what was there.
-(pub :: expSpliceOneCtor (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
+(pub :: expSpliceOneCtor (-> ASTNode Names Nodes MEnv Int Nodes))
 ;@axiom:effect(unsafe)
-(pub fn (expSpliceOneCtor c params args env isp)
+(pub fn (expSpliceOneCtor constructor params args env isp)
   {
-    (let names (expCtorSeqNames c vecNew env))
+    (let names (expCtorSeqNames constructor vecNew env))
     (if (== (vecLen names) 0)
       {
         (expEllipsisDiag env "..." "follows nothing that repeats"
           "put `...` directly after a constructor form whose names repeat, or drop it" isp)
         (as 0 Nodes)
       }
-      (if (== (expCtorHasEllipsis c) 1)
+      (if (== (expCtorHasEllipsis constructor) 1)
         {
           (expEllipsisDiag env "..." "nests a repeat inside a repeat"
             "repeat one level only in constructor lists too" isp)
           (as 0 Nodes)
         }
-        {
-          (let n (vecLen (expSeqLookup (expSeqBindsVec env) (vecGetStr names 0))))
+        (if (let (Some rows) (expSequenceRows env names isp 0 vecNew))
           {
+            (let first (vecGet rows 0))
             (let markP (vecLen params))
-            {
-              (let markA (vecLen args))
-              {
-                (let mut j 0)
+            (let markA (vecLen args))
+            (let out vecNew)
+            (let mut bad false)
+            (for j in 0..(vecLen first)
+              (if (! bad)
                 {
-                  (let mut bad 0)
-                  {
-                    (let out vecNew)
+                  (for k in 0..(vecLen names)
                     {
-                      (while (< j n)
-                        (if (== bad 1)
-                          (set j n)
-                          {
-                            (let mut k 0)
-                            {
-                              (while (< k (vecLen names))
-                                {
-                                  (vecPush params (vecGetStr names k))
-                                  (vecPush args
-                                    (vecGet (expSeqLookup (expSeqBindsVec env) (vecGetStr names k))
-                                      j))
-                                  (set k (+ k 1))
-                                })
-                              {
-                                (let one
-                                  (expBuildCtors
-                                    {
-                                      (let single vecNew)
-                                      {
-                                        (vecPush single c)
-                                        single
-                                      }
-                                    }
-                                    params args env isp))
-                                (if (!= (vecLen one) 1)
-                                  {
-                                    (set bad 1)
-                                    (set j n)
-                                  }
-                                  {
-                                    (vecPush out (vecGet one 0))
-                                    (set j (+ j 1))
-                                  })
-                              }
-                              (while (> (vecLen params) markP)
-                                (vecPop params))
-                              (while (> (vecLen args) markA)
-                                (vecPop args))
-                            }
-                          }))
-                      (if (== bad 1)
-                        (as 0 Nodes)
-                        out)
-                    }
-                  }
-                }
-              }
-            }
+                      (vecPush params (vecGet names k))
+                      (vecPush args (vecGet (vecGet rows k) j))
+                    })
+                  (let one (expBuildCtors (vecPush vecNew constructor) params args env isp))
+                  (if (!= (vecLen one) 1)
+                    (set bad true)
+                    (vecPush out (vecGet one 0)))
+                  (expTrunc params markP)
+                  (expTrunc args markA)
+                }))
+            (if bad
+              (as 0 Nodes)
+              out)
           }
-        }))
+          (as 0 Nodes))))
   })
 
 ; Every sequence-bound name a constructor form mentions: its own
@@ -10390,11 +10379,11 @@
 ; which substitutes the ordinary way. Duplicates are harmless
 ; downstream (one index's value twice), so this collects rather
 ; than dedupes.
-(pub :: expCtorSeqNames (-> ASTNode Ints MEnv Ints))
+(pub :: expCtorSeqNames (-> ASTNode Names MEnv Names))
 (pub fn (expCtorSeqNames c acc env)
-  (if (! (vecIsNull (expSeqLookup (expSeqBindsVec env) (nodeAName c))))
+  (if (let (Some _) (expSeqLookup (expSeqBindsVec env) (nodeAName c)))
     {
-      (vecPush acc (nodeA c))
+      (vecPush acc (nodeAName c))
       (expTySeqNamesVec (expCtorFieldTys c) acc env 0)
     }
     (expTySeqNamesVec (expCtorFieldTys c) acc env 0)))
@@ -10411,14 +10400,14 @@
 ; the name; the containers recurse structurally; anything else is
 ; skipped here and refused by the splice above, which owns the
 ; diagnostic.
-(pub :: expTySeqNames (-> ASTNode Ints MEnv Ints))
+(pub :: expTySeqNames (-> ASTNode Names MEnv Names))
 (pub fn (expTySeqNames t acc env)
   {
     (let tg (nodeTag t))
     (if (== tg TAG_T_VAR)
-      (if (! (vecIsNull (expSeqLookup (expSeqBindsVec env) (nodeAName t))))
+      (if (let (Some _) (expSeqLookup (expSeqBindsVec env) (nodeAName t)))
         {
-          (vecPush acc (nodeA t))
+          (vecPush acc (nodeAName t))
           acc
         }
         acc)
@@ -10437,7 +10426,7 @@
               acc)))))
   })
 
-(pub :: expTySeqNamesVec (-> (Vec ASTNode) Ints MEnv Int Ints))
+(pub :: expTySeqNamesVec (-> (Vec ASTNode) Names MEnv Int Names))
 (pub fn (expTySeqNamesVec tys acc env i)
   (if (>= i (vecLen tys))
     acc

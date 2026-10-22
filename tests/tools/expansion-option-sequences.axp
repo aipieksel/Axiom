@@ -1,0 +1,201 @@
+; Repeated-form lookup distinguishes absence, empty bindings and matched owners.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: environment (-> Diags Units MEnv))
+(fn (environment diagnostics units)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls vecNew
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNew
+    :structBuckets vecNew))
+
+(:: selected (-> String Nodes (Option ExpMatch)))
+(fn (selected source arguments)
+  {
+    (let parsed (parseModule (lex source)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let macro (vecGet declarations 0))
+        (expRuleForForms (nodeFieldNamesRows macro) arguments 0 (expMatchCtx declarations 0 0))
+      }
+      None)
+  })
+
+(:: sequenceLength (-> SeqBinds String Int Bool))
+(fn (sequenceLength bindings name want)
+  (if (let (Some forms) (expSeqLookup bindings name))
+    (== (vecLen forms) want)
+    false))
+
+(:: firstValue (-> SeqBinds String Int Bool))
+(fn (firstValue bindings name want)
+  (if (let (Some forms) (expSeqLookup bindings name))
+    (&& (> (vecLen forms) 0) (== (nodeA (vecGet forms 0)) want))
+    false))
+
+(:: evaluatesExpansion (-> String Int Bool))
+;@axiom:effect(io)
+(fn (evaluatesExpansion source want)
+  {
+    (let parsed (parseModule (lex source)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let diagnostics (:: vecNew Diags))
+        (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
+        (if (== (countErrorDiags diagnostics) 0)
+          {
+            (let functions (:: vecNew (Vec MFunc)))
+            (let refused (:: vecNew Names))
+            (mLowerDecls declarations functions refused 0)
+            (&& (== (vecLen refused) 0) (== (mvalCall1 functions "main" 0) want))
+          }
+          false)
+      }
+      false)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let bindings (:: vecNew SeqBinds))
+    (say 1
+      (if (let (Some _) (expSeqLookup bindings "missing"))
+        false
+        true))
+    (vecPush bindings (SeqBind :name "empty" :forms vecNew))
+    (say 2 (sequenceLength bindings "empty" 0))
+    (say 3 (! (sequenceLength bindings "missing" 0)))
+    (vecPush bindings
+      (SeqBind :name "values" :forms (vecPush (vecPush vecNew (mkEInt 4)) (mkEInt 7))))
+    (say 4 (sequenceLength bindings "values" 2))
+    (say 5 (firstValue bindings "values" 4))
+    (let flat "(macro collect ((collect values ...) (sum values ...)))")
+    (let chosen (selected flat (vecPush (vecPush vecNew (mkEInt 3)) (mkEInt 8))))
+    (say 6
+      (if (let (Some matched) chosen)
+        (&& (sequenceLength matched.sequences "values" 2) (firstValue matched.sequences "values" 3))
+        false))
+    (say 7
+      (if (let (Some matched) (selected flat vecNew))
+        (sequenceLength matched.sequences "values" 0)
+        false))
+    (say 8
+      (if (let (Some _) (selected "(macro only ((only 7) 1))" (vecPush vecNew (mkEInt 8))))
+        false
+        true))
+    (say 9
+      (if (let (Some matched) (selected "(macro only ((only 7) 1))" (vecPush vecNew (mkEInt 7))))
+        (&& (== (vecLen matched.names) 0) (== (vecLen matched.sequences) 0))
+        false))
+    (let nested
+      (selected "(macro pairs ((pairs (f x) ...) (+ x ...)))"
+        (vecPush (vecPush vecNew (mkEApp (mkEVar "left") (mkEInt 2)))
+          (mkEApp (mkEVar "right") (mkEInt 5)))))
+    (say 10
+      (if (let (Some matched) nested)
+        (&& (sequenceLength matched.sequences "f" 2) (sequenceLength matched.sequences "x" 2))
+        false))
+    (say 11
+      (if (let (Some matched) nested)
+        (firstValue matched.sequences "x" 2)
+        false))
+    (let diagnostics (:: vecNew Diags))
+    (let env (environment diagnostics vecNew))
+    (set env.seqbinds bindings)
+    (say 12 (== (expEllipsisAt env (vecPush (vecPush vecNew (mkEVar "empty")) (mkEVar "...")) 0) 1))
+    (say 13
+      (== (expEllipsisAt env (vecPush (vecPush vecNew (mkEVar "missing")) (mkEVar "...")) 0) 0))
+    (let pattern (mkEVar "missing"))
+    (say 14 (nodeSame (expSubstPatSeq pattern bindings 0 0) pattern))
+    (vecPush bindings (SeqBind :name "constructors" :forms (vecPush vecNew (mkEVar "Present"))))
+    (let test (expSubstPatSeq (mkEVar "constructors") bindings 0 0))
+    (say 15 (&& (== (nodeTag test) TAG_P_CON0) (strEq (nodeAName test) "Present")))
+    (let repeated (:: vecNew SeqBinds))
+    (vecPush repeated (SeqBind :name "x" :forms (vecPush (vecPush vecNew (mkEInt 1)) (mkEInt 2))))
+    (vecPush repeated (SeqBind :name "y" :forms (vecPush (vecPush vecNew (mkEInt 3)) (mkEInt 4))))
+    (set env.seqbinds repeated)
+    (let template (mkEApp (mkEApp (mkEVar "combine") (mkEVar "x")) (mkEVar "y")))
+    (let out (:: vecNew Nodes))
+    (let names (:: vecNew Names))
+    (let arguments (:: vecNew Nodes))
+    (expSpliceNested env template names arguments 0 out)
+    (say 16 (== (vecLen out) 2))
+    (say 17 (== (nodeA (vecGet (spineArgVec (vecGet out 0) vecNew) 0)) 1))
+    (say 18 (== (nodeA (vecGet (spineArgVec (vecGet out 1) vecNew) 1)) 4))
+    (say 19 (&& (== (vecLen names) 0) (== (vecLen arguments) 0)))
+    (say 20 (== (vecLen diagnostics) 0))
+    (set env.seqbinds (vecPush (vecPush vecNew (SeqBind :name "x" :forms vecNew))
+                        (SeqBind :name "y" :forms vecNew)))
+    (let emptyOutput (:: vecNew Nodes))
+    (expSpliceNested env template names arguments 0 emptyOutput)
+    (say 21 (&& (== (vecLen emptyOutput) 0) (== (vecLen diagnostics) 0)))
+    (set env.seqbinds (vecPush (vecPush vecNew (SeqBind :name "x" :forms vecNew))
+                        (SeqBind :name "y" :forms (vecPush vecNew (mkEInt 3)))))
+    (let malformedOutput (:: vecNew Nodes))
+    (expSpliceNested env template names arguments 0 malformedOutput)
+    (say 22 (&& (== (vecLen malformedOutput) 1) (== (vecLen diagnostics) 1)))
+    (say 23 (strEq (diagCode (vecGet diagnostics 0)) "AX3034"))
+    (say 24 (&& (== (vecLen names) 0) (== (vecLen arguments) 0)))
+    (say 25
+      (evaluatesExpansion
+        "(macro total ((total) 0) ((total x xs ...) (+ x (total xs ...)))) (macro pairs ((pairs (x x) ...) (total x ...)) ((pairs other ...) 100)) (:: main Int) (fn (main) (+ (pairs (2 2) (3 3)) (pairs (2 2) (3 4))))"
+        105))
+    (say 26
+      (evaluatesExpansion
+        "(macro make ((make values ...) (:: generated (-> Int Int)) (fn (generated ignored) (+ values ...)))) (make 5 8) (:: main Int) (fn (main) (generated 0))"
+        13))
+    0
+  })
