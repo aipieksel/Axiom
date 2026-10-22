@@ -34,6 +34,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 gate_build_axc axc
 
+python3 tests/tools/format-option-specifiers.py "$axc"
+
 failed=0
 checks=0
 ok()  { checks=$((checks + 1)); echo "ok   $*"; }

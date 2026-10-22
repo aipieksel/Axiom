@@ -1,0 +1,86 @@
+; Parse the production format-specifier grammar and preserve its diagnostics.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+
+(:: environment (-> Diags Units MEnv))
+(fn (environment diagnostics units)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls vecNew
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNew
+    :structBuckets vecNew))
+
+(:: precisionText (-> FmtSpec String))
+(fn (precisionText spec)
+  (if (let (Some value) (fmtSpecPrec spec))
+    (fmtInt value)
+    "None"))
+
+(:: radixText (-> FmtSpec String))
+(fn (radixText spec)
+  (if (let (Some value) (fmtSpecType spec))
+    (fmtInt (as value Int))
+    "None"))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let body (sysArg 1))
+    (let diagnostics vecNew)
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "format-spec.ax" :src body :name "" :imports vecNew :library false)))
+    (let env (environment diagnostics units))
+    (let parsed (expFmtParseSpec env body 0 (strLen body) 0))
+    (if (let (Some spec) parsed)
+      {
+        (println "Some")
+        (println (fmtSpecAlign spec))
+        (println (fmtSpecZero spec))
+        (println (fmtSpecWidth spec))
+        (println (precisionText spec))
+        (println (radixText spec))
+      }
+      (println "None"))
+    (writeStr stdout (renderDiagsUnits diagnostics units))
+    0
+  })

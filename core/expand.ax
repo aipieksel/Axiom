@@ -2427,86 +2427,51 @@
 ; backtrace pointing at the macro - which is the correct place for
 ; it, and is why this needs no diagnostic of its own for the case.
 ; ------------------------------------------------------------------
-; A parsed specifier. `align` is the byte `<`, `^` or `>`; `prec` is
-; -1 when absent, `ty` is 0 when absent, and `ok` is 0 once a refusal
-; has been emitted - the poison convention the rest of this family
-; uses.
+; A valid parsed specifier. Alignment and zero-padding flags retain
+; their compact byte storage; absent precision and radix use `None`.
 (pub struct FmtSpec
   (align : UInt8)
   (zero : UInt8)
   (width : Int)
-  (prec : Int)
-  (ty : UInt8)
-  (ok : UInt8))
+  (prec : (Option Int))
+  (ty : (Option UInt8)))
 
-; The public compiler helpers keep Int handles and counts. Flags have
-; their proven byte ranges; accessors use the declared field layout.
-(pub :: mkFmtSpec (-> Int Int Int Int Int Int Int))
-;@axiom:pre((&& (|| (== align 60) (|| (== align 62) (== align 94))) (&& (&& (>= zero 0) (<= zero 1)) (&& (|| (== ty 0) (|| (== ty 88) (== ty 120))) (&& (>= ok 0) (<= ok 1))))))
-(pub fn (mkFmtSpec align zero width prec ty ok)
-  (as (FmtSpec
-        :align (as align UInt8)
-        :zero (as zero UInt8)
-        :width width
-        :prec prec
-        :ty (as ty UInt8)
-        :ok (as ok UInt8)) Int))
+(:: fmtSpecTypeAllowed (-> (Option UInt8) Bool))
+(fn (fmtSpecTypeAllowed ty)
+  (if (let (Some radix) ty)
+    (|| (== radix (as 88 UInt8)) (== radix (as 120 UInt8)))
+    true))
 
-; Accessors require a live handle returned by mkFmtSpec. The typed
-; view borrows that block; it does not create an ownership share.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: fmtSpecAlign (-> Int Int))
-;@axiom:effect(unsafe)
+(:: fmtSpecPrecisionAllowed (-> (Option Int) Bool))
+(fn (fmtSpecPrecisionAllowed precision)
+  (if (let (Some count) precision)
+    (>= count 0)
+    true))
+
+(pub :: mkFmtSpec (-> Int Int Int (Option Int) (Option UInt8) FmtSpec))
+;@axiom:pre((&& (|| (== align 60) (|| (== align 62) (== align 94))) (&& (&& (>= zero 0) (<= zero 1)) (&& (fmtSpecPrecisionAllowed prec) (fmtSpecTypeAllowed ty)))))
+(pub fn (mkFmtSpec align zero width prec ty)
+  (FmtSpec :align (as align UInt8) :zero (as zero UInt8) :width width :prec prec :ty ty))
+
+(pub :: fmtSpecAlign (-> FmtSpec Int))
 (pub fn (fmtSpecAlign spec)
-  {
-    (let view (as spec FmtSpec))
-    (as view.align Int)
-  })
+  (as spec.align Int))
 
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: fmtSpecZero (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: fmtSpecZero (-> FmtSpec Int))
 (pub fn (fmtSpecZero spec)
-  {
-    (let view (as spec FmtSpec))
-    (as view.zero Int)
-  })
+  (as spec.zero Int))
 
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: fmtSpecWidth (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: fmtSpecWidth (-> FmtSpec Int))
 (pub fn (fmtSpecWidth spec)
-  {
-    (let view (as spec FmtSpec))
-    view.width
-  })
+  spec.width)
 
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: fmtSpecPrec (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: fmtSpecPrec (-> FmtSpec (Option Int)))
 (pub fn (fmtSpecPrec spec)
-  {
-    (let view (as spec FmtSpec))
-    view.prec
-  })
+  spec.prec)
 
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: fmtSpecType (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: fmtSpecType (-> FmtSpec (Option UInt8)))
 (pub fn (fmtSpecType spec)
-  {
-    (let view (as spec FmtSpec))
-    (as view.ty Int)
-  })
-
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: fmtSpecOk (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (fmtSpecOk spec)
-  {
-    (let view (as spec FmtSpec))
-    (as view.ok Int)
-  })
+  spec.ty)
 
 ; The generated call `(f x)`, with `f` resolved the way a template's
 ; free identifier resolves - at the macro's DEFINITION site
@@ -2701,15 +2666,15 @@
 ; anything left over at the end is a refusal rather than a silent
 ; ignore - a format specifier that is quietly dropped is the exact
 ; failure this whole design exists to make impossible.
-(pub :: expFmtParseSpec (-> MEnv String Int Int Int Int))
+(pub :: expFmtParseSpec (-> MEnv String Int Int Int (Option FmtSpec)))
 (pub fn (expFmtParseSpec env body from to base)
   {
     (let mut p from)
     (let mut align 62)
     (let mut zero 0)
     (let mut width 0)
-    (let mut prec (- 0 1))
-    (let mut ty 0)
+    (let mut prec (:: None (Option Int)))
+    (let mut ty (:: None (Option UInt8)))
     (let mut ok 1)
     {
       (if (&& (< p to)
@@ -2750,34 +2715,31 @@
       (if (&& (== ok 1) (&& (< p to) (== (strByte body p) 46)))
         {
           (set p (+ p 1))
-          (if (if (>= p to)
-            true
-            (if (isDigit (strByte body p))
-              false
-              true))
-            ; From the `.` rather than from after it: at the end
-            ; of a specifier there is nothing after it to point
-            ; at, and a zero-width caret marks no byte at all.
+          (if (|| (>= p to) (! (isDigit (strByte body p))))
+            ; Include the dot when no digits follow it.
             (set ok (expFmtErr env (+ base (- p 1)) (+ base to)
                       "a `.` in a format specifier needs a digit count after it"
                       "write `{x:.2}` for two decimal places"))
-            (set prec 0))
-          (while (&& (< p to) (isDigit (strByte body p)))
             {
-              (set prec (if (> prec expFmtMaxCount)
-                prec
-                (+ (* prec 10) (- (strByte body p) 48))))
-              (set p (+ p 1))
+              (let mut digits 0)
+              (while (&& (< p to) (isDigit (strByte body p)))
+                {
+                  (set digits (if (> digits expFmtMaxCount)
+                    digits
+                    (+ (* digits 10) (- (strByte body p) 48))))
+                  (set p (+ p 1))
+                })
+              (if (> digits expFmtMaxCount)
+                (set ok (expFmtErr env (+ base from) (+ base to)
+                          (concat "a format precision above " expFmtMaxCountMsg)
+                          "a precision is a digit count; `{x:.2}` is two decimal places"))
+                (set prec (Some digits)))
             })
-          (if (&& (== ok 1) (> prec expFmtMaxCount))
-            (set ok (expFmtErr env (+ base from) (+ base to)
-                      (concat "a format precision above " expFmtMaxCountMsg)
-                      "a precision is a digit count; `{x:.2}` is two decimal places")))
         })
       (if (&& (== ok 1) (< p to))
         (if (|| (== (strByte body p) 120) (== (strByte body p) 88))
           {
-            (set ty (strByte body p))
+            (set ty (Some (as (strByte body p) UInt8)))
             (set p (+ p 1))
           }
           (set ok (expFmtErr env (+ base p) (+ base (+ p 1))
@@ -2787,7 +2749,9 @@
         (set ok (expFmtErr env (+ base p) (+ base to)
                   "this is left over after the format specifier"
                   "a specifier is [align][0][width][.precision][type], in that order - `{x:>08.2}`")))
-      (mkFmtSpec align zero width prec ty ok)
+      (if (== ok 1)
+        (Some (mkFmtSpec align zero width prec ty))
+        None)
     }
   })
 
@@ -2816,33 +2780,30 @@
 ; Both layers are chosen HERE, at expansion time, so the generated
 ; code contains no test of a format flag - `{n:>8x}` becomes exactly
 ; `(fmtPadLeft (fmtHex n) 8)` and carries no specifier with it.
-(pub :: expFmtHole (-> MEnv ASTNode Int Int ASTNode))
+(pub :: expFmtHole (-> MEnv ASTNode FmtSpec Int ASTNode))
 (pub fn (expFmtHole env v spec vsp)
   {
-    (let align (fmtSpecAlign spec))
-    (let zero (fmtSpecZero spec))
-    (let width (fmtSpecWidth spec))
-    (let prec (fmtSpecPrec spec))
-    (let ty (fmtSpecType spec))
-    {
-      (let rendered
-        (if (== ty 120)
-          (expFmtCall env "fmtHex" v vsp)
-          (if (== ty 88)
-            (expFmtCall env "fmtHexUpper" v vsp)
-            (if (>= prec 0)
-              (expFmtCall2 env "fmtFloatPrec" v (mkEInt prec) vsp)
-              (expFmtShow v vsp)))))
-      (if (== width 0)
-        rendered
-        (if (== zero 1)
-          (expFmtCall2 env "fmtPadZerosLeft" rendered (mkEInt width) vsp)
-          (if (== align 60)
-            (expFmtCall2 env "fmtPadRight" rendered (mkEInt width) vsp)
-            (if (== align 94)
-              (expFmtCall2 env "fmtPadCenter" rendered (mkEInt width) vsp)
-              (expFmtCall2 env "fmtPadLeft" rendered (mkEInt width) vsp)))))
-    }
+    (let rendered
+      (if (let (Some radix) spec.ty)
+        (expFmtCall env
+          (if (== radix (as 120 UInt8))
+            "fmtHex"
+            "fmtHexUpper")
+          v vsp)
+        (if (let (Some precision) spec.prec)
+          (expFmtCall2 env "fmtFloatPrec" v (mkEInt precision) vsp)
+          (expFmtShow v vsp))))
+    (if (== spec.width 0)
+      rendered
+      (if (== spec.zero (as 1 UInt8))
+        (expFmtCall2 env "fmtPadZerosLeft" rendered (mkEInt spec.width) vsp)
+        (expFmtCall2 env
+          (if (== spec.align (as 60 UInt8))
+            "fmtPadRight"
+            (if (== spec.align (as 94 UInt8))
+              "fmtPadCenter"
+              "fmtPadLeft"))
+          rendered (mkEInt spec.width) vsp)))
   })
 
 (pub :: expEvalFormat (-> MEnv Nodes Names (Vec ASTNode) Int Int ASTNode))
@@ -2998,12 +2959,11 @@
                                             "this `{` is never closed"
                                             "close the hole with `}` after its format specifier"))
                                   {
-                                    (let spec
+                                    (let parsedSpec
                                       (if (== close j)
-                                        (mkFmtSpec 62 0 0 (- 0 1) 0 1)
+                                        (Some (mkFmtSpec 62 0 0 None None))
                                         (expFmtParseSpec env body (+ j 1) close base)))
-                                    (if (== (fmtSpecOk spec) 0)
-                                      (set ok 0)
+                                    (if (let (Some spec) parsedSpec)
                                       {
                                         (set acc (expFmtCatRun env acc chunk lsp))
                                         (set chunk "")
@@ -3015,7 +2975,8 @@
                                                      spec (mkSpan (+ base (+ i 1)) (+ base j)))
                                                    lsp))
                                         (set i (+ close 1))
-                                      })
+                                      }
+                                      (set ok 0))
                                   }))
                             }))
                       })
