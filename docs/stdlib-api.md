@@ -1967,7 +1967,7 @@ Str - length-prefixed strings, in Axiom.
 | `strIsEmpty` | value | `(-> String Bool)` |  |  | Whether `s` has no bytes. |
 | `strCmp` | value | `(-> String String Int)` |  |  | 0 when equal; otherwise negative if `a` sorts before `b`, positive if after - lexicographic by unsigned byte, with a shorter prefix sorting first. |
 | `strEq` | value | `(-> String String Bool)` |  |  | Whether `a` and `b` hold the same bytes. |
-| `strSlice` | value | `(-> String Int Int String)` | `Alloc,Mut,Unsafe` |  | The `count` bytes of `s` starting at `start`, sharing `s`'s storage. |
+| `strSlice` | value | `(-> String Int Int String)` | `Alloc,Mut,Unsafe` |  | The `count` bytes of `s` starting at `start`, sharing `s`'s storage. `start` and `count` are clamped to `s`: a range past either end answers the bytes that are there, and a range outside `s` is empty. |
 | `strDup` | value | `(-> String String)` | `Alloc,Mut` |  | An owned, NUL-terminated copy of `s`. |
 | `concat` | value | `(-> String String String)` | `Alloc,Mut` |  | `a` followed by `b`, as a new string. |
 | `strFindByte` | value | `(-> String Int Int (Option Int))` |  |  | Index of the first `byte` at or after `from`, or `None`. |
