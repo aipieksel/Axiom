@@ -113,6 +113,49 @@ releases_in() { # <ll> -> count of release call sites (not the define)
 # `check-static-release.sh`'s counter, copied: count
 # `axiom_release` sites whose operand is defined, in the same define,
 # by a `ptrtoint ... @strhdr_*`. Prints "<static> <total> <hdrs>".
+# The nonliteral releases that moved between two emissions. A restored
+# release can kill a tail jump, and the branch that paid its pending
+# shares before the jump then pays them once at the join instead, so in
+# a function whose `musttail` jumps changed the ablated arm may have
+# FEWER nonliteral releases. A region rule turned off only ever adds
+# them, so an increase counts everywhere. Prints the drift and how many
+# functions flipped a jump.
+nonliteral_drift() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+def per(path):
+    txt = open(path, encoding="utf-8", errors="replace").read()
+    out = {}
+    for b in re.split(r'\n(?=define )', txt):
+        m = re.match(r'define [^@]*@("?[^"(]+"?)\(', b)
+        if not m:
+            continue
+        defs = {}
+        for L in b.split("\n"):
+            d = re.match(r'\s*(%[\w.]+) = (.*)', L)
+            if d:
+                defs[d.group(1)] = d.group(2)
+        nonlit = 0
+        for L in b.split("\n"):
+            r = re.match(r'^\s*call void @axiom_release\(i64 (%[.\w]+)\)', L)
+            if r and "@strhdr_" not in defs.get(r.group(1), ""):
+                nonlit += 1
+        out[m.group(1)] = (nonlit, b.count("musttail call "))
+    return out
+a, b = per(sys.argv[1]), per(sys.argv[2])
+drift = flipped = 0
+for name in set(a) | set(b):
+    na, ta = a.get(name, (0, 0))
+    nb, tb = b.get(name, (0, 0))
+    if ta != tb:
+        flipped += 1
+        drift += max(0, nb - na)
+    else:
+        drift += abs(nb - na)
+print(drift, flipped)
+PY
+}
+
 count_static_releases() {
   python3 - "$1" <<'PY'
 import re, sys
@@ -206,8 +249,9 @@ if [[ -f "$work/axc-ablated" ]]; then
     read -r st_abl tot_abl hd_abl <<<"$(count_static_releases "$work/host-abl.ll")"
     if (( n_abl - n_new < 1000 )); then
       bad "core release delta is $((n_abl - n_new)) ($n_abl ablated, $n_new under test), wanted thousands"
-    elif (( st_abl - st_new != n_abl - n_new )); then
-      bad "core delta is $((n_abl - n_new)) releases but only $((st_abl - st_new)) on literals - a region optimisation changed a nonliteral release in this workload"
+    elif read -r drift flipped <<<"$(nonliteral_drift "$work/host.ll" "$work/host-abl.ll")" \
+         && (( drift != 0 )); then
+      bad "core delta is $((n_abl - n_new)) releases, $((st_abl - st_new)) on literals, and $drift nonliteral release(s) moved in functions whose tail jumps did not ($flipped flipped one) - a region optimisation changed a nonliteral release in this workload"
     else
       # Restored releases flip `musttail` decisions downstream (a
       # pending release kills the jump, so the ablated arm branches
