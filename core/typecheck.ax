@@ -23651,8 +23651,12 @@
               1
               0)
             (if (== ta TAG_E_APP)
-              (if (strEq (patCtorName a) (patCtorName b))
-                (patArgsAllBinders (spineArgVec a vecNew) 0)
+              (if (let (Some left) (patCtorName a))
+                (if (let (Some right) (patCtorName b))
+                  (if (strEq left right)
+                    (patArgsAllBinders (spineArgVec a vecNew) 0)
+                    0)
+                  0)
                 0)
               (if (== ta TAG_P_CONNAMED)
                 (if (strEq (nodeAName a) (nodeAName b))
@@ -24210,24 +24214,23 @@
       1)
     0))
 
-; The constructor a pattern tests, bare, or "" for a binder or a
-; literal. A literal tests something this algorithm cannot enumerate,
+; Some bare constructor name, or None for a binder or a literal. A literal tests something this algorithm cannot enumerate,
 ; so it names no constructor and is covered by neither branch - which
 ; is why a literal-only arm leaves its constructor missing.
-(pub :: patCtorName (-> ASTNode String))
+(pub :: patCtorName (-> ASTNode (Option String)))
 (pub fn (patCtorName pat)
   {
     (let tag (nodeTag pat))
     (if (|| (== tag TAG_P_CON0) (== tag TAG_P_CONNAMED))
-      (bareOf (nodeAName pat))
+      (Some (bareOf (nodeAName pat)))
       (if (== tag TAG_E_APP)
         {
           (let head (spineHead pat))
           (if (== (nodeTag head) TAG_E_VAR)
-            (bareOf (nodeAName head))
-            "")
+            (Some (bareOf (nodeAName head)))
+            None)
         }
-        ""))
+        None))
   })
 
 ; A constructor pattern's sub-patterns, positionally. A NAMED pattern
@@ -24282,9 +24285,16 @@
 (pub fn (colHasCtor matrix cn i)
   (if (>= i (vecLen matrix))
     0
-    (if (strEq (patCtorName (vecGet (vecGetVec matrix i) 0)) cn)
-      1
-      (colHasCtor matrix cn (+ i 1)))))
+    {
+      (let found (patCtorName (vecGet (vecGet matrix i) 0)))
+      (let same
+        (match found
+          ((None) false)
+          ((Some name) (strEq name cn))))
+      (if same
+        1
+        (colHasCtor matrix cn (+ i 1)))
+    }))
 
 ; The constructors of this type that column 0 never tests.
 (pub :: matMissing (-> NodesRows (Vec CtorEnt) Strings Int Strings))
@@ -24315,13 +24325,14 @@
           (let p (vecGet row 0))
           (if (== (patIrrefutable p) 1)
             (vecPush acc (vecAppendFrom (rowTail row) (pushWilds vecNew arity 0) 0))
-            (if (strEq (patCtorName p) cn)
-              {
-                (let args (patCtorArgs tc p))
-                (vecPush acc
-                  (vecAppendFrom (rowTail row)
-                    (pushWilds (vecAppendFrom args vecNew 0) arity (vecLen args)) 0))
-              }))
+            (if (let (Some name) (patCtorName p))
+              (if (strEq name cn)
+                {
+                  (let args (patCtorArgs tc p))
+                  (vecPush acc
+                    (vecAppendFrom (rowTail row)
+                      (pushWilds (vecAppendFrom args vecNew 0) arity (vecLen args)) 0))
+                })))
         }
       }
       (matSpecialize tc matrix cn arity acc (+ i 1))
@@ -26221,8 +26232,9 @@
           ; underneath it, which is how an interrupt deadlocks.
           (if (! (== (strInVec rs "no-block" 0) 1))
             (vecPush rs "no-block"))
-          (checkIsrParams tc d (isrVectorOf sig own))
-          (checkIsrWaits tc d (isrVectorOf sig own) eff)
+          (let vector (isrVectorOf sig own))
+          (checkIsrParams tc d vector)
+          (checkIsrWaits tc d vector eff)
         })
       ; `strict` is read off the whole SET, before any name in it is
       ; checked, because it modifies how every one of them answers.
@@ -26280,11 +26292,13 @@
 ; and its `Int` answer is the exit status. The dispatch passes five
 ; words whatever the declaration says, so the declaration must say
 ; exactly that: five parameters, each `Int`, and an `Int` result.
-(pub :: checkIsrParams (-> TC ASTNode String Int))
+(pub :: checkIsrParams (-> TC ASTNode (Option String) Int))
 (pub fn (checkIsrParams tc d v)
   (if (!= (nodeTag d) TAG_D_FN)
     0
-    (if (strEq v "fault")
+    (if (match v
+      ((None) false)
+      ((Some vector) (strEq vector "fault")))
       (if (== (isrFaultSigOk tc d) 1)
         0
         (emitAxtag tc d
@@ -26339,28 +26353,30 @@
     1
     0))
 
-; The vector an `isr(...)` tag names - "irq", "fault", or whatever an
-; author wrote - or "" for a bare `isr` or none. The signature's tags
-; first, as `restrictCollect` reads them.
-(pub :: isrVectorOf (-> Ints Ints String))
+; Some vector text for an `isr(...)` tag, including explicit empty
+; text, or None for a bare `isr` or no binding. A nonempty signature
+; binding wins; otherwise the function's own binding is used.
+(pub :: isrVectorOf (-> Ints Ints (Option String)))
 (pub fn (isrVectorOf sig own)
   {
-    (let v (isrVectorIn sig 0))
-    (if (> (strLen v) 0)
-      v
+    (let signature (isrVectorIn sig 0))
+    (if (let (Some vector) signature)
+      (if (> (strLen vector) 0)
+        (Some vector)
+        (isrVectorIn own 0))
       (isrVectorIn own 0))
   })
 
-(pub :: isrVectorIn (-> Ints Int String))
+(pub :: isrVectorIn (-> Ints Int (Option String)))
 (pub fn (isrVectorIn tags i)
   (if (== (as tags Int) 0)
-    ""
+    None
     (if (>= i (vecLen tags))
-      ""
+      None
       {
         (let content (memGetWordStr (vecGet tags i) 1))
         (if (&& (strStartsWith content "isr(") (== (strByte content (- (strLen content) 1)) 41))
-          (strTrim (strSlice content 4 (- (strLen content) 5)))
+          (Some (strTrim (strSlice content 4 (- (strLen content) 5))))
           (isrVectorIn tags (+ i 1)))
       })))
 
@@ -26383,43 +26399,45 @@
 ; handler that MAY wait is refused, as one that certainly waits is.
 ; A poll of a volatile word the handler waits on is a wait this walk
 ; can't see: that stays the program's obligation (MM-EXEC-18).
-(pub :: checkIsrWaits (-> TC ASTNode String Strings Int))
-(pub fn (checkIsrWaits tc d v eff)
-  (if (|| (!= (nodeTag d) TAG_D_FN)
-        (if (strEq v "irq")
-          false
-          (if (strEq v "fault")
-            false
-            true)))
-    0
-    {
-      (let entFound (restrictOwnEnt tc d))
-      (if (let (Some ent) entFound)
-        {
-          {
-            (let sysFound (graphWitnessAny tc (Some ent) "syscall"))
-            (if (let (Some sys) sysFound)
-              (emitIsrWaits tc d v
-                (concat
-                  (concat
-                    "reaches a system call, where every blocking library call ends, and baremetal-aarch64 has no kernel to answer it: "
-                    (graphRender sys))
-                  "")
-                sys)
-              ())
-          }
+(pub :: checkIsrWaits (-> TC ASTNode (Option String) Strings Int))
+(pub fn (checkIsrWaits tc d vector eff)
+  (if (let (Some v) vector)
+    (if (|| (!= (nodeTag d) TAG_D_FN)
           (if (strEq v "irq")
+            false
+            (if (strEq v "fault")
+              false
+              true)))
+      0
+      {
+        (let entFound (restrictOwnEnt tc d))
+        (if (let (Some ent) entFound)
+          {
             {
-              (let wFound (graphWitnessAny tc (Some ent) "wfi"))
-              (if (let (Some w) wFound)
+              (let sysFound (graphWitnessAny tc (Some ent) "syscall"))
+              (if (let (Some sys) sysFound)
                 (emitIsrWaits tc d v
-                  (concat "waits for an interrupt with IRQs masked: " (graphRender w)) w)
-                0)
+                  (concat
+                    (concat
+                      "reaches a system call, where every blocking library call ends, and baremetal-aarch64 has no kernel to answer it: "
+                      (graphRender sys))
+                    "")
+                  sys)
+                ())
             }
-            0)
-        }
-        0)
-    }))
+            (if (strEq v "irq")
+              {
+                (let wFound (graphWitnessAny tc (Some ent) "wfi"))
+                (if (let (Some w) wFound)
+                  (emitIsrWaits tc d v
+                    (concat "waits for an interrupt with IRQs masked: " (graphRender w)) w)
+                  0)
+              }
+              0)
+          }
+          0)
+      })
+    0))
 
 (pub :: emitIsrWaits (-> TC ASTNode String String (Vec FnEnt) Int))
 (pub fn (emitIsrWaits tc d v why path)
@@ -29194,8 +29212,8 @@
 ; One pass over the declaration list, keeping only the signatures that
 ; carry an AXTAG. None is unbuilt and Some empty is built with no tags,
 ; so the pass runs once even when no declaration carries a tag.
-; The replacement text a `;@axiom:deprecated(...)` names, or "" when
-; `name` is not deprecated.
+; Some replacement text for an indexed deprecation, or None when
+; `name` is not deprecated. Empty text remains explicit if present.
 ;
 ; WHY A TABLE AND NOT A SCAN OF `sigTags`. This is asked at every
 ; resolved reference. `sigTags` holds every signature carrying ANY
@@ -29216,8 +29234,7 @@
 (pub fn (warnDeprecated tc name span)
   (if (== span 0)
     0
-    {
-      (let repl (deprecatedFor tc name))
+    (if (let (Some repl) (deprecatedFor tc name))
       (if (== (strLen repl) 0)
         0
         (emitDiag tc
@@ -29227,9 +29244,9 @@
               (concat "the declaration says: " repl)
               "It still works, and it still compiles - a deprecation is a notice, not a refusal. It may be removed in a later release, and `compat/BREAKING`'s rule lets that happen without a declared break precisely because this notice shipped first")
             (concat "declared `;@axiom:deprecated(" (concat repl ")`")))))
-    }))
+      0)))
 
-(pub :: deprecatedFor (-> TC String String))
+(pub :: deprecatedFor (-> TC String (Option String)))
 (pub fn (deprecatedFor tc name)
   {
     (let table
@@ -29268,16 +29285,17 @@
         (deprecatedBuild decls acc (+ i 1))
       })))
 
-(pub :: deprecatedFrom (-> (Vec ASTNode) String Int String))
+; The first indexed declaration wins; Some empty text is distinct from None.
+(pub :: deprecatedFrom (-> (Vec ASTNode) String Int (Option String)))
 (pub fn (deprecatedFrom tbl name i)
   (if (== (as tbl Int) 0)
-    ""
+    None
     (if (>= i (vecLen tbl))
-      ""
+      None
       {
         (let d (vecGet tbl i))
         (if (strEq (bareOf (nodeAName d)) (bareOf name))
-          (axtagValueOf d "deprecated")
+          (Some (axtagValueOf d "deprecated"))
           (deprecatedFrom tbl name (+ i 1)))
       })))
 
@@ -29568,10 +29586,10 @@
       (if (== (axtagReservedKey key) 1)
         (emitAxtagKeyReserved tc d key)
         {
-          (let want (axtagNearMiss key))
-          (if (== (strLen want) 0)
-            0
-            (emitAxtagKeyTypo tc d key want))
+          (let suggestion (axtagNearMiss key))
+          (if (let (Some want) suggestion)
+            (emitAxtagKeyTypo tc d key want)
+            0)
         }))))
 
 ; `pure`, or one slip from it. A namespaced key never reaches here, and
@@ -30289,35 +30307,35 @@
                     1
                     0))))))))))
 
-(pub :: axtagNearMiss (-> String String))
+(pub :: axtagNearMiss (-> String (Option String)))
 (pub fn (axtagNearMiss key)
   (if (== (axtagKnownKey key) 1)
-      ""
+      None
     (== (axtagSlip key "scoped") 1)
-      "scoped"
+      (Some "scoped")
     (== (axtagSlip key "compute") 1)
-      "compute"
+      (Some "compute")
     (== (axtagSlip key "deprecated") 1)
-      "deprecated"
+      (Some "deprecated")
     (if (== (axtagSlip key "effect") 1)
-      "effect"
+      (Some "effect")
       (if (== (axtagSlip key "pre") 1)
-        "pre"
+        (Some "pre")
         (if (== (axtagSlip key "post") 1)
-          "post"
+          (Some "post")
           (if (== (axtagSlip key "restrict") 1)
-            "restrict"
+            (Some "restrict")
             (if (== (axtagSlip key "unhandled") 1)
-              "unhandled"
+              (Some "unhandled")
               (if (== (axtagSlip key "isr") 1)
-                "isr"
+                (Some "isr")
                 (if (== (axtagSlip key "syscall") 1)
-                  "syscall"
+                  (Some "syscall")
                   (if (== (axtagSlip key "ct") 1)
-                    "ct"
+                    (Some "ct")
                     (if (== (axtagSlip key "result") 1)
-                      "result"
-                      "")))))))))))
+                      (Some "result")
+                      None)))))))))))
 
 (pub :: axtagSlip (-> String String Int))
 (pub fn (axtagSlip key known)

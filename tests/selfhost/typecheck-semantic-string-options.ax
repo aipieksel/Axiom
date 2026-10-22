@@ -1,0 +1,122 @@
+; expect 42
+; Optional names distinguish missing lookup from present empty metadata.
+; Candidate order, deprecation warnings and ISR precedence stay stable.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: semanticStringContext (-> String TC))
+(fn (semanticStringContext source)
+  {
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "semantic-strings.ax" :src source :name "" :imports vecNew :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: stringIs (-> (Option String) String Bool))
+(fn (stringIs value expected)
+  (match value
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: metadataTags (-> String Ints))
+(fn (metadataTags text)
+  {
+    (let tc (semanticStringContext (concat (concat ";@axiom:" text) "\n(pub fn (handler) 0)\n")))
+    (nodeAxtagsWords (vecGet tc.allDecls 0))
+  })
+
+(:: constructorNameChecks Bool)
+(fn (constructorNameChecks)
+  {
+    (let plain (nodeBuildPCon0 "Team$Ctor" 0 0 0))
+    (let applied (mkEApp (mkEVar "Team$Ctor") (mkEVar "value")))
+    (let same (mkEApp (mkEVar "Ctor") (mkEVar "other")))
+    (let invalid (mkEApp (mkEInt 1) (mkEVar "value")))
+    (&& (isNone (patCtorName (mkEInt 1)))
+      (&& (isNone (patCtorName invalid))
+        (&& (stringIs (patCtorName plain) "Ctor")
+          (&& (stringIs (patCtorName applied) "Ctor")
+            (&& (stringIs (patCtorName (nodeBuildPCon0 "" 0 0 0)) "")
+              (&& (== (patSameTest applied same) 1)
+                (&& (== (patSameTest invalid invalid) 0)
+                  (== (colHasCtor (vecPush vecNew (vecPush vecNew plain)) "Ctor" 0) 1))))))))
+  })
+
+(:: interruptMetadataChecks Bool)
+(fn (interruptMetadataChecks)
+  {
+    (let irq (metadataTags "isr( irq )"))
+    (let fault (metadataTags "isr(fault)"))
+    (let empty (metadataTags "isr()"))
+    (let bare (metadataTags "isr"))
+    (&& (isNone (isrVectorIn nilWords 0))
+      (&& (isNone (isrVectorIn bare 0))
+        (&& (stringIs (isrVectorIn empty 0) "")
+          (&& (stringIs (isrVectorIn irq 0) "irq")
+            (&& (stringIs (isrVectorOf irq fault) "irq")
+              (&& (stringIs (isrVectorOf nilWords fault) "fault")
+                (&& (stringIs (isrVectorOf empty fault) "fault")
+                  (&& (stringIs (isrVectorOf nilWords empty) "")
+                    (isNone (isrVectorOf nilWords nilWords))))))))))
+  })
+
+(:: deprecationChecks Bool)
+(fn (deprecationChecks)
+  {
+    (let source
+      ";@axiom:deprecated(use first)\n(:: old Int)\n;@axiom:deprecated(use second)\n(pub fn (old) 1)\n;@axiom:deprecated()\n(pub fn (empty) 0)\n")
+    (let tc (semanticStringContext source))
+    (let directEmpty (vecPush vecNew (vecGet tc.allDecls 2)))
+    (warnDeprecated tc "old" 0)
+    (let noSpanNoCache (isNone tc.deprecated))
+    (warnDeprecated tc "missing" (mkSpan 1 2))
+    (warnDeprecated tc "empty" (mkSpan 1 2))
+    (let silent (== (vecLen (tcOutVec tc)) 0))
+    (warnDeprecated tc "old" (mkSpan 1 2))
+    (&& noSpanNoCache
+      (&& silent
+        (&& (isNone (deprecatedFrom vecNew "missing" 0))
+          (&& (isNone (deprecatedFor tc "missing"))
+            (&& (stringIs (deprecatedFrom directEmpty "empty" 0) "")
+              (&& (stringIs (deprecatedFor tc "old") "use first")
+                (if (== (vecLen (tcOutVec tc)) 1)
+                  (&& (strEq (diagCode (vecGet (tcOutVec tc) 0)) "AX3048")
+                    (strEq (diagMsg (vecGet (tcOutVec tc) 0)) "`old` is deprecated"))
+                  false)))))))
+  })
+
+(:: typoChecks Bool)
+(fn (typoChecks)
+  {
+    (let tc (semanticStringContext "(pub fn (handler) 0)\n"))
+    (let declaration (vecGet tc.allDecls 0))
+    (axtagKeyTypo tc declaration "effct")
+    (&& (isNone (axtagNearMiss "effect"))
+      (&& (isNone (axtagNearMiss "user:custom"))
+        (&& (stringIs (axtagNearMiss "effct") "effect")
+          (&& (stringIs (axtagNearMiss "comute") "compute")
+            (if (== (vecLen (tcOutVec tc)) 1)
+              (&& (strEq (diagCode (vecGet (tcOutVec tc) 0)) "AX3039")
+                (strEq (diagMsg (vecGet (tcOutVec tc) 0))
+                  "AXTAG key typo on `handler`: unrecognised key `effct`; did you mean `effect`?"))
+              false)))))
+  })
+
+(:: main Int)
+(fn (main)
+  (if (constructorNameChecks)
+    (if (interruptMetadataChecks)
+      (if (deprecationChecks)
+        (if (typoChecks)
+          42
+          4)
+        3)
+      2)
+    1))
