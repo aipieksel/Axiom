@@ -34,12 +34,12 @@
       16
     20))
 
-(:: headers (-> Int (Vec Int)))
+(:: headers (-> CG (Vec Int)))
 (fn (headers cg)
   {
     (let out vecNew)
     (for i in 0..4
-      (vecPush out (memGetWord cg (slot i))))
+      (vecPush out (memGetWord (as cg Int) (slot i))))
     out
   })
 
@@ -52,12 +52,12 @@
     out
   })
 
-(:: sameHeaders (-> Int (Vec Int) Bool))
+(:: sameHeaders (-> CG (Vec Int) Bool))
 (fn (sameHeaders cg hs)
   {
     (let mut good true)
     (for i in 0..4
-      (if (!= (memGetWord cg (slot i)) (vecGet hs i))
+      (if (!= (memGetWord (as cg Int) (slot i)) (vecGet hs i))
         (set good false)))
     good
   })
@@ -72,20 +72,21 @@
     good
   })
 
-(:: allLengths (-> Int Int Bool))
+(:: allLengths (-> CG Int Bool))
 (fn (allLengths cg n)
   {
     (let mut good true)
     (for i in 0..4
-      (if (!= (memGetWord (memGetWord cg (slot i)) 0) n)
+      (if (!= (memGetWord (memGetWord (as cg Int) (slot i)) 0) n)
         (set good false)))
     good
   })
 
-(:: regOf (-> Int String String))
+(:: regOf (-> CG String String))
 ;@axiom:effect(unsafe)
 (fn (regOf cg name)
-  (as (__load64 (__load64 (__load64 cg 7) 2) (strIndexIn (memGetWordVec cg 6) name)) String))
+  (as (__load64 (__load64 (__load64 (as cg Int) 7) 2)
+        (strIndexIn (memGetWordVec (as cg Int) 6) name)) String))
 
 (:: live Int)
 (fn (live)
@@ -202,18 +203,20 @@
     (let parsed (parseModule (lex "(fn (probe) (lambda (x) (lambda (y) (+ captured (+ x y)))))")))
     (let outer (nodeCChild (vecGet (readAstNodes parsed 1) 0)))
     (emitLambda outer cg)
-    (let d (vecPop (memGetWordVec cg 21)))
+    (let d (vecPop (memGetWordVec (as cg Int) 21)))
     (let caps (memGetWordVec d 3))
     (let flags (memGetWordVec d 4))
-    (say 29 (&& (!= (as caps Int) (memGetWord cg 6)) (!= (as flags Int) (memGetWord cg 16))))
+    (say 29
+      (&& (!= (as caps Int) (memGetWord (as cg Int) 6))
+        (!= (as flags Int) (memGetWord (as cg Int) 16))))
     (emitFnDef (mkDFnAt "between" vecNew (mkEInt 1) 0) cg)
     (say 30 (&& (== (vecLen caps) 1) (strEq (vecGetStr caps 0) "captured")))
     (emitLamDef d cg)
     (say 31 (sameHeaders cg hs))
-    (let inner (vecPop (memGetWordVec cg 21)))
+    (let inner (vecPop (memGetWordVec (as cg Int) 21)))
     (let innerCaps (memGetWordVec inner 3))
     (say 32
-      (&& (!= (as innerCaps Int) (memGetWord cg 6))
+      (&& (!= (as innerCaps Int) (memGetWord (as cg Int) 6))
         (&& (>= (strIndexIn innerCaps "x") 0) (>= (strIndexIn innerCaps "captured") 0))))
     (say 33 (&& (== (vecLen caps) 1) (strEq (vecGetStr caps 0) "captured")))
     (emitLamDef inner cg)
@@ -230,18 +233,20 @@
 (fn (applicationChecks)
   {
     (let cg newCG)
-    (vecPush (readAstNodes cg 5) (mkEInt 99))
-    (vecPush (memGetWordVec cg 45) 7)
+    (vecPush (readAstNodes (as cg Int) 5) (mkEInt 99))
+    (vecPush (memGetWordVec (as cg Int) 45) 7)
     ; These retained getter snapshots must survive replacement and nested
     ; lowering with their original lengths and values, never be cleared.
-    (let args (readAstNodes cg 5))
-    (let evs (memGetWordVec cg 45))
+    (let args (readAstNodes (as cg Int) 5))
+    (let evs (memGetWordVec (as cg Int) 45))
     (let beforeArgs (__load64 (as args Int) -2))
     (let beforeEvs (__load64 (as evs Int) -2))
     (emitApp (mkEApp (mkEApp (mkEVar "+") (mkEInt 2)) (mkEInt 3)) cg)
     (say 37 (== (__load64 (as args Int) -2) (- beforeArgs 1)))
     (say 38 (== (__load64 (as evs Int) -2) (- beforeEvs 1)))
-    (say 39 (&& (!= (as args Int) (memGetWord cg 5)) (!= (as evs Int) (memGetWord cg 45))))
+    (say 39
+      (&& (!= (as args Int) (memGetWord (as cg Int) 5))
+        (!= (as evs Int) (memGetWord (as cg Int) 45))))
     (say 40
       (if (== (vecLen args) 1)
         (== (nodeA (vecGet args 0)) 99)

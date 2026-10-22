@@ -28,32 +28,32 @@
 (fn (overwrite text byte)
   (__store8 (strData text) 0 byte))
 
-(:: scopedLine (-> Int Int))
+(:: scopedLine (-> CG CG))
 (fn (scopedLine cg)
   {
     (let text (concat "scope-" (fmtInt 73)))
     (emitLine cg text)
   })
 
-(:: getterCount (-> Int Int))
+(:: getterCount (-> CG Int))
 ;@axiom:effect(unsafe)
 (fn (getterCount cg)
   {
-    (let lines (memGetWordVec cg 0))
+    (let lines (memGetWordVec (as cg Int) 0))
     (__load64 (as lines Int) -2)
   })
 
-(:: lineAt (-> Int Int String))
+(:: lineAt (-> CG Int String))
 ;@axiom:effect(unsafe)
 (fn (lineAt cg index)
-  (as (__load64 (__load64 (__load64 cg 0) 2) index) String))
+  (as (__load64 (__load64 (__load64 (as cg Int) 0) 2) index) String))
 
 (:: snapshotChecks ())
 ;@axiom:effect(io)
 (fn (snapshotChecks)
   {
     (let cg newCG)
-    (let header (memGetWord cg 0))
+    (let header (memGetWord (as cg Int) 0))
     (let initialCount (countOf header))
     (let source (strDup "alpha"))
     (emitLine cg source)
@@ -63,14 +63,14 @@
     (for i in 0..128
       (emitLine cg (concat "grow-" (fmtInt i))))
     (scopedLine cg)
-    (say 3 (== (memGetWord cg 0) header))
+    (say 3 (== (memGetWord (as cg Int) 0) header))
     (say 4 (== (countOf header) initialCount))
     (say 5 (strEq (lineAt cg 0) "alpha"))
     (say 6 (strEq (lineAt cg 129) "scope-73"))
     (let beforeGetter (countOf header))
     (say 7 (== (getterCount cg) (+ beforeGetter 1)))
     (say 8 (== (countOf header) beforeGetter))
-    (say 9 (== (strLen (renderCG cg)) (joinSize (memGetWordVec cg 0))))
+    (say 9 (== (strLen (renderCG cg)) (joinSize (memGetWordVec (as cg Int) 0))))
   })
 
 (:: allocaChecks ())
@@ -83,9 +83,9 @@
     (emitAlloca cg "%.a")
     (emitAlloca cg "%.b")
     (emitLine cg "  ret i64 0")
-    (say 10 (== (memGetWord (memGetWord cg 0) 3) 1))
+    (say 10 (== (memGetWord (memGetWord (as cg Int) 0) 3) 1))
     (closeAllocaMark cg)
-    (say 11 (== (memGetWord (memGetWord cg 0) 3) 1))
+    (say 11 (== (memGetWord (memGetWord (as cg Int) 0) 3) 1))
     (emitLine cg "}")
     (say 12
       (strEq (renderCG cg)
@@ -104,14 +104,14 @@
     (emitLine cg "define internal i64 @dead() #0 {")
     (emitLine cg "  ret i64 99")
     (emitLine cg "}")
-    (let old (memGetWord cg 0))
+    (let old (memGetWord (as cg Int) 0))
     ; Keep one explicit share so observing the old header after replacement
     ; is valid even when the CG slot and temporary getter both retire.
     (__retain old)
     (let removed (lineAt cg 4))
     (let oldBefore (countOf old))
     (pruneDeadDefs cg)
-    (say 13 (!= (memGetWord cg 0) old))
+    (say 13 (!= (memGetWord (as cg Int) 0) old))
     (say 14 (== (countOf old) (- oldBefore 1)))
     ; Pruning may hold additional String views; measure only the share
     ; released when the explicitly held old vector is finally destroyed.
@@ -122,7 +122,7 @@
     (say 17 (strEq (renderCG cg) "define i64 @main() #0 {\n  ret i64 17\n}\n"))
   })
 
-(:: hoistedGetterCount (-> Int Int))
+(:: hoistedGetterCount (-> CG Int))
 ;@axiom:effect(unsafe)
 (fn (hoistedGetterCount cg)
   {
@@ -135,15 +135,15 @@
 (fn (hoistedChecks)
   {
     (let cg newCG)
-    (say 18 (== (countOf (memGetWord cg 44)) 1))
+    (say 18 (== (countOf (memGetWord (as cg Int) 44)) 1))
     (say 19 (== (vecLen (probeHoisted cg)) 0))
-    (let lines (memGetWord cg 0))
+    (let lines (memGetWord (as cg Int) 0))
     (let first (vecPush vecNew (strDup "73")))
     (let second (vecPush vecNew (strDup "91")))
     (let before (countOf (as first Int)))
     (probeSetHoisted cg first)
     (say 20 (== (countOf (as first Int)) (+ before 1)))
-    (say 21 (== (memGetWord cg 44) (as first Int)))
+    (say 21 (== (memGetWord (as cg Int) 44) (as first Int)))
     (let beforeGetter (countOf (as first Int)))
     (say 22 (== (hoistedGetterCount cg) (+ beforeGetter 1)))
     (say 23 (== (countOf (as first Int)) beforeGetter))
@@ -152,7 +152,7 @@
     (probeSetHoisted cg second)
     (say 24 (== (countOf (as first Int)) (- beforeReplacement 1)))
     (say 25 (strEq (vecGet old 0) "73"))
-    (say 26 (&& (== (memGetWord cg 43) (- 0 1)) (== (memGetWord cg 0) lines)))
+    (say 26 (&& (== (memGetWord (as cg Int) 43) (- 0 1)) (== (memGetWord (as cg Int) 0) lines)))
     (say 27 (probeSameHoistedGetter cg "91"))
     (let beforeSame (countOf (as second Int)))
     (probeSetHoisted cg second)
@@ -194,12 +194,12 @@
 (fn (hoistedAllocaChecks)
   {
     (let cg newCG)
-    (let initial (memGetWord cg 44))
+    (let initial (memGetWord (as cg Int) 44))
     (closeAllocaMark cg)
-    (say 34 (== (memGetWord cg 44) initial))
+    (say 34 (== (memGetWord (as cg Int) 44) initial))
     (emitLine cg "define i64 @held() #0 {")
     (openAllocaMark cg)
-    (say 35 (&& (== (memGetWord cg 43) 1) (!= (memGetWord cg 44) initial)))
+    (say 35 (&& (== (memGetWord (as cg Int) 43) 1) (!= (memGetWord (as cg Int) 44) initial)))
     (let active (probeHoisted cg))
     (emitAlloca cg "%.a")
     (emitAlloca cg "%.b")
@@ -210,7 +210,7 @@
     (closeAllocaMark cg)
     (say 37
       (&& (== (countOf (as active Int)) 1)
-        (&& (== (memGetWord cg 43) (- 0 1)) (== (countOf (memGetWord cg 44)) 1))))
+        (&& (== (memGetWord (as cg Int) 43) (- 0 1)) (== (countOf (memGetWord (as cg Int) 44)) 1))))
     (say 38
       (strEq (joinAllocas active)
         "  %.a = alloca i64\n  %.b = alloca i64\n  %.recover = alloca i64, i64 8, align 16\n  %.region = alloca i64, i64 3, align 16 ; axiom region mark"))
@@ -230,13 +230,13 @@
     (emitLine cg "define i64 @nested() #0 {")
     (openAllocaMark cg)
     (emitAlloca cg "%.outer.a")
-    (let mark (memGetWord cg 43))
+    (let mark (memGetWord (as cg Int) 43))
     (let outer (probeHoisted cg))
     (openAllocaMark cg)
     (let mut balanced (== (countOf (as outer Int)) 1))
     (emitAlloca cg "%.inner")
     (closeAllocaMark cg)
-    (memSetWord cg 43 mark)
+    (memSetWord (as cg Int) 43 mark)
     (probeSetHoisted cg outer)
     (if (!= (countOf (as outer Int)) 2)
       (set balanced false))
@@ -252,7 +252,7 @@
         "define i64 @nested() #0 {\n  %.outer.a = alloca i64\n  %.outer.b = alloca i64\n  %.inner = alloca i64\n  ret i64 0\n}\n"))
   })
 
-(:: freshHoistedOverwrite (-> Int Int Int))
+(:: freshHoistedOverwrite (-> CG Int Int))
 (fn (freshHoistedOverwrite cg i)
   {
     (let value (vecPush vecNew (concat "hoisted-" (fmtInt (+ i 1000)))))
@@ -306,7 +306,7 @@
       (&& (strEq (joinAllocas (probeHoisted cg)) expected)
         (&& (== (countOf (as alloca Int)) 2)
           (&& (== (countOf (as recover Int)) 2) (== (countOf (as region Int)) 2)))))
-    (say 50 (== (countOf (memGetWord cg 44)) 1))
+    (say 50 (== (countOf (memGetWord (as cg Int) 44)) 1))
     (closeAllocaMark cg)
     (say 51
       (&& (== (countOf (as alloca Int)) 1)
@@ -339,7 +339,7 @@
 
 ; Reuse one context and clear its rendered lines, so retained output is
 ; not confused with an ordinary producer or getter share that escaped.
-(:: payloadIteration (-> Int Int Bool Int))
+(:: payloadIteration (-> CG Int Bool Int))
 (fn (payloadIteration cg i hoist)
   {
     (if hoist
@@ -349,7 +349,7 @@
     (emitRegionCell cg "%.region")
     (if hoist
       (closeAllocaMark cg))
-    (vecClear (memGetWordVec cg 0))
+    (vecClear (memGetWordVec (as cg Int) 0))
     0
   })
 

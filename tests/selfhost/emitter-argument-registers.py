@@ -112,13 +112,13 @@ def metadata_ir(path, counted):
 def raw_metadata(source):
     """Revert only the six metadata sites, leaving target decisions unchanged."""
     edits = [
-        ('(pub :: emitArgsRegs (-> Nodes Int Strings Int String Int Int))',
-         '(pub :: emitArgsRegs (-> Nodes Int Ints Int String Int Int))'),
+        ('(pub :: emitArgsRegs (-> Nodes CG Strings Int String Int CG))',
+         '(pub :: emitArgsRegs (-> Nodes CG Ints Int String Int CG))'),
         ('(vecPush regs reg)', '(vecPush regs (as reg Int))'),
-        ('(pub :: releaseOwnedArgs (-> Int String Nodes Strings Int Int))',
-         '(pub :: releaseOwnedArgs (-> Int String Nodes Ints Int Int))'),
-        ('(pub :: releaseBorrowedFrom (-> Int String Nodes Strings Int Int))',
-         '(pub :: releaseBorrowedFrom (-> Int String Nodes Ints Int Int))'),
+        ('(pub :: releaseOwnedArgs (-> CG String Nodes Strings Int CG))',
+         '(pub :: releaseOwnedArgs (-> CG String Nodes Ints Int CG))'),
+        ('(pub :: releaseBorrowedFrom (-> CG String Nodes Strings Int CG))',
+         '(pub :: releaseBorrowedFrom (-> CG String Nodes Ints Int CG))'),
     ]
     for before, after in edits:
         if source.count(before) != 1:
@@ -137,7 +137,7 @@ def raw_metadata(source):
         if changed.replace(after, before, 1) != body:
             raise RuntimeError('metadata ablation changed a surrounding decision')
         source = source[:start] + changed + source[end:]
-        signature = f'(pub :: {name} (-> Int String Nodes Ints Int Int))\n'
+        signature = f'(pub :: {name} (-> CG String Nodes Ints Int CG))\n'
         if source.count(signature) != 1:
             raise RuntimeError('raw metadata boundary declaration changed')
         source = source.replace(signature, signature + ';@axiom:effect(unsafe)\n', 1)

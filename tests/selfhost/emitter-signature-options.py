@@ -13,8 +13,8 @@ replace_once = SUPPORT['replace_once']
 check_output = SUPPORT['check_output']
 emitted_function = SUPPORT['emitted_function']
 
-BRIDGE = '''
-(pub :: probeInstallSignatures (-> Int (Vec FSig) Bool Int))
+BRIDGE = r'''
+(pub :: probeInstallSignatures (-> CG (Vec FSig) Bool CG))
 (pub fn (probeInstallSignatures cg signatures indexed)
   {
     (cgSetFloatSigs cg signatures)
