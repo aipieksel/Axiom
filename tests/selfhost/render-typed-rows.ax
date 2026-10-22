@@ -1,0 +1,59 @@
+; expect 42
+; Diagnostic rows own their text across sorting and trace construction.
+; Sorting is stable for equal starts, and empty row lists stay empty.
+(import core)
+(import parser)
+(import render)
+(import diag)
+(import Vec)
+(import Str)
+
+(:: rowsLifetime Int)
+(fn (rowsLifetime)
+  {
+    (let rows (:: vecNew SnipRows))
+    (vecPush rows (SnipRow :span (mkSpan 8 9) :ch 45 :msg (concat "late" "r") :sgr "secondary"))
+    (vecPush rows (SnipRow :span (mkSpan 0 1) :ch 94 :msg (concat "prim" "ary") :sgr "primary"))
+    (vecPush rows (SnipRow :span (mkSpan 0 2) :ch 45 :msg (concat "rela" "ted") :sgr "secondary"))
+    (let sorted (sortRows rows))
+    (if (&& (strEq (rowMsg (vecGet sorted 0)) "primary")
+          (&& (strEq (rowMsg (vecGet sorted 1)) "related")
+            (&& (strEq (rowMsg (vecGet sorted 2)) "later")
+              (&& (== (spanStart (rowSpan (vecGet sorted 2))) 8)
+                (&& (== (rowCh (vecGet sorted 0)) 94)
+                  (strEq (rowSgr (vecGet sorted 1)) "secondary"))))))
+      2
+      0)
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let empty (:: vecNew SnipRows))
+    (let source "one\ntwo\nthree\n")
+    (let ix (srcLineIndex source))
+    (let report (mkDiag SEV_ERROR "AX3001" "undefined-variable" (mkSpan 4 7) "missing" 0 0 0))
+    (diagSetLabel report (concat "pri" "mary"))
+    (diagAddSecondary report (mkSpan 0 3) (concat "rela" "ted"))
+    (diagAddTrace report "macro" (mkSpan 8 13) 0)
+    (let rows (snipRowsOf report (diagSpan report) vecNew vecNew))
+    (let trace (traceRows report 0))
+    (if (&& (== (vecLen (sortRows empty)) 0)
+          (&& (== (vecLen rows) 2)
+            (&& (== (rowCh (vecGet rows 0)) 45)
+              (&& (strEq (rowMsg (vecGet rows 0)) "related")
+                (&& (strEq (rowMsg (vecGet rows 1)) "primary")
+                  (&& (== (rowsGutterWidth source ix rows) 1)
+                    (&& (== (vecLen trace) 1)
+                      (&& (strEq (rowMsg (vecGet trace 0)) "in this expansion of `macro`")
+                        (== rowsLifetime 2)))))))))
+      {
+        (let mut total 0)
+        (for i in 0..100
+          (set total (+ total rowsLifetime)))
+        (if (== total 200)
+          42
+          2)
+      }
+      1)
+  })

@@ -714,37 +714,23 @@
   (msg : String)
   (sgr : String))
 
-(pub :: rowSpan (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rowSpan r)
-  {
-    (let row (as r SnipRow))
-    row.span
-  })
+(pub type SnipRows (Vec SnipRow))
 
-(pub :: rowCh (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rowCh r)
-  {
-    (let row (as r SnipRow))
-    row.ch
-  })
+(pub :: rowSpan (-> SnipRow Int))
+(pub fn (rowSpan row)
+  row.span)
 
-(pub :: rowMsg (-> Int String))
-;@axiom:effect(unsafe)
-(pub fn (rowMsg r)
-  {
-    (let row (as r SnipRow))
-    row.msg
-  })
+(pub :: rowCh (-> SnipRow Int))
+(pub fn (rowCh row)
+  row.ch)
 
-(pub :: rowSgr (-> Int String))
-;@axiom:effect(unsafe)
-(pub fn (rowSgr r)
-  {
-    (let row (as r SnipRow))
-    row.sgr
-  })
+(pub :: rowMsg (-> SnipRow String))
+(pub fn (rowMsg row)
+  row.msg)
+
+(pub :: rowSgr (-> SnipRow String))
+(pub fn (rowSgr row)
+  row.sgr)
 
 ; Insertion sort by span START. The code this replaces compared LINE
 ; numbers and put the related span first on a tie, which agreed with
@@ -753,7 +739,7 @@
 ; on line 3 at columns 6 and 22, and the first defined is the first
 ; written. Sorting by offset says the same thing about that case and the
 ; right thing about the case where it is not.
-(pub :: sortRows (-> Ints Ints))
+(pub :: sortRows (-> SnipRows SnipRows))
 (pub fn (sortRows rows)
   {
     (let n (vecLen rows))
@@ -788,7 +774,7 @@
 ; degradation an expansion frame with no reachable unit already takes.
 ; A related location with no span at all has nothing to underline
 ; anywhere and becomes a note too.
-(pub :: snipRowsOf (-> diag::Diag Int Units Ints Ints))
+(pub :: snipRowsOf (-> diag::Diag Int Units Ints SnipRows))
 (pub fn (snipRowsOf d span units ixs)
   ; The primary underline takes the diagnostic's own severity
   ; colour; a related one is always secondary.
@@ -796,19 +782,11 @@
     (let rows vecNew)
     {
       (vecPush rows
-        (as (SnipRow
-              :span span
-              :ch 94
-              :msg (ctlEsc (diagLabel d))
-              :sgr (sgrForSev (diagSev d))) Int))
+        (SnipRow :span span :ch 94 :msg (ctlEsc (diagLabel d)) :sgr (sgrForSev (diagSev d))))
       (for i in 0..(diagSecCount d)
         (if (== (secDrawable d i units ixs) 1)
           (vecPush rows
-            (as (SnipRow
-                  :span (diagSecSpan d i)
-                  :ch 45
-                  :msg (ctlEsc (diagSecMsg d i))
-                  :sgr SGR_SEC) Int))))
+            (SnipRow :span (diagSecSpan d i) :ch 45 :msg (ctlEsc (diagSecMsg d i)) :sgr SGR_SEC))))
       (sortRows rows)
     }
   })
@@ -860,7 +838,7 @@
       (diagSecMsg d i))))
 
 ; Width of the widest line number any row will print.
-(pub :: rowsGutterWidth (-> String Int Ints Int))
+(pub :: rowsGutterWidth (-> String Int SnipRows Int))
 (pub fn (rowsGutterWidth src ix rows)
   {
     (let mut w 1)
@@ -877,7 +855,7 @@
 
 ; The labeled blocks, in order, with a `...` row wherever two adjacent
 ; rows are more than one line apart.
-(pub :: snipBody (-> String Int Int Ints String))
+(pub :: snipBody (-> String Int Int SnipRows String))
 (pub fn (snipBody src ix gw rows)
   {
     (let out vecNew)
@@ -939,17 +917,17 @@
       1)
   })
 
-(pub :: traceRows (-> diag::Diag Int Ints))
+(pub :: traceRows (-> diag::Diag Int SnipRows))
 (pub fn (traceRows d i)
   {
     (let rows vecNew)
     {
       (vecPush rows
-        (as (SnipRow
-              :span (diagTraceSpan d i)
-              :ch 94
-              :msg (concat (concat "in this expansion of `" (diagTraceName d i)) "`")
-              :sgr SGR_SEC) Int))
+        (SnipRow
+          :span (diagTraceSpan d i)
+          :ch 94
+          :msg (concat (concat "in this expansion of `" (diagTraceName d i)) "`")
+          :sgr SGR_SEC))
       rows
     }
   })
