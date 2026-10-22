@@ -28327,7 +28327,7 @@
 ; Called from `tcCheckFn` while the parameters are still bound and the
 ; declared result type is in hand - `checkAxtags` runs after the frame
 ; is truncated and has neither.
-(pub :: checkContracts (-> TC ASTNode ASTNode Int))
+(pub :: checkContracts (-> TC ASTNode (Option ASTNode) Int))
 (pub fn (checkContracts tc d resTy)
   {
     (let tags vecNew)
@@ -28341,7 +28341,7 @@
     }
   })
 
-(pub :: checkContractsFrom (-> TC ASTNode Ints Int ASTNode Int))
+(pub :: checkContractsFrom (-> TC ASTNode Ints Int (Option ASTNode) Int))
 (pub fn (checkContractsFrom tc d tags i resTy)
   (if (>= i (vecLen tags))
     0
@@ -28350,7 +28350,7 @@
       (checkContractsFrom tc d tags (+ i 1) resTy)
     }))
 
-(pub :: checkOneContract (-> TC ASTNode Int ASTNode Int))
+(pub :: checkOneContract (-> TC ASTNode Int (Option ASTNode) Int))
 (pub fn (checkOneContract tc d t resTy)
   {
     (let p (contractExprOf t))
@@ -28362,8 +28362,10 @@
       {
         (let mark (vecLen (tcScopeVec tc)))
         (let _r
-          (if (&& (strEq (contractKeyOf t) "post") (! (nodeSame resTy nilNode)))
-            (pushScope (tcScopeVec tc) "result" 0 (contractSpanOf t) resTy)
+          (if (strEq (contractKeyOf t) "post")
+            (if (let (Some resultType) resTy)
+              (pushScope (tcScopeVec tc) "result" 0 (contractSpanOf t) resultType)
+              0)
             0))
         (let _i
           (tcSetContractTag tc
@@ -28397,7 +28399,7 @@
 ; vector, which this must not grow. `bodyScopeOf` mints a fresh
 ; `BScope` per call, so replacing its word 1 with the copy and
 ; extending its callable list by one is local to this check.
-(pub :: checkContractPurity (-> TC ASTNode Int ASTNode ASTNode Int))
+(pub :: checkContractPurity (-> TC ASTNode Int ASTNode (Option ASTNode) Int))
 (pub fn (checkContractPurity tc d t p resTy)
   {
     (let sc (bodyScopeOf tc d))
@@ -28406,7 +28408,10 @@
       (copyInto ps (nodeBNames d) 0)
       (vecPushStr ps "result")
       (set sc.params ps)
-      (vecPush (bsCallableVec sc) (tyIsCallable resTy))
+      (vecPush (bsCallableVec sc)
+        (match resTy
+          ((Some resultType) (tyIsCallable resultType))
+          ((None) 0)))
       {
         (let did (effDropUnsafe (effDefiniteOnly (collectEffects tc p sc))))
         (if (== (vecLen did) 0)
@@ -30875,27 +30880,33 @@
               (let bodyTy
                 {
                   (let bodyTy0
-                    (if (&& (!= (nodeC d) 0)
-                          (&& (== (nodeTag (nodeCChild d)) TAG_E_LAM)
-                            (&& (! (nodeSame resTy nilNode)) (== (nodeTag resTy) TAG_T_ARR))))
-                      {
-                        (checkLamValidate tc (nodeCChild d))
-                        (checkLamAgainst tc (nodeCChild d) resTy)
-                      }
-                      (checkExprH tc (nodeCChild d) 0)))
+                    (match resTy
+                      ((Some resTy)
+                        (if (&& (!= (nodeC d) 0)
+                              (&& (== (nodeTag (nodeCChild d)) TAG_E_LAM)
+                                (== (nodeTag resTy) TAG_T_ARR)))
+                          {
+                            (checkLamValidate tc (nodeCChild d))
+                            (checkLamAgainst tc (nodeCChild d) resTy)
+                          }
+                          (checkExprH tc (nodeCChild d) 0))
+                      )
+                      ((None) (checkExprH tc (nodeCChild d) 0))))
                   (if (== (isPendingNode bodyTy0) 1)
                     (groundStandalone tc bodyTy0 (spanOf (nodeCChild d)))
                     bodyTy0)
                 })
               {
-                (checkDeclaredReturn tc d resTy (maybeWrapSubtypeReturn tc d resTy bodyTy))
+                (if (let (Some resultType) resTy)
+                  (checkDeclaredReturn tc d resultType
+                    (maybeWrapSubtypeReturn tc d resultType bodyTy)))
                 ; The contracts, while the frame is still standing: the
                 ; parameters are bound above `base` and `scopeTrunc`
                 ; below takes them away, so `checkAxtags` - which runs
                 ; after this whole function - has no scope to check a
-                ; `pre` against. `resTy` is 0 when the declaration has
-                ; no signature, which is exactly the case a `post`
-                ; naming `result` has to be refused for.
+                ; `pre` against. None means no result type remains after
+                ; the signature's parameter spine, so a `post` cannot
+                ; name `result` there. Some keeps poison and inference types.
                 (checkContracts tc d resTy)
                 (emitUnsignedSignature tc)
                 (if (let (Some ent) entFound)
@@ -30978,16 +30989,16 @@
       (strCountIn v s (+ i 1) end))))
 
 ; The signature's result type: its arrows peeled by as many
-; parameters as the definition has. 0 when the signature runs out of
+; parameters as the definition has. None when the signature runs out of
 ; arrows first, which is the case this cannot say anything about.
-(pub :: peelArrows (-> ASTNode Int ASTNode))
+(pub :: peelArrows (-> ASTNode Int (Option ASTNode)))
 (pub fn (peelArrows t n)
-  (if (<= n 0)
-    t
-    (if (nodeSame t nilNode)
-      nilNode
+  (if (nodeSame t nilNode)
+    None
+    (if (<= n 0)
+      (Some t)
       (if (!= (nodeTag t) TAG_T_ARR)
-        nilNode
+        None
         (peelArrows (nodeBChild t) (- n 1))))))
 
 ; A function's body against its declared result. The comparison is

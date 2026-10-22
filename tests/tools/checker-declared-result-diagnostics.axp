@@ -1,0 +1,44 @@
+; A missing declared result differs from a present poison or inferred type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let nodes (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (tcWalkDecls tc 0)
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "420-declared-return.ax"
+      "(:: g (-> Int Int Int))\n(fn (g a)\n  a)\n\n(:: main Int)\n(fn (main)\n  (g 41 2))\n")
+    (checkSource "425-declared-return-repr.ax"
+      "(:: b (-> Int Bool))\n(fn (b x)\n  42)\n\n(:: f (-> Int Float))\n(fn (f x)\n  42)\n\n(:: main Int)\n(fn (main)\n  (if (b 1)\n    7\n    9))\n")
+    (checkSource "1443-generic-result-rigidity.ax"
+      "; A caller's type parameter remains rigid inside every result shape.\n(import Vec)\n\n(data Pair (a b)\n  (Paired a b))\n\n(struct Record (a)\n  (value : a))\n\n(type Optional a (Option a))\n\n(:: forgedOption (-> a (Option a)))\n(fn (forgedOption witness)\n  (Some 42))\n\n(:: forgedAlias (-> a (Optional a)))\n(fn (forgedAlias witness)\n  (Some 42))\n\n(:: forgedVector (-> a (Vec a)))\n(fn (forgedVector witness)\n  (vecPush vecNew 42))\n\n(:: forgedRecord (-> a (Record a)))\n(fn (forgedRecord witness)\n  (Record :value 42))\n\n(:: swapped (-> a b (Pair a b)))\n(fn (swapped left right)\n  (Paired right left))\n\n(:: wrongConcrete (-> a (Pair a Int)))\n(fn (wrongConcrete witness)\n  (Paired witness \"not an integer\"))\n\n(:: bump (-> Int Int))\n(fn (bump n)\n  (+ n 1))\n\n(:: forgedCallback (-> a (Option (-> a Int))))\n(fn (forgedCallback witness)\n  (Some bump))\n\n(subtype Small is Int range 0..10)\n\n(:: boundedOnly (-> Small Int))\n(fn (boundedOnly n)\n  n)\n\n(:: forgedRangeCallback (-> Int Int))\n(fn (forgedRangeCallback)\n  boundedOnly)\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    (checkSource "result-2.ax" ";@axiom:post((> result 0))\n(pub fn (missing n) n)\n")
+    (checkSource "result-3.ax"
+      ";@axiom:pre((> result 0))\n(pub :: before (-> Int Int))\n(pub fn (before n) n)\n")
+    (checkSource "result-4.ax"
+      ";@axiom:post((> result 0))\n(pub :: short (-> Int Int))\n(pub fn (short first second) first)\n")
+    (checkSource "result-5.ax"
+      ";@axiom:post((== result result))\n(pub :: poisoned Ghost)\n(pub fn (poisoned) 1)\n")
+    (checkSource "result-11.ax" "(pub :: mismatch Int)\n(pub fn (mismatch) \"wrong\")\n")
+    0
+  })
