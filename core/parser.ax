@@ -1796,7 +1796,7 @@
 ; AX2005, whose message, label and help are stage0's own wording. The
 ; limit renders from `parseMaxDepth` rather than being spelled out, so
 ; the constant and the sentence about it cannot drift.
-(pub :: ax2005Diag (-> Ints Int Int))
+(pub :: ax2005Diag (-> Ints Int Diag))
 (pub fn (ax2005Diag tokens pos)
   {
     (let tok (vecGet tokens pos))
@@ -1828,7 +1828,7 @@
 ; the other half: it is a type VARIABLE, and a signature carrying one
 ; accepts anything at all. The help names the Axiom type so the fix is
 ; a substitution rather than a search.
-(pub :: ax3047Diag (-> Ints Int String Int))
+(pub :: ax3047Diag (-> Ints Int String diag::Diag))
 (pub fn (ax3047Diag tokens pos n)
   {
     (let d
@@ -1843,7 +1843,7 @@
 ; AX3133, at the rule pattern's head token: the one name a rule's
 ; pattern may not open with is any name but the macro's own, because
 ; the head is how a rule is matched to its macro (MAC-LANG-14).
-(pub :: ax3133Diag (-> Ints Int String Int))
+(pub :: ax3133Diag (-> Ints Int String diag::Diag))
 (pub fn (ax3133Diag tokens pos mac)
   {
     (let tok (vecGet tokens pos))
@@ -1864,7 +1864,7 @@
 ; quote followed by space, `(` or `[` here - and Axiom has no
 ; quote form, so the help says what the quote mark does open
 ; rather than naming a replacement that does not exist.
-(pub :: quoteDiag (-> Ints Int Int))
+(pub :: quoteDiag (-> Ints Int diag::Diag))
 (pub fn (quoteDiag tokens pos)
   {
     (let tok (vecGet tokens pos))
@@ -1884,7 +1884,7 @@
 ; (`(import Sys/Platform)` for `Sys.Platform`). The note records what
 ; the acceptance used to cost, which is the fact that decides whether
 ; anyone may relax this later.
-(pub :: ax2006Diag (-> Ints Int String Int))
+(pub :: ax2006Diag (-> Ints Int String Diag))
 (pub fn (ax2006Diag tokens pos seg)
   {
     (let tok (vecGet tokens pos))
@@ -1922,7 +1922,7 @@
 ; the check is not in the lexer: `scanStringEnd` treats a line break
 ; inside a literal as an ordinary character on purpose, and banning it
 ; there would be a change to every string in the language.
-(pub :: ax3041Diag (-> Ints Int String Int))
+(pub :: ax3041Diag (-> Ints Int String Diag))
 (pub fn (ax3041Diag tokens pos ch)
   {
     (let tok (vecGet tokens pos))
@@ -1966,7 +1966,7 @@
 ; token where `in` belongs. The help inserts it, unless the form ends
 ; there: then the loop is missing more than one word, and an insertion
 ; would only move the error along.
-(pub :: forInDiag (-> Ints Int Int))
+(pub :: forInDiag (-> Ints Int Diag))
 (pub fn (forInDiag tokens pos)
   {
     (let tok (vecGet tokens pos))
@@ -1991,7 +1991,7 @@
 
 ; Imports form the module header. Both late and nested imports keep
 ; AX2001, with placement advice at the import keyword.
-(pub :: importPositionDiag (-> Ints Int String Int))
+(pub :: importPositionDiag (-> Ints Int String diag::Diag))
 (pub fn (importPositionDiag tokens pos code)
   (diagSetLabel
     (mkDiag SEV_ERROR "AX2001" "unexpected-token" (tokenSpan (vecGet tokens pos))
@@ -2002,7 +2002,7 @@
       "move this import before the module's signatures, functions and other declarations, outside any function, block or lambda")
     "imports belong at the start of the module"))
 
-(pub :: parseErrDiag (-> Ints Int String Int))
+(pub :: parseErrDiag (-> Ints Int String Diag))
 (pub fn (parseErrDiag tokens r src)
   ; Tested on the CODE rather than inferred from the position: the
   ; overflow token is always a real `(`, so every test below would step
@@ -2136,7 +2136,7 @@
 ; which is an unexpected character. Keying off the byte gave the bare
 ; one AX1005 where stage0 says AX1001 - found by sweeping all 94
 ; printable bytes through both compilers, not by reading.
-(pub :: lexErrDiag (-> Ints String Int))
+(pub :: lexErrDiag (-> Ints String (Option Diag)))
 (pub fn (lexErrDiag tokens src)
   {
     (let mut i 0)
@@ -2158,66 +2158,69 @@
           (set i (+ i 1))
         })
       (if (== found 0)
-        0
-        {
-          (let sp (tokenSpan found))
+        None
+        (Some
           {
-            (let b (strByte src (spanStart sp)))
-            (if isEsc
-              (diagSetLabel
-                (mkDiag SEV_ERROR "AX1005" "invalid-escape-sequence" sp
-                  (concat (concat "invalid escape sequence `" (strSlice src (spanStart sp) 2)) "`")
-                  0 "" "valid escapes are \\n \\t \\r \\\\ \\\" \\' \\0")
-                "unrecognized escape sequence")
-              (if (== b 34)
+            (let sp (tokenSpan found))
+            {
+              (let b (strByte src (spanStart sp)))
+              (if isEsc
                 (diagSetLabel
-                  (mkDiag SEV_ERROR "AX1002" "unterminated-string" sp "unterminated string literal"
-                    0 "" "add a closing `\"`, or escape an embedded quote as `\\\"`")
-                  "string literal starts here but is never closed")
-                (if (== b 39)
+                  (mkDiag SEV_ERROR "AX1005" "invalid-escape-sequence" sp
+                    (concat (concat "invalid escape sequence `" (strSlice src (spanStart sp) 2))
+                      "`")
+                    0 "" "valid escapes are \\n \\t \\r \\\\ \\\" \\' \\0")
+                  "unrecognized escape sequence")
+                (if (== b 34)
                   (diagSetLabel
-                    (mkDiag SEV_ERROR "AX1003" "unterminated-char" sp "unterminated char literal" 0
-                      ""
-                      "character literals must contain exactly one character, e.g. `'a'` or `'\\n'`")
-                    "character literal starts here but is never closed")
-                  (if (|| (isDigit b)
-                        (&& (== b 45)
-                          (&& (< (+ (spanStart sp) 1) (spanEnd sp))
-                            (isDigit (strByte src (+ (spanStart sp) 1))))))
+                    (mkDiag SEV_ERROR "AX1002" "unterminated-string" sp
+                      "unterminated string literal" 0 ""
+                      "add a closing `\"`, or escape an embedded quote as `\\\"`")
+                    "string literal starts here but is never closed")
+                  (if (== b 39)
                     (diagSetLabel
-                      (mkDiag SEV_ERROR "AX1004" "invalid-number-literal" sp
+                      (mkDiag SEV_ERROR "AX1003" "unterminated-char" sp "unterminated char literal"
+                        0 ""
+                        "character literals must contain exactly one character, e.g. `'a'` or `'\\n'`")
+                      "character literal starts here but is never closed")
+                    (if (|| (isDigit b)
+                          (&& (== b 45)
+                            (&& (< (+ (spanStart sp) 1) (spanEnd sp))
+                              (isDigit (strByte src (+ (spanStart sp) 1))))))
+                      (diagSetLabel
+                        (mkDiag SEV_ERROR "AX1004" "invalid-number-literal" sp
+                          (concat
+                            (concat "invalid number literal `"
+                              (strSlice src (spanStart sp) (- (spanEnd sp) (spanStart sp))))
+                            "`")
+                          0 "" "check for a value that overflows i64/f64 or a malformed exponent")
                         (concat
-                          (concat "invalid number literal `"
-                            (strSlice src (spanStart sp) (- (spanEnd sp) (spanStart sp))))
-                          "`")
-                        0 "" "check for a value that overflows i64/f64 or a malformed exponent")
-                      (concat
-                        (concat "`" (strSlice src (spanStart sp) (- (spanEnd sp) (spanStart sp))))
-                        "` cannot be parsed as Int or Float"))
-                    ; The lexer's error token covers the whole
-                    ; character (`lexErrCharLen`), so the quote does
-                    ; too; a byte that begins no UTF-8 character is
-                    ; NAMED rather than quoted, since quoting it
-                    ; would put a byte that is not text into every
-                    ; renderer's output.
-                    {
-                      (let ch (strSlice src (spanStart sp) (- (spanEnd sp) (spanStart sp))))
-                      (if (&& (>= b 128) (== (strLen ch) 1))
-                        (diagSetLabel
-                          (mkDiag SEV_ERROR "AX1001" "unexpected-char" sp
-                            (concat (concat "unexpected byte 0x" (hexByteUpper b))
-                              ", which begins no UTF-8 character")
-                            0 ""
-                            "Axiom source is UTF-8; this byte is not part of a well-formed character - the file may be in another encoding, or damaged")
-                          "not UTF-8")
-                        (diagSetLabel
-                          (mkDiag SEV_ERROR "AX1001" "unexpected-char" sp
-                            (concat (concat "unexpected character `" ch) "`") 0 ""
-                            "an identifier is letters, digits, `_`, `'` and `+ - * / % < > = ! & | ^`, and cannot begin with a digit or `'`; operators are not a separate class - `+` is simply an identifier - and `?`, `~` and `@` are not identifier characters at all")
-                          (concat (concat "`" ch) "` is not valid here")))
-                    }))))
-          }
-        })
+                          (concat "`" (strSlice src (spanStart sp) (- (spanEnd sp) (spanStart sp))))
+                          "` cannot be parsed as Int or Float"))
+                      ; The lexer's error token covers the whole
+                      ; character (`lexErrCharLen`), so the quote does
+                      ; too; a byte that begins no UTF-8 character is
+                      ; NAMED rather than quoted, since quoting it
+                      ; would put a byte that is not text into every
+                      ; renderer's output.
+                      {
+                        (let ch (strSlice src (spanStart sp) (- (spanEnd sp) (spanStart sp))))
+                        (if (&& (>= b 128) (== (strLen ch) 1))
+                          (diagSetLabel
+                            (mkDiag SEV_ERROR "AX1001" "unexpected-char" sp
+                              (concat (concat "unexpected byte 0x" (hexByteUpper b))
+                                ", which begins no UTF-8 character")
+                              0 ""
+                              "Axiom source is UTF-8; this byte is not part of a well-formed character - the file may be in another encoding, or damaged")
+                            "not UTF-8")
+                          (diagSetLabel
+                            (mkDiag SEV_ERROR "AX1001" "unexpected-char" sp
+                              (concat (concat "unexpected character `" ch) "`") 0 ""
+                              "an identifier is letters, digits, `_`, `'` and `+ - * / % < > = ! & | ^`, and cannot begin with a digit or `'`; operators are not a separate class - `+` is simply an identifier - and `?`, `~` and `@` are not identifier characters at all")
+                            (concat (concat "`" ch) "` is not valid here")))
+                      }))))
+            }
+          }))
     }
   })
 

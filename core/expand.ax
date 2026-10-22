@@ -164,7 +164,7 @@
 ; ------------------------------------------------------------------
 (pub struct MEnv
   (macros : Nodes)
-  (out : (Vec Int))
+  (out : Diags)
   (mut fresh : Int)
   (mut depth : Int)
   (decls : (Vec ASTNode))
@@ -663,7 +663,7 @@
 ; `Diag` can carry a per-span unit these say the macro's NAME in the
 ; message and anchor only where they can be trusted.
 ; ------------------------------------------------------------------
-(pub :: expEmit (-> MEnv Int Int))
+(pub :: expEmit (-> MEnv diag::Diag Int))
 (pub fn (expEmit env d)
   {
     (vecPush (expOutVec env) d)
@@ -7463,7 +7463,7 @@
 ; answering the diagnostic so the call wraps a `mkDiagNote` in place.
 ; Module 0 (the entry file) resolves to unit 0, so stamping is safe
 ; on every path.
-(pub :: expMarkUnit (-> MEnv Int a Int))
+(pub :: expMarkUnit (-> MEnv diag::Diag a diag::Diag))
 (pub fn (expMarkUnit env dg m)
   {
     (diagSetUnit dg (expUnitOfMod env.units m))
@@ -10908,7 +10908,7 @@
       i
       (expUnitOfModFrom units m (+ i 1)))))
 
-(pub :: expAttachFrames (-> Ints Ints Ints Int))
+(pub :: expAttachFrames (-> Diags Ints Ints Int))
 (pub fn (expAttachFrames diags table units)
   (if (== (as table Int) 0)
     0
@@ -10954,22 +10954,22 @@
 (pub fn (expMaxFrames)
   128)
 
-(pub :: expAttachTo (-> Int Ints Ints Int Int Int))
+(pub :: expAttachTo (-> diag::Diag Ints Ints Int Int Int))
 (pub fn (expAttachTo d table units dmod j)
   {
     (let n (expAttachFrom d table units dmod j 0))
     (if (> n expMaxFrames)
       (diagAddNote d
         (concat (concat "expansion reached this through " (expFmtInt n))
-          " frames; the first 128 are shown"))
-      0)
+          " frames; the first 128 are shown")))
+    0
   })
 
 ; Answers how many frames MATCHED, having added at most `expMaxFrames`
 ; of them. The count keeps rising after the cap so the note can say
 ; what it left out - a truncation nobody counts is how a reader stops
 ; being able to trust the ones that are shown.
-(pub :: expAttachFrom (-> Int Ints Ints Int Int Int Int))
+(pub :: expAttachFrom (-> diag::Diag Ints Ints Int Int Int Int))
 (pub fn (expAttachFrom d table units dmod j seen)
   (if (>= j (vecLen table))
     seen
@@ -10990,11 +10990,11 @@
 ; separately and merged; `orderDiags` is a stable partition, so
 ; merging this way round keeps expansion's refusals ahead of the
 ; checker's report about the code they poisoned.
-(pub :: expMergeInto (-> Ints Ints Ints))
+(pub :: expMergeInto (-> Diags Diags Diags))
 (pub fn (expMergeInto dst src)
   (expMergeIntoAt dst src 0))
 
-(pub :: expMergeIntoAt (-> Ints Ints Int Ints))
+(pub :: expMergeIntoAt (-> Diags Diags Int Diags))
 (pub fn (expMergeIntoAt dst src i)
   (if (>= i (vecLen src))
     dst

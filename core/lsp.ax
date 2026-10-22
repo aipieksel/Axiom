@@ -335,7 +335,7 @@
 ;
 ; Read through diag.ax's accessors rather than a second copy of the
 ; field list, so every note and every help reaches the editor.
-(pub :: lspDiagText (-> Int String))
+(pub :: lspDiagText (-> diag::Diag String))
 (pub fn (lspDiagText d)
   {
     (let parts vecNew)
@@ -392,7 +392,7 @@
 ; Takes the line index rather than building one: its caller at the
 ; publish loop reports every diagnostic in the file, and building the
 ; index per diagnostic would keep the whole cost it exists to remove.
-(pub :: lspDiagJson (-> Int String Ints String Int))
+(pub :: lspDiagJson (-> diag::Diag String Ints String Int))
 (pub fn (lspDiagJson d src ix uri)
   ; The key is OMITTED rather than sent empty when there is nothing
   ; to relate. An empty array is legal and would have rewritten every
@@ -415,7 +415,7 @@
 
 ; The secondary spans, as `DiagnosticRelatedInformation[]`. One uri and
 ; one line index for all of them, for the reason the header gives.
-(pub :: lspDiagRelated (-> Int String Ints String Int))
+(pub :: lspDiagRelated (-> diag::Diag String Ints String Int))
 (pub fn (lspDiagRelated d src ix uri)
   {
     (let out jsonArr)
@@ -435,7 +435,7 @@
 ; Is secondary `i` one this server can place - a real span, in the
 ; document it is publishing against? See the header above for why the
 ; other two kinds are dropped rather than aimed at this uri.
-(pub :: lspSecHere (-> Int Int Int))
+(pub :: lspSecHere (-> diag::Diag Int Int))
 (pub fn (lspSecHere d i)
   (if (== (diagSecSpan d i) 0)
     0
@@ -445,7 +445,7 @@
 ; the key is omitted when this is 0, and a diagnostic whose secondaries
 ; are ALL elsewhere must omit it too rather than publish an empty
 ; array, which is the distinction `diagSecCount` alone stopped making.
-(pub :: lspSecPublishable (-> Int Int Int Int))
+(pub :: lspSecPublishable (-> diag::Diag Int Int Int))
 (pub fn (lspSecPublishable d i n)
   (if (>= i (diagSecCount d))
     n
@@ -671,14 +671,15 @@
 ; take a fatal CLI path. The table is also the resolver's source input.
 ; The first failure carries its own unit; callers never index it using
 ; the entry document's bytes.
-(pub :: lspWorkspacePreflight (-> LspWorkspace (Vec ASTNode) Int String Ints Int Int))
+(pub :: lspWorkspacePreflight
+  (-> LspWorkspace (Vec ASTNode) Int String Ints Int (Option diag::Diag)))
 ;@axiom:effect(io)
 (pub fn (lspWorkspacePreflight workspace decls tcode entryDir units owner)
   {
     (let mut i 0)
-    (let mut failure 0)
+    (let mut failure (:: None (Option Diag)))
     {
-      (while (&& (== failure 0) (< i (vecLen decls)))
+      (while (&& (isNone failure) (< i (vecLen decls)))
         {
           {
             (let site (vecGet decls i))
@@ -696,7 +697,7 @@
                             (importHelpText name tcode entryDir)))
                         {
                           (diagSetUnit d owner)
-                          (set failure d)
+                          (set failure (Some d))
                         }
                       }
                       {
@@ -721,18 +722,18 @@
                                 (let lexD (lexErrDiag toks src))
                                 {
                                   (let pr
-                                    (if (== lexD 0)
+                                    (if (isNone lexD)
                                       (parseModuleWith toks (scanAxtags src))
                                       (pErr 0)))
-                                  (if (|| (!= lexD 0) (== (memGetWord pr 0) 0))
+                                  (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
                                     {
                                       (let d
-                                        (if (== lexD 0)
-                                          (parseErrDiag toks pr src)
-                                          lexD))
+                                        (match lexD
+                                          ((Some ld) ld)
+                                          ((None) (parseErrDiag toks pr src))))
                                       {
                                         (diagSetUnit d unit)
-                                        (set failure d)
+                                        (set failure (Some d))
                                       }
                                     }
                                     (set failure (lspWorkspacePreflight workspace
@@ -777,10 +778,10 @@
       (let lexD (lexErrDiag toks src))
       {
         (let pr
-          (if (== lexD 0)
+          (if (isNone lexD)
             (parseModuleWith toks (scanAxtags src))
             (pErr 0)))
-        (if (|| (> lexD 0) (== (memGetWord pr 0) 0))
+        (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
           ; A parse failure now carries a code and a span, so the editor
           ; gets a squiggle ON the offending token instead of one
           ; spanless note at the top of the file. That was this port's
@@ -788,9 +789,9 @@
           ; reported identically, at line 1.
           (jsonArrPush jsonArr
             (lspDiagJson
-              (if (== lexD 0)
-                (parseErrDiag toks pr src)
-                lexD)
+              (match lexD
+                ((Some ld) ld)
+                ((None) (parseErrDiag toks pr src)))
               src (lspLineIndex src) (lspPathToUri path)))
           {
             (let decls (readAstNodes pr 1))
@@ -812,11 +813,15 @@
               })
             {
               (let failure (lspWorkspacePreflight workspace decls tcode entryDir units 0))
-              (if (!= failure 0)
-                (if (== (diagUnit failure) 0)
-                  (jsonArrPush jsonArr
-                    (lspDiagJson failure src (lspLineIndex src) (lspPathToUri path)))
-                  jsonArr)
+              (if (isSome failure)
+                (match failure
+                  ((Some fd)
+                    (if (== (diagUnit fd) 0)
+                      (jsonArrPush jsonArr
+                        (lspDiagJson fd src (lspLineIndex src) (lspPathToUri path)))
+                      jsonArr)
+                  )
+                  ((None) jsonArr))
                 ; Same order as `compileFile`: expansion, then the
                 ; checker. An editor that reported a different set
                 ; of diagnostics from `axiom check` on the same file
@@ -3371,7 +3376,7 @@
         })
       {
         (let failure (lspWorkspacePreflight workspace decls tcode entryDir units 0))
-        (if (!= failure 0)
+        (if (isSome failure)
           None
           (Some
             (LspResolved
@@ -12694,7 +12699,7 @@
 ; Only this document's diagnostics - `diagUnit` 0 - are asked, for the
 ; reason `lspCheckDoc` publishes only those: a fix into an imported
 ; module's bytes is an edit to a file the request did not name.
-(pub :: lspQuickfixes (-> Int Ints String String Ints Int Int))
+(pub :: lspQuickfixes (-> Int (Vec diag::Diag) String String Ints Int Int))
 (pub fn (lspQuickfixes out ds src uri ix want)
   {
     (let n (vecLen ds))
@@ -12709,7 +12714,7 @@
     }
   })
 
-(pub :: lspQuickfixesOf (-> Int Int String String Ints Int Int))
+(pub :: lspQuickfixesOf (-> Int diag::Diag String String Ints Int Int))
 (pub fn (lspQuickfixesOf out d src uri ix want)
   {
     (let n (diagHelpCount d))
@@ -12726,7 +12731,7 @@
 
 ; `isPreferred` because a fix the compiler wrote is the fix; an editor
 ; binds its "apply preferred fix" key to exactly this flag.
-(pub :: lspQuickfixJson (-> Int Int Int String String Ints Int))
+(pub :: lspQuickfixJson (-> diag::Diag Int Int String String Ints Int))
 (pub fn (lspQuickfixJson d i fsp src uri ix)
   (jsonObjPut
     (jsonObjPut
@@ -13209,7 +13214,7 @@
 
 ; One acknowledge per AX3053 the request meets, where this document
 ; declares the effect and carries no `unhandled` tag on it.
-(pub :: lspUnhandledAssists (-> Int Ints String String Ints Int (Vec ASTNode) Int))
+(pub :: lspUnhandledAssists (-> Int (Vec diag::Diag) String String Ints Int (Vec ASTNode) Int))
 (pub fn (lspUnhandledAssists out ds src uri ix want decls)
   {
     (let n (vecLen ds))
@@ -13276,7 +13281,7 @@
 ; item now runs before whatever the statement evaluated ahead of it.
 ; ------------------------------------------------------------------
 (pub :: lspNameAssists
-  (-> Int Ints String String Ints Int (Vec ASTNode) String (Vec ASTNode) Ints Int))
+  (-> Int (Vec diag::Diag) String String Ints Int (Vec ASTNode) String (Vec ASTNode) Ints Int))
 ;@axiom:effect(io)
 (pub fn (lspNameAssists out ds src uri ix want decls path allDecls units)
   {
@@ -13297,7 +13302,7 @@
   })
 
 ; A CodeAction carrying one diagnostic and one WorkspaceEdit.
-(pub :: lspFixActionJson (-> String String Int String String Ints Int Int))
+(pub :: lspFixActionJson (-> String String diag::Diag String String Ints Int Int))
 (pub fn (lspFixActionJson title kind d src uri ix edit)
   (jsonObjPut
     (jsonObjPut (jsonObjPut (jsonObjPut jsonObj "title" (jsonStr title)) "kind" (jsonStr kind))
@@ -13325,7 +13330,7 @@
 ; The name AX3001 reports is the reference's own bytes; a qualified
 ; `Mod::name` spans its first segment alone, and names its module
 ; already, so it is not this assist's question.
-(pub :: lspImportAssists (-> Int Int String String Ints (Vec ASTNode) String Strings Int))
+(pub :: lspImportAssists (-> Int diag::Diag String String Ints (Vec ASTNode) String Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspImportAssists out d src uri ix decls path seen)
   {
@@ -13353,7 +13358,8 @@
 
 ; One action per (module, name), whatever the number of diagnostics
 ; that asked for it - a whole-document range meets every one.
-(pub :: lspImportOffer (-> Int Int String String Ints (Vec ASTNode) String String Strings Int))
+(pub :: lspImportOffer
+  (-> Int diag::Diag String String Ints (Vec ASTNode) String String Strings Int))
 (pub fn (lspImportOffer out d src uri ix decls mod name seen)
   {
     (let key (concat mod (concat "$" name)))
@@ -13669,7 +13675,7 @@
 ; `pub` for an AX3023 name.
 ; ------------------------------------------------------------------
 (pub :: lspPublicAssist
-  (-> Int Int String String Ints (Vec ASTNode) (Vec ASTNode) Ints Strings Int))
+  (-> Int diag::Diag String String Ints (Vec ASTNode) (Vec ASTNode) Ints Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspPublicAssist out d src uri ix decls allDecls units seen)
   {
@@ -13766,8 +13772,8 @@
     }))
 
 (pub :: lspPublicOffer
-  (-> Int Int String String Ints (Vec ASTNode) (Vec ASTNode) Ints String String ASTNode Strings
-    Int))
+  (-> Int diag::Diag String String Ints (Vec ASTNode) (Vec ASTNode) Ints String String ASTNode
+    Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspPublicOffer out d src uri ix decls allDecls units mod name decl seen)
   {

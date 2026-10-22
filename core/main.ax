@@ -17,6 +17,7 @@
 (import nolint)
 (import parser)
 (import diag)
+(import Err (isSome isNone))
 (import render)
 (import repl)
 (import typecheck)
@@ -265,9 +266,9 @@
             (let v vecNew)
             {
               (vecPush v
-                (if (== lexD 0)
-                  (parseErrDiag toks pr src)
-                  lexD))
+                (match lexD
+                  ((Some ld) ld)
+                  ((None) (parseErrDiag toks pr src))))
               v
             }
           })
@@ -380,7 +381,7 @@
       }
     }))
 
-(:: attachTcFrames (-> (Vec ASTNode) Int Ints Ints Ints))
+(:: attachTcFrames (-> (Vec ASTNode) Int Ints Ints Diags))
 (fn (attachTcFrames decls tc ftbl units)
   {
     (expAttachFrames (tcOutVec tc) ftbl units)
@@ -425,7 +426,7 @@
 
 ; Every marker from `from` on, one diagnostic per DISTINCT sentence: a
 ; primitive called in three places is one refusal, not three.
-(pub :: deviceRefusals (-> String Ints Strings Int Ints))
+(pub :: deviceRefusals (-> String (Vec diag::Diag) Strings Int (Vec diag::Diag)))
 (pub fn (deviceRefusals ir mds seen from)
   {
     (let k (strFindSub ir "; axiom-device-refused " from))
@@ -600,10 +601,10 @@
           (let lexD (lexErrDiag toks src))
           {
             (let pr
-              (if (== lexD 0)
+              (if (isNone lexD)
                 (parseModuleWith toks (scanAxtags src))
                 (pErr 0)))
-            (if (|| (> lexD 0) (== (memGetWord pr 0) 0))
+            (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
               ; A parse failure is a DIAGNOSTIC, through the same
               ; renderer and the same exit status as every other one.
               ; It used to be a bare `parse failed` on stderr with exit
@@ -614,9 +615,9 @@
                     (let v vecNew)
                     {
                       (vecPush v
-                        (if (== lexD 0)
-                          (parseErrDiag toks pr src)
-                          lexD))
+                        (match lexD
+                          ((Some ld) ld)
+                          ((None) (parseErrDiag toks pr src))))
                       v
                     }
                   })

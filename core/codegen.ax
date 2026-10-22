@@ -9564,7 +9564,7 @@
 ; This was the last surface untouched by the parse-error port, and it
 ; is the one a person compiling a multi-module program meets first: it
 ; is what a compiler prints when a file it was told to read is broken.
-(pub :: dieModuleParse (-> String String Ints Int Int Int String Int))
+(pub :: dieModuleParse (-> String String Ints Int (Option Diag) Int String Int))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (dieModuleParse name src toks pr lexD tcode entryDir)
@@ -9574,9 +9574,9 @@
     (let units vecNew)
     {
       (vecPush ds
-        (if (== lexD 0)
-          (parseErrDiag toks pr src)
-          lexD))
+        (match lexD
+          ((Some ld) ld)
+          ((None) (parseErrDiag toks pr src))))
       ; The unit carries the RESOLVED path, not the module name, so the
       ; `-->` line names a file the reader can open.
       (vecPush units
@@ -9609,10 +9609,10 @@
       (let lexD (lexErrDiag toks src))
       {
         (let pr
-          (if (== lexD 0)
+          (if (isNone lexD)
             (parseModuleWith toks (scanAxtags src))
             (pErr 0)))
-        (if (|| (> lexD 0) (== (memGetWord pr 0) 0))
+        (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
           {
             (dieModuleParse name src toks pr lexD tcode entryDir)
             vecNew

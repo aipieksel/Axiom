@@ -104,13 +104,14 @@
   (slug : String)
   (span : Int)
   (msg : String)
-  (label : String)
-  (unit : Int)
-  (secs : Int)
-  (notes : Int)
-  (helps : Int)
-  (trace : Int))
+  (mut label : String)
+  (mut unit : Int)
+  (mut secs : (Option (Vec DLabel)))
+  (mut notes : (Option Strings))
+  (mut helps : (Option (Vec DHelp)))
+  (mut trace : (Option (Vec DFrame))))
 
+; allocated by the first secondary, note, help or frame added
 ; A related location and the note that goes with it.
 ;
 ; `unit` is the SENTINEL -1 for "the diagnostic's own unit", which is
@@ -130,6 +131,9 @@
 ; a builtin or an `extern` item has no declaration to point at, and
 ; leaving it out of the field list instead would make the list look
 ; complete when it is not.
+; The diagnostics of one run, in emission order.
+(pub type Diags (Vec Diag))
+
 (pub struct DLabel
   (span : Int)
   (msg : String)
@@ -141,7 +145,7 @@
 ; tool can apply it without parsing the English.
 (pub struct DHelp
   (msg : String)
-  (fixSpan : Int)
+  (mut fixSpan : Int)
   (fixText : String))
 
 ; One expansion frame: the macro's name, the span of its DECLARATION,
@@ -160,126 +164,135 @@
 ; constructor application contributed nothing to the effect row
 ; (`MM-EXEC-9a`); `no-io` and `no-foreign` are unchanged.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagBase (-> Int String String Int String String Int))
+(pub :: mkDiagBase (-> Int String String Int String String Diag))
 (pub fn (mkDiagBase sev code slug span msg label)
-  (as (Diag
-        :sev sev
-        :code code
-        :slug slug
-        :span span
-        :msg msg
-        :label label
-        :unit 0
-        :secs 0
-        :notes 0
-        :helps 0
-        :trace 0) Int))
+  (Diag
+    :sev sev
+    :code code
+    :slug slug
+    :span span
+    :msg msg
+    :label label
+    :unit 0
+    :secs None
+    :notes None
+    :helps None
+    :trace None))
 
 ; ------------------------------------------------------------------
 ; Accessors.
 ; ------------------------------------------------------------------
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSev (-> Int Int))
+(pub :: diagSev (-> Diag Int))
 (pub fn (diagSev d)
-  (memGetWord d 0))
+  d.sev)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagCode (-> Int String))
+(pub :: diagCode (-> Diag String))
 (pub fn (diagCode d)
-  (memGetWordStr d 1))
+  d.code)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSlug (-> Int String))
+(pub :: diagSlug (-> Diag String))
 (pub fn (diagSlug d)
-  (memGetWordStr d 2))
+  d.slug)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSpan (-> Int Int))
+(pub :: diagSpan (-> Diag Int))
 (pub fn (diagSpan d)
-  (memGetWord d 3))
+  d.span)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagMsg (-> Int String))
+(pub :: diagMsg (-> Diag String))
 (pub fn (diagMsg d)
-  (memGetWordStr d 4))
+  d.msg)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagLabel (-> Int String))
+(pub :: diagLabel (-> Diag String))
 (pub fn (diagLabel d)
-  (memGetWordStr d 5))
+  d.label)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagUnit (-> Int Int))
+(pub :: diagUnit (-> Diag Int))
 (pub fn (diagUnit d)
-  (memGetWord d 6))
+  d.unit)
 
 ; Returns the diagnostic, so it wraps a constructor at an emission site
 ; without the site having to name a local.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSetLabel (-> Int String Int))
+(pub :: diagSetLabel (-> Diag String Diag))
 (pub fn (diagSetLabel d s)
   {
-    (memSetWord d 5 s)
+    (set d.label s)
     d
   })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSetUnit (-> Int Int Int))
+(pub :: diagSetUnit (-> Diag Int Diag))
 (pub fn (diagSetUnit d u)
-  (memSetWord d 6 u))
-
-; How many entries a lazily-allocated slot holds; 0 both when the slot
-; was never touched and when its vector is empty.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagCountAt (-> Int Int Int))
-(pub fn (diagCountAt d w)
   {
-    (let v (memGetWordVec d w))
-    (if (== (as v Int) 0)
-      0
-      (vecLen v))
+    (set d.unit u)
+    d
   })
 
-; The slot's vector, allocating it on first use.
-;@axiom:restrict(no-io,no-foreign)
-(pub :: diagVecAt (-> Int Int (Vec a)))
-(pub fn (diagVecAt d w)
-  {
-    (let v (memGetWordVec d w))
-    (if (== (as v Int) 0)
-      {
-        (let nv vecNew)
-        {
-          (memSetWord d w nv)
-          nv
-        }
-      }
-      v)
-  })
+; The four lazily allocated lists: each read answers without allocating
+; (an untouched list has no entries), and each builder allocates its
+; list on first use.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: diagSecList (-> Diag (Vec DLabel)))
+(pub fn (diagSecList d)
+  (match d.secs
+    ((Some v) v)
+    ((None) __indexTrap)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecCount (-> Int Int))
+(pub :: diagHelpList (-> Diag (Vec DHelp)))
+(pub fn (diagHelpList d)
+  (match d.helps
+    ((Some v) v)
+    ((None) __indexTrap)))
+
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: diagTraceList (-> Diag (Vec DFrame)))
+(pub fn (diagTraceList d)
+  (match d.trace
+    ((Some v) v)
+    ((None) __indexTrap)))
+
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: diagSecCount (-> Diag Int))
 (pub fn (diagSecCount d)
-  (diagCountAt d 7))
+  (match d.secs
+    ((Some v) (vecLen v))
+    ((None) 0)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecSpan (-> Int Int Int))
+(pub :: diagSecSpan (-> Diag Int Int))
 (pub fn (diagSecSpan d i)
-  (memGetWord (vecGet (memGetWordVec d 7) i) 0))
+  {
+    (let l (vecGet (diagSecList d) i))
+    l.span
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecMsg (-> Int Int String))
+(pub :: diagSecMsg (-> Diag Int String))
 (pub fn (diagSecMsg d i)
-  (memGetWordStr (vecGet (memGetWordVec d 7) i) 1))
+  {
+    (let l (vecGet (diagSecList d) i))
+    l.msg
+  })
 
 ; The unit the secondary's span indexes, or -1 for the diagnostic's
 ; own - see `struct DLabel`. Every renderer asks `diagSecCross`
 ; below rather than comparing this by hand, because "is it elsewhere"
 ; also depends on whether there is a unit table to resolve it against.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecUnit (-> Int Int Int))
+(pub :: diagSecUnit (-> Diag Int Int))
 (pub fn (diagSecUnit d i)
-  (memGetWord (vecGet (memGetWordVec d 7) i) 2))
+  {
+    (let l (vecGet (diagSecList d) i))
+    l.unit
+  })
 
 ; Does secondary `i` index the diagnostic's OWN unit? The sentinel
 ; says so by construction, and an explicit unit says so when it is the
@@ -288,7 +301,7 @@
 ; are different answers; `diagSecCross` below folds them together on
 ; purpose, because a renderer with no table has no other file to name.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecOwn (-> Int Int Int))
+(pub :: diagSecOwn (-> Diag Int Int))
 (pub fn (diagSecOwn d i)
   {
     (let su (diagSecUnit d i))
@@ -306,7 +319,7 @@
 ; the bare form", because in each of those cases there is no other
 ; file this renderer could name.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecCross (-> Int Int Ints Ints Int))
+(pub :: diagSecCross (-> Diag Int Ints Ints Int))
 (pub fn (diagSecCross d i units ixs)
   (if (== (diagSecOwn d i) 1)
     0
@@ -315,65 +328,88 @@
       1)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagNoteCount (-> Int Int))
+(pub :: diagNoteCount (-> Diag Int))
 (pub fn (diagNoteCount d)
-  (diagCountAt d 8))
+  (match d.notes
+    ((Some v) (vecLen v))
+    ((None) 0)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagNote (-> Int Int String))
+(pub :: diagNote (-> Diag Int String))
 (pub fn (diagNote d i)
-  (vecGetStr (memGetWordVec d 8) i))
+  (match d.notes
+    ((Some v) (vecGet v i))
+    ((None) __indexTrap)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagHelpCount (-> Int Int))
+(pub :: diagHelpCount (-> Diag Int))
 (pub fn (diagHelpCount d)
-  (diagCountAt d 9))
+  (match d.helps
+    ((Some v) (vecLen v))
+    ((None) 0)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagHelpMsg (-> Int Int String))
+(pub :: diagHelpMsg (-> Diag Int String))
 (pub fn (diagHelpMsg d i)
-  (memGetWordStr (vecGet (memGetWordVec d 9) i) 0))
+  {
+    (let h (vecGet (diagHelpList d) i))
+    h.msg
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagHelpFixSpan (-> Int Int Int))
+(pub :: diagHelpFixSpan (-> Diag Int Int))
 (pub fn (diagHelpFixSpan d i)
-  (memGetWord (vecGet (memGetWordVec d 9) i) 1))
+  {
+    (let h (vecGet (diagHelpList d) i))
+    h.fixSpan
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagHelpFixText (-> Int Int String))
+(pub :: diagHelpFixText (-> Diag Int String))
 (pub fn (diagHelpFixText d i)
-  (memGetWordStr (vecGet (memGetWordVec d 9) i) 2))
+  {
+    (let h (vecGet (diagHelpList d) i))
+    h.fixText
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagTraceCount (-> Int Int))
+(pub :: diagTraceCount (-> Diag Int))
 (pub fn (diagTraceCount d)
-  (diagCountAt d 10))
+  (match d.trace
+    ((Some v) (vecLen v))
+    ((None) 0)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagTraceName (-> Int Int String))
+(pub :: diagTraceName (-> Diag Int String))
 (pub fn (diagTraceName d i)
-  (memGetWordStr (vecGet (memGetWordVec d 10) i) 0))
+  {
+    (let f (vecGet (diagTraceList d) i))
+    f.name
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagTraceSpan (-> Int Int Int))
+(pub :: diagTraceSpan (-> Diag Int Int))
 (pub fn (diagTraceSpan d i)
-  (memGetWord (vecGet (memGetWordVec d 10) i) 1))
+  {
+    (let f (vecGet (diagTraceList d) i))
+    f.span
+  })
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagTraceUnit (-> Int Int Int))
+(pub :: diagTraceUnit (-> Diag Int Int))
 (pub fn (diagTraceUnit d i)
-  (memGetWord (vecGet (memGetWordVec d 10) i) 2))
+  {
+    (let f (vecGet (diagTraceList d) i))
+    f.unit
+  })
 
 ; ------------------------------------------------------------------
 ; Builders. Each returns the diagnostic, so they chain.
 ; ------------------------------------------------------------------
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: diagAddSecondary (-> Int Int String Int))
+(pub :: diagAddSecondary (-> Diag Int String Diag))
 (pub fn (diagAddSecondary d span msg)
-  {
-    (vecPush (diagVecAt d 7) (as (DLabel :span span :msg msg :unit (- 0 1)) Int))
-    d
-  })
+  (diagAddSecondaryIn d span msg (- 0 1)))
 
 ; The same, for a location in ANOTHER unit: `unit` is an index into
 ; the unit table the renderers are handed, and `span` indexes THAT
@@ -385,35 +421,58 @@
 ; is walking a call graph across modules, and every existing producer
 ; of a secondary has both spans in one file by construction.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: diagAddSecondaryIn (-> Int Int String Int Int))
+(pub :: diagAddSecondaryIn (-> Diag Int String Int Diag))
 (pub fn (diagAddSecondaryIn d span msg unit)
   {
-    (vecPush (diagVecAt d 7) (as (DLabel :span span :msg msg :unit unit) Int))
+    (let l (DLabel :span span :msg msg :unit unit))
+    (match d.secs
+      ((Some v) (vecPush v l))
+      ((None)
+        {
+          (let v (:: vecNew (Vec DLabel)))
+          (vecPush v l)
+          (set d.secs (Some v))
+        }
+      ))
     d
   })
 
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: diagAddNote (-> Int String Int))
+(pub :: diagAddNote (-> Diag String Diag))
 (pub fn (diagAddNote d s)
   {
-    (vecPush (diagVecAt d 8) s)
+    (match d.notes
+      ((Some v) (vecPush v s))
+      ((None)
+        {
+          (let v (:: vecNew Strings))
+          (vecPush v s)
+          (set d.notes (Some v))
+        }
+      ))
     d
   })
 
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: diagAddHelp (-> Int String Int))
+(pub :: diagAddHelp (-> Diag String Diag))
 ;@axiom:effect(unsafe)
 (pub fn (diagAddHelp d s)
-  {
-    (vecPush (diagVecAt d 9) (as (DHelp :msg s :fixSpan 0 :fixText (as 0 String)) Int))
-    d
-  })
+  (diagAddFixHelp d s 0 (as 0 String)))
 
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: diagAddFixHelp (-> Int String Int String Int))
+(pub :: diagAddFixHelp (-> Diag String Int String Diag))
 (pub fn (diagAddFixHelp d msg fixSpan fixText)
   {
-    (vecPush (diagVecAt d 9) (as (DHelp :msg msg :fixSpan fixSpan :fixText fixText) Int))
+    (let h (DHelp :msg msg :fixSpan fixSpan :fixText fixText))
+    (match d.helps
+      ((Some v) (vecPush v h))
+      ((None)
+        {
+          (let v (:: vecNew (Vec DHelp)))
+          (vecPush v h)
+          (set d.helps (Some v))
+        }
+      ))
     d
   })
 
@@ -430,24 +489,32 @@
 ; which no source can even spell (MAC-HYG-3a), pasted over the macro
 ; call.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagDisarmFixes (-> Int Int))
+(pub :: diagDisarmFixes (-> Diag Int))
 (pub fn (diagDisarmFixes d)
-  {
-    (let hs (memGetWordVec d 9))
-    (if (== (as hs Int) 0)
-      0
+  (match d.helps
+    ((Some hs)
       {
-        (for i in 0..(vecLen hs)
-          (memSetWord (vecGet hs i) 1 0))
+        (for h in hs
+          (set h.fixSpan 0))
         0
-      })
-  })
+      }
+    )
+    ((None) 0)))
 
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: diagAddTrace (-> Int String Int Int Int))
+(pub :: diagAddTrace (-> Diag String Int Int Diag))
 (pub fn (diagAddTrace d name span unit)
   {
-    (vecPush (diagVecAt d 10) (as (DFrame :name name :span span :unit unit) Int))
+    (let f (DFrame :name name :span span :unit unit))
+    (match d.trace
+      ((Some v) (vecPush v f))
+      ((None)
+        {
+          (let v (:: vecNew (Vec DFrame)))
+          (vecPush v f)
+          (set d.trace (Some v))
+        }
+      ))
     d
   })
 
@@ -466,12 +533,12 @@
 ; with no re-bless is the check on it.
 ; ------------------------------------------------------------------
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiag (-> Int String String Int String Int a b Int))
+(pub :: mkDiag (-> Int String String Int String Int a b Diag))
 (pub fn (mkDiag sev code slug span msg relSpan relMsg help)
   (mkDiagFix2 sev code slug span msg relSpan relMsg help 0 0 0))
 
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagFix (-> Int String String Int String Int a b Int c Int))
+(pub :: mkDiagFix (-> Int String String Int String Int a b Int c Diag))
 (pub fn (mkDiagFix sev code slug span msg relSpan relMsg help fixSpan fixText)
   (mkDiagFix2 sev code slug span msg relSpan relMsg help fixSpan fixText 0))
 
@@ -483,13 +550,13 @@
 ; renderer as separate lines, so the two never have to be crammed into
 ; one sentence.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagNote (-> Int String String Int String Int a b c Int))
+(pub :: mkDiagNote (-> Int String String Int String Int a b c Diag))
 ;@axiom:effect(unsafe)
 (pub fn (mkDiagNote sev code slug span msg relSpan relMsg help note)
   (diagAddNote (mkDiag sev code slug span msg relSpan relMsg help) (as note String)))
 
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagFix2 (-> Int String String Int String Int a b Int c d Int))
+(pub :: mkDiagFix2 (-> Int String String Int String Int a b Int c d Diag))
 ;@axiom:effect(unsafe)
 (pub fn (mkDiagFix2 sev code slug span msg relSpan relMsg help fixSpan fixText help2)
   ; The optional strings arrive as TYPE VARIABLES - `0` means
@@ -1027,7 +1094,7 @@
 ; O(file) the scans it replaces cost. The report loop below calls
 ; `renderDiagIx` and builds one index for the whole run instead.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiag (-> Int String String Ints String))
+(pub :: renderDiag (-> Diag String String Ints String))
 ;@axiom:effect(unsafe)
 (pub fn (renderDiag d src file units)
   (renderDiagIx d src file units (srcLineIndex src)
@@ -1039,7 +1106,7 @@
 ; built once per render - see THE LINE INDEX above. `ixs` is 0 exactly
 ; when `units` is, on the single-unit path.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiagIx (-> Int String String Ints Int Ints String))
+(pub :: renderDiagIx (-> Diag String String Ints Int Ints String))
 (pub fn (renderDiagIx d src file units ix ixs)
   {
     (let parts vecNew)
@@ -1162,7 +1229,7 @@
 ; source file that contributed declarations - and each diagnostic
 ; names the one its spans index.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiagsUnits (-> Ints Ints String))
+(pub :: renderDiagsUnits (-> Diags Ints String))
 (pub fn (renderDiagsUnits ds units)
   ; A linear join rather than the old recursive concat fold, whose
   ; peak was measured at 829 MiB RSS for a 2000-diagnostic file - the
@@ -1238,10 +1305,10 @@
 ; discovery order stays observable to anything that wants it.
 ; ------------------------------------------------------------------
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: orderDiags (-> Ints Ints))
+(pub :: orderDiags (-> Diags Diags))
 (pub fn (orderDiags ds)
   {
-    (let out vecNew)
+    (let out (:: vecNew Diags))
     (let n (vecLen ds))
     {
       (for i in 0..n
@@ -1261,7 +1328,7 @@
 ; with only its own imports, so a shared helper in the entry file is
 ; a helper only the entry file can see.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: countErrorDiags (-> Ints Int))
+(pub :: countErrorDiags (-> (Vec Diag) Int))
 (pub fn (countErrorDiags ds)
   {
     (let mut n 0)

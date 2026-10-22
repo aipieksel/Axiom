@@ -476,57 +476,46 @@
 ; The out-vector swap: a throwaway home for a speculative pass's
 ; diagnostics. The swapper either restores filtered (a flush keeps
 ; what it keeps) or restores bare (a first pass discards all).
-(pub :: outvecSwapOut (-> Int Int))
+(pub :: outvecSwapOut (-> Int Diags))
 (pub fn (outvecSwapOut tc)
   {
-    (let real (tcOutWord tc))
-    {
-      (tcSetOutWord tc (as vecNew Int))
-      real
-    }
+    (let real (tcOutVec tc))
+    (tcSetOutVec tc (:: vecNew Diags))
+    real
   })
 
-(pub :: outvecSwapIn (-> Int Int Int))
+(pub :: outvecSwapIn (-> Int Diags Int))
 (pub fn (outvecSwapIn tc real)
-  {
-    (tcSetOutWord tc real)
-    0
-  })
+  (tcSetOutVec tc real))
 
 ; 1 when `d` is an `{unknown}` refusal: AX3004 whose message names
 ; the unknowable.
-(pub :: diagIsUnknownRefusal (-> Int Int))
+(pub :: diagIsUnknownRefusal (-> diag::Diag Int))
 (pub fn (diagIsUnknownRefusal d)
-  (if (== d 0)
-    0
-    (if (strEq (diagCode d) "AX3004")
-      (if (isSome (strFind (diagMsg d) "{unknown}" 0))
-        1
-        0)
-      0)))
+  (if (strEq (diagCode d) "AX3004")
+    (if (isSome (strFind (diagMsg d) "{unknown}" 0))
+      1
+      0)
+    0))
 
-(pub :: outvecCarryOver (-> Int Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: outvecCarryOver (-> Int Diags Int Int))
 (pub fn (outvecCarryOver tc fresh i)
   (if (>= i (vecLen fresh))
     0
     {
       (if (== (diagIsUnknownRefusal (vecGet fresh i)) 0)
-        (vecPush (as (tcOutWord tc) (Vec Int)) (vecGet fresh i)))
+        (vecPush (tcOutVec tc) (vecGet fresh i)))
       (outvecCarryOver tc fresh (+ i 1))
     }))
 
 ; Restore `real`, carrying over every diagnostic EXCEPT the
 ; `{unknown}` refusals.
-(pub :: outvecRestoreFiltered (-> Int Int Int))
-;@axiom:effect(unsafe)
+(pub :: outvecRestoreFiltered (-> Int Diags Int))
 (pub fn (outvecRestoreFiltered tc real)
   {
-    (let fresh (as (tcOutWord tc) (Vec Int)))
-    {
-      (tcSetOutWord tc real)
-      (outvecCarryOver tc fresh 0)
-    }
+    (let fresh (tcOutVec tc))
+    (tcSetOutVec tc real)
+    (outvecCarryOver tc fresh 0)
   })
 
 ; FLUSH: verify a pending lambda that escapes without a use. The
@@ -2621,7 +2610,7 @@
 ; own source is worse than no checker. Duplicates *inside an imported
 ; module* go unreported until declarations carry their origin.
 ; ------------------------------------------------------------------
-(pub :: checkDuplicates (-> Ints (Vec ASTNode) Ints Int Ints))
+(pub :: checkDuplicates (-> Ints (Vec ASTNode) Diags Int Diags))
 (pub fn (checkDuplicates bs decls out i)
   (if (>= i (vecLen decls))
     out
@@ -2666,7 +2655,7 @@
 ; ENTRY file can collide: a module's declaration is mangled to
 ; `Mod$axiom_alloc`, a different symbol.
 ; ------------------------------------------------------------------
-(pub :: checkReservedNames (-> (Vec ASTNode) Ints Int Int))
+(pub :: checkReservedNames (-> (Vec ASTNode) (Vec diag::Diag) Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (checkReservedNames decls out i)
   (if (>= i (vecLen decls))
@@ -2708,7 +2697,7 @@
       }
     }))
 
-(pub :: checkFieldDupes (-> Ints (Vec ASTNode) Ints Int (Vec ASTNode) Int Int))
+(pub :: checkFieldDupes (-> Ints (Vec ASTNode) (Vec diag::Diag) Int (Vec ASTNode) Int Int))
 (pub fn (checkFieldDupes bs decls out i fields k)
   (if (>= k (vecLen fields))
     0
@@ -2727,7 +2716,7 @@
 ; A second signature for one name. Each signature states the whole
 ; type, so two of them can't both hold, and taking the later one would
 ; let the earlier be read as true while the checker ignores it.
-(pub :: dupSigDiag (-> (Vec ASTNode) Ints Int String Int Int))
+(pub :: dupSigDiag (-> (Vec ASTNode) (Vec diag::Diag) Int String Int Int))
 (pub fn (dupSigDiag decls out j name sp)
   {
     (vecPush out
@@ -2740,7 +2729,7 @@
     0
   })
 
-(pub :: dupDiag (-> (Vec ASTNode) Ints Int String Int Int))
+(pub :: dupDiag (-> (Vec ASTNode) (Vec diag::Diag) Int String Int Int))
 (pub fn (dupDiag decls out j name sp)
   {
     (vecPush out
@@ -2912,7 +2901,7 @@
 ; Entry imports live in `entryDecls`. Each imported unit retains its
 ; own import sites because resolution consumes them before `allDecls`.
 ; ------------------------------------------------------------------
-(pub :: checkImportNames (-> Decls Decls Ints Int Int Int))
+(pub :: checkImportNames (-> Decls Decls (Vec diag::Diag) Int Int Int))
 (pub fn (checkImportNames sites allDecls out unit i)
   (if (>= i (vecLen sites))
     0
@@ -2929,7 +2918,7 @@
       }
     }))
 
-(pub :: checkImportedImportNames (-> Units Decls Ints Int Int))
+(pub :: checkImportedImportNames (-> Units Decls (Vec diag::Diag) Int Int))
 ; Units is a packed ABI registry of live CUnit2 owners. Retain their typed
 ; import vectors while the checker reads the consumed import forms.
 ;@axiom:effect(unsafe)
@@ -2942,7 +2931,7 @@
       (checkImportedImportNames units allDecls out (+ i 1))
     }))
 
-(pub :: checkImportNameList (-> String Names Int Decls Ints Int Int Int))
+(pub :: checkImportNameList (-> String Names Int Decls (Vec diag::Diag) Int Int Int))
 (pub fn (checkImportNameList modName names sp allDecls out unit i)
   (if (>= i (vecLen names))
     0
@@ -2962,7 +2951,7 @@
       (checkImportNameList modName names sp allDecls out unit (+ i 1))
     }))
 
-(pub :: importDiag (-> Ints Int Int String String Int))
+(pub :: importDiag (-> (Vec diag::Diag) Int Int String String Int))
 (pub fn (importDiag out unit sp msg help)
   {
     (vecPush out
@@ -3016,7 +3005,7 @@
     }
     (strEq (bareOf (nodeAName d)) name)))
 
-(pub :: checkMissingDefs (-> StringRows (Vec ASTNode) Ints Int Ints Ints))
+(pub :: checkMissingDefs (-> StringRows (Vec ASTNode) Diags Int Ints Diags))
 (pub fn (checkMissingDefs bs entryDecls out i missing)
   (if (>= i (vecLen entryDecls))
     out
@@ -3456,7 +3445,7 @@
   (datas : (Vec Int))
   (structs : (Vec Int))
   (scope : (Vec Int))
-  (out : (Vec Int))
+  (mut out : Diags)
   (mut counter : Int)
   (mut frameBase : Int)
   (macros : Nodes)
@@ -3853,27 +3842,22 @@
     t.scope
   })
 
-(pub :: tcOutVec (-> Int (Vec a)))
+(pub :: tcOutVec (-> Int Diags))
 ;@axiom:effect(unsafe)
 (pub fn (tcOutVec tc)
   {
     (let t (as tc TC))
-    (as t.out (Vec a))
+    t.out
   })
 
-; The diagnostics vector as the bare word `outvecSwapOut` parks and
-; `outvecSwapIn` restores: no share moves with it.
-(:: tcOutWord (-> Int Int))
+(:: tcSetOutVec (-> Int Diags Int))
 ;@axiom:effect(unsafe)
-(fn (tcOutWord tc)
+(fn (tcSetOutVec tc v)
   {
     (let t (as tc TC))
-    (as t.out Int)
+    (set t.out v)
+    0
   })
-
-(:: tcSetOutWord (-> Int Int Int))
-(fn (tcSetOutWord tc v)
-  (memSetWord tc 4 v))
 
 (pub :: tcCounter (-> Int Int))
 ;@axiom:effect(unsafe)
@@ -4830,7 +4814,7 @@
 ; one of the library's `Internal` modules. The entry file's imports are
 ; its own declarations; every other unit's were recorded on it as the
 ; resolver read them.
-(pub :: checkInternalImports (-> Units (Vec ASTNode) Ints Int))
+(pub :: checkInternalImports (-> Units (Vec ASTNode) (Vec diag::Diag) Int))
 ;@axiom:effect(unsafe)
 (pub fn (checkInternalImports units entryDecls out)
   (if (== (vecLen (internalUnitNames units 0 vecNew)) 0)
@@ -4850,7 +4834,7 @@
       0
     }))
 
-(pub :: internalImportsIn (-> Units (Vec ASTNode) Ints Int Int Int))
+(pub :: internalImportsIn (-> Units (Vec ASTNode) (Vec diag::Diag) Int Int Int))
 (pub fn (internalImportsIn units sites out unit i)
   (if (>= i (vecLen sites))
     0
@@ -11120,7 +11104,7 @@
 ; record was built (docs/memory-model.md MM-VAL-16), so there is no
 ; cell this store could reach, and codegen refused it as AX4002 after
 ; `check` said OK (MM-MUT-1a).
-(pub :: emitSetCaptured (-> String Int Int Ints Int))
+(pub :: emitSetCaptured (-> String Int Int (Vec diag::Diag) Int))
 (pub fn (emitSetCaptured name tspan bspan out)
   ; MAC-HYG-3a, binding-name half: see `emitAX3012`.
   {
@@ -12573,7 +12557,7 @@
         i
         (unitIndexForFrom units m (+ i 1))))))
 
-(pub :: emitDiag (-> Int Int Int))
+(pub :: emitDiag (-> Int diag::Diag Int))
 (pub fn (emitDiag tc d)
   {
     (diagSetUnit d (tcCurUnit tc))
@@ -25296,7 +25280,7 @@
 ; `(import IO (todo))`, after its last import or at byte 0 when it has
 ; none.
 ; ------------------------------------------------------------------
-(pub :: matchFixHelps (-> Int Int (Vec ASTNode) ASTNode ASTNode NodesRows Ints Int))
+(pub :: matchFixHelps (-> Int diag::Diag (Vec ASTNode) ASTNode ASTNode NodesRows Ints ()))
 (pub fn (matchFixHelps tc d arms scrutTy scrut matrix missing)
   {
     (let src (tcEntrySrc tc))
@@ -25321,8 +25305,7 @@
               (diagAddFixHelp d "add the missing arms, each a `todo` until it is written"
                 (mkSpan close close) text)
               (if (== (findFnEnt tc "todo") 0)
-                (importTodoHelp tc d src)
-                0)
+                (importTodoHelp tc d src))
             })
         }
       }
@@ -25492,7 +25475,7 @@
 ; The import that brings `todo` in, as a second fix help on the same
 ; diagnostic. `mod` is the module the import must name, or "" for the
 ; last import of any module.
-(pub :: importTodoHelp (-> Int Int String Int))
+(pub :: importTodoHelp (-> Int diag::Diag String ()))
 (pub fn (importTodoHelp tc d src)
   {
     (let imp (lastImportOf (tcEntryDecls tc) "IO" 0 nilNode))
@@ -25500,11 +25483,11 @@
       {
         (let lo (importListOpen src imp))
         (if (< lo 0)
-          0
+          ()
           {
             (let le (formEndFrom src lo))
             (if (< le 0)
-              0
+              ()
               (diagAddFixHelp d "add `todo` to the names imported from IO"
                 (mkSpan (- le 1) (- le 1)) " todo"))
           })
@@ -25516,11 +25499,11 @@
           {
             (let o (headOpenBefore src (spanStart (nodeSpan last)) "import"))
             (if (< o 0)
-              0
+              ()
               {
                 (let e (formEndFrom src o))
                 (if (< e 0)
-                  0
+                  ()
                   (diagAddFixHelp d "import `todo` from IO" (mkSpan e e) "\n(import IO (todo))"))
               })
           })
@@ -28721,7 +28704,7 @@
 ;     chain and is not. That failure mode is the one this whole
 ;     change exists to answer, so it is not repeated one level down.
 ; ------------------------------------------------------------------
-(pub :: restrictPathSecs (-> Int Ints Int Int Int))
+(pub :: restrictPathSecs (-> Int Ints Int diag::Diag diag::Diag))
 (pub fn (restrictPathSecs tc path i dg)
   (if (== (as path Int) 0)
     dg
@@ -28739,7 +28722,7 @@
 ; one exception is an `asm` form's primitive, which the prose and this
 ; field both show as `asm` (`graphShownName`) and `symbols --calls`
 ; keeps as `__asm.N`, since a program may name a function `asm`.
-(pub :: restrictHopSec (-> Int Int Int Int))
+(pub :: restrictHopSec (-> Int diag::Diag Int diag::Diag))
 (pub fn (restrictHopSec tc dg ent)
   {
     (let dd (restrictHopDecl tc ent))
