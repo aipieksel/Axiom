@@ -47,6 +47,7 @@ python3 tests/tools/checker-for-help-options.py "$axc"
 python3 tests/tools/checker-declared-result-options.py "$axc"
 python3 tests/tools/checker-field-refusal-options.py "$axc"
 python3 tests/tools/checker-renderer-options.py "$axc"
+python3 tests/tools/checker-syscall-effect-options.py "$axc"
 python3 tests/tools/expansion-option-sequences.py "$axc"
 
 failed=0

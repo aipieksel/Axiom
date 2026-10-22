@@ -22015,8 +22015,8 @@
 ; first saying it. A function that names the number and never makes
 ; the call is over-approximated, which is the safe direction.
 ;
-; The value is a comma list of the three names. A name outside them is
-; AX3052's refusal, reported by `checkSyscallTag` where the tag stands.
+; The value is a comma list of the three names. This reader seeds no
+; effect for a name outside that set.
 (pub :: syscallTagEffects (-> TC ASTNode Strings))
 (pub fn (syscallTagEffects tc d)
   {
@@ -22048,25 +22048,22 @@
   (if (>= i (vecLen names))
     0
     {
-      (let e (syscallEffectOf (strTrimBlanks (vecGetStr names i))))
-      {
-        (if (! (== (strLen e) 0))
-          (effAdd out e))
-        (syscallNamesInto out names (+ i 1))
-      }
+      (if (let (Some effect) (syscallEffectOf (strTrimBlanks (vecGetStr names i))))
+        (effAdd out effect))
+      (syscallNamesInto out names (+ i 1))
     }))
 
-; The effect a `syscall(...)` name denotes, or "" for a name it does
-; not accept.
-(pub :: syscallEffectOf (-> String String))
+; The effect a `syscall(...)` name denotes, or `None` for a name it
+; does not accept.
+(pub :: syscallEffectOf (-> String (Option String)))
 (pub fn (syscallEffectOf n)
   (if (strEq n "entropy")
-    (builtinEff "Entropy")
+    (Some (builtinEff "Entropy"))
     (if (strEq n "spawn")
-      (builtinEff "Spawn")
+      (Some (builtinEff "Spawn"))
       (if (strEq n "block")
-        (builtinEff "Block")
-        ""))))
+        (Some (builtinEff "Block"))
+        None))))
 
 ; LAST declaration to first. The recursive call is bound before the
 ; body runs, so `decls[i]` is processed after everything above it.

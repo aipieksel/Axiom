@@ -1,0 +1,79 @@
+; Syscall name absence stays distinct from three real effect names.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: named (-> (Option String) String Bool))
+(fn (named result expected)
+  (match result
+    ((Some effect) (strEq effect (builtinEff expected)))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (named (syscallEffectOf "entropy") "Entropy"))
+    (say 2 (named (syscallEffectOf "spawn") "Spawn"))
+    (say 3 (named (syscallEffectOf "block") "Block"))
+    (say 4 (isNone (syscallEffectOf "")))
+    (say 5 (isNone (syscallEffectOf "io")))
+    (say 6 (isNone (syscallEffectOf "Entropy")))
+    (say 7 (isNone (syscallEffectOf (concat "opaque" "Name"))))
+    (say 8 (isNone (syscallEffectOf "block ")))
+    (let row vecNew)
+    (let names (strSplit "entropy, spawn,block,opaque,spawn,,unknown" 44))
+    (syscallNamesInto row names 0)
+    (say 9 (== (vecLen row) 3))
+    (say 10 (strEq (vecGetStr row 0) (builtinEff "Entropy")))
+    (say 11 (strEq (vecGetStr row 1) (builtinEff "Spawn")))
+    (say 12 (strEq (vecGetStr row 2) (builtinEff "Block")))
+    (syscallNamesInto row (vecPush vecNew "opaque") 0)
+    (say 13 (== (vecLen row) 3))
+    (syscallNamesInto row names (vecLen names))
+    (say 14 (== (vecLen row) 3))
+    (let suffix vecNew)
+    (syscallNamesInto suffix names 2)
+    (say 15 (&& (== (vecLen suffix) 2) (strEq (vecGetStr suffix 0) (builtinEff "Block"))))
+    (let source
+      ";@axiom:syscall(block)\n(pub :: tagged Int)\n;@axiom:syscall(entropy, spawn, entropy)\n(pub fn (tagged) 0)\n")
+    (let nodes (pResNodes (parseModuleWith (lex source) (scanAxtags source))))
+    (let tc (tcNew nodes nodes vecNew))
+    (if (let (Some declaration) (declByName nodes "tagged" 0))
+      {
+        (let tags (syscallTagEffects tc declaration))
+        (say 16 (== (vecLen tags) 3))
+        (say 17 (strEq (vecGetStr tags 0) (builtinEff "Entropy")))
+        (say 18 (strEq (vecGetStr tags 1) (builtinEff "Spawn")))
+        (say 19 (strEq (vecGetStr tags 2) (builtinEff "Block")))
+      }
+      {
+        (say 16 false)
+        (say 17 false)
+        (say 18 false)
+        (say 19 false)
+      })
+    (say 20
+      (if (let (Some entry) (findFnEnt tc "tagged"))
+        (&& (== (vecLen entry.effects) 3)
+          (&& (== (effIn entry.effects (builtinEff "Entropy")) 1)
+            (&& (== (effIn entry.effects (builtinEff "Spawn")) 1)
+              (== (effIn entry.effects (builtinEff "Block")) 1))))
+        false))
+    0
+  })
