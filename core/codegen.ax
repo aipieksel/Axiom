@@ -79,60 +79,29 @@
 (pub fn (TF_WORD)
   2)
 
-(pub :: eNameLen (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: eNameLen (-> TypeEntry Int))
 (pub fn (eNameLen e)
-  {
-    (let t (as e TypeEntry))
-    t.nameLen
-  })
+  e.nameLen)
 
-(pub :: eKind (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: eKind (-> TypeEntry Int))
 (pub fn (eKind e)
-  {
-    (let t (as e TypeEntry))
-    t.kind
-  })
+  e.kind)
 
-(pub :: eArity (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: eArity (-> TypeEntry Int))
 (pub fn (eArity e)
-  {
-    (let t (as e TypeEntry))
-    t.arity
-  })
+  e.arity)
 
-(pub :: eTag (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: eTag (-> TypeEntry Int))
 (pub fn (eTag e)
-  {
-    (let t (as e TypeEntry))
-    t.tag
-  })
+  e.tag)
 
-(pub :: eRep (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: eRep (-> TypeEntry Int))
 (pub fn (eRep e)
-  {
-    (let t (as e TypeEntry))
-    t.rep
-  })
+  e.rep)
 
-(pub :: eFieldFlags (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (eFieldFlags e)
-  {
-    (let t (as e TypeEntry))
-    (as t.fieldFlags Int)
-  })
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: eFieldFlagsVec (-> Int Ints))
-;@axiom:effect(unsafe)
+(pub :: eFieldFlagsVec (-> TypeEntry Ints))
 (pub fn (eFieldFlagsVec e)
-  (as (eFieldFlags e) Ints))
+  e.fieldFlags)
 
 ; A length is not a name. An entry used to carry a `nameHash` word
 ; beside its `nameLen` and match on the pair alone, so every name of the
@@ -141,70 +110,44 @@
 ; construction. Equality is decided by comparing the bytes now, and the
 ; hash word was `strLen` - the same value as `nameLen`, one word further
 ; along - so the entry carried its length twice and read it once.
-(pub :: eName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: eName (-> TypeEntry String))
 (pub fn (eName e)
-  {
-    (let t (as e TypeEntry))
-    t.name
-  })
+  e.name)
 
-(pub :: addType (-> Ints String Int Int Int Int Ints Ints))
+(pub :: addType (-> (Vec TypeEntry) String Int Int Int Int Ints (Vec TypeEntry)))
 (pub fn (addType types name kind arity tag rep fieldFlags)
   (addTypeNamed types name kind arity tag rep fieldFlags cgNullVec cgNullVec))
 
-(pub :: addTypeNamed (-> Ints String Int Int Int Int Ints Names Nodes Ints))
+(pub :: addTypeNamed (-> (Vec TypeEntry) String Int Int Int Int Ints Names Nodes (Vec TypeEntry)))
 (pub fn (addTypeNamed types name kind arity tag rep fieldFlags fieldNames fieldTys)
   {
     (let nl (strLen name))
     (vecPush types
-      (as (TypeEntry
-            :name name
-            :nameLen nl
-            :kind kind
-            :arity arity
-            :tag tag
-            :rep rep
-            :fieldFlags fieldFlags
-            :fieldNames fieldNames
-            :fieldTys fieldTys) Int))
+      (TypeEntry
+        :name name
+        :nameLen nl
+        :kind kind
+        :arity arity
+        :tag tag
+        :rep rep
+        :fieldFlags fieldFlags
+        :fieldNames fieldNames
+        :fieldTys fieldTys))
   })
 
-(pub :: eFieldNames (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (eFieldNames e)
-  {
-    (let t (as e TypeEntry))
-    (as t.fieldNames Int)
-  })
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: eFieldNamesVec (-> Int Names))
-;@axiom:effect(unsafe)
+(pub :: eFieldNamesVec (-> TypeEntry Names))
 (pub fn (eFieldNamesVec e)
-  (as (eFieldNames e) Names))
+  e.fieldNames)
 
-(pub :: eStructFields (-> Int Nodes))
+(pub :: eStructFields (-> TypeEntry Nodes))
 (pub fn (eStructFields e)
   (eFieldTysVec e))
 
-(pub :: eFieldTys (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (eFieldTys e)
-  {
-    (let t (as e TypeEntry))
-    (as t.fieldTys Int)
-  })
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: eFieldTysVec (-> Int Nodes))
-;@axiom:effect(unsafe)
+(pub :: eFieldTysVec (-> TypeEntry Nodes))
 (pub fn (eFieldTysVec e)
-  (as (eFieldTys e) Nodes))
+  e.fieldTys)
 
-(pub :: lookupType (-> Ints String Int))
+(pub :: lookupType (-> (Vec TypeEntry) String (Option TypeEntry)))
 (pub fn (lookupType types name)
   (lookupByIdx types name (strLen name) 0))
 
@@ -222,24 +165,32 @@
 ; to eliminate the frames. `lldb` named it in one backtrace: 25 frames
 ; of `codegen$lookupByIdx`, and `Vec$vecGet` on top of them holding
 ; the address that had run off the stack.
-(pub :: lookupByIdx (-> Ints String Int Int Int))
+(pub :: lookupByIdx (-> (Vec TypeEntry) String Int Int (Option TypeEntry)))
 (pub fn (lookupByIdx types name nLen i)
   {
     (let mut k i)
-    (let mut found 0)
+    (let mut found (None))
+    (let mut searching true)
     {
-      (while (&& (< k (vecLen types)) (== found 0))
+      (while (&& (< k (vecLen types)) searching)
         {
-          {
-            (let e (vecGet types k))
-            (if (&& (== (eNameLen e) nLen) (strEq (eName e) name))
-              (set found e))
-          }
+          (let e (vecGet types k))
+          (if (&& (== (eNameLen e) nLen) (strEq (eName e) name))
+            {
+              (set found (Some e))
+              (set searching false)
+            })
           (set k (+ k 1))
         })
       found
     }
   })
+
+(:: hasType (-> (Vec TypeEntry) String Bool))
+(fn (hasType types name)
+  (if (let (Some _) (lookupType types name))
+    true
+    false))
 
 ; ------------------------------------------------------------------
 ; The effect registry: what a `handle` installs into and what an
@@ -423,7 +374,7 @@
   (mut lines : (Vec Int))
   (mut tmp : Int)
   (mut result : String)
-  (mut types : (Vec Int))
+  (mut types : (Vec TypeEntry))
   (mut tagN : Int)
   (mut argVec : Nodes)
   (symnames : (Vec Int))
@@ -852,17 +803,17 @@
     c.result
   })
 
-; Word 3: the type registry, one `TypeEntry` address per constructor
+; Word 3: the typed registry, one `TypeEntry` per constructor
 ; and struct (`lookupType`).
-(:: cgTypes (-> Int Ints))
+(:: cgTypes (-> Int (Vec TypeEntry)))
 ;@axiom:effect(unsafe)
 (fn (cgTypes cg)
   {
     (let c (as cg CG))
-    (as c.types Ints)
+    c.types
   })
 
-(:: cgSetTypes (-> Int Ints Int))
+(:: cgSetTypes (-> Int (Vec TypeEntry) Int))
 ;@axiom:effect(unsafe)
 (fn (cgSetTypes cg types)
   {
@@ -2774,7 +2725,7 @@
                 0
                 ; a nullary constructor is an immediate: owned,
                 ; and releasing it is a no-op
-                (if (!= (lookupType (cgTypes cg) (nodeAName e)) 0)
+                (if (hasType (cgTypes cg) (nodeAName e))
                   1
                   ; A nullary global answers according to its own flag;
                   ; a named function value is an immortal descriptor.
@@ -2872,7 +2823,7 @@
                       (if (== (fnResultClass cg n) 2)
                         1
                         (fnResultOwned cg n))
-                      (if (!= (lookupType (cgTypes cg) n) 0)
+                      (if (hasType (cgTypes cg) n)
                         1
                         0))))))))
       })
@@ -2969,11 +2920,11 @@
           {
             (let hd (spineHead pat))
             {
-              (let entry
+              (let entryFound
                 (if (== (nodeTag hd) TAG_E_VAR)
                   (lookupType (cgTypes cg) (nodeAName hd))
-                  0))
-              (envPushPatArgs cg v pat (spineArity pat) entry flag 0)
+                  (None)))
+              (envPushPatArgs cg v pat (spineArity pat) entryFound flag 0)
             }
           }
           (if (== tag TAG_P_CONNAMED)
@@ -2981,15 +2932,15 @@
             0)))
     }))
 
-(pub :: envPushPatArgs (-> Int Ints ASTNode Int Int Int Int Int))
+(pub :: envPushPatArgs (-> Int Ints ASTNode Int (Option TypeEntry) Int Int Int))
 (pub fn (envPushPatArgs cg v pat n_ entry flag i)
   (if (>= i n_)
     0
     {
       (let tn
-        (if (== entry 0)
-          nilNode
-          (fieldTypeNode entry i)))
+        (if (let (Some found) entry)
+          (fieldTypeNode found i)
+          nilNode))
       {
         (let f
           (if (nodeSame tn nilNode)
@@ -3227,12 +3178,12 @@
     (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_CON))
       0
       {
-        (let t (lookupType (cgTypes cg) (as (nodeA res) String)))
-        (if (== t 0)
-          0
+        (let tFound (lookupType (cgTypes cg) (as (nodeA res) String)))
+        (if (let (Some t) tFound)
           (if (== (eKind t) TF_WORD)
             1
-            0))
+            0)
+          0)
       })
   })
 
@@ -3697,7 +3648,7 @@
                             ; a counted reference of its own (event 2)
                             0
                             (flowMaskSel cg e n_ params env (callRetMask cg e n) 0))
-                          (if (!= (lookupType (cgTypes cg) n) 0)
+                          (if (hasType (cgTypes cg) n)
                             ; a construction is a fresh block
                             0
                             (flowMaskAll cg e n_ params env 0)))))))))))
@@ -3724,7 +3675,7 @@
               (if (|| (isCastName n)
                     (|| (isPrimName n) (|| (isBinop n) (|| (isCmpOp n) (isAndOr n)))))
                 0
-                (if (|| (!= (lookupType (cgTypes cg) n) 0) (== (fnResultClass cg n) 2))
+                (if (|| (hasType (cgTypes cg) n) (== (fnResultClass cg n) 2))
                   (aliasFlowAll cg e (spineArity e) params env 0)
                   0))
             })
@@ -3995,13 +3946,13 @@
                                 (parkForms (lamCaptureMask cg (nodeBChild e) params env)))
                               (if (== tg TAG_E_STRUCTCON)
                                 {
-                                  (let entry (lookupType (cgTypes cg) (nodeAName e)))
+                                  (let entryFound (lookupType (cgTypes cg) (nodeAName e)))
                                   {
                                     (flowStashesVec cg (nodeBChildren e) params env cell 0)
-                                    (if (== entry 0)
-                                      0
+                                    (if (let (Some entry) entryFound)
                                       (flowStashesFieldsVec cg entry (nodeBChildren e) params env
-                                        cell 0))
+                                        cell 0)
+                                      0)
                                   }
                                 }
                                 0)))))))))))))
@@ -4548,11 +4499,11 @@
                       0
                     }
                     {
-                      (let entry (lookupType (cgTypes cg) n))
-                      (if (== entry 0)
+                      (let entryFound (lookupType (cgTypes cg) n))
+                      (if (let (Some entry) entryFound)
+                        (flowStashesFields cg entry e n_ params env cell 0)
                         ; an effect operation, or a name nothing signed
-                        (stashAdd cell (parkForms (flowMaskAll cg e n_ params env 0)))
-                        (flowStashesFields cg entry e n_ params env cell 0))
+                        (stashAdd cell (parkForms (flowMaskAll cg e n_ params env 0))))
                     }))))
           })
       })
@@ -4656,7 +4607,7 @@
 ; is stored in them; reference fields retain (event 6), and a
 ; type-variable field retains under its witness when the value is a
 ; typed reference - a word laundered into one parks.
-(pub :: flowStashesFields (-> Int Int ASTNode Int Names Ints Int Int Int))
+(pub :: flowStashesFields (-> Int TypeEntry ASTNode Int Names Ints Int Int Int))
 (pub fn (flowStashesFields cg entry e n_ params env cell i)
   (if (>= i n_)
     0
@@ -4671,7 +4622,7 @@
       }
     }))
 
-(pub :: flowStashesFieldsVec (-> Int Int (Vec ASTNode) Names Ints Int Int Int))
+(pub :: flowStashesFieldsVec (-> Int TypeEntry (Vec ASTNode) Names Ints Int Int Int))
 (pub fn (flowStashesFieldsVec cg entry args params env cell i)
   (if (>= i (vecLen args))
     0
@@ -4690,7 +4641,7 @@
 
 ; The declared type node of field `j` of a constructor or struct
 ; entry, or 0.
-(pub :: fieldTypeNode (-> Int Int ASTNode))
+(pub :: fieldTypeNode (-> TypeEntry Int ASTNode))
 (pub fn (fieldTypeNode entry j)
   (if (== (eKind entry) TF_DATA)
     {
@@ -4746,7 +4697,7 @@
             (if (|| (isCastName n)
                   (|| (isPrimName n) (|| (isBinop n) (|| (isCmpOp n) (isAndOr n)))))
               0
-              (if (!= (lookupType (cgTypes cg) n) 0)
+              (if (hasType (cgTypes cg) n)
                 1
                 (if (== (fnResultClass cg n) 2)
                   1
@@ -4882,7 +4833,7 @@
                   scoped
                   (if (&& (!= (nodeDefScope e) 1) (isLocalValue cg name))
                     0
-                    (if (!= (lookupType (cgTypes cg) name) 0)
+                    (if (hasType (cgTypes cg) name)
                       1
                       (if (|| (isCastName name) (isPrimName name))
                         0
@@ -4915,7 +4866,7 @@
                               (|| (isPrimName name)
                                 (&& (!= (nodeDefScope head) 1) (isLocalValue cg name))))
                           0
-                          (if (!= (lookupType (cgTypes cg) name) 0)
+                          (if (hasType (cgTypes cg) name)
                             0
                             (if (== (spineArity e) (fnArityCg cg name))
                               1
@@ -6137,7 +6088,7 @@
 ; changes no rule: the tag, arity and representation are the SAME
 ; values, which is what keeps a constructor reached under either
 ; spelling one constructor rather than two.
-(pub :: addQualified (-> Ints a String Int Int Int Int Ints Names Nodes Ints))
+(pub :: addQualified (-> (Vec TypeEntry) a String Int Int Int Int Ints Names Nodes (Vec TypeEntry)))
 ;@axiom:effect(unsafe)
 (pub fn (addQualified types modName name kind arity tag rep fieldFlags fieldNames fieldTys)
   (if (== (as modName Int) 0)
@@ -14079,6 +14030,7 @@
   })
 
 (pub :: emitWinEntry (-> Int Int))
+;@axiom:effect(io)
 (pub fn (emitWinEntry cg)
   {
     (emitLine cg "declare dllimport i64 @GetCommandLineW() #0")
@@ -14656,13 +14608,15 @@
                       (== (isNamedConTy (nodeBChild ety) "String") 0))
                   0
                   {
-                    (let okE (lookupType (cgTypes cg) "Err$Ok"))
-                    (let errE (lookupType (cgTypes cg) "Err$Err"))
-                    (if (|| (== okE 0) (== errE 0))
-                      0
-                      (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
-                        0
-                        1))
+                    (let okEFound (lookupType (cgTypes cg) "Err$Ok"))
+                    (let errEFound (lookupType (cgTypes cg) "Err$Err"))
+                    (if (let (Some okE) okEFound)
+                      (if (let (Some errE) errEFound)
+                        (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
+                          0
+                          1)
+                        0)
+                      0)
                   }))
             })
         }))
@@ -14674,46 +14628,49 @@
 ; the `Err` tail is one sentence on fd 2 and status 70 on every
 ; target, through the trap family's own doors.
 (pub :: emitMainResultTail (-> Int Int Int))
+;@axiom:effect(io)
 (pub fn (emitMainResultTail cg wind)
-  {
-    (let okTag (eTag (lookupType (cgTypes cg) "Err$Ok")))
-    (let etext (llvmSym (mainResultErrorText cg)))
+  (if (let (Some okEntry) (lookupType (cgTypes cg) "Err$Ok"))
     {
-      (emitLine cg "  %mres_tp = inttoptr i64 %r to ptr")
-      (emitLine cg "  %mres_tag = load i64, ptr %mres_tp")
-      (emitLine cg (concat "  %mres_isok = icmp eq i64 %mres_tag, " (concat (constStr okTag) "")))
-      (emitLine cg "  br i1 %mres_isok, label %.mres_ok, label %.mres_err")
-      (emitLine cg ".mres_ok:")
-      (emitLine cg "  %mres_outp = inttoptr i64 %r to ptr")
-      (emitLine cg "  %mres_outv = getelementptr i64, ptr %mres_outp, i64 1")
-      (emitLine cg "  %mres_out = load i64, ptr %mres_outv")
-      (if (== wind 1)
-        {
-          (emitLine cg "  call i64 @ExitProcess(i64 %mres_out)")
-          (emitLine cg "  unreachable")
-        }
-        (emitLine cg "  ret i64 %mres_out"))
-      (emitLine cg ".mres_err:")
-      (emitLine cg "  %mres_errp = inttoptr i64 %r to ptr")
-      (emitLine cg "  %mres_errv = getelementptr i64, ptr %mres_errp, i64 1")
-      (emitLine cg "  %mres_errh = load i64, ptr %mres_errv")
-      (emitLine cg
-        (concat "  %mres_msg = call i64 @" (concat etext (concat "(i64 " "%mres_errh)"))))
-      (emitLine cg "  %mres_slp = inttoptr i64 %mres_msg to ptr")
-      (emitLine cg "  %mres_sll = getelementptr i64, ptr %mres_slp, i64 0")
-      (emitLine cg "  %mres_len = load i64, ptr %mres_sll")
-      (emitLine cg "  %mres_sdp = getelementptr i64, ptr %mres_slp, i64 1")
-      (emitLine cg "  %mres_dat = load i64, ptr %mres_sdp")
-      (emitLine cg "  %mres_pre = ptrtoint ptr @__axiom_result_prefix to i64")
-      (emitRuntimeWrite cg "%mres_pre" "7")
-      (emitLine cg "  %mres_nlp = ptrtoint ptr @__axiom_result_nl to i64")
-      (emitRuntimeWrite cg "%mres_dat" "%mres_len")
-      (emitRuntimeWrite cg "%mres_nlp" "1")
-      (emitRuntimeExit cg "70")
-      (emitLine cg "  unreachable")
-      cg
+      (let okTag (eTag okEntry))
+      (let etext (llvmSym (mainResultErrorText cg)))
+      {
+        (emitLine cg "  %mres_tp = inttoptr i64 %r to ptr")
+        (emitLine cg "  %mres_tag = load i64, ptr %mres_tp")
+        (emitLine cg (concat "  %mres_isok = icmp eq i64 %mres_tag, " (concat (constStr okTag) "")))
+        (emitLine cg "  br i1 %mres_isok, label %.mres_ok, label %.mres_err")
+        (emitLine cg ".mres_ok:")
+        (emitLine cg "  %mres_outp = inttoptr i64 %r to ptr")
+        (emitLine cg "  %mres_outv = getelementptr i64, ptr %mres_outp, i64 1")
+        (emitLine cg "  %mres_out = load i64, ptr %mres_outv")
+        (if (== wind 1)
+          {
+            (emitLine cg "  call i64 @ExitProcess(i64 %mres_out)")
+            (emitLine cg "  unreachable")
+          }
+          (emitLine cg "  ret i64 %mres_out"))
+        (emitLine cg ".mres_err:")
+        (emitLine cg "  %mres_errp = inttoptr i64 %r to ptr")
+        (emitLine cg "  %mres_errv = getelementptr i64, ptr %mres_errp, i64 1")
+        (emitLine cg "  %mres_errh = load i64, ptr %mres_errv")
+        (emitLine cg
+          (concat "  %mres_msg = call i64 @" (concat etext (concat "(i64 " "%mres_errh)"))))
+        (emitLine cg "  %mres_slp = inttoptr i64 %mres_msg to ptr")
+        (emitLine cg "  %mres_sll = getelementptr i64, ptr %mres_slp, i64 0")
+        (emitLine cg "  %mres_len = load i64, ptr %mres_sll")
+        (emitLine cg "  %mres_sdp = getelementptr i64, ptr %mres_slp, i64 1")
+        (emitLine cg "  %mres_dat = load i64, ptr %mres_sdp")
+        (emitLine cg "  %mres_pre = ptrtoint ptr @__axiom_result_prefix to i64")
+        (emitRuntimeWrite cg "%mres_pre" "7")
+        (emitLine cg "  %mres_nlp = ptrtoint ptr @__axiom_result_nl to i64")
+        (emitRuntimeWrite cg "%mres_dat" "%mres_len")
+        (emitRuntimeWrite cg "%mres_nlp" "1")
+        (emitRuntimeExit cg "70")
+        (emitLine cg "  unreachable")
+        cg
+      }
     }
-  })
+    (dieCodegenDiag "missing result constructor: " "Err$Ok")))
 
 ; ------------------------------------------------------------------
 (pub :: emitAllocator (-> Int Int))
@@ -20757,9 +20714,9 @@
     (let pen
       (if (!= (pairSlot cg 0) 0)
         (pairLeafEntry cg e)
-        0))
-    (if (!= pen 0)
-      (emitPairRet e pen cg)
+        (None)))
+    (if (let (Some entry) pen)
+      (emitPairRet e entry cg)
       ; A forwarding leaf hands its callee's two registers straight
       ; back. `pairFwdOK` is re-asked here with the names the symbol
       ; table holds, so a head that a `let` has bound is a closure
@@ -21775,19 +21732,18 @@
     (let tg (nodeTag pat))
     (if (== tg TAG_P_CON0)
       {
-        (let en (lookupType (cgTypes cg) (nodeAName pat)))
-        (if (== en 0)
-          cg
-          (emitPatTest (constStr (eTag en)) (strDup tagR) failB cg))
+        (let enFound (lookupType (cgTypes cg) (nodeAName pat)))
+        (if (let (Some en) enFound)
+          (emitPatTest (constStr (eTag en)) (strDup tagR) failB cg)
+          cg)
       }
       {
         (let h (patHead pat))
         (if (== h 0)
           cg
           {
-            (let en (lookupType (cgTypes cg) (as h String)))
-            (if (== en 0)
-              cg
+            (let enFound (lookupType (cgTypes cg) (as h String)))
+            (if (let (Some en) enFound)
               {
                 (let cgT (emitPatTest (constStr (eTag en)) (strDup tagR) failB cg))
                 {
@@ -21797,7 +21753,8 @@
                     (bindSym cgT (nodeAName (vecGet subs 0)) (strDup payR)
                       (patFloatFlag (vecGet subs 0) 0) 0))
                 }
-              })
+              }
+              cg)
           })
       })
   })
@@ -21972,7 +21929,9 @@
         (let tg (nodeTag pat))
         (if (== tg TAG_P_CON0)
           (if (&& (== (pairCtorNamed (nodeAName pat)) 1)
-                (!= (pairEntryOfArity cg (nodeAName pat) 0) 0))
+                (if (let (Some _) (pairEntryOfArity cg (nodeAName pat) 0))
+                  true
+                  false))
             (pairArmsOK cg arms (+ i 1))
             0)
           (if (== tg TAG_E_APP)
@@ -21981,7 +21940,9 @@
               (if (== h 0)
                 0
                 (if (|| (== (pairCtorNamed (as h String)) 0)
-                      (== (pairEntryOfArity cg (as h String) 1) 0))
+                      (if (let (Some _) (pairEntryOfArity cg (as h String) 1))
+                        false
+                        true))
                   0
                   {
                     (let subs (patArgs pat vecNew))
@@ -22377,15 +22338,15 @@
                 ; constructor of a non-unboxing type is still a one-word block
                 ; whose tag loads from word 0.
                 {
-                  (let entry (lookupType (cgTypes cg) (nodeAName pat)))
-                  (if (== entry 0)
-                    (bindSym cg (nodeAName pat) (strDup vr) (patFloatFlag pat isFloat) 0)
+                  (let entryFound (lookupType (cgTypes cg) (nodeAName pat)))
+                  (if (let (Some entry) entryFound)
                     (if (!= (eRep entry) 0)
                       (emitPatTest (constStr (eTag entry)) vr failB cg)
                       {
                         (let cgL (loadWordAt cg vr 0))
                         (emitPatTest (constStr (eTag entry)) (strDup (cgResult cgL)) failB cgL)
-                      }))
+                      })
+                    (bindSym cg (nodeAName pat) (strDup vr) (patFloatFlag pat isFloat) 0))
                 }
                 ; A NAMED constructor pattern is reordered into the positional
                 ; spine and re-dispatched, so every mechanism below - the mixed-rep
@@ -22396,27 +22357,25 @@
                 ; answer.
                 (if (== tag TAG_P_CONNAMED)
                   {
-                    (let ent (lookupType (cgTypes cg) (nodeAName pat)))
-                    (if (|| (== ent 0) (== (eFieldNames ent) 0))
-                      cg
-                      (emitPatMatch
-                        (namedPatSpine (nodeAName pat) (eFieldNamesVec ent) (nodeBChildren pat)
-                          (nodeCChildren pat) (nodeSpan pat))
-                        vr failB cg isFloat))
+                    (let entFound (lookupType (cgTypes cg) (nodeAName pat)))
+                    (if (let (Some ent) entFound)
+                      (if (== (as (eFieldNamesVec ent) Int) 0)
+                        cg
+                        (emitPatMatch
+                          (namedPatSpine (nodeAName pat) (eFieldNamesVec ent) (nodeBChildren pat)
+                            (nodeCChildren pat) (nodeSpan pat))
+                          vr failB cg isFloat))
+                      cg)
                   }
                   (if (== tag TAG_E_APP)
                     {
                       (let cname (patHead pat))
                       {
-                        (let entry
+                        (let entryFound
                           (if (== cname 0)
-                            0
+                            (None)
                             (lookupType (cgTypes cg) (as cname String))))
-                        (if (== entry 0)
-                          ; An application whose head is no constructor - nothing
-                          ; well-typed produces this; match everything, bind
-                          ; nothing, as before.
-                          cg
+                        (if (let (Some entry) entryFound)
                           ; A fieldful pattern in a MIXED type must not load word
                           ; 0 unguarded: the scrutinee may be an immediate
                           ; nullary sibling, and word 0 of a small integer is a
@@ -22434,7 +22393,11 @@
                               (emitPatFields (patArgs pat vecNew) (eFieldFlagsVec entry) vr failB
                                 cgT 0)
                             }
-                          })
+                          }
+                          ; An application whose head is no constructor - nothing
+                          ; well-typed produces this; match everything, bind
+                          ; nothing, as before.
+                          cg)
                       }
                     }
                     cg))))))))
@@ -23113,14 +23076,14 @@
     (let types (cgTypes cg))
     (let args (nodeBChildren node))
     {
-      (let entry (lookupType types (nodeAName node)))
-      (if (== entry 0)
+      (let entryFound (lookupType types (nodeAName node)))
+      (if (let (Some entry) entryFound)
+        (zeroFloat (emitConstructor args entry nilNode cg))
         {
           (cgSetResult cg (constStr 0))
           (cgSetResultFloat cg 0)
           cg
-        }
-        (zeroFloat (emitConstructor args entry nilNode cg)))
+        })
     }
   })
 
@@ -23268,19 +23231,19 @@
 ; node, or 0. Searched in registry order, first match winning.
 ; The checker stamps a resolved constructor on a typed data-field read.
 ; Its entry supplies the correct slot and Float flag across modules.
-(:: resolveDataField (-> Ints ASTNode ASTNode))
+(:: resolveDataField (-> (Vec TypeEntry) ASTNode ASTNode))
 ;@axiom:effect(unsafe)
 (fn (resolveDataField types node)
   (if (== (nodeBinderTy node) 0)
     (findDataField types (nodeBName node))
     {
-      (let entry (lookupType types (as (nodeBinderTy node) String)))
-      (if (== entry 0)
-        nilNode
-        (dataFieldOfEntry entry (nodeBName node)))
+      (let entryFound (lookupType types (as (nodeBinderTy node) String)))
+      (if (let (Some entry) entryFound)
+        (dataFieldOfEntry entry (nodeBName node))
+        nilNode)
     }))
 
-(:: dataFieldOfEntry (-> Int String ASTNode))
+(:: dataFieldOfEntry (-> TypeEntry String ASTNode))
 (fn (dataFieldOfEntry entry name)
   {
     (let i (dataFieldIndexIn (eFieldNamesVec entry) name 0))
@@ -23292,17 +23255,17 @@
           0)))
   })
 
-(pub :: findDataField (-> Ints String ASTNode))
+(pub :: findDataField (-> (Vec TypeEntry) String ASTNode))
 (pub fn (findDataField types fname)
   (findDataFieldFrom types fname 0))
 
-(pub :: findDataFieldFrom (-> Ints String Int ASTNode))
+(pub :: findDataFieldFrom (-> (Vec TypeEntry) String Int ASTNode))
 (pub fn (findDataFieldFrom types fname i)
   (if (>= i (vecLen types))
     nilNode
     {
       (let e (vecGet types i))
-      (if (|| (!= (eKind e) TF_DATA) (== (eFieldNames e) 0))
+      (if (|| (!= (eKind e) TF_DATA) (== (as (eFieldNamesVec e) Int) 0))
         (findDataFieldFrom types fname (+ i 1))
         {
           (let j (dataFieldIndexIn (eFieldNamesVec e) fname 0))
@@ -23337,7 +23300,7 @@
 ; that the table cannot find, or that lacks the field, answers 0
 ; rather than falling back: both are checker/emitter disagreements,
 ; and a wrong slot is the failure this exists to refuse.
-(pub :: resolveStructField (-> Ints ASTNode ASTNode))
+(pub :: resolveStructField (-> (Vec TypeEntry) ASTNode ASTNode))
 ;@axiom:effect(unsafe)
 (pub fn (resolveStructField types node)
   (if (== (nodeTy node) 0)
@@ -23354,12 +23317,12 @@
       (if (== (strLen key) 0)
         nilNode
         {
-          (let e (lookupType types key))
-          (if (== e 0)
-            nilNode
+          (let eFound (lookupType types key))
+          (if (let (Some e) eFound)
             (if (!= (eKind e) TF_STRUCT)
               nilNode
-              (structFieldOf e (nodeBName node))))
+              (structFieldOf e (nodeBName node)))
+            nilNode)
         })
     }))
 
@@ -23515,7 +23478,7 @@
     }
   })
 
-(pub :: structFieldOf (-> Int String ASTNode))
+(pub :: structFieldOf (-> TypeEntry String ASTNode))
 (pub fn (structFieldOf e name)
   {
     (let idx (fieldIndexIn (eStructFields e) name 0))
@@ -23531,11 +23494,11 @@
 
 ; The field's (byte offset, Float flag, type), or 0 when no struct
 ; declares the name.
-(pub :: findStructField (-> Ints String ASTNode))
+(pub :: findStructField (-> (Vec TypeEntry) String ASTNode))
 (pub fn (findStructField types name)
   (findStructFieldIn types name 0))
 
-(pub :: findStructFieldIn (-> Ints String Int ASTNode))
+(pub :: findStructFieldIn (-> (Vec TypeEntry) String Int ASTNode))
 (pub fn (findStructFieldIn types name i)
   (if (>= i (vecLen types))
     nilNode
@@ -23674,11 +23637,11 @@
               ; value, and parity means agreeing on that order.
               {
                 (let parameter (&& (!= (nodeDefScope node) 1) (>= (paramIndexOf cg name) 0)))
-                (let entry
+                (let entryFound
                   (if parameter
-                    0
+                    (None)
                     (lookupType (cgTypes cg) name)))
-                (if (!= entry 0)
+                (if (let (Some entry) entryFound)
                   (if (== (eArity entry) 0)
                     ; A bare nullary constructor: an immediate tag for
                     ; an all-nullary type, a fresh one-word block
@@ -24055,8 +24018,9 @@
                   (emitEffectOp operation args cg snode)
                   {
                     (let types (cgTypes cg))
-                    (let entry (lookupType types fnName))
-                    (if (== entry 0)
+                    (let entryFound (lookupType types fnName))
+                    (if (let (Some entry) entryFound)
+                      (zeroFloat (emitConstructor args entry stamp cg))
                       ; The self tail call is recognised HERE, not on the way
                       ; in: a macro, a local, a lambda parameter or a match
                       ; binder that shadows the function's name has already
@@ -24069,8 +24033,7 @@
                                 (== (vecLen args) (vecLen (cgTcoSlots cg))))))
                         (emitTailJump args stamp cg)
                         (emitOverApplied fnName args stamp (armMustTail cg isTail fnName args) evs
-                          snode))
-                      (zeroFloat (emitConstructor args entry stamp cg)))
+                          snode)))
                   })))))))
   })
 
@@ -27940,7 +27903,7 @@
             (|| argsWrite (&& (isCastName n) (> (spineArity e) 2)))
             (if (isPrimName n)
               (|| argsWrite (! (writesReadOnlyPrim n)))
-              (if (!= (lookupType (cgTypes cg) n) 0)
+              (if (hasType (cgTypes cg) n)
                 argsWrite
                 {
                   (let full (mangledForCg cg n))
@@ -28313,7 +28276,7 @@
           (let name (nodeAName e))
           (if (|| (isNullaryPrimName name)
                 (|| (&& (!= (nodeDefScope e) 1) (isLocalValue cg name))
-                  (!= (lookupType (cgTypes cg) name) 0)))
+                  (hasType (cgTypes cg) name)))
             0
             (if (isDefinedFnCg cg (mangledForCg cg name))
               1
@@ -28338,7 +28301,7 @@
   (if (nodeSame e nilNode)
     0
     (if (== (nodeTag e) TAG_E_VAR)
-      (if (!= (lookupType (cgTypes cg) (nodeAName e)) 0)
+      (if (hasType (cgTypes cg) (nodeAName e))
         1
         0)
       (if (&& (== (nodeTag e) TAG_E_APP) (== (spineArity e) 0))
@@ -28418,13 +28381,13 @@
       0
       (if (== (nodeTag e) TAG_E_STRUCTCON)
         {
-          (let entry (lookupType (cgTypes cg) (nodeAName e)))
-          (if (== entry 0)
-            0
+          (let entryFound (lookupType (cgTypes cg) (nodeAName e)))
+          (if (let (Some entry) entryFound)
             (if (&& (== (eKind entry) (TF_STRUCT))
                   (&& (> (eArity entry) 0) (== (vecLen (nodeBChildren e)) (eArity entry))))
               1
-              0))
+              0)
+            0)
         }
         (if (!= (nodeTag e) TAG_E_APP)
           0
@@ -28440,9 +28403,8 @@
                 (if (|| (isCastName n) (|| (isLocalValue cg n) (hasEffFor cg (cgEffOps cg) n)))
                   0
                   {
-                    (let entry (lookupType (cgTypes cg) n))
-                    (if (== entry 0)
-                      0
+                    (let entryFound (lookupType (cgTypes cg) n))
+                    (if (let (Some entry) entryFound)
                       ; Data and struct alike: `dispatchCall` answers
                       ; `emitConstructor` for either hit, and the types
                       ; table holds nothing else, so a function name
@@ -28453,7 +28415,8 @@
                       (if (&& (|| (== (eKind entry) (TF_DATA)) (== (eKind entry) (TF_STRUCT)))
                             (&& (> (eArity entry) 0) (== (spineArity e) (eArity entry))))
                         1
-                        0))
+                        0)
+                      0)
                   })
               })
           })))))
@@ -28759,21 +28722,14 @@
                   2
                   (if (== (dataTyKnown (cgDataTyNames cg) n 0) 1)
                     2
-                    {
-                      (let e (lookupType (cgTypes cg) n))
-                      (if (if (== e 0)
-                        false
-                        (== (eKind e) TF_STRUCT))
+                    (if (let (Some e) (lookupType (cgTypes cg) n))
+                      (if (== (eKind e) TF_STRUCT)
                         2
-                        ; A word struct is a word: no bit, and being
-                        ; CLASSIFIED keeps the enclosing record mapped,
-                        ; the reason `Foreign` is listed above.
-                        (if (if (== e 0)
-                          false
-                          (== (eKind e) TF_WORD))
+                        ; Word structs carry no reference bit.
+                        (if (== (eKind e) TF_WORD)
                           0
                           1))
-                    })))
+                      1))))
             }
             1)))
     }))
@@ -28825,7 +28781,7 @@
       }
     }))
 
-(pub :: ctorShapeConst (-> Int Int Int))
+(pub :: ctorShapeConst (-> Int TypeEntry Int))
 (pub fn (ctorShapeConst cg entry)
   {
     (let kind (eKind entry))
@@ -29045,7 +29001,7 @@
 ; forces the whole block to the leaf; a variable with no stamp, or
 ; a witness of 0, contributes no bit - which IS the leaf answer for
 ; that field, with every classifiable neighbour's bit kept.
-(:: ctorFieldTypes (-> Int (Vec ASTNode)))
+(:: ctorFieldTypes (-> TypeEntry (Vec ASTNode)))
 (fn (ctorFieldTypes entry)
   (if (== (eKind entry) TF_DATA)
     (eFieldTysVec entry)
@@ -29058,14 +29014,14 @@
       }
     }))
 
-(:: ctorFieldBit (-> Int Int Int))
+(:: ctorFieldBit (-> TypeEntry Int Int))
 (fn (ctorFieldBit entry i)
   (+ 16
     (if (== (eKind entry) TF_DATA)
       (+ 1 i)
       (/ (structFieldOffset (eStructFields entry) i) 8))))
 
-(pub :: ctorShapeEmit (-> Int String Int ASTNode Int))
+(pub :: ctorShapeEmit (-> Int String TypeEntry ASTNode Int))
 (pub fn (ctorShapeEmit cg ptr entry stamp)
   {
     (let kind (eKind entry))
@@ -29467,23 +29423,23 @@
       1
       (pairNamesHasFrom names name (+ i 1)))))
 
-(pub :: pairLeafEntry (-> Int ASTNode Int))
+(pub :: pairLeafEntry (-> Int ASTNode (Option TypeEntry)))
 (pub fn (pairLeafEntry cg e)
   (if (nodeSame e nilNode)
-    0
+    (None)
     {
       (let tg (nodeTag e))
       (if (== tg TAG_E_VAR)
         (if (== (pairCtorNamed (nodeAName e)) 1)
           (pairEntryOfArity cg (nodeAName e) 0)
-          0)
+          (None))
         (if (== tg TAG_E_APP)
           (if (!= (nodeTag (nodeAChild e)) TAG_E_VAR)
-            0
+            (None)
             (if (== (pairCtorNamed (nodeAName (nodeAChild e))) 1)
               (pairEntryOfArity cg (nodeAName (nodeAChild e)) 1)
-              0))
-          0))
+              (None)))
+          (None)))
     }))
 
 ; The four constructor SPELLINGS a pair leaf or a pair arm may name.
@@ -29557,24 +29513,24 @@
 
 ; The entry `name` denotes when it is a `data` constructor of a type
 ; that unboxes its nullary arms (`rep` 2) and carries exactly `want`
-; fields; 0 otherwise. Nested `if`s with one comparison each, for the
+; fields; `None` otherwise. Nested `if`s with one comparison each, for the
 ; code generation reasons the probe loops in `Map` record.
-(pub :: pairEntryOfArity (-> Int String Int Int))
+(pub :: pairEntryOfArity (-> Int String Int (Option TypeEntry)))
 (pub fn (pairEntryOfArity cg name want)
   {
-    (let en (lookupType (cgTypes cg) name))
-    (if (== en 0)
-      0
+    (let enFound (lookupType (cgTypes cg) name))
+    (if (let (Some en) enFound)
       (if (!= (eKind en) TF_DATA)
-        0
+        (None)
         ; rep 2 mixes immediates with blocks (`Option`); rep 0 is all
         ; blocks (`Result`, whose arms both carry a field). rep 1 is
         ; all-nullary - already immediate, nothing to unbox.
         (if (&& (!= (eRep en) 2) (!= (eRep en) 0))
-          0
+          (None)
           (if (!= (eArity en) want)
-            0
-            en))))
+            (None)
+            (Some en))))
+      (None))
   })
 
 ; Is every TAIL leaf of `body` one of those two shapes?
@@ -29621,7 +29577,9 @@
                 }
               }
             }
-            (if (!= (pairLeafEntry cg e) 0)
+            (if (if (let (Some _) (pairLeafEntry cg e))
+              true
+              false)
               1
               (pairFwdOK cg e bound)))))
     }))
@@ -29778,6 +29736,7 @@
 ; rewritten to the pair (`emitPlainCall`), and boxes there when it
 ; must. The body is not here; `emitFnDef` wrote it once, as the pair.
 (pub :: emitPairWrapper (-> ASTNode Int Int))
+;@axiom:effect(io)
 (pub fn (emitPairWrapper node cg)
   {
     (let name (nodeAName node))
@@ -29820,6 +29779,7 @@
 ; the share of the temporary it was built from.
 (pub :: emitPairBox (-> Int ASTNode String Int))
 ;@axiom:effect(unsafe)
+;@axiom:effect(io)
 (pub fn (emitPairBox cg rt r)
   {
     (let tr (regStr (allocReg cg)))
@@ -29837,86 +29797,92 @@
 
 ; `Option`: the `None` tag is its own immediate; `Some` is a block.
 (pub :: emitPairBoxOption (-> Int ASTNode String String Int))
+;@axiom:effect(io)
 (pub fn (emitPairBoxOption cg rt tr pr)
-  {
-    (let noneE (pairEntryOfArity cg "None" 0))
-    (let someE (pairEntryOfArity cg "Some" 1))
-    (let lNone (labelStr (allocReg cg)))
-    (let lSome (labelStr (allocReg cg)))
-    (let lMerge (labelStr (allocReg cg)))
-    (let c (regStr (allocReg cg)))
-    (let _1
-      (emitLine cg
-        (concat (concat "  " c)
-          (concat " = icmp eq i64 " (concat tr (concat ", " (constStr (eTag noneE))))))))
-    (let _2
-      (emitLine cg
-        (concat (concat "  br i1 " (concat c ", label %"))
-          (concat lNone (concat (concat ", label %" lSome) "")))))
-    (let _3 (emitLabel cg lSome))
-    (let blk (emitPairBoxBlock cg someE (pairPayloadClass cg rt "Some") pr))
-    (let _4 (emitLine cg (concat "  br label %" lMerge)))
-    (let _5 (emitLabel cg lNone))
-    (let _6 (emitLine cg (concat "  br label %" lMerge)))
-    (let _7 (emitLabel cg lMerge))
-    (let res (regStr (allocReg cg)))
-    (let _8
-      (emitLine cg
-        (concat (concat (concat "  " res) (concat " = phi i64 [ " blk))
-          (concat (concat ", %" (concat lSome " ], [ "))
-            (concat (concat (constStr (eTag noneE)) (concat ", %" lNone)) " ]")))))
-    {
-      (cgSetResult cg res)
-      (cgSetResultFloat cg 0)
-      cg
-    }
-  })
+  (if (let (Some noneE) (pairEntryOfArity cg "None" 0))
+    (if (let (Some someE) (pairEntryOfArity cg "Some" 1))
+      {
+        (let lNone (labelStr (allocReg cg)))
+        (let lSome (labelStr (allocReg cg)))
+        (let lMerge (labelStr (allocReg cg)))
+        (let c (regStr (allocReg cg)))
+        (let _1
+          (emitLine cg
+            (concat (concat "  " c)
+              (concat " = icmp eq i64 " (concat tr (concat ", " (constStr (eTag noneE))))))))
+        (let _2
+          (emitLine cg
+            (concat (concat "  br i1 " (concat c ", label %"))
+              (concat lNone (concat (concat ", label %" lSome) "")))))
+        (let _3 (emitLabel cg lSome))
+        (let blk (emitPairBoxBlock cg someE (pairPayloadClass cg rt "Some") pr))
+        (let _4 (emitLine cg (concat "  br label %" lMerge)))
+        (let _5 (emitLabel cg lNone))
+        (let _6 (emitLine cg (concat "  br label %" lMerge)))
+        (let _7 (emitLabel cg lMerge))
+        (let res (regStr (allocReg cg)))
+        (let _8
+          (emitLine cg
+            (concat (concat (concat "  " res) (concat " = phi i64 [ " blk))
+              (concat (concat ", %" (concat lSome " ], [ "))
+                (concat (concat (constStr (eTag noneE)) (concat ", %" lNone)) " ]")))))
+        {
+          (cgSetResult cg res)
+          (cgSetResultFloat cg 0)
+          cg
+        }
+      }
+      (dieCodegenDiag "missing pair constructor: " "Some"))
+    (dieCodegenDiag "missing pair constructor: " "None")))
 
 ; `Result`: both arms are blocks, and they differ in the shape word
 ; when one payload is a share and the other a word.
 (pub :: emitPairBoxResult (-> Int ASTNode String String Int))
+;@axiom:effect(io)
 (pub fn (emitPairBoxResult cg rt tr pr)
-  {
-    (let okE (pairEntryOfArity cg "Err$Ok" 1))
-    (let errE (pairEntryOfArity cg "Err$Err" 1))
-    (let lOk (labelStr (allocReg cg)))
-    (let lErr (labelStr (allocReg cg)))
-    (let lMerge (labelStr (allocReg cg)))
-    (let c (regStr (allocReg cg)))
-    (let _1
-      (emitLine cg
-        (concat (concat "  " c)
-          (concat " = icmp eq i64 " (concat tr (concat ", " (constStr (eTag okE))))))))
-    (let _2
-      (emitLine cg
-        (concat (concat "  br i1 " (concat c ", label %"))
-          (concat lOk (concat (concat ", label %" lErr) "")))))
-    (let _3 (emitLabel cg lOk))
-    (let b1 (emitPairBoxBlock cg okE (pairPayloadClass cg rt "Err$Ok") pr))
-    (let _4 (emitLine cg (concat "  br label %" lMerge)))
-    (let _5 (emitLabel cg lErr))
-    (let b2 (emitPairBoxBlock cg errE (pairPayloadClass cg rt "Err$Err") pr))
-    (let _6 (emitLine cg (concat "  br label %" lMerge)))
-    (let _7 (emitLabel cg lMerge))
-    (let res (regStr (allocReg cg)))
-    (let _8
-      (emitLine cg
-        (concat (concat (concat "  " res) (concat " = phi i64 [ " b1))
-          (concat (concat ", %" (concat lOk " ], [ "))
-            (concat (concat b2 (concat ", %" lErr)) " ]")))))
-    {
-      (cgSetResult cg res)
-      (cgSetResultFloat cg 0)
-      cg
-    }
-  })
+  (if (let (Some okE) (pairEntryOfArity cg "Err$Ok" 1))
+    (if (let (Some errE) (pairEntryOfArity cg "Err$Err" 1))
+      {
+        (let lOk (labelStr (allocReg cg)))
+        (let lErr (labelStr (allocReg cg)))
+        (let lMerge (labelStr (allocReg cg)))
+        (let c (regStr (allocReg cg)))
+        (let _1
+          (emitLine cg
+            (concat (concat "  " c)
+              (concat " = icmp eq i64 " (concat tr (concat ", " (constStr (eTag okE))))))))
+        (let _2
+          (emitLine cg
+            (concat (concat "  br i1 " (concat c ", label %"))
+              (concat lOk (concat (concat ", label %" lErr) "")))))
+        (let _3 (emitLabel cg lOk))
+        (let b1 (emitPairBoxBlock cg okE (pairPayloadClass cg rt "Err$Ok") pr))
+        (let _4 (emitLine cg (concat "  br label %" lMerge)))
+        (let _5 (emitLabel cg lErr))
+        (let b2 (emitPairBoxBlock cg errE (pairPayloadClass cg rt "Err$Err") pr))
+        (let _6 (emitLine cg (concat "  br label %" lMerge)))
+        (let _7 (emitLabel cg lMerge))
+        (let res (regStr (allocReg cg)))
+        (let _8
+          (emitLine cg
+            (concat (concat (concat "  " res) (concat " = phi i64 [ " b1))
+              (concat (concat ", %" (concat lOk " ], [ "))
+                (concat (concat b2 (concat ", %" lErr)) " ]")))))
+        {
+          (cgSetResult cg res)
+          (cgSetResultFloat cg 0)
+          cg
+        }
+      }
+      (dieCodegenDiag "missing pair constructor: " "Err$Err"))
+    (dieCodegenDiag "missing pair constructor: " "Err$Ok")))
 
 ; One 16-byte block: tag word and one field, a share or a word by
 ; `cls`. The shape is what `ctorShapeConst` computes for a two-word
 ; data cell whose field 0 is a reference (bit 17) or is not - written
 ; out here because the constructor's own entry cannot answer it (its
 ; field type is the variable `a`) and the class is already known.
-(pub :: emitPairBoxBlock (-> Int Int Int String String))
+(pub :: emitPairBoxBlock (-> Int TypeEntry Int String String))
 (pub fn (emitPairBoxBlock cg entry cls pr)
   {
     (let p (regStr (allocReg cg)))
@@ -29965,7 +29931,7 @@
       (nodeAName (nodeAChild e))
       "")))
 
-(pub :: emitPairRet (-> ASTNode Int Int Int))
+(pub :: emitPairRet (-> ASTNode TypeEntry Int Int))
 ;@axiom:effect(io)
 (pub fn (emitPairRet e entry cg)
   (if (== (eArity entry) 0)
@@ -30028,7 +29994,7 @@
 ; ------------------------------------------------------------------
 ; Constructor emission: alloc + shape + field stores.
 ; ------------------------------------------------------------------
-(pub :: emitConstructor (-> Nodes Int ASTNode Int Int))
+(pub :: emitConstructor (-> Nodes TypeEntry ASTNode Int Int))
 ;@axiom:effect(io)
 (pub fn (emitConstructor args entry stamp cg)
   ; A nullary constructor of any type that unboxes (all-nullary OR
@@ -30162,7 +30128,7 @@
               0
               (if (||
                     (&& (|| (== (nodeDefScope h) 1) (! (isLocalValue cg (nodeAName h))))
-                      (!= (lookupType (cgTypes cg) (nodeAName h)) 0))
+                      (hasType (cgTypes cg) (nodeAName h)))
                     (&& (strEq (nodeAName h) "__resource_new") (== (spineArity an) 2)))
                 1
                 0))
@@ -30174,7 +30140,7 @@
 ; the checker's spineHead lives in another module)
 ; -1 = no retain, 1 = unconditional, k>=0 encoded as 2+k = evidence
 ; bit k - the same per-field answer ctorShapeEmit derives
-(pub :: fieldRetainCode (-> Int Int ASTNode Int Int))
+(pub :: fieldRetainCode (-> Int TypeEntry ASTNode Int Int))
 (pub fn (fieldRetainCode cg entry stamp j)
   {
     (let kind (eKind entry))
@@ -30240,7 +30206,7 @@
     }
   })
 
-(pub :: emitFieldStores (-> Int String Nodes Int Int Int ASTNode Int))
+(pub :: emitFieldStores (-> Int String Nodes Int Int TypeEntry ASTNode Int))
 ;@axiom:effect(io)
 (pub fn (emitFieldStores cg ptr args i base entry stamp)
   (if (>= i (vecLen args))
@@ -31314,8 +31280,8 @@
                         0))
                     0)
                   {
-                    (let entry (lookupType (cgTypes cg) n))
-                    (if (!= entry 0)
+                    (let entryFound (lookupType (cgTypes cg) n))
+                    (if (let (Some entry) entryFound)
                       ; a constructor: a reference field retains what it
                       ; is given (event 6) and is walked in argument
                       ; position by the caller; a WORD field parks it,
@@ -31343,7 +31309,7 @@
 ; reading it as the binding kept every scrutinee's payload - 96 to 128
 ; bytes an iteration, measured over a `match` whose arm built an
 ; `Option Int` from a `String` binder.
-(pub :: ctorWordFieldsMention (-> Int Int String ASTNode Int Int BinderSummary Int))
+(pub :: ctorWordFieldsMention (-> Int TypeEntry String ASTNode Int Int BinderSummary Int))
 (pub fn (ctorWordFieldsMention cg entry name e n_ i bound)
   (if (>= i n_)
     0
@@ -31396,7 +31362,7 @@
 ; whose witness collapsed to "no retain" (`fieldRetainCode` -1): the
 ; emitter stores the value uncounted there, whatever the field's
 ; declaration says. The stamp sits on the constructor's name node.
-(pub :: ctorFieldParks (-> Int Int ASTNode ASTNode Int Int))
+(pub :: ctorFieldParks (-> Int TypeEntry ASTNode ASTNode Int Int))
 (pub fn (ctorFieldParks cg entry e tn i)
   (if (nodeSame tn nilNode)
     1
@@ -31844,12 +31810,12 @@
       (if (== t 0)
         0
         {
-          (let e (lookupType (cgTypes cg) (as t String)))
-          (if (== e 0)
-            0
+          (let eFound (lookupType (cgTypes cg) (as t String)))
+          (if (let (Some e) eFound)
             (if (== (eKind e) TF_WORD)
               1
-              0))
+              0)
+            0)
         })
     }))
 
@@ -33647,46 +33613,48 @@
                 true
                 {
                   (let inner (dropFreeSeenWith seen n))
-                  (let entry (lookupType (cgTypes cg) n))
-                  (if (|| (== entry 0) (== (eKind entry) TF_DATA))
-                    ; Data type names have no complete registry entry.
-                    ; Every constructor must be free of drops;
-                    ; an unknown field or recursive depth limit abstains.
-                    {
-                      (let decls (cgDecls cg))
-                      (let mut i 0)
-                      (let mut found false)
-                      (let mut safe true)
-                      {
-                        (while (< i (vecLen decls))
-                          {
-                            {
-                              (let d (vecGet decls i))
-                              (if (&& (== (nodeTag d) TAG_D_DATA) (strEq (cgDeclaredTypeName d) n))
-                                {
-                                  (let ctors (nodeBChildren d))
-                                  (let mut j 0)
-                                  {
-                                    (set found true)
-                                    (while (< j (vecLen ctors))
-                                      {
-                                        (set safe (&& safe
-                                                    (dropFreeTypes cg
-                                                      (nodeTyChildren (vecGet ctors j)) (- depth 1)
-                                                      0 inner)))
-                                        (set j (+ j 1))
-                                      })
-                                  }
-                                })
-                            }
-                            (set i (+ i 1))
-                          })
-                        (&& found safe)
-                      }
-                    }
-                    (dropFreeFields cg entry (- depth 1) 0 inner))
+                  (let entryFound (lookupType (cgTypes cg) n))
+                  (if (let (Some entry) entryFound)
+                    (if (== (eKind entry) TF_DATA)
+                      (dropFreeDataTy cg n depth inner)
+                      (dropFreeFields cg entry (- depth 1) 0 inner))
+                    (dropFreeDataTy cg n depth inner))
                 })))
         }))))
+
+(:: dropFreeDataTy (-> Int String Int Names Bool))
+(fn (dropFreeDataTy cg n depth inner)
+  {
+    (let decls (cgDecls cg))
+    (let mut i 0)
+    (let mut found false)
+    (let mut safe true)
+    {
+      (while (< i (vecLen decls))
+        {
+          {
+            (let d (vecGet decls i))
+            (if (&& (== (nodeTag d) TAG_D_DATA) (strEq (cgDeclaredTypeName d) n))
+              {
+                (let ctors (nodeBChildren d))
+                (let mut j 0)
+                {
+                  (set found true)
+                  (while (< j (vecLen ctors))
+                    {
+                      (set safe (&& safe
+                                  (dropFreeTypes cg (nodeTyChildren (vecGet ctors j)) (- depth 1) 0
+                                    inner)))
+                      (set j (+ j 1))
+                    })
+                }
+              })
+          }
+          (set i (+ i 1))
+        })
+      (&& found safe)
+    }
+  })
 
 (:: dropFreeSeen (-> Names String Bool))
 (fn (dropFreeSeen seen n)
@@ -33717,7 +33685,7 @@
     true
     (&& (dropFreeTyIn cg (vecGet tys i) depth seen) (dropFreeTypes cg tys depth (+ i 1) seen))))
 
-(pub :: dropFreeFields (-> Int Int Int Int Names Bool))
+(pub :: dropFreeFields (-> Int TypeEntry Int Int Names Bool))
 (pub fn (dropFreeFields cg entry depth i seen)
   (if (|| (== (eKind entry) TF_WORD) (>= i (eArity entry)))
     true
@@ -33745,8 +33713,8 @@
           (if (|| (== (nodeTag hd) TAG_E_VAR) (== tag TAG_E_STRUCTCON))
             {
               (let n (nodeAName hd))
-              (let entry (lookupType (cgTypes cg) n))
-              (if (!= entry 0)
+              (let entryFound (lookupType (cgTypes cg) n))
+              (if (let (Some entry) entryFound)
                 (dropFreeFields cg entry 16 0 (vecPush vecNew n))
                 {
                   (let sig (findFSigCg cg (mangledForCg cg n)))
