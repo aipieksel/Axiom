@@ -204,7 +204,7 @@ s = open(p, encoding="utf-8").read()
 start = s.index("(pub fn (rgnCheckAll tc)")
 end = s.index("(pub :: rgnEnsureFacts", start)
 part = s[start:end]
-old = "(if (== (memGetWord tc 39) 1)"
+old = "(if (== (tcRgnHasForm tc) 1)"
 if part.count(old) != 1:
     sys.exit("the lexical reporting ablation no longer matches")
 s = s[:start] + part.replace(old, "(if (== 0 1)") + s[end:]

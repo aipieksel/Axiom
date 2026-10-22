@@ -47,10 +47,10 @@
 # copy of core/, since a compiler carrying two defects proves
 # neither arm:
 #   arm 1: `fnEntVisibleExact` (core/typecheck.ax) branches on
-#          `memGetWord tc 20`. Forcing the zero branch makes every
+#          `tcFnIdx`. Forcing the zero branch makes every
 #          lookup fall to `findFnEntVisibleExact`, a scan of every entry
-#          filtered by `privBlocks`. The suffix index (`memGetWord tc
-#          26`) is left alone: the exact pass dominates
+#          filtered by `privBlocks`. The suffix index (`tcFnSufIdx`)
+#          is left alone: the exact pass dominates
 #          `check core/main.ax`, so one seam is enough.
 #   arm 2: `mangleIdxHas` put back to a scan of `bares`. This is arm 2's
 #          cause, not arm 1's: arm 1 passes on that compiler.
@@ -320,7 +320,7 @@ mkdir -p "$abl1"
 cp -R "$repo_root/core" "$repo_root/stdlib" "$abl1/" || {
   echo "FAIL: could not copy the tree to ablate for arm 1" >&2; exit 1; }
 
-# Anchored on the whole function. `fnEntVisibleSuffix` reads slot 26
+# Anchored on the whole function. `fnEntVisibleSuffix` reads the suffix index
 # with the same two-branch shape, so a substitution anchored on the `if`
 # alone would edit whichever came first.
 if ! python3 - "$abl1/core/typecheck.ax" <<'PY_ABL'
@@ -328,9 +328,9 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 old = '''(pub fn (fnEntVisibleExact tc privs name curMod)
-  (if (== (memGetWord tc 20) 0)
+  (if (== (tcFnIdx tc) 0)
     (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)
-    (fnIdxGetVisible (memGetWordVec tc 20) privs name curMod)))'''
+    (fnIdxGetVisible (tcFnIdxVec tc) privs name curMod)))'''
 new = '''(pub fn (fnEntVisibleExact tc privs name curMod)
   (findFnEntVisibleExact privs (tcFnsVec tc) name curMod))'''
 n = s.count(old)

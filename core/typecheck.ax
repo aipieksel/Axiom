@@ -472,9 +472,9 @@
 (pub :: outvecSwapOut (-> Int Int))
 (pub fn (outvecSwapOut tc)
   {
-    (let real (memGetWord tc 4))
+    (let real (tcOutWord tc))
     {
-      (memSetWord tc 4 (as vecNew Int))
+      (tcSetOutWord tc (as vecNew Int))
       real
     }
   })
@@ -482,7 +482,7 @@
 (pub :: outvecSwapIn (-> Int Int Int))
 (pub fn (outvecSwapIn tc real)
   {
-    (memSetWord tc 4 real)
+    (tcSetOutWord tc real)
     0
   })
 
@@ -505,7 +505,7 @@
     0
     {
       (if (== (diagIsUnknownRefusal (vecGet fresh i)) 0)
-        (vecPush (as (memGetWord tc 4) (Vec Int)) (vecGet fresh i)))
+        (vecPush (as (tcOutWord tc) (Vec Int)) (vecGet fresh i)))
       (outvecCarryOver tc fresh (+ i 1))
     }))
 
@@ -515,9 +515,9 @@
 ;@axiom:effect(unsafe)
 (pub fn (outvecRestoreFiltered tc real)
   {
-    (let fresh (as (memGetWord tc 4) (Vec Int)))
+    (let fresh (as (tcOutWord tc) (Vec Int)))
     {
-      (memSetWord tc 4 real)
+      (tcSetOutWord tc real)
       (outvecCarryOver tc fresh 0)
     }
   })
@@ -1959,7 +1959,7 @@
 (pub :: lamVarDepth (-> Int String Int))
 (pub fn (lamVarDepth tc n)
   {
-    (let st (memGetWordVec tc 32))
+    (let st (tcLamVars tc))
     (if (== (as st Int) 0)
       (- 0 1)
       {
@@ -1985,14 +1985,14 @@
 (pub :: lamVarPush (-> Int Int Int))
 (pub fn (lamVarPush tc n)
   {
-    (let st (memGetWordVec tc 32))
+    (let st (tcLamVars tc))
     {
       (let v
         (if (== (as st Int) 0)
           vecNew
           st))
       {
-        (memSetWord tc 32 v)
+        (tcSetLamVars tc v)
         (vecPush v (as n Int))
         (vecLen v)
       }
@@ -2002,7 +2002,7 @@
 (pub :: lamVarTrunc (-> Int Int Int))
 (pub fn (lamVarTrunc tc n)
   {
-    (let st (memGetWordVec tc 32))
+    (let st (tcLamVars tc))
     (if (== (as st Int) 0)
       0
       (scopeTrunc st n))
@@ -2052,7 +2052,7 @@
             (evClassOf tc (nodeBChild t))
             (if (== (tyIsSrcVar t) 1)
               {
-                (let sv (memGetWordVec tc 23))
+                (let sv (tcCurSigVarsVec tc))
                 (if (== (as sv Int) 0)
                   0
                   {
@@ -2156,7 +2156,7 @@
                         })
                       (writeNodeChild e 6
                         (setNodeTyNames
-                          (nodeBuildEvstampCallPlain (readAstNode tc 24) w
+                          (nodeBuildEvstampCallPlain (tcCurDeclNode tc) w
                             (if (== poisoned 1)
                               vecNew
                               env))
@@ -2350,7 +2350,7 @@
 (pub :: evNotePending (-> Int ASTNode ASTNode ASTNode ASTNode Int))
 (pub fn (evNotePending tc st pt at node)
   {
-    (vecPush (evPendingOf tc) (EvPend :st st :pt pt :at at :node node :sigVars (memGetWord tc 23)))
+    (vecPush (evPendingOf tc) (EvPend :st st :pt pt :at at :node node :sigVars (tcCurSigVars tc)))
     0
   })
 
@@ -2366,8 +2366,12 @@
 
 ; The pending witnesses, TC word 44's word 6.
 (pub :: evPendingOf (-> Int (Vec EvPend)))
+;@axiom:effect(unsafe)
 (pub fn (evPendingOf tc)
-  (memGetWordVec (memGetWord tc 44) 6))
+  {
+    (let t (as tc TC))
+    t.unsafe.evPending
+  })
 
 ; Replay every pending witness now that its body is typed: a stamp's
 ; through `evWalk` in its late mode, an application's by asking its
@@ -2380,11 +2384,11 @@
     (if (== (vecLen ps) 0)
       0
       {
-        (let sv0 (memGetWord tc 23))
+        (let sv0 (tcCurSigVars tc))
         {
           (for p in ps
             {
-              (memSetWord tc 23 p.sigVars)
+              (tcSetCurSigVars tc p.sigVars)
               (if (nodeSame p.node nilNode)
                 (evWalk tc p.st p.pt p.at 0 1)
                 {
@@ -2393,7 +2397,7 @@
                     (setNodeTyWord p.node c))
                 })
             })
-          (memSetWord tc 23 sv0)
+          (tcSetCurSigVars tc sv0)
           (vecClear ps)
           0
         }
@@ -3228,8 +3232,8 @@
   (structs : (Vec Int))
   (scope : (Vec Int))
   (out : (Vec Int))
-  (counter : Int)
-  (frameBase : Int)
+  (mut counter : Int)
+  (mut frameBase : Int)
   (macros : Nodes)
   (effects : Nodes)
   (entryDecls : (Vec ASTNode))
@@ -3237,33 +3241,33 @@
   (curParams : Strings)
   (curCallable : (Vec Int))
   (units : (Vec Int))
-  (curUnit : Int)
+  (mut curUnit : Int)
   (ambTbl : (Vec Int))
-  (curModule : Int)
+  (mut curModule : Int)
   (aliases : Nodes)
-  (pairFns : (Vec Int))
+  (pairFns : Names)
   (privates : Int)
   (fnIdx : Int)
   (ambIdx : Int)
-  (lamBase : Int)
-  (curSigVars : Int)
+  (mut lamBase : Int)
+  (mut curSigVars : Int)
   (curDeclNode : ASTNode)
   (sigTags : Int)
   (fnSufIdx : Int)
   (privIdx : Int)
-  (rgnFactsDone : Int)
-  (curCalls : Int)
+  (mut rgnFactsDone : Int)
+  (mut curCalls : Int)
   (tyIdx : Int)
   (deprecated : Int)
   (curLamVar : Int)
-  (inContract : Int)
-  (restrictStrict : Int)
+  (mut rgnGaveUp : Int)
+  (mut contractTag : Int)
   (regions : (Vec Int))
   (pairSites : Nodes)
   (floatOps : (Vec ASTNode))
   (subtypes : Nodes)
-  (rgnHasForm : Int)
-  (rgnStamping : Int)
+  (mut rgnHasForm : Int)
+  (mut rgnStamping : Int)
   (rgnRefused : (Vec Int))
   (wordLower : (Vec ASTNode))
   (wordStructs : Int)
@@ -3299,7 +3303,8 @@
 ; `wordLowerRecord` for why the lowering is here rather than there.
 ; Word 44, `unsafe`, is the unsafe boundary's (R-B6): one `UState`,
 ; because TC's own reference map is full at 47 words. Its fields,
-; read through `(memGetWord tc 44)`:
+; read through the `tc...` accessors after `TC` (`tcUnsafeSink`,
+; `tcForgeSites`, and so on):
 ;
 ;   0 `unsafeSink`  a Vec while `checkAxtags` walks one body's effects,
 ;                    0 otherwise: every reference that walk resolves to
@@ -3365,7 +3370,7 @@
   (forgeDecls : (Vec Int))
   (unsafePending : (Vec ASTNode))
   (ctClaimed : Nodes)
-  (ctResults : Int)
+  (mut ctResults : Int)
   (evPending : (Vec EvPend))
   (eraseSites : Nodes)
   (eraseCounts : (Vec Int))
@@ -3374,7 +3379,7 @@
   (walkCtx : (Vec BCtx))
   (mut discard : Int)
   (unknownCallees : (Vec Int))
-  (regionWalkCtx : Int)
+  (mut regionWalkCtx : Int)
   (fieldDecls : (Vec FieldDecl))
   (fieldDeclNames : (Vec FieldDeclName))
   (fieldStoreSpans : (Vec Int)))
@@ -3582,116 +3587,731 @@
 ; S2 runs during `tcWalkDecls`, S3 after it, same TC, so the set is
 ; complete before the first suppression is asked. Appended, for the
 ; reason every field before it was.
-(pub :: tcFns (-> Int Int))
-(pub fn (tcFns tc)
-  (memGetWord tc 0))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
+; ------------------------------------------------------------------
+; Typed access to the checker state. Every phase holds the `TC` record
+; as a word, so each reader below views it through the struct's own
+; declaration and answers the field at the type it holds. A getter is
+; one load (and the retain a reference result takes); `opt` inlines
+; it. A reference field is written through `memSetWord`, which takes a
+; share of the new value and leaves the old one, exactly as the
+; record's other writers do; an `Int` field is written with `set`.
+; ------------------------------------------------------------------
 (pub :: tcFnsVec (-> Int (Vec a)))
 ;@axiom:effect(unsafe)
 (pub fn (tcFnsVec tc)
-  (as (tcFns tc) (Vec a)))
+  {
+    (let t (as tc TC))
+    (as t.fns (Vec a))
+  })
 
-(pub :: tcDatas (-> Int Int))
-(pub fn (tcDatas tc)
-  (memGetWord tc 1))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcDatasVec (-> Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (tcDatasVec tc)
-  (as (tcDatas tc) Ints))
+  {
+    (let t (as tc TC))
+    t.datas
+  })
 
-(pub :: tcStructs (-> Int Int))
-(pub fn (tcStructs tc)
-  (memGetWord tc 2))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcStructsVec (-> Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (tcStructsVec tc)
-  (as (tcStructs tc) Ints))
+  {
+    (let t (as tc TC))
+    t.structs
+  })
 
-(pub :: tcScope (-> Int Int))
-(pub fn (tcScope tc)
-  (memGetWord tc 3))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcScopeVec (-> Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (tcScopeVec tc)
-  (as (tcScope tc) Ints))
+  {
+    (let t (as tc TC))
+    t.scope
+  })
 
-(pub :: tcOut (-> Int Int))
-(pub fn (tcOut tc)
-  (memGetWord tc 4))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcOutVec (-> Int (Vec a)))
 ;@axiom:effect(unsafe)
 (pub fn (tcOutVec tc)
-  (as (tcOut tc) (Vec a)))
+  {
+    (let t (as tc TC))
+    (as t.out (Vec a))
+  })
+
+; The diagnostics vector as the bare word `outvecSwapOut` parks and
+; `outvecSwapIn` restores: no share moves with it.
+(:: tcOutWord (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcOutWord tc)
+  {
+    (let t (as tc TC))
+    (as t.out Int)
+  })
+
+(:: tcSetOutWord (-> Int Int Int))
+(fn (tcSetOutWord tc v)
+  (memSetWord tc 4 v))
 
 (pub :: tcCounter (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (tcCounter tc)
-  (memGetWord tc 5))
+  {
+    (let t (as tc TC))
+    t.counter
+  })
 
 (pub :: tcBumpCounter (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (tcBumpCounter tc)
-  (memSetWord tc 5 (+ (memGetWord tc 5) 1)))
+  {
+    (let t (as tc TC))
+    (set t.counter (+ t.counter 1))
+    tc
+  })
 
 (pub :: tcFrameBase (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (tcFrameBase tc)
-  (memGetWord tc 6))
+  {
+    (let t (as tc TC))
+    t.frameBase
+  })
 
-(pub :: tcMacros (-> Int Int))
-(pub fn (tcMacros tc)
-  (memGetWord tc 7))
+(:: tcSetFrameBase (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetFrameBase tc v)
+  {
+    (let t (as tc TC))
+    (set t.frameBase v)
+    tc
+  })
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcMacrosVec (-> Int Nodes))
 ;@axiom:effect(unsafe)
 (pub fn (tcMacrosVec tc)
-  (as (tcMacros tc) Nodes))
+  {
+    (let t (as tc TC))
+    t.macros
+  })
 
-(pub :: tcEffects (-> Int Int))
-(pub fn (tcEffects tc)
-  (memGetWord tc 8))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcEffectsVec (-> Int Nodes))
 ;@axiom:effect(unsafe)
 (pub fn (tcEffectsVec tc)
-  (as (tcEffects tc) Nodes))
+  {
+    (let t (as tc TC))
+    t.effects
+  })
 
-(pub :: tcAliases (-> Int Int))
-(pub fn (tcAliases tc)
-  (memGetWord tc 17))
+(:: tcEntryDecls (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcEntryDecls tc)
+  {
+    (let t (as tc TC))
+    t.entryDecls
+  })
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
+(:: tcCurParams (-> Int Strings))
+;@axiom:effect(unsafe)
+(fn (tcCurParams tc)
+  {
+    (let t (as tc TC))
+    t.curParams
+  })
+
+(:: tcSetCurParams (-> Int Strings Int))
+(fn (tcSetCurParams tc v)
+  (memSetWord tc 11 v))
+
+(:: tcCurCallable (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(fn (tcCurCallable tc)
+  {
+    (let t (as tc TC))
+    t.curCallable
+  })
+
+(:: tcSetCurCallable (-> Int (Vec Int) Int))
+(fn (tcSetCurCallable tc v)
+  (memSetWord tc 12 v))
+
+(pub :: tcUnits (-> Int Ints))
+;@axiom:effect(unsafe)
+(pub fn (tcUnits tc)
+  {
+    (let t (as tc TC))
+    t.units
+  })
+
+(:: tcCurUnit (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcCurUnit tc)
+  {
+    (let t (as tc TC))
+    t.curUnit
+  })
+
+(:: tcSetCurUnit (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetCurUnit tc v)
+  {
+    (let t (as tc TC))
+    (set t.curUnit v)
+    tc
+  })
+
+(:: tcAmbTbl (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(fn (tcAmbTbl tc)
+  {
+    (let t (as tc TC))
+    t.ambTbl
+  })
+
+; The module being checked as a word, 0 for the entry file.
+(:: tcCurModule (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcCurModule tc)
+  {
+    (let t (as tc TC))
+    t.curModule
+  })
+
+; The same module's name; `""` for the entry file.
+(:: tcCurModuleName (-> Int String))
+;@axiom:effect(unsafe)
+(fn (tcCurModuleName tc)
+  {
+    (let t (as tc TC))
+    (as t.curModule String)
+  })
+
+(:: tcSetCurModule (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetCurModule tc v)
+  {
+    (let t (as tc TC))
+    (set t.curModule v)
+    tc
+  })
+
 (pub :: tcAliasesVec (-> Int Nodes))
 ;@axiom:effect(unsafe)
 (pub fn (tcAliasesVec tc)
-  (as (tcAliases tc) Nodes))
+  {
+    (let t (as tc TC))
+    t.aliases
+  })
 
-(pub :: tcSubtypes (-> Int Int))
-(pub fn (tcSubtypes tc)
-  (memGetWord tc 38))
+(:: tcPairFns (-> Int Names))
+;@axiom:effect(unsafe)
+(fn (tcPairFns tc)
+  {
+    (let t (as tc TC))
+    t.pairFns
+  })
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
+(:: tcSetPairFns (-> Int Names Int))
+(fn (tcSetPairFns tc v)
+  (memSetWord tc 18 v))
+
+; The private-name set: a word that is 0 when the program has none, and
+; its vector view.
+(:: tcPrivates (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcPrivates tc)
+  {
+    (let t (as tc TC))
+    t.privates
+  })
+
+(:: tcPrivatesVec (-> Int Strings))
+;@axiom:effect(unsafe)
+(fn (tcPrivatesVec tc)
+  {
+    (let t (as tc TC))
+    (as t.privates Strings)
+  })
+
+; The exact-name index: 0 before `tcNew` builds it, and its bucket view.
+(:: tcFnIdx (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcFnIdx tc)
+  {
+    (let t (as tc TC))
+    t.fnIdx
+  })
+
+(:: tcFnIdxVec (-> Int Ints))
+;@axiom:effect(unsafe)
+(fn (tcFnIdxVec tc)
+  {
+    (let t (as tc TC))
+    (as t.fnIdx Ints)
+  })
+
+(:: tcSetFnIdx (-> Int Ints Int))
+(fn (tcSetFnIdx tc v)
+  (memSetWord tc 20 v))
+
+(:: tcAmbIdx (-> Int Ints))
+;@axiom:effect(unsafe)
+(fn (tcAmbIdx tc)
+  {
+    (let t (as tc TC))
+    (as t.ambIdx Ints)
+  })
+
+(:: tcSetAmbIdx (-> Int Ints Int))
+(fn (tcSetAmbIdx tc v)
+  (memSetWord tc 21 v))
+
+(:: tcLamBase (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcLamBase tc)
+  {
+    (let t (as tc TC))
+    t.lamBase
+  })
+
+(:: tcSetLamBase (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetLamBase tc v)
+  {
+    (let t (as tc TC))
+    (set t.lamBase v)
+    tc
+  })
+
+; The signature's type-variable names as a word, 0 outside a body or
+; for a signature with none, and their vector view.
+(:: tcCurSigVars (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcCurSigVars tc)
+  {
+    (let t (as tc TC))
+    t.curSigVars
+  })
+
+(:: tcCurSigVarsVec (-> Int (Vec a)))
+;@axiom:effect(unsafe)
+(fn (tcCurSigVarsVec tc)
+  {
+    (let t (as tc TC))
+    (as t.curSigVars (Vec a))
+  })
+
+(:: tcSetCurSigVars (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetCurSigVars tc v)
+  {
+    (let t (as tc TC))
+    (set t.curSigVars v)
+    tc
+  })
+
+(:: tcCurDeclNode (-> Int ASTNode))
+;@axiom:effect(unsafe)
+(fn (tcCurDeclNode tc)
+  {
+    (let t (as tc TC))
+    t.curDeclNode
+  })
+
+(:: tcSetCurDeclNode (-> Int ASTNode Int))
+(fn (tcSetCurDeclNode tc v)
+  (memSetWord tc 24 v))
+
+(:: tcSigTags (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcSigTags tc)
+  {
+    (let t (as tc TC))
+    (as t.sigTags Nodes)
+  })
+
+(:: tcSetSigTags (-> Int Nodes Int))
+(fn (tcSetSigTags tc v)
+  (memSetWord tc 25 v))
+
+; The suffix index: 0 before it is built, and its bucket view.
+(:: tcFnSufIdx (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcFnSufIdx tc)
+  {
+    (let t (as tc TC))
+    t.fnSufIdx
+  })
+
+(:: tcFnSufIdxVec (-> Int Ints))
+;@axiom:effect(unsafe)
+(fn (tcFnSufIdxVec tc)
+  {
+    (let t (as tc TC))
+    (as t.fnSufIdx Ints)
+  })
+
+(:: tcSetFnSufIdx (-> Int Ints Int))
+(fn (tcSetFnSufIdx tc v)
+  (memSetWord tc 26 v))
+
+(:: tcPrivIdx (-> Int StringRows))
+;@axiom:effect(unsafe)
+(fn (tcPrivIdx tc)
+  {
+    (let t (as tc TC))
+    (as t.privIdx StringRows)
+  })
+
+(:: tcSetPrivIdx (-> Int Int Int))
+(fn (tcSetPrivIdx tc v)
+  (memSetWord tc 27 v))
+
+(:: tcRgnFactsDone (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcRgnFactsDone tc)
+  {
+    (let t (as tc TC))
+    t.rgnFactsDone
+  })
+
+(:: tcSetRgnFactsDone (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetRgnFactsDone tc v)
+  {
+    (let t (as tc TC))
+    (set t.rgnFactsDone v)
+    tc
+  })
+
+(:: tcCurCalls (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcCurCalls tc)
+  {
+    (let t (as tc TC))
+    t.curCalls
+  })
+
+(:: tcCurCallsVec (-> Int (Vec a)))
+;@axiom:effect(unsafe)
+(fn (tcCurCallsVec tc)
+  {
+    (let t (as tc TC))
+    (as t.curCalls (Vec a))
+  })
+
+(:: tcSetCurCalls (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetCurCalls tc v)
+  {
+    (let t (as tc TC))
+    (set t.curCalls v)
+    tc
+  })
+
+(:: tcTyIdx (-> Int Ints))
+;@axiom:effect(unsafe)
+(fn (tcTyIdx tc)
+  {
+    (let t (as tc TC))
+    (as t.tyIdx Ints)
+  })
+
+(:: tcSetTyIdx (-> Int Ints Int))
+(fn (tcSetTyIdx tc v)
+  (memSetWord tc 30 v))
+
+(:: tcDeprecated (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcDeprecated tc)
+  {
+    (let t (as tc TC))
+    (as t.deprecated Nodes)
+  })
+
+(:: tcSetDeprecated (-> Int Nodes Int))
+(fn (tcSetDeprecated tc v)
+  (memSetWord tc 31 v))
+
+(:: tcLamVars (-> Int Ints))
+;@axiom:effect(unsafe)
+(fn (tcLamVars tc)
+  {
+    (let t (as tc TC))
+    (as t.curLamVar Ints)
+  })
+
+(:: tcSetLamVars (-> Int Ints Int))
+(fn (tcSetLamVars tc v)
+  (memSetWord tc 32 v))
+
+(:: tcSetRgnGaveUp (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetRgnGaveUp tc v)
+  {
+    (let t (as tc TC))
+    (set t.rgnGaveUp v)
+    tc
+  })
+
+(:: tcContractTag (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcContractTag tc)
+  {
+    (let t (as tc TC))
+    t.contractTag
+  })
+
+(:: tcSetContractTag (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetContractTag tc v)
+  {
+    (let t (as tc TC))
+    (set t.contractTag v)
+    tc
+  })
+
+(:: tcPairSites (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcPairSites tc)
+  {
+    (let t (as tc TC))
+    t.pairSites
+  })
+
+(:: tcSetPairSites (-> Int Nodes Int))
+(fn (tcSetPairSites tc v)
+  (memSetWord tc 36 v))
+
+(:: tcClearPairSites (-> Int Int))
+(fn (tcClearPairSites tc)
+  (memSetWord tc 36 0))
+
+(:: tcFloatOps (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcFloatOps tc)
+  {
+    (let t (as tc TC))
+    t.floatOps
+  })
+
 (pub :: tcSubtypesVec (-> Int Nodes))
 ;@axiom:effect(unsafe)
 (pub fn (tcSubtypesVec tc)
-  (as (tcSubtypes tc) Nodes))
+  {
+    (let t (as tc TC))
+    t.subtypes
+  })
+
+(:: tcRgnHasForm (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcRgnHasForm tc)
+  {
+    (let t (as tc TC))
+    t.rgnHasForm
+  })
+
+(:: tcSetRgnHasForm (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetRgnHasForm tc v)
+  {
+    (let t (as tc TC))
+    (set t.rgnHasForm v)
+    tc
+  })
+
+(:: tcRgnStamping (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcRgnStamping tc)
+  {
+    (let t (as tc TC))
+    t.rgnStamping
+  })
+
+(:: tcSetRgnStamping (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetRgnStamping tc v)
+  {
+    (let t (as tc TC))
+    (set t.rgnStamping v)
+    tc
+  })
+
+(:: tcRgnRefused (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(fn (tcRgnRefused tc)
+  {
+    (let t (as tc TC))
+    t.rgnRefused
+  })
+
+(:: tcWordLower (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcWordLower tc)
+  {
+    (let t (as tc TC))
+    t.wordLower
+  })
+
+(:: tcWordStructs (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcWordStructs tc)
+  {
+    (let t (as tc TC))
+    t.wordStructs
+  })
+
+(:: tcParLends (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcParLends tc)
+  {
+    (let t (as tc TC))
+    t.parLends
+  })
+
+; The unsafe boundary's record (`UState`, word 44) and the expression
+; checks (`ExprChecks`, word 46), read through the same view. The
+; per-body vectors are 0 between bodies, so each has a clear beside
+; its setter.
+(:: tcUnsafeSink (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcUnsafeSink tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.unsafeSink
+  })
+
+(:: tcSetUnsafeSink (-> Int Nodes Int))
+(fn (tcSetUnsafeSink tc v)
+  (memSetWord (memGetWord tc 44) 0 v))
+
+(:: tcClearUnsafeSink (-> Int Int))
+(fn (tcClearUnsafeSink tc)
+  (memSetWord (memGetWord tc 44) 0 0))
+
+(:: tcForgeSites (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcForgeSites tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.forgeSites
+  })
+
+(:: tcSetForgeSites (-> Int Nodes Int))
+(fn (tcSetForgeSites tc v)
+  (memSetWord (memGetWord tc 44) 1 v))
+
+(:: tcClearForgeSites (-> Int Int))
+(fn (tcClearForgeSites tc)
+  (memSetWord (memGetWord tc 44) 1 0))
+
+(:: tcForgeDecls (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(fn (tcForgeDecls tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.forgeDecls
+  })
+
+(:: tcUnsafePending (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcUnsafePending tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.unsafePending
+  })
+
+(:: tcCtClaimed (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcCtClaimed tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.ctClaimed
+  })
+
+(:: tcSetCtClaimed (-> Int Nodes Int))
+(fn (tcSetCtClaimed tc v)
+  (memSetWord (memGetWord tc 44) 4 v))
+
+(:: tcSetCtResults (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetCtResults tc v)
+  {
+    (let t (as tc TC))
+    (set t.unsafe.ctResults v)
+    tc
+  })
+
+(:: tcEraseSites (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcEraseSites tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.eraseSites
+  })
+
+(:: tcSetEraseSites (-> Int Nodes Int))
+(fn (tcSetEraseSites tc v)
+  (memSetWord (memGetWord tc 44) 7 v))
+
+(:: tcClearEraseSites (-> Int Int))
+(fn (tcClearEraseSites tc)
+  (memSetWord (memGetWord tc 44) 7 0))
+
+(:: tcEraseCounts (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(fn (tcEraseCounts tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.eraseCounts
+  })
+
+(:: tcRegionWalkCtx (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcRegionWalkCtx tc)
+  {
+    (let t (as tc TC))
+    t.unsafe.regionWalkCtx
+  })
+
+(:: tcSetRegionWalkCtx (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetRegionWalkCtx tc v)
+  {
+    (let t (as tc TC))
+    (set t.unsafe.regionWalkCtx v)
+    tc
+  })
+
+(:: tcFormatChecked (-> Int Nodes))
+;@axiom:effect(unsafe)
+(fn (tcFormatChecked tc)
+  {
+    (let t (as tc TC))
+    t.exprChecks.formatChecked
+  })
+
+(:: tcComputeRequests (-> Int (Vec Int)))
+;@axiom:effect(unsafe)
+(fn (tcComputeRequests tc)
+  {
+    (let t (as tc TC))
+    t.exprChecks.computeRequests
+  })
+
+(:: tcComputeEnabled (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcComputeEnabled tc)
+  {
+    (let t (as tc TC))
+    t.exprChecks.computeEnabled
+  })
+
+(:: tcSetComputeEnabled (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetComputeEnabled tc v)
+  {
+    (let t (as tc TC))
+    (set t.exprChecks.computeEnabled v)
+    tc
+  })
 
 ; A fresh `_tN`. stage0 mints the name from the current counter and
 ; increments at SOME sites but not others; callers say which.
@@ -4613,8 +5233,8 @@
                 :tyIdx 0
                 :deprecated 0
                 :curLamVar 0
-                :inContract 0
-                :restrictStrict 0
+                :rgnGaveUp 0
+                :contractTag 0
                 :regions vecNew
                 :pairSites nilNodes
                 :floatOps vecNew
@@ -4653,17 +5273,17 @@
                     :validatingEffects false
                     :unsignedParams nilNodes)) Int))
         {
-          (memSetWord tc 30 (tyIdxNew (vecLen allDecls)))
+          (tcSetTyIdx tc (tyIdxNew (vecLen allDecls)))
           ; The builtin `Option` went into `datas` before this record
           ; existed, so it has no collection pass to be indexed by.
           (tyIdxSeedDatas tc (tcDatasVec tc) 0)
-          (memSetWord tc 20 (fnIdxBuildSized (tcFnsVec tc) (vecLen allDecls)))
-          (memSetWord tc 21 (ambIdxNew (vecLen allDecls)))
+          (tcSetFnIdx tc (fnIdxBuildSized (tcFnsVec tc) (vecLen allDecls)))
+          (tcSetAmbIdx tc (ambIdxNew (vecLen allDecls)))
           ; The suffix index, in the same place and for the same
           ; reason: a lookup that falls through the exact pass during
           ; collection would otherwise scan the whole table.
-          (memSetWord tc 26 (fnSufIdxBuildSized (tcFnsVec tc) (vecLen allDecls)))
-          (memSetWord tc 27 (privIdxBuild (memGetWordVec tc 19)))
+          (tcSetFnSufIdx tc (fnSufIdxBuildSized (tcFnsVec tc) (vecLen allDecls)))
+          (tcSetPrivIdx tc (privIdxBuild (tcPrivatesVec tc)))
           ; Aliases first, then record fields, then everything else.
           ; `tcCollect` precomputes each constructor's field vector AND
           ; its arrow from the field types AS WRITTEN, so an expansion
@@ -5730,10 +6350,10 @@
     {
       (let name (bareOf (memGetWordStr ent 0)))
       (let bucket
-        (if (== (memGetWord tc 26) 0)
+        (if (== (tcFnSufIdx tc) 0)
           (tcFnsVec tc)
           {
-            (let buckets (memGetWordVec tc 26))
+            (let buckets (tcFnSufIdxVec tc))
             (vecGetVec buckets (% (fnIdxHash name) (vecLen buckets)))
           }))
       (signatureDefinitionIn tc bucket name 0 ent)
@@ -5749,12 +6369,9 @@
             (&& (== (nameMatches (memGetWordStr candidate 0) name) 1)
               (&&
                 (==
-                  (fnEntOutOfModuleScope tc (memGetWord tc 16) (memGetWordStr candidate 0)
-                    candidate)
+                  (fnEntOutOfModuleScope tc (tcCurModule tc) (memGetWordStr candidate 0) candidate)
                   0)
-                (==
-                  (privBlocks (memGetWordVec tc 27) (memGetWordStr candidate 0)
-                    (memGetWordStr tc 16))
+                (== (privBlocks (tcPrivIdx tc) (memGetWordStr candidate 0) (tcCurModuleName tc))
                   0))))
         candidate
         (signatureDefinitionIn tc entries name (+ i 1) fallback))
@@ -5763,15 +6380,15 @@
 (:: findFnEntDeclared (-> Int String Int))
 (fn (findFnEntDeclared tc name)
   {
-    (let m (memGetWord tc 16))
+    (let m (tcCurModule tc))
     {
       (let local
         (if (== m 0)
           0
-          (fnEntQual tc (memGetWordStr tc 16) name)))
+          (fnEntQual tc (tcCurModuleName tc) name)))
       (if (!= local 0)
         local
-        (if (== (memGetWord tc 19) 0)
+        (if (== (tcPrivates tc) 0)
           {
             (let e (fnEntExact tc name))
             (if (!= e 0)
@@ -5781,12 +6398,12 @@
               (fnEntSuffix tc name))
           }
           {
-            (let e (fnEntVisibleExact tc (memGetWordVec tc 27) name (memGetWordStr tc 16)))
+            (let e (fnEntVisibleExact tc (tcPrivIdx tc) name (tcCurModuleName tc)))
             (if (!= e 0)
               (if (== (fnEntOutOfModuleScope tc m name e) 0)
                 e
                 (fnEntModuleSuffix tc name))
-              (fnEntVisibleSuffix tc (memGetWordVec tc 27) name (memGetWordStr tc 16)))
+              (fnEntVisibleSuffix tc (tcPrivIdx tc) name (tcCurModuleName tc)))
           }))
     }
   })
@@ -5818,10 +6435,10 @@
 ; entry-file match. The ordinary suffix index also contains exact keys.
 (pub :: fnEntModuleSuffix (-> Int String Int))
 (pub fn (fnEntModuleSuffix tc name)
-  (if (== (memGetWord tc 26) 0)
+  (if (== (tcFnSufIdx tc) 0)
     (fnEntModuleSuffixIn tc (tcFnsVec tc) name 0)
     {
-      (let bs (memGetWordVec tc 26))
+      (let bs (tcFnSufIdxVec tc))
       {
         (let v (vecGetVec bs (% (fnIdxHash name) (vecLen bs))))
         (if (== (as v Int) 0)
@@ -5837,8 +6454,8 @@
     {
       (let e (vecGet fns i))
       (if (&& (== (nameMatches (memGetWordStr e 0) name) 1)
-            (&& (== (fnEntOutOfModuleScope tc (memGetWord tc 16) (memGetWordStr e 0) e) 0)
-              (== (privBlocks (memGetWordVec tc 27) (memGetWordStr e 0) (memGetWordStr tc 16)) 0)))
+            (&& (== (fnEntOutOfModuleScope tc (tcCurModule tc) (memGetWordStr e 0) e) 0)
+              (== (privBlocks (tcPrivIdx tc) (memGetWordStr e 0) (tcCurModuleName tc)) 0)))
         e
         (fnEntModuleSuffixIn tc fns name (+ i 1)))
     }))
@@ -6016,9 +6633,9 @@
 ; when it exists rather than relying on an ordering.
 (pub :: fnEntExact (-> Int String Int))
 (pub fn (fnEntExact tc name)
-  (if (== (memGetWord tc 20) 0)
+  (if (== (tcFnIdx tc) 0)
     (findFnEntExact (tcFnsVec tc) name 0)
-    (fnIdxGet (memGetWordVec tc 20) name)))
+    (fnIdxGet (tcFnIdxVec tc) name)))
 
 ; The same question with the visibility filter on it.
 ;
@@ -6042,9 +6659,9 @@
 ; The suffix pass is deliberately left alone; see the index's note.
 (pub :: fnEntVisibleExact (-> Int StringRows String String Int))
 (pub fn (fnEntVisibleExact tc privs name curMod)
-  (if (== (memGetWord tc 20) 0)
+  (if (== (tcFnIdx tc) 0)
     (findFnEntVisibleExact privs (tcFnsVec tc) name curMod)
-    (fnIdxGetVisible (memGetWordVec tc 20) privs name curMod)))
+    (fnIdxGetVisible (tcFnIdxVec tc) privs name curMod)))
 
 (pub :: fnIdxGetVisible (-> Ints StringRows String String Int))
 (pub fn (fnIdxGetVisible bs privs name curMod)
@@ -6083,9 +6700,9 @@
 ; ------------------------------------------------------------------
 (pub :: fnEntQual (-> Int String String Int))
 (pub fn (fnEntQual tc m name)
-  (if (== (memGetWord tc 20) 0)
+  (if (== (tcFnIdx tc) 0)
     (findFnEntExact (tcFnsVec tc) (concat (concat m "$") name) 0)
-    (fnIdxGetQual (memGetWordVec tc 20) m name)))
+    (fnIdxGetQual (tcFnIdxVec tc) m name)))
 
 ; `fnIdxHash` of `m` ++ "$" ++ `name`, computed over the pieces. 36 is
 ; `$`. The fold is `fnIdxHashFrom`'s, unchanged, resumed three times.
@@ -6129,11 +6746,11 @@
 (pub :: fnIdxNote (-> Int Int Int))
 (pub fn (fnIdxNote tc ent)
   {
-    (if (! (== (memGetWord tc 20) 0))
-      (fnIdxAdd (memGetWordVec tc 20) ent))
-    (if (== (memGetWord tc 26) 0)
+    (if (! (== (tcFnIdx tc) 0))
+      (fnIdxAdd (tcFnIdxVec tc) ent))
+    (if (== (tcFnSufIdx tc) 0)
       0
-      (fnSufIdxAdd (memGetWordVec tc 26) ent))
+      (fnSufIdxAdd (tcFnSufIdxVec tc) ent))
   })
 
 ; ------------------------------------------------------------------
@@ -6293,15 +6910,15 @@
 ; answers, which is the same answer the slow way.
 (pub :: fnEntSuffix (-> Int String Int))
 (pub fn (fnEntSuffix tc name)
-  (if (== (memGetWord tc 26) 0)
+  (if (== (tcFnSufIdx tc) 0)
     (findFnEntSuffix (tcFnsVec tc) name 0)
-    (fnSufIdxGet (memGetWordVec tc 26) name)))
+    (fnSufIdxGet (tcFnSufIdxVec tc) name)))
 
 (pub :: fnEntVisibleSuffix (-> Int StringRows String String Int))
 (pub fn (fnEntVisibleSuffix tc privs name curMod)
-  (if (== (memGetWord tc 26) 0)
+  (if (== (tcFnSufIdx tc) 0)
     (findFnEntVisibleSuffix privs (tcFnsVec tc) name curMod)
-    (fnSufIdxGetVisible (memGetWordVec tc 26) privs name curMod)))
+    (fnSufIdxGetVisible (tcFnSufIdxVec tc) privs name curMod)))
 
 ; ------------------------------------------------------------------
 ; THE TYPE NAMESPACE, AND ITS INDEX.
@@ -6406,7 +7023,7 @@
         (let last (tyFindAnyVisFromSyntax tc TY_DECL name 1))
         (if (|| (! (nodeSame first last)) (nodeSame first nilNode))
           nilNode
-          (if (&& (!= (memGetWord tc 16) 0) (== (nodeModule first) 0))
+          (if (&& (!= (tcCurModule tc) 0) (== (nodeModule first) 0))
             nilNode
             first))
       })
@@ -6459,7 +7076,7 @@
 (pub fn (tyIdxPut tc name kind m ent owner)
   {
     (__retainref ent)
-    (let bs (memGetWordVec tc 30))
+    (let bs (tcTyIdx tc))
     (if (== (as bs Int) 0)
       0
       {
@@ -6514,7 +7131,7 @@
 ;@axiom:effect(unsafe)
 (pub fn (tyIdxBucket tc name)
   {
-    (let bs (memGetWordVec tc 30))
+    (let bs (tcTyIdx tc))
     (if (== (as bs Int) 0)
       (as 0 (Vec Int))
       (vecGetVec bs (% (fnIdxHash (bareOf name)) (vecLen bs))))
@@ -6636,8 +7253,8 @@
     (if (== (as v Int) 0)
       0
       {
-        (let privs (memGetWordVec tc 27))
-        (let curMod (memGetWord tc 16))
+        (let privs (tcPrivIdx tc))
+        (let curMod (tcCurModule tc))
         {
           (let te
             (if (!= (modOf name) 0)
@@ -6693,7 +7310,7 @@
     (let v (tyIdxBucket tc name))
     (if (== (as v Int) 0)
       0
-      (if (>= (tyMatchCount v kind name (memGetWordVec tc 27) (memGetWord tc 16) 0 0) 2)
+      (if (>= (tyMatchCount v kind name (tcPrivIdx tc) (tcCurModule tc) 0 0) 2)
         1
         0))
   })
@@ -6724,8 +7341,8 @@
       (if (!= (modOf name) 0)
         vecNew
         {
-          (let privs (memGetWordVec tc 27))
-          (let curMod (memGetWord tc 16))
+          (let privs (tcPrivIdx tc))
+          (let curMod (tcCurModule tc))
           (if (!= (tyScanFwd v kind name privs curMod 1 0) 0)
             vecNew
             (if (!= (tyScanFwd v kind name privs curMod 2 0) 0)
@@ -6846,11 +7463,11 @@
       ; caret against the wrong source. Restored to 0, which is what
       ; the rest of the pass expects to find there.
       {
-        (let _u (memSetWord tc 14 (unitIndexFor (memGetWordVec tc 13) (nodeModule d))))
+        (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
         {
           (let r (checkAmbiguousType tc TY_ANY (as bad String) (nodeSpan d)))
           {
-            (memSetWord tc 14 0)
+            (tcSetCurUnit tc 0)
             r
           }
         }
@@ -6947,7 +7564,7 @@
       0
       {
         (let none (as 0 (Vec (Vec String))))
-        (let curMod (memGetWord tc 16))
+        (let curMod (tcCurModule tc))
         {
           (let te
             (if (!= (modOf name) 0)
@@ -6983,7 +7600,7 @@
 ; declares none (word 43).
 (pub :: tcWordEnt (-> Int String Int))
 (pub fn (tcWordEnt tc n)
-  (if (== (memGetWord tc 43) 0)
+  (if (== (tcWordStructs tc) 0)
     0
     {
       (let ent (findStructAnyVis tc n))
@@ -7067,7 +7684,7 @@
     true
     (== (& (memGetWord ent 4) 5) 0))
     0
-    (if (== (tcSameModule (memGetWord ent 2) (memGetWord tc 16)) 1)
+    (if (== (tcSameModule (memGetWord ent 2) (tcCurModule tc)) 1)
       0
       1)))
 
@@ -7305,7 +7922,7 @@
 (pub :: wordLowerRecord (-> Int ASTNode ASTNode Int))
 (pub fn (wordLowerRecord tc site operand)
   {
-    (let v (readAstNodes tc 42))
+    (let v (tcWordLower tc))
     {
       (vecPush v site)
       (vecPush v operand)
@@ -7316,7 +7933,7 @@
 (pub :: wordLowerApply (-> Int Int))
 (pub fn (wordLowerApply tc)
   {
-    (let v (readAstNodes tc 42))
+    (let v (tcWordLower tc))
     (let mut i 0)
     {
       (while (< (+ i 1) (vecLen v))
@@ -7382,7 +7999,7 @@
       (if (|| (nodeSame al nilNode) (!= (modOf name) 0))
         al
         {
-          (let here (memGetWord tc 16))
+          (let here (tcCurModule tc))
           (let owner (nodeModule al))
           (if (== (typeModuleSame here owner) 1)
             al
@@ -7618,15 +8235,15 @@
             (if (|| (== (aliasPathHas seen al 0) 1) (!= (vecLen args) (aliasParamCount al)))
               mkTErr
               {
-                (let saved (memGetWord tc 16))
+                (let saved (tcCurModule tc))
                 (let next (vecAppendFrom seen vecNew 0))
                 {
                   (vecPush next al)
-                  (memSetWord tc 16 (nodeModule al))
+                  (tcSetCurModule tc (nodeModule al))
                   {
                     (let target (tyExpandAliasPath tc (nodeBChild al) next))
                     {
-                      (memSetWord tc 16 saved)
+                      (tcSetCurModule tc saved)
                       (tyEnvSubst target (aliasSubstEnv (nodeCNames al) args vecNew 0))
                     }
                   }
@@ -7780,10 +8397,10 @@
         (let d (vecGet decls i))
         (if (== (nodeTag d) TAG_D_ALIAS)
           {
-            (let saved (memGetWord tc 16))
+            (let saved (tcCurModule tc))
             (let params (nodeCNames d))
             {
-              (memSetWord tc 16 (nodeModule d))
+              (tcSetCurModule tc (nodeModule d))
               {
                 (let badParam (aliasBadParam params 0))
                 (if (>= badParam 0)
@@ -7816,7 +8433,7 @@
                 })
               (if (== (tyCheckAliasArity tc (nodeBChild d) (nodeSpan d)) 0)
                 (writeNodeChild d 2 mkTErr))
-              (memSetWord tc 16 saved)
+              (tcSetCurModule tc saved)
             }
           })
       }
@@ -7939,15 +8556,15 @@
                     (if (== (aliasPathHas seen al 0) 1)
                       al
                       {
-                        (let saved (memGetWord tc 16))
+                        (let saved (tcCurModule tc))
                         (let next (vecAppendFrom seen vecNew 0))
                         {
                           (vecPush next al)
-                          (memSetWord tc 16 (nodeModule al))
+                          (tcSetCurModule tc (nodeModule al))
                           {
                             (let bad (aliasCycle tc (nodeBChild al) next))
                             {
-                              (memSetWord tc 16 saved)
+                              (tcSetCurModule tc saved)
                               bad
                             }
                           }
@@ -7992,10 +8609,10 @@
         (let d (vecGet decls i))
         (if (== (nodeTag d) TAG_D_ALIAS)
           {
-            (let saved (memGetWord tc 16))
+            (let saved (tcCurModule tc))
             (let seen vecNew)
             {
-              (memSetWord tc 16 (nodeModule d))
+              (tcSetCurModule tc (nodeModule d))
               (vecPush seen d)
               (if (! (nodeSame (aliasCycle tc (nodeBChild d) seen) nilNode))
                 (if (!= (nodeSpan d) 0)
@@ -8005,7 +8622,7 @@
                         (concat (bareOf (nodeAName d)) "` expands recursively"))
                       0 0
                       "use a `data` or `struct` declaration for a recursive type; an alias must expand to a finite existing type"))))
-              (memSetWord tc 16 saved)
+              (tcSetCurModule tc saved)
             }
           })
       }
@@ -8182,9 +8799,9 @@
     {
       {
         (let d (vecGet decls i))
-        (let saved (memGetWord tc 16))
+        (let saved (tcCurModule tc))
         {
-          (memSetWord tc 16 (nodeModule d))
+          (tcSetCurModule tc (nodeModule d))
           (if (== (nodeTag d) TAG_D_ALIAS)
             {
               (if (== (checkAmbiguousSigTy tc d (nodeBChild d)) 1)
@@ -8197,7 +8814,7 @@
               (tcCheckDataTypeUses tc (nodeBChildren d) 0)
               (if (== (nodeTag d) TAG_D_STRUCT)
                 (tcCheckStructTypeUses tc (nodeBChildren d) 0))))
-          (memSetWord tc 16 saved)
+          (tcSetCurModule tc saved)
         }
       }
       (tcCheckDeclaredTypeUses tc decls (+ i 1))
@@ -8453,7 +9070,7 @@
       {
         (let d (vecGet decls i))
         {
-          (let _m (memSetWord tc 16 (nodeModule d)))
+          (let _m (tcSetCurModule tc (nodeModule d)))
           {
             (if (== (nodeTag d) TAG_D_SIG)
               ; Ambiguity FIRST, before expansion: expansion RESOLVES
@@ -8489,7 +9106,7 @@
               ; `Outcome` into it.
               (if (== (nodeTag d) TAG_D_EXTERN)
                 (tcCheckExternTypes tc (nodeCChildren d) 0)))
-            (memSetWord tc 16 0)
+            (tcSetCurModule tc 0)
           }
         }
       }
@@ -9125,7 +9742,7 @@
               ; nothing to report.
               (if (! (== diverges 1))
                 {
-                  (memSetWord tc 16 (nodeModule d))
+                  (tcSetCurModule tc (nodeModule d))
                   (emitResultOnlyVar tc d rv)
                 }))
             ; THE DEMANDED ARM YIELDS ONLY WHEN THE ARM ABOVE
@@ -9145,7 +9762,7 @@
               (if (&& (strEq dv rv) (== diverges 0))
                 0
                 {
-                  (memSetWord tc 16 (nodeModule d))
+                  (tcSetCurModule tc (nodeModule d))
                   (emitDemandedVar tc d dv)
                 })
               0)
@@ -9702,7 +10319,10 @@
 (pub :: tcRegionsVec (-> Int (Vec a)))
 ;@axiom:effect(unsafe)
 (pub fn (tcRegionsVec tc)
-  (as (memGetWord tc 35) (Vec a)))
+  {
+    (let t (as tc TC))
+    (as t.regions (Vec a))
+  })
 
 ; The innermost open region's index in the stack, or -1 outside any.
 (pub :: rgInner (-> Int Int))
@@ -9824,7 +10444,7 @@
     ; span is not recorded - it renders nowhere, so nothing printable
     ; can collide with it.
     (if (!= span 0)
-      (vecPush (memGetWordVec tc 41) span))
+      (vecPush (tcRgnRefused tc) span))
     (emitDiag tc
       (diagSetLabel
         (mkDiagNote SEV_ERROR "AX3059" "region-escape" span
@@ -9899,7 +10519,7 @@
     {
       ; S4 slice 2b's trigger bit: a region form has been checked. O(1),
       ; set here because this walk already visits every such form.
-      (memSetWord tc 39 1)
+      (tcSetRgnHasForm tc 1)
       (if (>= (rgFind tc name) 0)
         (emitRegionShadow tc name (nodeC e)))
       (rgPush tc (nodeA e) (vecLen (tcScopeVec tc)) (nodeC e))
@@ -9977,8 +10597,8 @@
       {
         (tyVarsInto want names)
         (tyVarsInto got names)
-        (emitMismatch tc (tyRenderScoped want names (memGetWord tc 16))
-          (tyRenderScoped got names (memGetWord tc 16)) span)
+        (emitMismatch tc (tyRenderScoped want names (tcCurModule tc))
+          (tyRenderScoped got names (tcCurModule tc)) span)
       }
     }))
 
@@ -10059,7 +10679,7 @@
       (if (|| (== (vecLen params) 0) (== (tyIsErr (vecGet params 0)) 0))
         0
         {
-          (let d (readAstNode tc 24))
+          (let d (tcCurDeclNode tc))
           (if (== (nodeSpan d) 0)
             0
             (emitDiag tc
@@ -10432,14 +11052,14 @@
       ; to `Pre$when` - splits: bare part against the macro's name,
       ; module part against the declaration's module. MAC-LANG-12.
       (if (nodeSame
-            (macroQualVisible (tcMacrosVec tc) (bareOf n) (modOfName n) (memGetWord tc 16)
+            (macroQualVisible (tcMacrosVec tc) (bareOf n) (modOfName n) (tcCurModule tc)
               (- (vecLen (tcMacrosVec tc)) 1))
             nilNode)
         0
         1)
       {
         (let m
-          (isMacroVisible (tcMacrosVec tc) n (memGetWord tc 16) (- (vecLen (tcMacrosVec tc)) 1)))
+          (isMacroVisible (tcMacrosVec tc) n (tcCurModule tc) (- (vecLen (tcMacrosVec tc)) 1)))
         (if (nodeSame m nilNode)
           0
           ; The fn-wins veto, mirroring `expFindMacro`: a bare
@@ -10449,8 +11069,7 @@
           ; have to agree or the checker types against one meaning
           ; while expansion produced the other.
           (if (&& (!= (nodeModule m) 0)
-                (&& (== (macroSameMod (nodeModule m) (memGetWord tc 16)) 0)
-                  (!= (fnEntExact tc n) 0)))
+                (&& (== (macroSameMod (nodeModule m) (tcCurModule tc)) 0) (!= (fnEntExact tc n) 0)))
             0
             1))
       })
@@ -10901,13 +11520,21 @@
 ; is dropped as a statement is, so a `Result` there is still AX3046.
 ; ------------------------------------------------------------------
 (pub :: tcDiscard (-> Int Int))
+;@axiom:effect(unsafe)
 (pub fn (tcDiscard tc)
-  (memGetWord (memGetWord tc 44) 12))
+  {
+    (let t (as tc TC))
+    t.unsafe.discard
+  })
 
 ; The unknown callees (`UState` word 13).
 (pub :: tcUnknownCallees (-> Int Ints))
+;@axiom:effect(unsafe)
 (pub fn (tcUnknownCallees tc)
-  (memGetWordVec (memGetWord tc 44) 13))
+  {
+    (let t (as tc TC))
+    t.unsafe.unknownCallees
+  })
 
 (pub :: tcNoteUnknownCallee (-> Int String Int))
 (pub fn (tcNoteUnknownCallee tc name)
@@ -10928,9 +11555,11 @@
   })
 
 (pub :: tcSetDiscard (-> Int Int Int))
+;@axiom:effect(unsafe)
 (pub fn (tcSetDiscard tc v)
   {
-    (memSetWord (memGetWord tc 44) 12 v)
+    (let t (as tc TC))
+    (set t.unsafe.discard v)
     0
   })
 
@@ -11230,14 +11859,14 @@
       ; lifted shape, and a flat multi-parameter spelling would name
       ; the wrong placeholder.
       {
-        (let savedLB (memGetWord tc 22))
+        (let savedLB (tcLamBase tc))
         (let lamMark
           (lamVarPush tc
             (if (== (vecLen ptys) 1)
               (as (nodeAName (vecGet ptys 0)) Int)
               (as "" Int))))
         {
-          (memSetWord tc 22 mark)
+          (tcSetLamBase tc mark)
           ; A pending body (a lambda nested in this one) is
           ; inferred NOW, while this lambda's parameters are
           ; still in scope for it to close over: the arrow
@@ -11250,7 +11879,7 @@
                   (groundStandalone tc bodyTy0 (spanOf (nodeBChild e)))
                   bodyTy0))
               {
-                (memSetWord tc 22 savedLB)
+                (tcSetLamBase tc savedLB)
                 (lamVarTrunc tc (- lamMark 1))
                 (scopeTrunc (tcScopeVec tc) mark)
                 (if (== (vecLen ptys) 0)
@@ -11348,14 +11977,14 @@
           ; lambda's application word onto a value this application
           ; does not witness.
           {
-            (let savedLB (memGetWord tc 22))
+            (let savedLB (tcLamBase tc))
             (let lamMark
               (lamVarPush tc
                 (if (== (nodeTag (nodeAChild arrow)) TAG_T_VAR)
                   (as (nodeAName (nodeAChild arrow)) Int)
                   (as "" Int))))
             {
-              (memSetWord tc 22 mark)
+              (tcSetLamBase tc mark)
               ; A pending body THROUGH A WRAPPER (the direct
               ; lambda above already recursed): against an arrow
               ; codomain the declaration still binds it; against
@@ -11374,7 +12003,7 @@
                         (groundStandalone tc bodyTy (spanOf (nodeBChild e))))
                       bodyTy))
                   {
-                    (memSetWord tc 22 savedLB)
+                    (tcSetLamBase tc savedLB)
                     (lamVarTrunc tc (- lamMark 1))
                     (scopeTrunc (tcScopeVec tc) mark)
                     (mkTArr (nodeAChild arrow) bodyTy2)
@@ -11431,7 +12060,7 @@
     (let ctor (findCtor tc name))
     (if (== ctor 0)
       0
-      (if (== (typeModuleSame (modOf (nodeAName (readAstNode ctor 2))) (memGetWord tc 16)) 1)
+      (if (== (typeModuleSame (modOf (nodeAName (readAstNode ctor 2))) (tcCurModule tc)) 1)
         ctor
         0))
   })
@@ -11451,10 +12080,10 @@
     (let mods (definingModules tc (bareOf name)))
     (if (|| (!= (modOf name) 0)
           (|| (! (== (ownCtor tc name) 0))
-            (if (== (memGetWord tc 16) 0)
+            (if (== (tcCurModule tc) 0)
               false
               {
-                (let local (fnEntQual tc (memGetWordStr tc 16) name))
+                (let local (fnEntQual tc (tcCurModuleName tc) name))
                 (&& (!= local 0) (! (signatureEntryOnly local)))
               })))
       0
@@ -11496,13 +12125,13 @@
 
 (pub :: rootNameVisibleHere (-> Int String Bool))
 (pub fn (rootNameVisibleHere tc name)
-  (if (== (memGetWord tc 16) 0)
+  (if (== (tcCurModule tc) 0)
     true
     {
       (let e (fnEntExact tc name))
       (if (== e 0)
         true
-        (== (fnEntOutOfModuleScope tc (memGetWord tc 16) name e) 0))
+        (== (fnEntOutOfModuleScope tc (tcCurModule tc) name e) 0))
     }))
 
 (pub struct AmbEnt
@@ -11534,7 +12163,7 @@
 (pub :: ambFind (-> Int String Int))
 (pub fn (ambFind tc n)
   {
-    (let bs (memGetWordVec tc 21))
+    (let bs (tcAmbIdx tc))
     (if (== (as bs Int) 0)
       0
       {
@@ -11580,8 +12209,8 @@
                     1
                     0)) Int))
         {
-          (vecPush (memGetWordVec tc 15) ent)
-          (ambIdxPut (memGetWordVec tc 21) n ent)
+          (vecPush (tcAmbTbl tc) ent)
+          (ambIdxPut (tcAmbIdx tc) n ent)
           0
         }
       }
@@ -11683,16 +12312,13 @@
       (ambRecordCtors tc ctors (+ i 1) m)
     }))
 
-(pub :: tcAllDecls (-> Int Int))
-(pub fn (tcAllDecls tc)
-  (memGetWord tc 10))
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
 (pub :: tcAllDeclsVec (-> Int Nodes))
 ;@axiom:effect(unsafe)
 (pub fn (tcAllDeclsVec tc)
-  (as (tcAllDecls tc) Nodes))
+  {
+    (let t (as tc TC))
+    t.allDecls
+  })
 
 ; Every diagnostic records which source file its spans index. Stamped
 ; here rather than at the ~30 construction sites, so a new check
@@ -11719,7 +12345,7 @@
 (pub :: emitDiag (-> Int Int Int))
 (pub fn (emitDiag tc d)
   {
-    (diagSetUnit d (memGetWord tc 14))
+    (diagSetUnit d (tcCurUnit tc))
     (vecPush (tcOutVec tc) d)
     0
   })
@@ -11754,7 +12380,7 @@
   ; costs one load.
   {
     (let name (nodeAName e))
-    (if (&& (!= (memGetWord tc 34) 0)
+    (if (&& (!= (tcContractTag tc) 0)
           (&& (strEq name "result") (== (scopeFindFrame tc "result") 0)))
       {
         (emitContractResult tc e)
@@ -12035,7 +12661,7 @@
 (pub :: emitPrivateVar (-> Int String Int String ASTNode))
 (pub fn (emitPrivateVar tc name span declName)
   {
-    (if (&& (!= span 0) (== (privIdxHas (memGetWordVec tc 27) (concat "internal " declName)) 1))
+    (if (&& (!= span 0) (== (privIdxHas (tcPrivIdx tc) (concat "internal " declName)) 1))
       (emitDiag tc
         (diagSetLabel
           (mkDiag SEV_ERROR "AX5002" "internal-module" span
@@ -12068,7 +12694,7 @@
   ; not "undefined" about a name that plainly exists.
   {
     (let hidden
-      (if (== (memGetWord tc 19) 0)
+      (if (== (tcPrivates tc) 0)
         0
         (findFnEntAnywhere tc name)))
     (if (== (wordSealedHere tc (findStructAnyVis tc name)) 1)
@@ -12076,7 +12702,7 @@
         (emitWordSealedBuild tc (findStructAnyVis tc name) span)
         (nodeBuildTErrPlain 0 0 0)
       }
-      (if (&& (!= hidden 0) (== (strInVec (memGetWordVec tc 19) (memGetWordStr hidden 0) 0) 1))
+      (if (&& (!= hidden 0) (== (strInVec (tcPrivatesVec tc) (memGetWordStr hidden 0) 0) 1))
         (emitPrivateVar tc name span (memGetWordStr hidden 0))
         (if (== (isMacroAnywhere tc name) 1)
           (emitPrivateVar tc name span
@@ -12095,9 +12721,9 @@
 ; does not exist when it plainly does.
 (pub :: ctorHiddenModule (-> Int String Int))
 (pub fn (ctorHiddenModule tc name)
-  (if (== (memGetWord tc 19) 0)
+  (if (== (tcPrivates tc) 0)
     0
-    (ctorHiddenIn (tcDatasVec tc) (memGetWordVec tc 27) (memGetWordStr tc 16) name 0)))
+    (ctorHiddenIn (tcDatasVec tc) (tcPrivIdx tc) (tcCurModuleName tc) name 0)))
 
 (pub :: ctorHiddenIn (-> Ints StringRows String String Int Int))
 (pub fn (ctorHiddenIn datas privs curMod name i)
@@ -12696,8 +13322,8 @@
     (let bvar (nodeBChild (nodeAChild e)))
     {
       (checkExprH tc bvar 0)
-      (vecPush (readAstNodes tc 45) bvar)
-      (vecPush (readAstNodes tc 45) (nodeBChild e))
+      (vecPush (tcParLends tc) bvar)
+      (vecPush (tcParLends tc) (nodeBChild e))
       mkIntTy
     }
   })
@@ -12724,7 +13350,7 @@
 (pub :: capBorrowBlock (-> Int String ASTNode))
 (pub fn (capBorrowBlock tc id)
   {
-    (let v (readAstNodes tc 45))
+    (let v (tcParLends tc))
     (let want (concat "parallel$b" id))
     (let mut i (- (vecLen v) 2))
     (let mut found nilNode)
@@ -13440,7 +14066,7 @@
                   0))
               (let _rec
                 (if (&& (== headIsVar 1) (strEq hname "__axiom_recover"))
-                  (memSetWord tc 39 1)
+                  (tcSetRgnHasForm tc 1)
                   0))
               (let _trap
                 (if (&& (== inHead 0) (== headIsVar 1))
@@ -14011,7 +14637,7 @@
             false)
             (nodeBuildTErrPlain 0 0 0)
             {
-              (let cache (readAstNodes (memGetWord tc 46) 0))
+              (let cache (tcFormatChecked tc))
               {
                 ; A String splice copied the argument over `e`.
                 (vecPush cache
@@ -14439,13 +15065,13 @@
     {
       (writeNodeChild sig 6 ty)
       (writeNodeWord sig 5 1)
-      (vecPush (readAstNodes tc 10) sig)
+      (vecPush (tcAllDeclsVec tc) sig)
       (tcCollectSig tc sig)
       {
         (let fnd (nodeBuildDFn nm params nilNode sp))
         {
           (writeNodeWord fnd 5 1)
-          (vecPush (readAstNodes tc 10) fnd)
+          (vecPush (tcAllDeclsVec tc) fnd)
           (tcCollectFn tc fnd)
           fnd
         }
@@ -15373,7 +15999,7 @@
 (pub :: curDeclTrusted (-> Int Int))
 (pub fn (curDeclTrusted tc)
   {
-    (let d (readAstNode tc 24))
+    (let d (tcCurDeclNode tc))
     (if (nodeSame d nilNode)
       0
       {
@@ -15445,10 +16071,10 @@
 (pub :: castNoteForge (-> Int ASTNode ASTNode ASTNode ASTNode Int))
 (pub fn (castNoteForge tc e tgt src val)
   {
-    (let sites (readAstNodes (memGetWord tc 44) 1))
+    (let sites (tcForgeSites tc))
     (if (vecIsNull sites)
       0
-      (if (== (divTailOk (readAstNodes tc 10) val vecNew 0) 1)
+      (if (== (divTailOk (tcAllDeclsVec tc) val vecNew 0) 1)
         0
         (if (== (castMayForge tc tgt src) 1)
           {
@@ -15464,7 +16090,7 @@
           ; judged with the body for the reason above
           ; (`eraseSettle`).
           {
-            (let ev (readAstNodes (memGetWord tc 44) 7))
+            (let ev (tcEraseSites tc))
             (if (|| (vecIsNull ev) (!= (castTyClass tc tgt) 0))
               0
               {
@@ -16237,7 +16863,7 @@
                 })
               {
                 (let stamp
-                  (setNodeTyNames (nodeBuildEvstampCallPlain (readAstNode tc 24) w env) vars))
+                  (setNodeTyNames (nodeBuildEvstampCallPlain (tcCurDeclNode tc) w env) vars))
                 {
                   (setNodeTyChild head stamp)
                   (for i in 0..(vecLen vars)
@@ -16622,7 +17248,7 @@
 (pub fn (tcIsPairEnt tc ent)
   (if (== ent 0)
     0
-    (tcIsPairName (memGetWordVec tc 18) (memGetWordStr ent 0))))
+    (tcIsPairName (tcPairFns tc) (memGetWordStr ent 0))))
 
 ; `pairFwdOK`: a saturated direct call to a pair function whose head
 ; no `let` on the path and no parameter has bound.
@@ -16814,13 +17440,13 @@
                   (if (== (nodeTag d) TAG_D_FN)
                     (if (== (tcIsPairName pn (nodeAName d)) 0)
                       {
-                        (memSetWord tc 16 (nodeModule d))
+                        (tcSetCurModule tc (nodeModule d))
                         (if (== (tcPairFnOK tc d pn vecNew) 1)
                           {
                             (vecPush pn (nodeAName d))
                             (set grew 1)
                           })
-                        (memSetWord tc 16 0)
+                        (tcSetCurModule tc 0)
                       }))
                 }
                 (set m (+ m 1))
@@ -16842,8 +17468,8 @@
   {
     (let sites vecNew)
     {
-      (if (== (tcIsPairName (memGetWordVec tc 18) (nodeAName d)) 1)
-        (tcPairTails tc (nodeCChild d) (tcParamNames d) (memGetWordVec tc 18) sites))
+      (if (== (tcIsPairName (tcPairFns tc) (nodeAName d)) 1)
+        (tcPairTails tc (nodeCChild d) (tcParamNames d) (tcPairFns tc) sites))
       sites
     }
   })
@@ -16866,7 +17492,7 @@
 (pub :: tcSiteIn (-> Int ASTNode Int))
 (pub fn (tcSiteIn tc e)
   {
-    (let rec (readAstNodes tc 36))
+    (let rec (tcPairSites tc))
     (if (vecIsNull rec)
       0
       (tcNodeIn rec e))
@@ -16875,7 +17501,7 @@
 (pub :: tcSiteAdd (-> Int ASTNode Int))
 (pub fn (tcSiteAdd tc e)
   {
-    (let rec (readAstNodes tc 36))
+    (let rec (tcPairSites tc))
     (if (vecIsNull rec)
       0
       {
@@ -16894,13 +17520,13 @@
 (pub :: tcFloatOpAdd (-> Int ASTNode Int))
 (pub fn (tcFloatOpAdd tc h)
   {
-    (vecPush (readAstNodes tc 37) h)
+    (vecPush (tcFloatOps tc) h)
     0
   })
 
 (pub :: tcFloatOpIn (-> Int ASTNode Int))
 (pub fn (tcFloatOpIn tc h)
-  (tcNodeIn (readAstNodes tc 37) h))
+  (tcNodeIn (tcFloatOps tc) h))
 
 ; `pairMatchOK`: the scrutinee is a saturated direct call to a pair
 ; function that no local shadows, and every arm is a shape the
@@ -17062,8 +17688,12 @@
   })
 
 (pub :: walkCtxVec (-> Int (Vec BCtx)))
+;@axiom:effect(unsafe)
 (pub fn (walkCtxVec tc)
-  (memGetWordVec (memGetWord tc 44) 11))
+  {
+    (let t (as tc TC))
+    t.unsafe.walkCtx
+  })
 
 ; ------------------------------------------------------------------
 ; FUNCTION VALUES THE WALK CAN FOLLOW.
@@ -19784,7 +20414,7 @@
 (pub :: tcNoteCall (-> Int String Int))
 (pub fn (tcNoteCall tc name)
   {
-    (let acc (memGetWordVec tc 29))
+    (let acc (tcCurCallsVec tc))
     (if (== (as acc Int) 0)
       0
       (if (== (strInVec acc name 0) 1)
@@ -21261,7 +21891,7 @@
   {
     ; The pair set depends on signatures and syntax only, so it is
     ; complete before any row is, and the walk reads it from round 1.
-    (memSetWord tc 18 (tcPairFnsBuild tc decls))
+    (tcSetPairFns tc (tcPairFnsBuild tc decls))
     ; What every function-typed field can hold depends on syntax alone,
     ; so it too is complete before any row is (`fieldStoresBuild`).
     (collectFnRestrictions tc decls 0)
@@ -21284,9 +21914,9 @@
       {
         (if (== (nodeTag d) TAG_D_FN)
           {
-            (let _m (memSetWord tc 16 (nodeModule d)))
+            (let _m (tcSetCurModule tc (nodeModule d)))
             (let ent (findFnEnt tc (nodeAName d)))
-            (let _m0 (memSetWord tc 16 0))
+            (let _m0 (tcSetCurModule tc 0))
             (if (! (== ent 0))
               (memSetWord ent 12 1))
           })
@@ -22083,7 +22713,7 @@
 (pub :: handleScopeOf (-> Int Int))
 (pub fn (handleScopeOf tc)
   {
-    (let base (bsNew (memGetWordVec tc 11) (memGetWordVec tc 12) vecNew (curFnSigTy tc)))
+    (let base (bsNew (tcCurParams tc) (tcCurCallable tc) vecNew (curFnSigTy tc)))
     (seedFrameBinders base (tcScopeVec tc) (tcFrameBase tc))
   })
 
@@ -22098,7 +22728,7 @@
 (pub :: curFnSigTy (-> Int ASTNode))
 (pub fn (curFnSigTy tc)
   {
-    (let d (readAstNode tc 24))
+    (let d (tcCurDeclNode tc))
     (if (nodeSame d nilNode)
       nilNode
       {
@@ -22887,7 +23517,7 @@
             {
               (let suppressed
                 (if (== (memGetWord ent 1) 1)
-                  (if (&& (!= (memGetWord tc 22) 0) (< idx (memGetWord tc 22)))
+                  (if (&& (!= (tcLamBase tc) 0) (< idx (tcLamBase tc)))
                     {
                       (emitSetCaptured name (nodeSpan e) (memGetWord ent 2) (tcOutVec tc))
                       1
@@ -23021,7 +23651,7 @@
 ; parks a scope entry in stage0 either.
 (pub :: setTargetCovered (-> Int String Int))
 (pub fn (setTargetCovered tc name)
-  (setTargetCoveredFrom (readAstNodes tc 10) name 0))
+  (setTargetCoveredFrom (tcAllDeclsVec tc) name 0))
 
 (pub :: setTargetCoveredFrom (-> (Vec ASTNode) String Int Int))
 (pub fn (setTargetCoveredFrom decls name i)
@@ -23234,7 +23864,7 @@
 (pub :: checkRecursionInScrutinee (-> Int ASTNode ASTNode Int Int))
 (pub fn (checkRecursionInScrutinee tc e scrutTy errsBefore)
   {
-    (let d (readAstNode tc 24))
+    (let d (tcCurDeclNode tc))
     (if (|| (nodeSame d nilNode) (!= (nodeTag d) TAG_D_FN))
       0
       {
@@ -24241,10 +24871,10 @@
 ; ------------------------------------------------------------------
 (pub :: tcEntrySrc (-> Int String))
 (pub fn (tcEntrySrc tc)
-  (if (!= (memGetWord tc 14) 0)
+  (if (!= (tcCurUnit tc) 0)
     ""
     {
-      (let units (memGetWordVec tc 13))
+      (let units (tcUnits tc))
       (if (== (as units Int) 0)
         ""
         (if (== (vecLen units) 0)
@@ -24640,7 +25270,7 @@
 (pub :: importTodoHelp (-> Int Int String Int))
 (pub fn (importTodoHelp tc d src)
   {
-    (let imp (lastImportOf (readAstNodes tc 9) "IO" 0 nilNode))
+    (let imp (lastImportOf (tcEntryDecls tc) "IO" 0 nilNode))
     (if (! (nodeSame imp nilNode))
       {
         (let lo (importListOpen src imp))
@@ -24655,7 +25285,7 @@
           })
       }
       {
-        (let last (lastImportOf (readAstNodes tc 9) "" 0 nilNode))
+        (let last (lastImportOf (tcEntryDecls tc) "" 0 nilNode))
         (if (nodeSame last nilNode)
           (diagAddFixHelp d "import `todo` from IO" (mkSpan 0 0) "(import IO (todo))\n")
           {
@@ -25598,13 +26228,13 @@
 ; index.
 (pub fn (tcWalkDecls tc i)
   {
-    (let decls (readAstNodes tc 10))
+    (let decls (tcAllDeclsVec tc))
     (if (>= i (vecLen decls))
       0
       {
         (let d (vecGet decls i))
         {
-          (memSetWord tc 14 (unitIndexFor (memGetWordVec tc 13) (nodeModule d)))
+          (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d)))
           (checkBuiltinTypeDefinition tc d)
           {
             (let tag (nodeTag d))
@@ -25629,15 +26259,15 @@
                   ; that do once it is typed (`unsafeSettleForges`), for
                   ; `checkAxtags` to answer and `unsafeLatePass` to
                   ; follow.
-                  (memSetWord (memGetWord tc 44) 1 nodesNew)
-                  (memSetWord (memGetWord tc 44) 7 nodesNew)
+                  (tcSetForgeSites tc nodesNew)
+                  (tcSetEraseSites tc nodesNew)
                   (tcCheckFn tc d)
                   (unsafeSettleForges tc)
                   (eraseSettle tc d)
                   (checkAxtags tc d)
                   (unsafeNoteForgeDecl tc d)
-                  (memSetWord (memGetWord tc 44) 1 0)
-                  (memSetWord (memGetWord tc 44) 7 0)
+                  (tcClearForgeSites tc)
+                  (tcClearEraseSites tc)
                 }
                 ; A subtype declaration carries no body: validate the
                 ; base names a known type (v1: exactly `Int`) and the
@@ -25695,8 +26325,8 @@
     (let declared (fnEntExact tc (nodeAName d)))
     (if (signatureEntryOnly declared)
       {
-        (let saved (memGetWord tc 16))
-        (memSetWord tc 16 (nodeModule d))
+        (let saved (tcCurModule tc))
+        (tcSetCurModule tc (nodeModule d))
         (let definition (resolveSignatureEntry tc declared))
         (if (!= definition declared)
           {
@@ -25712,7 +26342,7 @@
                   (emitMismatchTy tc expected actual (nodeSpan d)))
               })
           })
-        (memSetWord tc 16 saved)
+        (tcSetCurModule tc saved)
       })
     0
   })
@@ -25752,16 +26382,16 @@
     (let own (nodeAxtagsWords d))
     (let sig (sigAxtagsFor tc (nodeAName d)))
     {
-      (let _m (memSetWord tc 16 (nodeModule d)))
+      (let _m (tcSetCurModule tc (nodeModule d)))
       (let sc (bodyScopeOf tc d))
       {
-        (let _s (memSetWord tc 36 (tcPairSitesOf tc d)))
+        (let _s (tcSetPairSites tc (tcPairSitesOf tc d)))
         (let sink nodesNew)
-        (let _k (memSetWord (memGetWord tc 44) 0 sink))
+        (let _k (tcSetUnsafeSink tc sink))
         (let eff (validateEffects tc (nodeCChild d) sc))
-        (let _k0 (memSetWord (memGetWord tc 44) 0 0))
-        (let _s0 (memSetWord tc 36 0))
-        (let _m0 (memSetWord tc 16 0))
+        (let _k0 (tcClearUnsafeSink tc))
+        (let _s0 (tcClearPairSites tc))
+        (let _m0 (tcSetCurModule tc 0))
         (let forges (unsafeForgeSitesOf tc))
         (let _f
           (if (> (vecLen forges) 0)
@@ -28173,11 +28803,11 @@
           (if (&& (strEq (contractKeyOf t) "post") (! (nodeSame resTy nilNode)))
             (pushScope (tcScopeVec tc) "result" 0 (contractSpanOf t) resTy)
             0))
-        (let _i (memSetWord tc 34 t))
+        (let _i (tcSetContractTag tc t))
         {
           (let ty (checkExprH tc p 0))
           {
-            (memSetWord tc 34 0)
+            (tcSetContractTag tc 0)
             (scopeTrunc (tcScopeVec tc) mark)
             (if (== (tyCompat tc mkBoolTy ty) 0)
               (emitContractMalformed tc t (contractSpanOf t)
@@ -28297,7 +28927,7 @@
 (pub :: emitContractResult (-> Int ASTNode Int))
 (pub fn (emitContractResult tc e)
   {
-    (let t (memGetWord tc 34))
+    (let t (tcContractTag tc))
     (if (== (nodeSpan e) 0)
       0
       (emitDiag tc
@@ -28726,9 +29356,9 @@
 ; Vec outside a checked body.
 (pub :: unsafeForgeSitesOf (-> Int (Vec ASTNode)))
 (pub fn (unsafeForgeSitesOf tc)
-  (if (vecIsNull (readAstNodes (memGetWord tc 44) 1))
+  (if (vecIsNull (tcForgeSites tc))
     vecNew
-    (readAstNodes (memGetWord tc 44) 1)))
+    (tcForgeSites tc)))
 
 ; Once a body is typed: of the casts `castNoteForge` recorded, keep the
 ; ones that forge. Every placeholder the body pins is pinned by now, so
@@ -28736,13 +29366,13 @@
 ; why the cast itself cannot ask).
 (pub :: unsafeSettleForges (-> Int Int))
 (pub fn (unsafeSettleForges tc)
-  (if (vecIsNull (readAstNodes (memGetWord tc 44) 1))
+  (if (vecIsNull (tcForgeSites tc))
     0
     {
       (let kept vecNew)
       {
-        (unsafeSettleFrom tc (readAstNodes (memGetWord tc 44) 1) kept 0)
-        (memSetWord (memGetWord tc 44) 1 kept)
+        (unsafeSettleFrom tc (tcForgeSites tc) kept 0)
+        (tcSetForgeSites tc kept)
         0
       }
     }))
@@ -28790,7 +29420,7 @@
 (pub :: eraseSettle (-> Int ASTNode Int))
 (pub fn (eraseSettle tc d)
   {
-    (let ev (readAstNodes (memGetWord tc 44) 7))
+    (let ev (tcEraseSites tc))
     (if (vecIsNull ev)
       0
       {
@@ -28802,8 +29432,8 @@
             (if (== ent 0)
               0
               {
-                (vecPush (memGetWordVec (memGetWord tc 44) 8) ent)
-                (vecPush (memGetWordVec (memGetWord tc 44) 8) n)
+                (vecPush (tcEraseCounts tc) ent)
+                (vecPush (tcEraseCounts tc) n)
                 0
               })
           })
@@ -28821,7 +29451,7 @@
 ; that erases none or was never checked.
 (pub :: tcErasuresOf (-> Int Int Int))
 (pub fn (tcErasuresOf tc ent)
-  (eraseLookup (memGetWordVec (memGetWord tc 44) 8) ent 0))
+  (eraseLookup (tcEraseCounts tc) ent 0))
 
 (pub :: eraseLookup (-> Ints Int Int Int))
 (pub fn (eraseLookup pairs ent i)
@@ -28842,7 +29472,7 @@
       (if (== ent 0)
         0
         {
-          (vecPush (memGetWordVec (memGetWord tc 44) 2) ent)
+          (vecPush (tcForgeDecls tc) ent)
           0
         })
     }))
@@ -28862,7 +29492,7 @@
         (restrictCollect own rs 0)
         (if (== (strInVec rs "no-unsafe" 0) 1)
           {
-            (vecPush (readAstNodes (memGetWord tc 44) 3) d)
+            (vecPush (tcUnsafePending tc) d)
             0
           }
           0)
@@ -28894,13 +29524,13 @@
     ; Each refusal is reported in its own declaration's unit; put the
     ; unit back afterwards so the passes that follow report in theirs.
     {
-      (let unit (memGetWord tc 14))
+      (let unit (tcCurUnit tc))
       {
-        (unsafeLateRestricts tc (readAstNodes (memGetWord tc 44) 3) 0)
-        (memSetWord tc 14 unit)
+        (unsafeLateRestricts tc (tcUnsafePending tc) 0)
+        (tcSetCurUnit tc unit)
       }
     }
-    (unsafeLateRows (memGetWordVec (memGetWord tc 44) 2) 0)
+    (unsafeLateRows (tcForgeDecls tc) 0)
   })
 
 (pub :: unsafeLateRestricts (-> Int (Vec ASTNode) Int Int))
@@ -28942,7 +29572,7 @@
 (pub :: unsafeSinkNote (-> Int ASTNode Int Int))
 (pub fn (unsafeSinkNote tc node bound)
   {
-    (let sink (readAstNodes (memGetWord tc 44) 0))
+    (let sink (tcUnsafeSink tc))
     (if (vecIsNull sink)
       0
       (if (== (bsIsLocal bound (nodeAName node)) 1)
@@ -28982,9 +29612,9 @@
   ; and walking it as a Vec walks `tc` - a segfault that printed OK
   ; on small files and died at 139 emitting the compiler.
   {
-    (if (vecIsNull (readAstNodes tc 25))
-      (memSetWord tc 25 (sigTagsBuild (readAstNodes tc 10) vecNew 0)))
-    (as (sigAxtagsFrom (readAstNodes tc 25) name 0) (Vec Int))
+    (if (vecIsNull (tcSigTags tc))
+      (tcSetSigTags tc (sigTagsBuild (tcAllDeclsVec tc) vecNew 0)))
+    (as (sigAxtagsFrom (tcSigTags tc) name 0) (Vec Int))
   })
 
 ; One pass over the declaration list, keeping only the signatures that
@@ -29028,9 +29658,9 @@
 (pub :: deprecatedFor (-> Int String String))
 (pub fn (deprecatedFor tc name)
   {
-    (if (vecIsNull (readAstNodes tc 31))
-      (memSetWord tc 31 (deprecatedBuild (readAstNodes tc 10) vecNew 0)))
-    (deprecatedFrom (readAstNodes tc 31) name 0)
+    (if (vecIsNull (tcDeprecated tc))
+      (tcSetDeprecated tc (deprecatedBuild (tcAllDeclsVec tc) vecNew 0)))
+    (deprecatedFrom (tcDeprecated tc) name 0)
   })
 
 ; One pass over the declaration list, keeping the declarations that
@@ -29685,7 +30315,7 @@
       0
       {
         (let dd
-          (declByName (readAstNodes tc 10) (memGetWordStr (vecGet path (- (vecLen path) 1)) 0) 0))
+          (declByName (tcAllDeclsVec tc) (memGetWordStr (vecGet path (- (vecLen path) 1)) 0) 0))
         (if (nodeSame dd nilNode)
           0
           (if (== (nodeModule dd) (nodeModule d))
@@ -29776,10 +30406,10 @@
 (pub :: strayAxtagsInUnit (-> Int ASTNode Int))
 (pub fn (strayAxtagsInUnit tc d)
   {
-    (let was (memGetWord tc 14))
-    (let _u (memSetWord tc 14 (unitIndexFor (memGetWordVec tc 13) (nodeModule d))))
+    (let was (tcCurUnit tc))
+    (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
     (let _r (strayAxtagsOf tc d (nodeAxtagsWords d) 0))
-    (memSetWord tc 14 was)
+    (tcSetCurUnit tc was)
   })
 
 (pub :: strayAxtagsOf (-> Int ASTNode Ints Int Int))
@@ -30551,18 +31181,18 @@
   ; mangled name, so the lookup is unaffected, but every reference the
   ; body makes below resolves module-locally.
   {
-    (let _m (memSetWord tc 16 (nodeModule d)))
+    (let _m (tcSetCurModule tc (nodeModule d)))
     (let ent (findFnEnt tc (nodeAName d)))
     (let params (nodeBNames d))
     (let base (vecLen (tcScopeVec tc)))
     {
-      (memSetWord tc 6 base)
+      (tcSetFrameBase tc base)
       ; The current function's parameters and their callability, for
       ; any handle site inside the body to seed its collector scope
       ; with. Without them a call through a parameter inside a handle
       ; would look like a call to an unknown global.
-      (memSetWord tc 11 params)
-      (memSetWord tc 12
+      (tcSetCurParams tc params)
+      (tcSetCurCallable tc
         (paramCallablesOf
           (if (== ent 0)
             nilNode
@@ -30578,19 +31208,19 @@
             (readAstNode ent 1)))
         (let ptys vecNew)
         {
-          (memSetWord tc 24 d)
+          (tcSetCurDeclNode tc d)
           (if (== (tyHasSrcVar sigTy) 1)
             {
               (let sv vecNew)
               {
                 (sigTyVarsInto sigTy sv)
-                (memSetWord tc 23
+                (tcSetCurSigVars tc
                   (if (== (tyHasPoison sigTy) 1)
                     0
                     (as sv Int)))
               }
             }
-            (memSetWord tc 23 0))
+            (tcSetCurSigVars tc 0))
           (refuseReservedParams tc params (nodeSpan d) 0)
           (checkDupParams tc d params 1)
           (bindFnParams tc params ptys sigTy 0)
@@ -30690,9 +31320,9 @@
                 (set state.unsignedParams nilNodes)
                 ; Every pin this body makes has been made.
                 (evSettle tc)
-                (memSetWord tc 16 0)
-                (memSetWord tc 23 0)
-                (memSetWord tc 24 nilNode)
+                (tcSetCurModule tc 0)
+                (tcSetCurSigVars tc 0)
+                (tcSetCurDeclNode tc nilNode)
               }
             }
           }
@@ -31046,8 +31676,8 @@
                     (vecPush (memGetWordVec ent field) pos))
                 }
                 (if (strEq (axtagKeyOf tag) "scoped")
-                  (memSetWord tc 39 1)
-                  (memSetWord (memGetWord tc 46) 2 1))
+                  (tcSetRgnHasForm tc 1)
+                  (tcSetComputeEnabled tc 1))
               })
           })
       }
@@ -31199,12 +31829,11 @@
 ;@axiom:effect(unsafe)
 (pub fn (rgnCtxNew tc d ent report)
   {
-    (let state (memGetWord tc 44))
-    (let mut rc (memGetWord state 14))
+    (let mut rc (tcRegionWalkCtx tc))
     (if (== rc 0)
       {
         (set rc (memAlloc 168))
-        (memSetWord state 14 rc)
+        (tcSetRegionWalkCtx tc rc)
         (memSetWord rc 4 (as (rgnStrVec) Int))
         (memSetWord rc 5 (as (rgnIntVec) Int))
         (memSetWord rc 6 (as (rgnIntVec) Int))
@@ -32544,8 +33173,8 @@
             ; No signature, no stamp: without declared parameter
             ; types there is nothing to prove scalar with, so a
             ; signature-less callee abstains rather than guessing.
-            (if (&& (== (memGetWord tc 40) 1)
-                  (&& (== (memGetWord tc 28) 1)
+            (if (&& (== (tcRgnStamping tc) 1)
+                  (&& (== (tcRgnFactsDone tc) 1)
                     (&& (== (nodeResWord e) 0)
                       (&& (!= (memGetWord f 4) 0)
                         (&& (== (memGetWord f 5) 0) (== (vecLen args) (memGetWord f 7)))))))
@@ -32586,7 +33215,7 @@
 
 (pub :: rgnDeclOf (-> Int String ASTNode))
 (pub fn (rgnDeclOf tc name)
-  (rgnDeclOfFrom (readAstNodes tc 10) name 0))
+  (rgnDeclOfFrom (tcAllDeclsVec tc) name 0))
 
 (pub :: rgnDeclOfFrom (-> (Vec ASTNode) String Int ASTNode))
 (pub fn (rgnDeclOfFrom decls name i)
@@ -32603,7 +33232,7 @@
 (pub :: rgnWalkFn (-> Int ASTNode Int Int Int))
 (pub fn (rgnWalkFn tc d ent report)
   {
-    (let _u (memSetWord tc 14 (unitIndexFor (memGetWordVec tc 13) (nodeModule d))))
+    (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModule d))))
     (let rc (rgnCtxNew tc d ent report))
     (let params (nodeBNames d))
     (let mut i 0)
@@ -32643,12 +33272,12 @@
 ; ---- the driver ----
 (pub :: rgnCheckAll (-> Int Int))
 (pub fn (rgnCheckAll tc)
-  (if (== (memGetWord tc 39) 1)
+  (if (== (tcRgnHasForm tc) 1)
     {
       (rgnEnsureFacts tc)
-      (memSetWord tc 40 1)
-      (rgnPass tc (readAstNodes tc 10) 0 1)
-      (memSetWord tc 40 0)
+      (tcSetRgnStamping tc 1)
+      (rgnPass tc (tcAllDeclsVec tc) 0 1)
+      (tcSetRgnStamping tc 0)
       0
     }
     0))
@@ -32659,10 +33288,10 @@
 ; has run.
 (pub :: rgnEnsureFacts (-> Int Int))
 (pub fn (rgnEnsureFacts tc)
-  (if (!= (memGetWord tc 28) 0)
+  (if (!= (tcRgnFactsDone tc) 0)
     0
     {
-      (memSetWord tc 28 1)
+      (tcSetRgnFactsDone tc 1)
       ; Word 33 is the fixpoint's own verdict: 1 when it gave up. Kept
       ; beside word 28 ("has run") because "ran" and "converged" are
       ; different facts and only one of them licenses a silence. The
@@ -32671,8 +33300,8 @@
       ; `len+1` converges every real program and the cap below is the
       ; safety net it always was, not a number any program reaches.
       {
-        (let decls (readAstNodes tc 10))
-        (memSetWord tc 33 (rgnRounds tc decls 0 (+ (vecLen decls) 1)))
+        (let decls (tcAllDeclsVec tc))
+        (tcSetRgnGaveUp tc (rgnRounds tc decls 0 (+ (vecLen decls) 1)))
       }
       0
     }))
@@ -32729,15 +33358,15 @@
   (if (!= (nodeTag d) TAG_D_FN)
     0
     {
-      (let _m (memSetWord tc 16 (nodeModule d)))
+      (let _m (tcSetCurModule tc (nodeModule d)))
       (let ent (findFnEnt tc (nodeAName d)))
-      (let _m0 (memSetWord tc 16 0))
+      (let _m0 (tcSetCurModule tc 0))
       (if (== ent 0)
         0
         {
-          (let _m1 (memSetWord tc 16 (nodeModule d)))
+          (let _m1 (tcSetCurModule tc (nodeModule d)))
           (let changed (rgnWalkFn tc d ent report))
-          (let _m2 (memSetWord tc 16 0))
+          (let _m2 (tcSetCurModule tc 0))
           changed
         })
     }))
@@ -32771,7 +33400,7 @@
 (pub fn (rgnWork tc decls bs work marks round limit)
   (if (>= round limit)
     {
-      (memSetWord tc 28 2)
+      (tcSetRgnFactsDone tc 2)
       1
     }
     {
@@ -32796,7 +33425,7 @@
     ; buying the silence a proven one does. Word 28 == 2 and word 33
     ; == 1 are one fact spelled twice, written at one site.
     {
-      (memSetWord tc 28 2)
+      (tcSetRgnFactsDone tc 2)
       1
     }
     (if (== (rgnPass tc decls 0 0) 0)
@@ -32809,7 +33438,7 @@
 ; publish an under-approximation without saying so.
 (pub :: rgnFactsTruncated (-> Int Int))
 (pub fn (rgnFactsTruncated tc)
-  (if (== (memGetWord tc 28) 2)
+  (if (== (tcRgnFactsDone tc) 2)
     1
     0))
 
@@ -33086,40 +33715,40 @@
 (pub :: ctTable (-> Int (Vec ASTNode)))
 (pub fn (ctTable tc)
   {
-    (let u (memGetWord tc 44))
-    {
-      (if (vecIsNull (readAstNodes u 4))
+    (if (vecIsNull (tcCtClaimed tc))
+      {
+        (let decls (tcAllDeclsVec tc))
+        (let tab vecNew)
+        (let sums vecNew)
+        (let mut i 0)
         {
-          (let decls (readAstNodes tc 10))
-          (let tab vecNew)
-          (let sums vecNew)
-          (let mut i 0)
-          {
-            (while (< i (vecLen decls))
+          (while (< i (vecLen decls))
+            {
               {
-                {
-                  (let dd (vecGet decls i))
-                  (if (== (nodeTag dd) TAG_D_FN)
-                    (if (> (vecLen (ctClaimOf tc dd)) 0)
-                      {
-                        (vecPush tab dd)
-                        (vecPush sums (- 0 1))
-                      }))
-                }
-                (set i (+ i 1))
-              })
-            (memSetWord u 5 (as sums Int))
-            (memSetWord u 4 tab)
-          }
-        })
-      (readAstNodes u 4)
-    }
+                (let dd (vecGet decls i))
+                (if (== (nodeTag dd) TAG_D_FN)
+                  (if (> (vecLen (ctClaimOf tc dd)) 0)
+                    {
+                      (vecPush tab dd)
+                      (vecPush sums (- 0 1))
+                    }))
+              }
+              (set i (+ i 1))
+            })
+          (tcSetCtResults tc (as sums Int))
+          (tcSetCtClaimed tc tab)
+        }
+      })
+    (tcCtClaimed tc)
   })
 
 (pub :: ctSums (-> Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (ctSums tc)
-  (as (memGetWord (memGetWord tc 44) 5) (Vec Int)))
+  {
+    (let t (as tc TC))
+    (as t.unsafe.ctResults (Vec Int))
+  })
 
 ; The declared name a call's head resolves to, the way the checker
 ; resolves it: a call names its callee bare, even across modules.
@@ -33137,13 +33766,13 @@
 (pub :: ctInModule (-> Int ASTNode (-> ASTNode Int) Int))
 (pub fn (ctInModule tc d f)
   {
-    (let saved (memGetWord tc 16))
+    (let saved (tcCurModule tc))
     {
-      (memSetWord tc 16 (nodeModule d))
+      (tcSetCurModule tc (nodeModule d))
       {
         (let r (f d))
         {
-          (memSetWord tc 16 saved)
+          (tcSetCurModule tc saved)
           r
         }
       }
@@ -33803,7 +34432,7 @@
 (pub :: checkExprH (-> Int ASTNode Int ASTNode))
 (pub fn (checkExprH tc e inHead)
   {
-    (let cache (readAstNodes (memGetWord tc 46) 0))
+    (let cache (tcFormatChecked tc))
     {
       (let ty
         (if (if (>= (vecLen cache) 2)
@@ -33818,7 +34447,7 @@
           (setNodeBinderTyChild e
             (if (== (nodeTag e) TAG_E_APP)
               (nodeBuildEvstampResultPlain (tyResolve ty) (evClassOf tc (tyResolve ty))
-                (readAstNode tc 24))
+                (tcCurDeclNode tc))
               (tyResolve ty)))
           e)
         (computePostExpr tc e inHead)
@@ -33926,7 +34555,7 @@
 (:: computeForwarded (-> Int ASTNode Bool))
 (fn (computeForwarded tc e)
   {
-    (let d (readAstNode tc 24))
+    (let d (tcCurDeclNode tc))
     (if (|| (nodeSame d nilNode) (!= (nodeTag e) TAG_E_VAR))
       false
       {
@@ -33974,14 +34603,14 @@
 (:: computeRequest (-> Int ASTNode Names Int Int Int Int))
 (fn (computeRequest tc body bound module unit site)
   {
-    (vecPush (memGetWordVec (memGetWord tc 46) 1)
+    (vecPush (tcComputeRequests tc)
       (as (ComputeRequest
             :body body
             :bound bound
             :module module
             :unit unit
             :site site
-            :siteUnit (memGetWord tc 14)) Int))
+            :siteUnit (tcCurUnit tc)) Int))
     0
   })
 
@@ -34001,8 +34630,7 @@
           (if (computeCaptureNames tc e names)
             {
               (capPushAll (nodeANames e) 0 names)
-              (computeRequest tc (nodeBChild e) names (memGetWord tc 16) (memGetWord tc 14)
-                (nodeSpan e))
+              (computeRequest tc (nodeBChild e) names (tcCurModule tc) (tcCurUnit tc) (nodeSpan e))
             }
             0)
         }
@@ -34018,7 +34646,7 @@
                 (if (nodeSame d nilNode)
                   (emitCompute tc (nodeSpan e) "compute callback has no visible function body")
                   (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModule d)
-                    (unitIndexFor (memGetWordVec tc 13) (nodeModule d)) (nodeSpan e)))
+                    (unitIndexFor (tcUnits tc) (nodeModule d)) (nodeSpan e)))
               }
               (emitCompute tc (nodeSpan e)
                 "compute callback must be a non-nullary numeric function with a visible body"))
@@ -34028,7 +34656,7 @@
 
 (:: computePostExpr (-> Int ASTNode Int Int))
 (fn (computePostExpr tc e inHead)
-  (if (|| (nodeSame e nilNode) (|| (!= inHead 0) (== (memGetWord (memGetWord tc 46) 2) 0)))
+  (if (|| (nodeSame e nilNode) (|| (!= inHead 0) (== (tcComputeEnabled tc) 0)))
     0
     {
       (let head
@@ -34076,9 +34704,9 @@
       (let saved (memGetWord (memGetWord walk 0) 14))
       {
         (memSetWord walk 4 1)
-        (memSetWord tc 14 (memGetWord walk 2))
+        (tcSetCurUnit tc (memGetWord walk 2))
         (emitCompute tc (memGetWord walk 1) message)
-        (memSetWord tc 14 saved)
+        (tcSetCurUnit tc saved)
         0
       }
     }))
@@ -34102,12 +34730,12 @@
           (concat "compute callback reaches an opaque or foreign function `"
             (concat (memGetWordStr ent 0) "`")))
         {
-          (let savedModule (memGetWord tc 16))
+          (let savedModule (tcCurModule tc))
           {
             (vecPush (memGetWordVec walk 3) ent)
-            (memSetWord tc 16 (nodeModule d))
+            (tcSetCurModule tc (nodeModule d))
             (computeWalkExpr walk (nodeCChild d) (capBoundOf (nodeBNames d)) vecNew)
-            (memSetWord tc 16 savedModule)
+            (tcSetCurModule tc savedModule)
             0
           }
         })
@@ -34231,16 +34859,16 @@
 (:: computeCheckRequests (-> Int Int Int))
 (fn (computeCheckRequests tc i)
   {
-    (let requests (memGetWordVec (memGetWord tc 46) 1))
+    (let requests (tcComputeRequests tc))
     (if (>= i (vecLen requests))
       0
       {
         (let request (vecGet requests i))
-        (let savedModule (memGetWord tc 16))
-        (let savedUnit (memGetWord tc 14))
+        (let savedModule (tcCurModule tc))
+        (let savedUnit (tcCurUnit tc))
         {
-          (memSetWord tc 16 (memGetWord request 2))
-          (memSetWord tc 14 (memGetWord request 3))
+          (tcSetCurModule tc (memGetWord request 2))
+          (tcSetCurUnit tc (memGetWord request 3))
           (computeWalkExpr
             (as (ComputeWalk
                   :tc tc
@@ -34249,8 +34877,8 @@
                   :seen vecNew
                   :failed 0) Int)
             (readAstNode request 0) (memGetWordVec request 1) vecNew)
-          (memSetWord tc 16 savedModule)
-          (memSetWord tc 14 savedUnit)
+          (tcSetCurModule tc savedModule)
+          (tcSetCurUnit tc savedUnit)
           (computeCheckRequests tc (+ i 1))
         }
       })

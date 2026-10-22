@@ -312,15 +312,15 @@ s = s[:i] + new + s[k:].lstrip("\n")
 # the walk still runs, still stamps, and diagnoses nothing. Anchored
 # on the tc39 branch. Find offsets after the first splice, and write
 # only after both anchors have matched.
-branch = "(if (== (memGetWord tc 39) 1)"
+branch = "(if (== (tcRgnHasForm tc) 1)"
 b = s.find(branch)
 if s.count(branch) != 1:
     sys.exit("the tc39 branch moved, wanted 1")
-call = "(rgnPass tc (readAstNodes tc 10) 0 1)"
+call = "(rgnPass tc (tcAllDeclsVec tc) 0 1)"
 c = s.find(call, b)
 if c < 0 or s.count(call) != 1:
     sys.exit("the tc39 report-1 walk moved, wanted 1")
-s = s[:c] + "(rgnPass tc (readAstNodes tc 10) 0 0)" + s[c+len(call):]
+s = s[:c] + "(rgnPass tc (tcAllDeclsVec tc) 0 0)" + s[c+len(call):]
 open(p, "w", encoding="utf-8").write(s)
 PY
 then
