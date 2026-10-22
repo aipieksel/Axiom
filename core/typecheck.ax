@@ -70,6 +70,8 @@
 (import Str)
 (import Fmt)
 (import Vec)
+(import Link)
+(import lexer)
 (import parser)
 (import diag)
 (import raw)
@@ -2459,30 +2461,64 @@
 ; index: N=2000 0.04s, 4000 0.19s, 8000 0.78s - ratios 4.00, 4.75,
 ; 4.11 per doubling.
 ;
-; `bs` is `dupIdxBuild`'s buckets. Entries are appended in declaration
-; order, so within a bucket the indices increase, so the FIRST entry
-; that matches is the smallest matching index - which is the "first,
-; not nearest" rule this check has always had, unchanged. The bucket
-; interleaves names that hash together and that does not disturb the
-; order.
-(pub :: firstDefiner (-> Ints Int Int String Int))
-(pub fn (firstDefiner bs i ns name)
+; `dupIdxBuild` keeps one bucket table per namespace. Entries are
+; appended in declaration order, so within a bucket the indices
+; increase, and the FIRST entry that matches is the smallest index.
+; The bucket interleaves names that hash together and that does not
+; disturb the order.
+; One packed word per definition. The name lives in `DupIdx.names` and
+; the word holds a link to it, so the entry takes no share and the
+; vector frees the strings with itself (MM-VAL-10b). `ns` picks which
+; bucket table the word sits in, which is what keeps both the link and
+; the declaration index at 32 bits: a third field would not fit.
+(struct DupRef word
+  (name : (Link String UInt32))
+  (idx : UInt32))
+
+(struct DupIdx
+  (names : (Vec String))
+  (value : (Vec (Vec DupRef)))
+  (types : (Vec (Vec DupRef)))
+  (sigs : (Vec (Vec DupRef))))
+
+(:: dupBucketVec (-> Int (Vec (Vec DupRef))))
+(fn (dupBucketVec n)
   {
-    (let v (vecGetVec bs (% (fnIdxHash name) (vecLen bs))))
-    (if (== (as v Int) 0)
-      (- 0 1)
-      (firstDefinerScan v i ns name 0))
+    (let bs vecNew)
+    (let mut i 0)
+    {
+      (while (< i n)
+        {
+          (vecPush bs (:: vecNew (Vec DupRef)))
+          (set i (+ i 1))
+        })
+      bs
+    }
   })
 
-(pub :: firstDefinerScan (-> Ints Int Int String Int Int))
-(pub fn (firstDefinerScan v i ns name k)
-  (if (>= k (vecLen v))
+(:: dupTable (-> DupIdx Int (Vec (Vec DupRef))))
+(fn (dupTable idx ns)
+  (if (== ns NS_VALUE)
+    idx.value
+    (if (== ns NS_TYPE)
+      idx.types
+      idx.sigs)))
+
+(pub :: firstDefiner (-> DupIdx Int Int String Int))
+(pub fn (firstDefiner idx i ns name)
+  (firstDefinerScan idx (vecGet (dupTable idx ns) (% (fnIdxHash name) (vecLen (dupTable idx ns))))
+    i name 0))
+
+(pub :: firstDefinerScan (-> DupIdx (Vec DupRef) Int String Int Int))
+(pub fn (firstDefinerScan idx bucket i name k)
+  (if (>= k (vecLen bucket))
     (- 0 1)
     {
-      (let e (vecGet v k))
-      (if (&& (< (memGetWord e 2) i) (&& (== (memGetWord e 1) ns) (strEq (memGetWordStr e 0) name)))
-        (memGetWord e 2)
-        (firstDefinerScan v i ns name (+ k 1)))
+      (let e (vecGet bucket k))
+      (let at (as e.idx Int))
+      (if (&& (< at i) (strEq (linkGet idx.names e.name) name))
+        at
+        (firstDefinerScan idx bucket i name (+ k 1)))
     }))
 
 ; One entry per (name, namespace) a declaration defines, carrying the
@@ -2492,69 +2528,53 @@
 ; where the multi-name declarations are named, and this index is the
 ; only thing that asks them. The `declDefinesNS` predicate that used
 ; to be the source of truth was superseded by this index and removed.
-(pub struct DupRef
-  (name : String)
-  (ns : Int)
-  (idx : Int))
-
-(pub :: dupIdxBuild (-> (Vec ASTNode) Ints))
+(pub :: dupIdxBuild (-> (Vec ASTNode) DupIdx))
 (pub fn (dupIdxBuild decls)
   {
-    (let nb (fnIdxBuckets (vecLen decls)))
-    (let bs vecNew)
-    (let mut i 0)
+    (let n (fnIdxBuckets (vecLen decls)))
+    (let idx
+      (DupIdx :names vecNew :value (dupBucketVec n) :types (dupBucketVec n) :sigs (dupBucketVec n)))
     {
-      (while (< i nb)
-        {
-          (vecPush bs 0)
-          (set i (+ i 1))
-        })
       (for i in 0..(vecLen decls)
-        (dupIdxAddDecl bs (vecGet decls i) i))
-      bs
+        (dupIdxAddDecl idx (vecGet decls i) i))
+      idx
     }
   })
 
-(pub :: dupIdxAddDecl (-> Ints ASTNode Int Int))
-(pub fn (dupIdxAddDecl bs d i)
+(pub :: dupIdxAddDecl (-> DupIdx ASTNode Int Int))
+(pub fn (dupIdxAddDecl idx d i)
   {
     (let fs (declFields d))
     (if (!= (as fs Int) 0)
-      (dupIdxAddFields bs fs i 0)
+      (dupIdxAddFields idx fs i 0)
       {
         (let ns (dupNamespace (nodeTag d)))
         (if (== ns NS_NONE)
           0
-          (dupIdxPut bs (nodeAName d) ns i))
+          (dupIdxPut idx (nodeAName d) ns i))
       })
   })
 
-(pub :: dupIdxAddFields (-> Ints (Vec ASTNode) Int Int Int))
-(pub fn (dupIdxAddFields bs fs i k)
+(pub :: dupIdxAddFields (-> DupIdx (Vec ASTNode) Int Int Int))
+(pub fn (dupIdxAddFields idx fs i k)
   (if (>= k (vecLen fs))
     0
     {
-      (dupIdxPut bs (nodeAName (vecGet fs k)) NS_VALUE i)
-      (dupIdxAddFields bs fs i (+ k 1))
+      (dupIdxPut idx (nodeAName (vecGet fs k)) NS_VALUE i)
+      (dupIdxAddFields idx fs i (+ k 1))
     }))
 
-(pub :: dupIdxPut (-> Ints String Int Int Int))
-(pub fn (dupIdxPut bs name ns i)
+(pub :: dupIdxPut (-> DupIdx String Int Int Int))
+(pub fn (dupIdxPut idx name ns i)
   {
+    (let bs (dupTable idx ns))
     (let b (% (fnIdxHash name) (vecLen bs)))
-    (if (== (vecGet bs b) 0)
-      {
-        (let v vecNew)
-        {
-          (vecPush v (as (DupRef :name name :ns ns :idx i) Int))
-          (vecSet bs b (as v Int))
-          0
-        }
-      }
-      {
-        (vecPush (vecGetVec bs b) (as (DupRef :name name :ns ns :idx i) Int))
-        0
-      })
+    (let id (vecLen idx.names))
+    {
+      (vecPush idx.names name)
+      (vecPush (vecGet bs b) (DupRef :name (linkTo idx.names id) :idx (as i UInt32)))
+      0
+    }
   })
 
 ; The TAG_FIELD vector of a declaration that defines MORE THAN ONE
@@ -2610,7 +2630,7 @@
 ; own source is worse than no checker. Duplicates *inside an imported
 ; module* go unreported until declarations carry their origin.
 ; ------------------------------------------------------------------
-(pub :: checkDuplicates (-> Ints (Vec ASTNode) Diags Int Diags))
+(pub :: checkDuplicates (-> DupIdx (Vec ASTNode) Diags Int Diags))
 (pub fn (checkDuplicates bs decls out i)
   (if (>= i (vecLen decls))
     out
@@ -2697,7 +2717,7 @@
       }
     }))
 
-(pub :: checkFieldDupes (-> Ints (Vec ASTNode) (Vec diag::Diag) Int (Vec ASTNode) Int Int))
+(pub :: checkFieldDupes (-> DupIdx (Vec ASTNode) (Vec diag::Diag) Int (Vec ASTNode) Int Int))
 (pub fn (checkFieldDupes bs decls out i fields k)
   (if (>= k (vecLen fields))
     0
@@ -10498,7 +10518,7 @@
     0
     (if (>= i (vecLen tags))
       0
-      (if (strEq (memGetWordStr (vecGet tags i) 1) key)
+      (if (strEq (axtagContent (vecGet tags i)) key)
         1
         (declHasAxtagFrom tags key (+ i 1))))))
 
@@ -10514,13 +10534,21 @@
 ; takes no value and silently answers 0 for any key that does.
 ; Measured the hard way: the tag reached AXSYM as
 ; `#deprecated=use%20vecLen` while the lookup here saw nothing.
+(:: axtagContent (-> Int String))
+;@axiom:effect(unsafe)
+(fn (axtagContent t)
+  {
+    (let tag (as t AxtagEnt))
+    tag.content
+  })
+
 (pub :: axtagKeyOf (-> Int String))
 (pub fn (axtagKeyOf t)
   {
-    (let txt (memGetWordStr t 1))
-    (match (strFindByte txt 40 0)
-      ((None) txt)
-      ((Some op) (strSlice txt 0 op)))
+    (let txt (axtagContent t))
+    (if (let (Some op) (strFindByte txt 40 0))
+      (strSlice txt 0 op)
+      txt)
   })
 
 ; The value runs from the first `(` to the LAST `)` - `axtagCloseAt`,
@@ -10534,17 +10562,15 @@
 (pub :: axtagTextValue (-> Int String))
 (pub fn (axtagTextValue t)
   {
-    (let txt (memGetWordStr t 1))
-    (match (strFindByte txt 40 0)
-      ((None) "")
-      ((Some op)
-        {
-          (let cl (axtagCloseAt txt))
-          (if (|| (>= cl (strLen txt)) (<= cl op))
-            ""
-            (strSlice txt (+ op 1) (- cl (+ op 1))))
-        }
-      ))
+    (let txt (axtagContent t))
+    (if (let (Some op) (strFindByte txt 40 0))
+      {
+        (let cl (axtagCloseAt txt))
+        (if (|| (>= cl (strLen txt)) (<= cl op))
+          ""
+          (strSlice txt (+ op 1) (- cl (+ op 1))))
+      }
+      "")
   })
 
 (pub :: axtagValueFrom (-> Ints String Int String))
