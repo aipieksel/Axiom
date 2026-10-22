@@ -16640,7 +16640,7 @@
       (collectFnRestrictions tc decls (+ i 1))
     }))
 
-(pub :: validateEffects (-> TC ASTNode Int Strings))
+(pub :: validateEffects (-> TC ASTNode BScope Strings))
 (pub fn (validateEffects tc expression scope)
   {
     (let state (tcCheckState tc))
@@ -16652,7 +16652,7 @@
 
 ; Restriction contracts follow callable parameters to their arguments.
 ; This runs during validation, after the inference fixpoint has settled.
-(pub :: checkRestrictedArgument (-> TC FnEnt Int ASTNode Int Int))
+(pub :: checkRestrictedArgument (-> TC FnEnt Int ASTNode BScope Int))
 (pub fn (checkRestrictedArgument tc raw index arg bound)
   (if (let (Some use) (epUseFor raw index))
     (if (== use.def 0)
@@ -16669,7 +16669,8 @@
               ((None)
                 {
                   (if (== (nodeTag arg) TAG_E_VAR)
-                    (noteParamRestrictions bound (bsParamAlias bound (nodeAName arg)) required))
+                    (noteParamRestrictions bound
+                      (bsAliasParam (bsParamAlias bound (nodeAName arg))) required))
                   (effAdd row effIncomplete)
                 }
               )
@@ -16687,18 +16688,18 @@
       })
     0))
 
-(pub :: noteParamRestrictions (-> Int Int Strings Int))
-(pub fn (noteParamRestrictions bound index required)
-  (if (< index 0)
-    0
+(pub :: noteParamRestrictions (-> BScope (Option Int) Strings Int))
+(pub fn (noteParamRestrictions bound parameter required)
+  (if (let (Some index) parameter)
     {
       (markEparamUse bound index vecNew 0)
       (if (let (Some use) (epUseFind (bsUsesVec bound) index 0))
         (effUnion use.restrictions required 0)
         0)
-    }))
+    }
+    0))
 
-(pub :: noteValueRestrictions (-> Int (Vec FnVal) Strings Int Int))
+(pub :: noteValueRestrictions (-> BScope (Vec FnVal) Strings Int Int))
 (pub fn (noteValueRestrictions bound members required i)
   (if (>= i (vecLen members))
     0
@@ -16709,14 +16710,14 @@
       (noteValueRestrictions bound members required (+ i 1))
     }))
 
-(pub :: noteLatentRestrictions (-> Int (Vec EpUse) Strings Int Int))
+(pub :: noteLatentRestrictions (-> BScope (Vec EpUse) Strings Int Int))
 (pub fn (noteLatentRestrictions bound uses required i)
   (if (>= i (vecLen uses))
     0
     {
       (let use (vecGet uses i))
       (if (== use.def 1)
-        (noteParamRestrictions bound use.pidx required))
+        (noteParamRestrictions bound (Some use.pidx) required))
       (noteLatentRestrictions bound uses required (+ i 1))
     }))
 
@@ -17047,7 +17048,7 @@
 ; effectful top-level name re-resolves globally and attributes
 ; effects the body cannot perform - the same shadowing bug stage0
 ; records having hit in its own mid-recursion check.
-(pub :: collectEffects (-> TC ASTNode Int Strings))
+(pub :: collectEffects (-> TC ASTNode BScope Strings))
 (pub fn (collectEffects tc e bound)
   {
     (let acc vecNew)
@@ -17590,7 +17591,7 @@
 ; one emitter or the other (`emitMatch`, or `emitMatchTail` with
 ; `pairTailDelegates` routing the case it cannot release to
 ; `emitMatch`), so there is no tail-position case here.
-(pub :: tcPairMatchOK (-> TC ASTNode Int Int))
+(pub :: tcPairMatchOK (-> TC ASTNode BScope Int))
 (pub fn (tcPairMatchOK tc e bound)
   {
     (let s (nodeAChild e))
@@ -17712,7 +17713,7 @@
 ; then asks the same question one level down - "can `p`'s own argument
 ; position `i` hold one" - and only the type node can answer that.
 ; `escapeArgs` is where it is asked.
-(pub :: bodyScopeOf (-> TC ASTNode Int))
+(pub :: bodyScopeOf (-> TC ASTNode BScope))
 (pub fn (bodyScopeOf tc d)
   {
     (let entFound (findFnEnt tc (nodeAName d)))
@@ -17721,8 +17722,8 @@
         (if (let (Some ent) entFound)
           (fnEntTy ent)
           nilNode))
-      (bsMake vecNew (nodeBNames d) (paramCallablesOf sig (vecLen (nodeBNames d))) vecNew sig
-        (bodyCtxReset tc))
+      (bsMake vecNew (nodeBNames d) (paramCallablesOf sig (vecLen (nodeBNames d))) vecNew
+        (bsTypeOpt sig) (bodyCtxReset tc))
     }
   })
 
@@ -17873,7 +17874,7 @@
     0))
 
 ; A lambda written here: its body walked once, for its own row.
-(pub :: walkLambdaLatent (-> TC ASTNode Int LambdaEffects))
+(pub :: walkLambdaLatent (-> TC ASTNode BScope LambdaEffects))
 (pub fn (walkLambdaLatent tc lam bound)
   {
     (let lb (bsLambda bound (nodeANames lam)))
@@ -17913,7 +17914,7 @@
 
 ; The parameter uses a lambda's body made, applied where the lambda
 ; runs: each call inside it gains `mask`, or every one escapes.
-(pub :: latentApply (-> Int (Vec EpUse) Strings Int Int Int))
+(pub :: latentApply (-> BScope (Vec EpUse) Strings Int Int Int))
 (pub fn (latentApply b uses mask esc i)
   (if (>= i (vecLen uses))
     0
@@ -17933,7 +17934,7 @@
     }))
 
 ; ... handed to a callee position whose record is `u`.
-(pub :: latentApplyU (-> Int (Vec EpUse) (Option EpUse) Int))
+(pub :: latentApplyU (-> BScope (Vec EpUse) (Option EpUse) Int))
 (pub fn (latentApplyU b uses o)
   (if (let (Some u) o)
     {
@@ -17998,14 +17999,14 @@
       MaybeLambdaCast
       NoLambdaCast)))
 
-(pub :: bsLambdaCast (-> Int LambdaCast))
+(pub :: bsLambdaCast (-> BScope LambdaCast))
 (pub fn (bsLambdaCast bound)
   {
     (let context (bsCtx bound))
     context.lambdaCast
   })
 
-(pub :: noteLambdaCast (-> Int LambdaCast Bool Int))
+(pub :: noteLambdaCast (-> BScope LambdaCast Bool Int))
 (pub fn (noteLambdaCast bound fact certain)
   {
     (let context (bsCtx bound))
@@ -18037,7 +18038,7 @@
       0)
   })
 
-(pub :: fnValCall (-> TC FnVal Nodes Int Strings Int Bool Int))
+(pub :: fnValCall (-> TC FnVal Nodes BScope Strings Int Bool Int))
 (pub fn (fnValCall tc value args bound acc unboxed certain)
   (match value
     ((NamedFn ent) (walkCallEnt tc ent.name ent args bound acc unboxed certain))
@@ -18057,7 +18058,7 @@
 ; only one, is the plain call. Otherwise each member's row is computed
 ; on its own: an effect every member performs definitely is definite,
 ; any other is possible, and a value the walk lost leaves the hole.
-(pub :: fnValsCall (-> TC FnVals Nodes Int Strings Int Int))
+(pub :: fnValsCall (-> TC FnVals Nodes BScope Strings Int Int))
 (pub fn (fnValsCall tc fv args bound acc unboxed)
   {
     (let ms fv.members)
@@ -18084,7 +18085,7 @@
       })
   })
 
-(pub :: fnValsRowsInto (-> TC (Vec FnVal) Nodes Int StringRows Int Int Int))
+(pub :: fnValsRowsInto (-> TC (Vec FnVal) Nodes BScope StringRows Int Int Int))
 (pub fn (fnValsRowsInto tc ms args bound rows unboxed i)
   (if (>= i (vecLen ms))
     0
@@ -18133,11 +18134,11 @@
 ; The value escaped: nothing here calls it, and something somewhere
 ; may. Each member's row arrives possible; a lambda written here
 ; already counted its built-in effects where it was written.
-(pub :: fnValsEscape (-> TC FnVals Int Strings Int))
+(pub :: fnValsEscape (-> TC FnVals BScope Strings Int))
 (pub fn (fnValsEscape tc fv bound acc)
   (fnValsEscapeFrom tc fv.members bound acc 0))
 
-(pub :: fnValsEscapeFrom (-> TC (Vec FnVal) Int Strings Int Int))
+(pub :: fnValsEscapeFrom (-> TC (Vec FnVal) BScope Strings Int Int))
 (pub fn (fnValsEscapeFrom tc ms bound acc i)
   (if (>= i (vecLen ms))
     0
@@ -18169,7 +18170,7 @@
 ; The value handed to a callee position whose record is `u` (`None`:
 ; one the callee never calls). A single known member is
 ; gated by `u`; anything less certain escapes.
-(pub :: fnValsHanded (-> TC FnVals Int Strings (Option EpUse) Int))
+(pub :: fnValsHanded (-> TC FnVals BScope Strings (Option EpUse) Int))
 (pub fn (fnValsHanded tc fv bound acc u)
   {
     (let ms fv.members)
@@ -18207,7 +18208,7 @@
 ; follow. Walks `e` for its own effects into `acc` exactly as
 ; `walkEffects` does, and answers its `FnVals`, or `None`.
 ; ------------------------------------------------------------------
-(pub :: walkEffectsVal (-> TC ASTNode Int Strings (Option FnVals)))
+(pub :: walkEffectsVal (-> TC ASTNode BScope Strings (Option FnVals)))
 (pub fn (walkEffectsVal tc e bound acc)
   (if (nodeSame e nilNode)
     None
@@ -18260,7 +18261,7 @@
 ; A name: a local known to hold functions, or a top-level function
 ; named as a value. A nullary function is invoked by its name, so its
 ; name is a call and not a value.
-(pub :: walkEffectsValVar (-> TC ASTNode Int Strings (Option FnVals)))
+(pub :: walkEffectsValVar (-> TC ASTNode BScope Strings (Option FnVals)))
 (pub fn (walkEffectsValVar tc e bound acc)
   {
     (let n (nodeAName e))
@@ -18286,7 +18287,7 @@
       })
   })
 
-(pub :: walkEffectsValBegin (-> TC (Vec ASTNode) Int Int Strings (Option FnVals)))
+(pub :: walkEffectsValBegin (-> TC (Vec ASTNode) Int BScope Strings (Option FnVals)))
 (pub fn (walkEffectsValBegin tc v i bound acc)
   (if (>= i (vecLen v))
     None
@@ -18300,7 +18301,7 @@
 ; The arms of a `match`: their values joined. `first` is 1 until one
 ; arm has answered, so a match whose every arm is followed is complete.
 (pub :: walkEffectsValArms
-  (-> TC (Vec ASTNode) Int Int Strings (Option FnVals) Int (Option FnVals)))
+  (-> TC (Vec ASTNode) Int BScope Strings (Option FnVals) Int (Option FnVals)))
 (pub fn (walkEffectsValArms tc arms i bound acc sofar first)
   (if (>= i (vecLen arms))
     sofar
@@ -18318,7 +18319,7 @@
 ; A `let`, in either position. `valMode` 1 answers the body's value.
 ; A name bound to a followed value carries it (`bsWithVals`); a `mut`
 ; one may be reassigned, so its first value escapes where it is bound.
-(pub :: walkEffectsLet (-> TC ASTNode Int Strings Int (Option FnVals)))
+(pub :: walkEffectsLet (-> TC ASTNode BScope Strings Int (Option FnVals)))
 (pub fn (walkEffectsLet tc e bound acc valMode)
   {
     (let fv (walkEffectsVal tc (nodeBChild e) bound acc))
@@ -18336,7 +18337,7 @@
 ; A `let` whose initialiser is a bare reference to a parameter is an
 ; ALIAS of it: calling the local is calling the parameter under another
 ; name, which is stage0's `param_alias_of` through `lookup_shadow`.
-(pub :: letScopeFor (-> TC ASTNode Int Strings (Option FnVals) Int))
+(pub :: letScopeFor (-> TC ASTNode BScope Strings (Option FnVals) BScope))
 (pub fn (letScopeFor tc e bound acc fv)
   (if (let (Some v) fv)
     (if (== (nodeTag e) TAG_E_LET)
@@ -18356,7 +18357,7 @@
 ; which the handle CALLS, outside the discharge. The body's VALUE is the
 ; form's value and passes out undischarged: a closure built in here and
 ; called after the handler pops performs its operations with no handler.
-(pub :: walkEffectsHandleVal (-> TC ASTNode Int Strings (Option FnVals)))
+(pub :: walkEffectsHandleVal (-> TC ASTNode BScope Strings (Option FnVals)))
 (pub fn (walkEffectsHandleVal tc e bound acc)
   {
     (let inner vecNew)
@@ -18378,7 +18379,7 @@
 ; Installing a dynamic handler calls the supplied function whenever its
 ; operation runs. Follow its value as a call, including local aliases and
 ; effect-transparent parameters, in the installation's outer scope.
-(pub :: walkHandler (-> TC ASTNode Int Strings ()))
+(pub :: walkHandler (-> TC ASTNode BScope Strings ()))
 (pub fn (walkHandler tc h bound acc)
   {
     (if (! (nodeSame h nilNode))
@@ -18414,7 +18415,7 @@
 ; A lambda applied where it stands - a call head, or a handler - is
 ; walked in place: its parameters are bound opaque and everything its
 ; body performs is this point's. Anything else is walked as usual.
-(pub :: walkCalledLambda (-> TC ASTNode Int Strings Int))
+(pub :: walkCalledLambda (-> TC ASTNode BScope Strings Int))
 (pub fn (walkCalledLambda tc h bound acc)
   (if (nodeSame h nilNode)
     0
@@ -18440,7 +18441,7 @@
 ; contributes nothing yet. The callee's first walk counts as a change
 ; (`inferEffectsOne`), so this call is walked again once the record
 ; exists, and the answer no longer depends on declaration order.
-(pub :: walkEffectsArgVecAt (-> TC Nodes Int Int Strings FnEnt Int))
+(pub :: walkEffectsArgVecAt (-> TC Nodes Int BScope Strings FnEnt Int))
 (pub fn (walkEffectsArgVecAt tc v i bound acc ent)
   (if (>= i (vecLen v))
     0
@@ -18568,10 +18569,10 @@
     resolved
   })
 
-(pub :: fieldLambdaScope (-> TC (Vec FieldLambdaBinding) Int))
+(pub :: fieldLambdaScope (-> TC (Vec FieldLambdaBinding) BScope))
 (pub fn (fieldLambdaScope tc bindings)
   {
-    (let mut bound (bsMake vecNew vecNew vecNew vecNew nilNode (bsCtxOf vecNew vecNew 0 vecNew)))
+    (let mut bound (bsMake vecNew vecNew vecNew vecNew None (bsCtxOf vecNew vecNew 0 vecNew)))
     (for i in 0..(vecLen bindings)
       {
         (let binding (vecGet bindings i))
@@ -19270,7 +19271,7 @@
 
 ; The declared row a read of the field `e` is charged, or `None` for the
 ; name-based set. See the section header for the two resolutions.
-(pub :: fieldDeclRowAt (-> TC ASTNode Int (Option Strings)))
+(pub :: fieldDeclRowAt (-> TC ASTNode BScope (Option Strings)))
 (pub fn (fieldDeclRowAt tc e bound)
   {
     (let u (tcUState tc))
@@ -19293,24 +19294,21 @@
 
 ; The struct a field read's base names, when the base is a parameter
 ; (or a local aliasing one) whose declared type is that struct.
-(pub :: fieldParamStruct (-> TC ASTNode Int (Option StructEnt)))
+(pub :: fieldParamStruct (-> TC ASTNode BScope (Option StructEnt)))
 (pub fn (fieldParamStruct tc base bound)
   (if (!= (nodeTag base) TAG_E_VAR)
     None
-    {
-      (let ty (bsParamTy bound (bsParamAlias bound (nodeAName base))))
-      (if (nodeSame ty nilNode)
-        None
-        (if (!= (nodeTag ty) TAG_T_CON)
-          None
-          (findStruct tc (nodeAName ty))))
-    }))
+    (if (let (Some ty) (bsParamTy bound (bsParamAlias bound (nodeAName base))))
+      (if (== (nodeTag ty) TAG_T_CON)
+        (findStruct tc (nodeAName ty))
+        None)
+      None)))
 
 ; A call through a declared field: the row, and the stored functions'
 ; edges. The members are called with no arguments - no stored function
 ; calls its own (`fieldStoreVerdict`), so nothing of the caller's is
 ; handed to one - and into a row the call does not keep.
-(pub :: fieldDeclaredCall (-> TC String Strings Int Strings Int ()))
+(pub :: fieldDeclaredCall (-> TC String Strings BScope Strings Int ()))
 (pub fn (fieldDeclaredCall tc fname row bound acc unboxed)
   {
     (let scratch vecNew)
@@ -19366,7 +19364,7 @@
 
 ; `(S a1 .. an)`: argument i enters S's i-th field. Asked in the
 ; validation walk only, when every row is final.
-(pub :: fieldStoreCtorCheck (-> TC String Nodes Int ()))
+(pub :: fieldStoreCtorCheck (-> TC String Nodes BScope ()))
 (pub fn (fieldStoreCtorCheck tc n args bound)
   {
     (let u (tcUState tc))
@@ -19393,7 +19391,7 @@
   })
 
 ; `(set e.f v)`: the struct is the one the checker stamped on the node.
-(pub :: fieldStoreSetCheck (-> TC ASTNode Int ()))
+(pub :: fieldStoreSetCheck (-> TC ASTNode BScope ()))
 (pub fn (fieldStoreSetCheck tc e bound)
   {
     (let u (tcUState tc))
@@ -19411,7 +19409,7 @@
 ; One store, answered once: a value the walk meets twice - a lambda
 ; handed to a restricted callee is walked for the restriction and for
 ; the call - draws one diagnostic.
-(pub :: fieldStoreCheck (-> TC StructEnt FieldDecl ASTNode Int ()))
+(pub :: fieldStoreCheck (-> TC StructEnt FieldDecl ASTNode BScope ()))
 (pub fn (fieldStoreCheck tc sent d v bound)
   {
     (let u (tcUState tc))
@@ -19438,7 +19436,7 @@
 ; with validation off so a store inside a stored lambda is answered
 ; once, where the main walk meets it. A field read whose node the
 ; checker stamped is resolved exactly, through the struct it names.
-(pub :: fieldStoreVerdict (-> TC ASTNode Strings Int FieldStoreVerdict))
+(pub :: fieldStoreVerdict (-> TC ASTNode Strings BScope FieldStoreVerdict))
 (pub fn (fieldStoreVerdict tc v row bound)
   (if (let (Some d) (fieldStoreSourceDecl tc v))
     (fieldRowVerdict d.row row
@@ -19487,7 +19485,7 @@
       (fieldDeclFor (tcUState tc) src (nodeBName v))
       None)))
 
-(pub :: fieldMembersVerdict (-> TC (Vec FnVal) Strings Int Int FieldStoreVerdict))
+(pub :: fieldMembersVerdict (-> TC (Vec FnVal) Strings BScope Int FieldStoreVerdict))
 (pub fn (fieldMembersVerdict tc members row bound i)
   (if (>= i (vecLen members))
     FieldStoreOk
@@ -19516,7 +19514,7 @@
         (_ verdict))
     }))
 
-(pub :: fieldUseName (-> Int EpUse String))
+(pub :: fieldUseName (-> BScope EpUse String))
 (pub fn (fieldUseName bound use)
   (if (&& (>= use.pidx 0) (< use.pidx (vecLen (bsParamsVec bound))))
     (vecGetStr (bsParamsVec bound) use.pidx)
@@ -19564,17 +19562,16 @@
 
 ; Why a value the walk does not follow to a function is not one it can
 ; check. A parameter is named, because the fix is at the caller.
-(pub :: fieldValueShape (-> TC ASTNode Int String))
-(pub fn (fieldValueShape tc v bound)
-  (if (== (nodeTag v) TAG_E_VAR)
-    {
-      (let p (bsParamAlias bound (nodeAName v)))
-      (if (&& (>= p 0) (< p (vecLen (bsParamsVec bound))))
-        (concat (concat "the parameter `" (vecGetStr (bsParamsVec bound) p))
+(pub :: fieldValueShape (-> TC ASTNode BScope String))
+(pub fn (fieldValueShape tc value bound)
+  (if (== (nodeTag value) TAG_E_VAR)
+    (if (let (Some index) (bsAliasParam (bsParamAlias bound (nodeAName value))))
+      (if (< index (vecLen (bsParamsVec bound)))
+        (concat (concat "the parameter `" (vecGetStr (bsParamsVec bound) index))
           "`, which each caller chooses")
         "a value the compiler can't follow to a function, such as a pattern binder, a lambda's parameter or a mutable local")
-    }
-    (if (== (nodeTag v) TAG_E_APP)
+      "a value the compiler can't follow to a function, such as a pattern binder, a lambda's parameter or a mutable local")
+    (if (== (nodeTag value) TAG_E_APP)
       "a call's result"
       "a value the compiler can't follow to a function")))
 
@@ -19695,7 +19692,7 @@
         (vecGetStr v i)
         (concat (concat acc ",") (vecGetStr v i))))))
 
-(pub :: walkEffects (-> TC ASTNode Int Strings Int))
+(pub :: walkEffects (-> TC ASTNode BScope Strings Int))
 (pub fn (walkEffects tc e bound acc)
   (if (nodeSame e nilNode)
     0
@@ -19792,7 +19789,7 @@
                               0))))))))))))
     }))
 
-(pub :: walkEffectsVec (-> TC Nodes Int Int Strings Int))
+(pub :: walkEffectsVec (-> TC Nodes Int BScope Strings Int))
 (pub fn (walkEffectsVec tc v i bound acc)
   (if (>= i (vecLen v))
     0
@@ -19802,7 +19799,7 @@
     }))
 
 ; A match arm binds its pattern's variables, which must shadow.
-(pub :: walkEffectsArms (-> TC (Vec ASTNode) Int Int Strings Int))
+(pub :: walkEffectsArms (-> TC (Vec ASTNode) Int BScope Strings Int))
 (pub fn (walkEffectsArms tc arms i bound acc)
   (if (>= i (vecLen arms))
     0
@@ -19819,7 +19816,7 @@
 ; handler expression's own effects pass through undiminished. A
 ; function the body hands back is the form's value, and here nothing
 ; calls it: it escapes, past the handler (`walkEffectsHandleVal`).
-(pub :: walkEffectsHandle (-> TC ASTNode Int Strings Int))
+(pub :: walkEffectsHandle (-> TC ASTNode BScope Strings Int))
 (pub fn (walkEffectsHandle tc e bound acc)
   (if (let (Some fv) (walkEffectsHandleVal tc e bound acc))
     (fnValsEscape tc fv bound acc)
@@ -19915,7 +19912,7 @@
 ; head decides what the call itself adds - and, when the callee is
 ; known to be effect-transparent somewhere, which argument escapes
 ; into that position.
-(pub :: walkEffectsSpine (-> TC ASTNode Int Strings Int))
+(pub :: walkEffectsSpine (-> TC ASTNode BScope Strings Int))
 (pub fn (walkEffectsSpine tc e bound acc)
   {
     (let args (spineArgVec e vecNew))
@@ -20005,7 +20002,7 @@
 ; The function whose transparent positions a call's arguments land in,
 ; when the walk knows it: a top-level name, or a local or field known to
 ; hold exactly that one function. 0 otherwise.
-(pub :: spineArgEnt (-> TC ASTNode Int (Option FnEnt)))
+(pub :: spineArgEnt (-> TC ASTNode BScope (Option FnEnt)))
 (pub fn (spineArgEnt tc head bound)
   {
     (let tag (nodeTag head))
@@ -20032,7 +20029,7 @@
 
 ; Mark every parameter alias among `args` as escaping, for a call whose
 ; callee's own uses the walk cannot read.
-(pub :: escapeArgsMark (-> Int Nodes Int Int))
+(pub :: escapeArgsMark (-> BScope Nodes Int Int))
 (pub fn (escapeArgsMark bound args i)
   (if (>= i (vecLen args))
     0
@@ -20077,7 +20074,7 @@
   })
 
 ; stage0's `walk_call`, by callee kind.
-(pub :: walkCallHead (-> TC String Nodes Int Strings Int Int))
+(pub :: walkCallHead (-> TC String Nodes BScope Strings Int Int))
 ; `unboxed` is 1 for exactly the call nodes `tcPairSitesOf` recorded:
 ; a tail leaf of a function the emitter writes as `@F$pair`, or a
 ; match scrutinee it reads from registers. Everywhere else a
@@ -20093,19 +20090,22 @@
         (fnValsCall tc fv args bound acc unboxed)
       }
       {
-        (markEparam bound (bsParamAlias bound n))
+        (markEparam bound (bsAliasParam (bsParamAlias bound n)))
         ; The callee is a parameter, or a local aliasing one, so the
         ; enclosing signature names its type and `escapeArgs` can ask
         ; which of its argument positions could hold a function at all.
         ; An opaque local answers 0 here and every position stays
         ; conservative, which is the right answer for a value whose
         ; identity the walk lost.
-        (escapeArgs bound args 0 acc (bsParamTy bound (bsParamAlias bound n)))
+        (escapeArgs bound args 0 acc
+          (match (bsParamTy bound (bsParamAlias bound n))
+            ((Some ty) ty)
+            ((None) nilNode)))
         ; An OPAQUE local: the value came out of memory, so no call edge
         ; carries what it performs and `markEparam` had no parameter to
         ; mark. This is the `let`-shaped spelling of the same hole the
         ; spine walk records for a non-name head.
-        (if (== (bsParamAlias bound n) bsOpaque)
+        (if (bsIsOpaque (bsParamAlias bound n))
           (effAdd acc effIncomplete)
           0)
       })
@@ -20148,7 +20148,7 @@
 ; the transparent positions instantiated with `args`, and an
 ; over-application's hole. A call through a name and a call through a
 ; local known to hold that function (`FnVals`) are the same call.
-(pub :: walkCallEnt (-> TC String FnEnt Nodes Int Strings Int Bool Int))
+(pub :: walkCallEnt (-> TC String FnEnt Nodes BScope Strings Int Bool Int))
 (pub fn (walkCallEnt tc n ent args bound acc unboxed certain)
   {
     (noteLambdaCast bound (fnLambdaCast ent) certain)
@@ -20196,26 +20196,12 @@
       0)
   })
 
-; A binder's `pidx` is a THREE-way answer, not two:
-;
-;   >= 0  the index of the enclosing function's parameter this name
-;         aliases - the effect-transparent case, carried by `eparams`
-;         and instantiated at every call site;
-;    -1   bound to something ALREADY ATTRIBUTED where it was bound - a
-;         bare name (`effRefSite` unioned its effects) or a lambda
-;         literal (`walkEffects` walked its body);
-;    -2   OPAQUE: a function value whose identity the walk lost. A
-;         field load, a container read, a `match` binder. Calling it
-;         performs whatever was put there, and nothing on the path
-;         from there to here attributed it to anybody.
-;
-; The third answer is new. It used to be spelled -1 along with the
-; second, which is why `(let ((g (b.f))) (g 7))` under `;@axiom:effect(pure)`
-; was accepted in silence: the walk could not tell a name it had
-; followed from a word it had merely read.
-(pub :: bsOpaque Int)
+; BindingSource separates parameter aliases, attributed values, opaque
+; locals and known function-value table entries. An opaque binding keeps
+; its unresolved effect contribution when called or passed onward.
+(pub :: bsOpaque BindingSource)
 (pub fn (bsOpaque)
-  (- 0 2))
+  BoundOpaque)
 
 ; Every argument handed to a call the walk could not resolve to a
 ; function. `acc` is 0 at the sites where the CALLEE is not known to
@@ -20265,7 +20251,7 @@
 ; expected function type`, and handing an arrow to one is `AX3004`
 ; too. So no well-typed program can put a function where a nominal
 ; type is declared, which is the same fact this whole rule rests on.
-(pub :: escapeArgs (-> Int Nodes Int Strings ASTNode Int))
+(pub :: escapeArgs (-> BScope Nodes Int Strings ASTNode Int))
 (pub fn (escapeArgs bound args i acc cty)
   (if (>= i (vecLen args))
     0
@@ -20280,7 +20266,7 @@
 ; say IT CALLS THEM. A value the walk cannot follow, landing in one, is
 ; called and unattributed - no guessing required about whether the
 ; position is a called one, because that is what the mark means.
-(pub :: instantiateEparams (-> Int FnEnt Ints Nodes Int Strings Int))
+(pub :: instantiateEparams (-> BScope FnEnt Ints Nodes Int Strings Int))
 (pub fn (instantiateEparams bound ent marks args i acc)
   (if (>= i (vecLen marks))
     0
@@ -20353,7 +20339,7 @@
 
 ; A bare reference in a position where the walk cannot see the value
 ; being CALLED. An arrow-typed referent's row arrives as POSSIBLE.
-(pub :: effRefSite (-> TC String Int Strings Int))
+(pub :: effRefSite (-> TC String BScope Strings Int))
 (pub fn (effRefSite tc n bound acc)
   (effRefSiteAt tc n bound acc 1))
 
@@ -20375,7 +20361,7 @@
 ; bare name in that position still arrives possible. The two differ by
 ; whether the walk can see a call, which is exactly what argument
 ; position tells it.
-(pub :: effRefSiteAt (-> TC String Int Strings Int Int))
+(pub :: effRefSiteAt (-> TC String BScope Strings Int Int))
 (pub fn (effRefSiteAt tc n bound acc mark)
   (if (== (bsIsLocal bound n) 1)
     0
@@ -21015,44 +21001,39 @@
 ; ------------------------------------------------------------------
 ; The walk's scope. `names` is the shadow list - one entry per `let`,
 ; lambda parameter or match binder, carrying the PARAMETER INDEX it
-; aliases or -1 - while `params`, `callable` and `eparams` are
+; aliases or the binding source - while `params`, `callable` and `eparams` are
 ; constant for the whole walk and shared by every derived scope.
 ;
 ; Parameters are deliberately NOT in `names`: stage0 keeps them in a
 ; separate list so `param_index` can still find one, and a parameter
 ; masked as a shadow of itself would be invisible to the
 ; effect-transparency marks that are the whole point of tracking it.
-; `name` held a String all along and was declared `Int`, which
-; `memGetWord`'s old type variable made invisible: every read of it
-; matched whatever the reader wanted. It is a name.
+(pub data BindingSource
+  (BoundParam Int)
+  (BoundAttributed)
+  (BoundOpaque)
+  (BoundValues Int))
+
 (pub struct BEnt
   (name : String)
-  (pidx : Int))
+  (source : BindingSource))
 
-(pub :: bEntName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: bEntName (-> BEnt String))
 (pub fn (bEntName ent)
-  {
-    (let e (as ent BEnt))
-    e.name
-  })
+  ent.name)
 
-(pub :: bEntPidx (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (bEntPidx ent)
-  {
-    (let e (as ent BEnt))
-    e.pidx
-  })
+(pub :: bEntSource (-> BEnt BindingSource))
+(pub fn (bEntSource ent)
+  ent.source)
 
 ; `ctx` is where the walk stands, in a one-element vector every scope a
 ; binding derives shares, so a `let` copies one word for it.
 (pub struct BScope
-  (names : (Vec Int))
-  (params : Strings)
+  (names : (Vec BEnt))
+  (mut params : Strings)
   (callable : Ints)
   (eparams : (Vec Int))
-  (fnty : ASTNode)
+  (fnty : (Option ASTNode))
   (ctx : (Vec BCtx)))
 
 ; `handled` is the custom effects a `handle` around this point
@@ -21062,7 +21043,7 @@
 ; parameter uses wait in its own `uses` until the lambda is called or
 ; escapes, since only then is the `handle` around them known. `vals` is
 ; the walk's table of function values a name is known to hold: a
-; binding that holds entry k records `pidx` -3 - k (`bsWithVals`).
+; binding that holds entry k records BoundValues k (`bsWithVals`).
 (pub struct BCtx
   (handled : Strings)
   (uses : (Vec EpUse))
@@ -21070,21 +21051,15 @@
   (vals : (Vec FnVals))
   (mut lambdaCast : LambdaCast))
 
-(pub :: bsMake (-> Ints Strings Ints Ints ASTNode (Vec BCtx) Int))
+(pub :: bsMake (-> (Vec BEnt) Strings Ints Ints (Option ASTNode) (Vec BCtx) BScope))
 (pub fn (bsMake names params callable eparams fnty ctx)
-  (as (BScope
-        :names names
-        :params params
-        :callable callable
-        :eparams eparams
-        :fnty fnty
-        :ctx ctx) Int))
+  (BScope :names names :params params :callable callable :eparams eparams :fnty fnty :ctx ctx))
 
-(pub :: bsCtxVec (-> Int (Vec BCtx)))
+(pub :: bsCtxVec (-> BScope (Vec BCtx)))
 (pub fn (bsCtxVec b)
-  (memGetWordVec b 5))
+  b.ctx)
 
-(pub :: bsCtx (-> Int BCtx))
+(pub :: bsCtx (-> BScope BCtx))
 (pub fn (bsCtx b)
   (vecGet (bsCtxVec b) 0))
 
@@ -21099,111 +21074,108 @@
     }
   })
 
-(pub :: bsNew (-> Strings Ints Ints ASTNode Int))
+(pub :: bsTypeOpt (-> ASTNode (Option ASTNode)))
+(pub fn (bsTypeOpt ty)
+  (if (nodeSame ty nilNode)
+    None
+    (Some ty)))
+
+(pub :: bsNew (-> Strings Ints Ints ASTNode BScope))
 (pub fn (bsNew params callable eparams fnty)
-  (bsMake vecNew params callable eparams fnty
+  (bsMake vecNew params callable eparams (bsTypeOpt fnty)
     (bsCtxOf (vecWithCapacity 1) (vecWithCapacity 1) 0 (vecWithCapacity 1))))
 
-(pub :: bsNames (-> Int Int))
+(pub :: bsNames (-> BScope (Vec BEnt)))
 (pub fn (bsNames b)
-  (memGetWord b 0))
+  b.names)
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: bsNamesVec (-> Int Ints))
-;@axiom:effect(unsafe)
+(pub :: bsNamesVec (-> BScope (Vec BEnt)))
 (pub fn (bsNamesVec b)
-  (as (bsNames b) Ints))
+  b.names)
 
-(pub :: bsParams (-> Int Strings))
+(pub :: bsParams (-> BScope Strings))
 (pub fn (bsParams b)
-  (memGetWordVec b 1))
+  b.params)
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: bsParamsVec (-> Int Strings))
+(pub :: bsParamsVec (-> BScope Strings))
 (pub fn (bsParamsVec b)
   (bsParams b))
 
-(pub :: bsCallable (-> Int Ints))
+(pub :: bsCallable (-> BScope Ints))
 (pub fn (bsCallable b)
-  (memGetWordVec b 2))
+  b.callable)
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: bsCallableVec (-> Int Ints))
+(pub :: bsCallableVec (-> BScope Ints))
 (pub fn (bsCallableVec b)
   (bsCallable b))
 
-(pub :: bsEparams (-> Int Int))
+(pub :: bsEparams (-> BScope Ints))
 (pub fn (bsEparams b)
-  (memGetWord b 3))
+  b.eparams)
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: bsEparamsVec (-> Int (Vec a)))
-;@axiom:effect(unsafe)
+(pub :: bsEparamsVec (-> BScope Ints))
 (pub fn (bsEparamsVec b)
-  (as (bsEparams b) (Vec a)))
+  b.eparams)
 
-; The enclosing function's declared type, or 0 when it has none. Every
+; The enclosing function's declared type, or None when it has none. Every
 ; derived scope shares it, exactly as `params` and `callable` do.
-(pub :: bsFnTy (-> Int ASTNode))
+(pub :: bsFnTy (-> BScope (Option ASTNode)))
 (pub fn (bsFnTy b)
-  (readAstNode b 4))
+  b.fnty)
 
-; The type declared for parameter `p` of the enclosing function, or 0.
-; `bsParamAlias`'s two negative answers (-1 bound-and-attributed, -2
-; opaque) have no parameter and therefore no type.
-(pub :: bsParamTy (-> Int Int ASTNode))
-(pub fn (bsParamTy b p)
-  (if (< p 0)
-    nilNode
-    (arrowParamTy (bsFnTy b) p)))
+; The declared type of a parameter alias. Other binding sources and
+; scopes without a signature have no parameter type.
+(pub :: bsParamTy (-> BScope BindingSource (Option ASTNode)))
+(pub fn (bsParamTy b source)
+  (if (let (Some index) (bsAliasParam source))
+    (if (let (Some signature) (bsFnTy b))
+      (bsTypeOpt (arrowParamTy signature index))
+      None)
+    None))
 
-(pub :: bsWith (-> Int String Int Int))
-(pub fn (bsWith b n pidx)
+(pub :: bsWith (-> BScope String BindingSource BScope))
+(pub fn (bsWith b name source)
   {
-    (let v vecNew)
-    {
-      (copyInto v (bsNamesVec b) 0)
-      (vecPush v (as (BEnt :name n :pidx pidx) Int))
-      (bsMake v (bsParams b) (bsCallable b) (bsEparamsVec b) (bsFnTy b) (bsCtxVec b))
-    }
+    (let names vecNew)
+    (let previous (bsNamesVec b))
+    (for entry in previous
+      (vecPush names entry))
+    (vecPush names (BEnt :name name :source source))
+    (bsMake names (bsParams b) (bsCallable b) (bsEparamsVec b) (bsFnTy b) (bsCtxVec b))
   })
 
-(pub :: bsWithVals (-> Int String FnVals Int))
+(pub :: bsWithVals (-> BScope String FnVals BScope))
 (pub fn (bsWithVals b n fv)
   {
     (let table (bsValsTable b))
     {
       (vecPush table fv)
-      (bsWith b n (- (- 0 3) (- (vecLen table) 1)))
+      (bsWith b n (BoundValues (- (vecLen table) 1)))
     }
   })
 
-(pub :: bsHandledVec (-> Int Strings))
+(pub :: bsHandledVec (-> BScope Strings))
 (pub fn (bsHandledVec b)
   {
     (let c (bsCtx b))
     c.handled
   })
 
-(pub :: bsValsTable (-> Int (Vec FnVals)))
+(pub :: bsValsTable (-> BScope (Vec FnVals)))
 (pub fn (bsValsTable b)
   {
     (let c (bsCtx b))
     c.vals
   })
 
-(pub :: bsUsesVec (-> Int (Vec EpUse)))
+(pub :: bsUsesVec (-> BScope (Vec EpUse)))
 (pub fn (bsUsesVec b)
   {
     (let c (bsCtx b))
     c.uses
   })
 
-(pub :: bsInLam (-> Int Int))
+(pub :: bsInLam (-> BScope Int))
 (pub fn (bsInLam b)
   {
     (let c (bsCtx b))
@@ -21213,24 +21185,18 @@
 ; The function values the innermost binding of `n` is known to hold, or
 ; none: a parameter, an opaque local, or a name bound to anything the
 ; walk does not follow.
-(pub :: bsValsOf (-> Int String (Option FnVals)))
-(pub fn (bsValsOf b n)
-  {
-    (let ent (bsFind b n))
-    (if (== ent 0)
-      None
-      {
-        (let k (- (- 0 3) (bEntPidx ent)))
-        (if (< k 0)
-          None
-          (Some (vecGet (bsValsTable b) k)))
-      })
-  })
+(pub :: bsValsOf (-> BScope String (Option FnVals)))
+(pub fn (bsValsOf b name)
+  (match (bsParamAlias b name)
+    ((BoundValues index) (Some (vecGet (bsValsTable b) index)))
+    ((BoundParam _) None)
+    ((BoundAttributed) None)
+    ((BoundOpaque) None)))
 
 ; The scope a `handle` body is walked in: the same names, with the
 ; custom effects this handle discharges (`effDischargedBy`'s test)
 ; added to `handled`.
-(pub :: bsWithHandled (-> TC Int (Vec ASTNode) Int))
+(pub :: bsWithHandled (-> TC BScope (Vec ASTNode) BScope))
 (pub fn (bsWithHandled tc b effs)
   {
     (let h vecNew)
@@ -21257,7 +21223,7 @@
 
 ; The scope a lambda's body is walked in for its own row: its
 ; parameters bound opaque, nothing handled yet, and a `uses` of its own.
-(pub :: bsLambda (-> Int Names Int))
+(pub :: bsLambda (-> BScope Names BScope))
 (pub fn (bsLambda b params)
   {
     (let b1 (bsWithParams b params bsOpaque 0))
@@ -21275,17 +21241,20 @@
     }))
 
 ; The LAST entry for `n`, which is the innermost binding.
-(pub :: bsFind (-> Int String Int))
+(pub :: bsFind (-> BScope String (Option BEnt)))
 (pub fn (bsFind b n)
   (bsFindFrom (bsNamesVec b) n (- (vecLen (bsNamesVec b)) 1)))
 
-(pub :: bsFindFrom (-> Ints String Int Int))
-(pub fn (bsFindFrom names n i)
-  (if (< i 0)
-    0
-    (if (strEq (memGetWordStr (vecGet names i) 0) n)
-      (vecGet names i)
-      (bsFindFrom names n (- i 1)))))
+(pub :: bsFindFrom (-> (Vec BEnt) String Int (Option BEnt)))
+(pub fn (bsFindFrom names name index)
+  (if (< index 0)
+    None
+    {
+      (let entry (vecGet names index))
+      (if (strEq entry.name name)
+        (Some entry)
+        (bsFindFrom names name (- index 1)))
+    }))
 
 (pub :: nameIndexIn (-> Strings String Int Int))
 (pub fn (nameIndexIn v n i)
@@ -21296,25 +21265,51 @@
       (nameIndexIn v n (+ i 1)))))
 
 ; Is this name lexically bound at all - a shadow entry or a parameter?
-(pub :: bsIsLocal (-> Int String Int))
-(pub fn (bsIsLocal b n)
-  (if (!= (bsFind b n) 0)
+(pub :: bsIsLocal (-> BScope String Int))
+(pub fn (bsIsLocal b name)
+  (if (let (Some _) (bsFind b name))
     1
-    (if (>= (nameIndexIn (bsParamsVec b) n 0) 0)
+    (if (let (Some _) (bsParamIndex (bsParamsVec b) name 0))
       1
       0)))
 
-; stage0's `param_alias_of`: the parameter index this name stands
-; for, or -1. A shadow entry answers with the alias it recorded; an
-; unshadowed name falls through to the parameter list.
-(pub :: bsParamAlias (-> Int String Int))
-(pub fn (bsParamAlias b n)
-  {
-    (let ent (bsFind b n))
-    (if (!= ent 0)
-      (bEntPidx ent)
-      (nameIndexIn (bsParamsVec b) n 0))
-  })
+; The innermost binding source, falling back to the parameter list.
+; An unbound global is attributed where its reference is walked.
+(pub :: bsParamAlias (-> BScope String BindingSource))
+(pub fn (bsParamAlias b name)
+  (if (let (Some entry) (bsFind b name))
+    entry.source
+    (if (let (Some index) (bsParamIndex (bsParamsVec b) name 0))
+      (BoundParam index)
+      BoundAttributed)))
+
+(pub :: bsAliasParam (-> BindingSource (Option Int)))
+(pub fn (bsAliasParam source)
+  (match source
+    ((BoundParam index)
+      (if (< index 0)
+        None
+        (Some index))
+    )
+    ((BoundAttributed) None)
+    ((BoundOpaque) None)
+    ((BoundValues _) None)))
+
+(pub :: bsIsOpaque (-> BindingSource Bool))
+(pub fn (bsIsOpaque source)
+  (match source
+    ((BoundOpaque) true)
+    ((BoundParam _) false)
+    ((BoundAttributed) false)
+    ((BoundValues _) false)))
+
+(pub :: bsParamIndex (-> Names String Int (Option Int)))
+(pub fn (bsParamIndex names name index)
+  (if (>= index (vecLen names))
+    None
+    (if (strEq (vecGet names index) name)
+      (Some index)
+      (bsParamIndex names name (+ index 1)))))
 
 ; Mark parameter `i` effect-transparent, if it is one a value can
 ; arrive in. stage0 gates on `param_callable`: a parameter declared
@@ -21329,15 +21324,17 @@
 ; parameter may be called with outside any handler is. That is what
 ; lets `(withAsk usesAsk)` - a callee that installs the handler around
 ; its callback - be the correct program it is (`EpUse`).
-(pub :: markEparam (-> Int Int Int))
-(pub fn (markEparam b i)
-  (markEparamUse b i (bsHandledVec b) 0))
+(pub :: markEparam (-> BScope (Option Int) Int))
+(pub fn (markEparam b index)
+  (if (let (Some i) index)
+    (markEparamUse b i (bsHandledVec b) 0)
+    0))
 
 ; A use of parameter `i` with `mask` discharged around it, or an escape
 ; when `esc` is 1. In a lambda's body the use waits in the lambda's own
 ; `uses` (`bsLambda`), and the eparam set is marked when the lambda is
 ; applied or escapes.
-(pub :: markEparamUse (-> Int Int Strings Int Int))
+(pub :: markEparamUse (-> BScope Int Strings Int Int))
 (pub fn (markEparamUse b i mask esc)
   (if (< i 0)
     0
@@ -21511,17 +21508,19 @@
 ; A use of the current function's parameter `pidx`, made by handing it
 ; to a callee position whose own record is `o` (`None`: a position the
 ; walk cannot see called, which is an escape).
-(pub :: epUseApply (-> Int Int (Option EpUse) Int))
-(pub fn (epUseApply b pidx o)
-  (if (let (Some u) o)
-    {
-      (if (== u.def 1)
-        (markEparamUse b pidx (effJoined (bsHandledVec b) u.mask) 0))
-      (if (== u.esc 1)
-        (markEparamUse b pidx vecNew 1)
-        0)
-    }
-    (markEparamUse b pidx vecNew 1)))
+(pub :: epUseApply (-> BScope (Option Int) (Option EpUse) Int))
+(pub fn (epUseApply b index use)
+  (if (let (Some pidx) index)
+    (if (let (Some record) use)
+      {
+        (if (== record.def 1)
+          (markEparamUse b pidx (effJoined (bsHandledVec b) record.mask) 0))
+        (if (== record.esc 1)
+          (markEparamUse b pidx vecNew 1)
+          0)
+      }
+      (markEparamUse b pidx vecNew 1))
+    0))
 
 (pub :: paramIsCallable (-> Ints Int Int))
 (pub fn (paramIsCallable callable i)
@@ -21550,7 +21549,7 @@
 ; was attributed where it was written. `escapeValueUse` is the same with
 ; the callee position's own record, so the alias's use inherits where
 ; that callee calls it.
-(pub :: escapeValue (-> Int ASTNode Int))
+(pub :: escapeValue (-> BScope ASTNode Int))
 ; Answers 1 when this value is ACCOUNTED FOR wherever it ends up, and 0
 ; when it may be a function whose identity the walk has lost. The
 ; caller decides what to do with a 0, because only the caller knows
@@ -21567,15 +21566,15 @@
 (pub fn (escapeValue b e)
   (escapeValueUse b e None))
 
-(pub :: escapeValueUse (-> Int ASTNode (Option EpUse) Int))
+(pub :: escapeValueUse (-> BScope ASTNode (Option EpUse) Int))
 (pub fn (escapeValueUse b e u)
   {
     (let inner (stripGrouping e))
     (if (== (nodeTag inner) TAG_E_VAR)
       {
         (let alias (bsParamAlias b (nodeAName inner)))
-        (epUseApply b alias u)
-        (if (== alias bsOpaque)
+        (epUseApply b (bsAliasParam alias) u)
+        (if (bsIsOpaque alias)
           0
           (if (let (Some values) (bsValsOf b (nodeAName inner)))
             values.complete
@@ -21602,11 +21601,10 @@
 (pub fn (stripGrouping e)
   e)
 
-; `pidx` is what every one of these binders records - see `bsOpaque`
-; for the three answers. It used to be hard-coded `-1`, which said
-; "already attributed where it was bound" about two kinds of binder
-; that are nothing of the sort.
-(pub :: bsWithParams (-> Int Names Int Int Int))
+; `source` is what every one of these binders records - see `bsOpaque`
+; for the meanings. Pattern and lambda binders use BoundOpaque until
+; the walk establishes which function values they carry.
+(pub :: bsWithParams (-> BScope Names BindingSource Int BScope))
 (pub fn (bsWithParams b params pidx i)
   (if (>= i (vecLen params))
     b
@@ -21614,7 +21612,7 @@
 
 ; A pattern's binders are its non-head variables - the same rule the
 ; AX3013 scope walk uses. They bind values, never parameter aliases.
-(pub :: bsWithPattern (-> Int ASTNode Int))
+(pub :: bsWithPattern (-> BScope ASTNode BScope))
 (pub fn (bsWithPattern b pat)
   {
     (let v vecNew)
@@ -22615,7 +22613,7 @@
 ; shadow list - stage0 excludes them for the same reason, that a
 ; parameter masked as a shadow of itself is invisible to the
 ; transparency marks.
-(pub :: handleScopeOf (-> TC Int))
+(pub :: handleScopeOf (-> TC BScope))
 (pub fn (handleScopeOf tc)
   {
     (let base (bsNew (tcCurParams tc) (tcCurCallable tc) vecNew (curFnSigTy tc)))
@@ -22644,7 +22642,7 @@
       })
   })
 
-(pub :: seedFrameBinders (-> Int (Vec SEnt) Int Int))
+(pub :: seedFrameBinders (-> BScope (Vec SEnt) Int BScope))
 (pub fn (seedFrameBinders b scope i)
   (if (>= i (vecLen scope))
     b
@@ -22653,7 +22651,7 @@
       (seedFrameBinders
         (if (>= (nameIndexIn (bsParamsVec b) n 0) 0)
           b
-          (bsWith b n (- 0 1)))
+          (bsWith b n BoundAttributed))
         scope (+ i 1))
     }))
 
@@ -28638,7 +28636,7 @@
     {
       (copyInto ps (nodeBNames d) 0)
       (vecPushStr ps "result")
-      (memSetWord sc 1 ps)
+      (set sc.params ps)
       (vecPush (bsCallableVec sc) (tyIsCallable resTy))
       {
         (let did (effDropUnsafe (effDefiniteOnly (collectEffects tc p sc))))
@@ -29372,7 +29370,7 @@
 ; body (`unsafeSink`): pushed when it names an extern, for AX3073 to
 ; name. A local or a parameter of the same spelling is not
 ; the function, and is not pushed.
-(pub :: unsafeSinkNote (-> TC ASTNode Int Int))
+(pub :: unsafeSinkNote (-> TC ASTNode BScope Int))
 (pub fn (unsafeSinkNote tc node bound)
   {
     (let sink (tcUnsafeSink tc))

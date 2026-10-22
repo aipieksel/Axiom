@@ -1,0 +1,194 @@
+; Typed body scopes keep shadowing, alias kinds and effect uses distinct.
+(import core)
+(import parser)
+(import lexer)
+(import diag)
+(import typecheck)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: absent (-> (Option a) Bool))
+(fn (absent value)
+  (if (let (Some _) value)
+    false
+    true))
+
+(:: paramIs (-> BindingSource Int Bool))
+(fn (paramIs source expected)
+  (match source
+    ((BoundParam index) (== index expected))
+    ((BoundAttributed) false)
+    ((BoundOpaque) false)
+    ((BoundValues _) false)))
+
+(:: attributed (-> BindingSource Bool))
+(fn (attributed source)
+  (match source
+    ((BoundAttributed) true)
+    ((BoundParam _) false)
+    ((BoundOpaque) false)
+    ((BoundValues _) false)))
+
+(:: holdScopes (-> String Int))
+(fn (holdScopes name)
+  {
+    (let base (bsNew vecNew vecNew vecNew nilNode))
+    (let first (bsWith base name BoundOpaque))
+    (let second (bsWith first "another" BoundAttributed))
+    (count name)
+  })
+
+(:: lookupChecks ())
+;@axiom:effect(io)
+(fn (lookupChecks)
+  {
+    (let params (vecPush (vecPush vecNew "callback") "number"))
+    (let arrow (mkTArr (mkTArr mkIntTy mkIntTy) (mkTArr mkIntTy mkIntTy)))
+    (let base (bsNew params (vecPush (vecPush vecNew 1) 0) vecNew arrow))
+    (say 1 (absent (bsFind base "missing")))
+    (say 2
+      (if (let (Some index) (bsParamIndex params "callback" 0))
+        (== index 0)
+        false))
+    (say 3 (absent (bsParamIndex params "missing" 0)))
+    (say 4 (== (bsIsLocal base "callback") 1))
+    (say 5 (== (bsIsLocal base "missing") 0))
+    (say 6 (paramIs (bsParamAlias base "callback") 0))
+    (say 7 (attributed (bsParamAlias base "global")))
+    (say 8
+      (if (let (Some ty) (bsParamTy base (BoundParam 1)))
+        (strEq (tyRender ty) "Int")
+        false))
+    (say 9 (absent (bsParamTy base BoundOpaque)))
+    (say 10 (absent (bsParamTy (bsNew params vecNew vecNew nilNode) (BoundParam 0))))
+    (let first (bsWith base "callback" BoundAttributed))
+    (let inner (bsWith first "callback" BoundOpaque))
+    (say 11 (== (bsIsLocal inner "callback") 1))
+    (say 12 (bsIsOpaque (bsParamAlias inner "callback")))
+    (say 13 (absent (bsAliasParam (bsParamAlias inner "callback"))))
+    (say 14 (absent (bsValsOf inner "callback")))
+    (say 15 (attributed (bsParamAlias first "callback")))
+    (say 16 (paramIs (bsParamAlias base "callback") 0))
+    (say 17 (absent (bsAliasParam (BoundParam -1))))
+    (let name (strDup "retired-binding"))
+    (let before (count name))
+    (let during (holdScopes name))
+    (say 18 (== during (+ before 1)))
+    (say 19 (== (count name) before))
+  })
+
+(:: valueChecks ())
+;@axiom:effect(io)
+(fn (valueChecks)
+  {
+    (let base
+      (bsNew (vecPush (vecPush vecNew "callback") "number") (vecPush (vecPush vecNew 1) 0) vecNew
+        nilNode))
+    (markEparam base None)
+    (say 20 (== (vecLen (bsEparamsVec base)) 0))
+    (markEparam base (Some 0))
+    (say 21 (&& (== (vecLen (bsEparamsVec base)) 1) (== (vecGet (bsEparamsVec base) 0) 0)))
+    (say 22
+      (if (let (Some use) (epUseFind (bsUsesVec base) 0 0))
+        (== use.def 1)
+        false))
+    (markEparam base (Some 1))
+    (say 23 (== (vecLen (bsEparamsVec base)) 1))
+    (let lambda (bsLambda base (vecPush vecNew "callback")))
+    (say 24 (bsIsOpaque (bsParamAlias lambda "callback")))
+    (say 25 (== (bsInLam lambda) 1))
+    (say 26 (== (vecLen (bsUsesVec lambda)) 0))
+    (let functions
+      (fnValsOne (LambdaFn (LambdaEffects :row (vecPush vecNew "b:IO") :uses vecNew :casts false))))
+    (let known (bsWithVals base "stored" functions))
+    (say 27
+      (match (bsParamAlias known "stored")
+        ((BoundValues index) (== index 0))
+        ((BoundParam _) false)
+        ((BoundAttributed) false)
+        ((BoundOpaque) false)))
+    (say 28
+      (if (let (Some values) (bsValsOf known "stored"))
+        (&& (== values.complete 1) (== (vecLen values.members) 1))
+        false))
+    (let hidden (bsWith known "stored" BoundOpaque))
+    (say 29 (absent (bsValsOf hidden "stored")))
+    (say 30 (== (escapeValue hidden (mkEVar "stored")) 0))
+    (say 31 (== (escapeValue known (mkEVar "stored")) 1))
+    (say 32 (== (vecLen (bsValsTable known)) 1))
+    (say 33 (absent (bsAliasParam (BoundValues 0))))
+    (say 34 (absent (bsAliasParam BoundAttributed)))
+    (say 35 (! (bsIsOpaque (BoundParam 0))))
+    (say 36 (! (bsIsOpaque (BoundValues 0))))
+  })
+
+(:: checkedDiags (-> String Diags))
+(fn (checkedDiags source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "scope.ax" :src source :name "" :imports vecNew :library false)))
+    (let checker (checkModuleTcTyped declarations declarations units))
+    (tcOutVec checker)
+  })
+
+(:: hasCode (-> Diags String Bool))
+(fn (hasCode diagnostics code)
+  {
+    (let mut found false)
+    (for diagnostic in diagnostics
+      (if (strEq (diagCode diagnostic) code)
+        (set found true)))
+    found
+  })
+
+(:: checkerChecks ())
+;@axiom:effect(io)
+(fn (checkerChecks)
+  {
+    (say 37
+      (==
+        (countErrorDiags
+          (checkedDiags
+            "(:: apply (-> (-> Int Int) Int Int))\n(pub fn (apply callback number) (callback number))\n(:: identity (-> Int Int))\n(pub fn (identity number) number)\n(:: main Int)\n(pub fn (main) (apply identity 42))\n"))
+        0))
+    (say 38
+      (hasCode
+        (checkedDiags
+          "(extern \"demo\" (write :: (-> Int Int)))\n(:: use Int)\n;@axiom:effect(pure)\n(pub fn (use) { (let action write) (action 7) })\n")
+        "AX3010"))
+    (say 39 (hasCode (checkedDiags "(:: main Int)\n(pub fn (main) (missing 7))\n") "AX3001"))
+    (say 40
+      (hasCode
+        (checkedDiags
+          "(struct Holder (callback : (-> Int Int)))\n(:: use (-> Holder Int))\n;@axiom:effect(pure)\n(pub fn (use holder) (holder.callback 7))\n")
+        "AX3037"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (lookupChecks)
+    (valueChecks)
+    (checkerChecks)
+    0
+  })
