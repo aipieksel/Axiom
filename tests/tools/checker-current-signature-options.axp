@@ -1,0 +1,90 @@
+; Missing current declarations and missing types stay optional through BScope.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: sameType (-> (Option ASTNode) ASTNode Bool))
+(fn (sameType candidate expected)
+  (match candidate
+    ((Some ty) (nodeSame ty expected))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let parsed
+      (parseModule
+        (lex "(pub :: active (-> (-> Int Int) Int)) (pub fn (active callback) (callback 1))")))
+    (let declarations (pResNodes parsed))
+    (let tc (tcNew declarations declarations vecNew))
+    (say 1 (isNone (curFnSigTy tc)))
+    (say 2 (isNone (bsFnTy (handleScopeOf tc))))
+    (say 3 (isNone (bsParamTy (handleScopeOf tc) (BoundParam 0))))
+    (if (let (Some declaration) (declByName declarations "active" 0))
+      (if (let (Some entry) (findFnEnt tc "active"))
+        {
+          (let original (fnEntTy entry))
+          (set tc.curDeclNode (Some declaration))
+          (set tc.curParams (vecPush vecNew "callback"))
+          (set tc.curCallable (vecPush vecNew 1))
+          (pushScope tc.scope "beforeFrame" 0 0 mkIntTy)
+          (set tc.frameBase 1)
+          (pushScope tc.scope "callback" 0 0 original)
+          (pushScope tc.scope "local" 0 0 mkIntTy)
+          (say 4 (sameType (curFnSigTy tc) original))
+          (let scope (handleScopeOf tc))
+          (say 5 (sameType (bsFnTy scope) original))
+          (say 6 (sameType (bsParamTy scope (BoundParam 0)) (nodeAChild original)))
+          (say 7 (isNone (bsParamTy scope (BoundParam 9))))
+          (say 8 (isSome (bsFind scope "local")))
+          (say 9 (isNone (bsFind scope "callback")))
+          (say 10 (isNone (bsFind scope "beforeFrame")))
+          (say 11 (== (vecLen (bsNamesVec scope)) 1))
+          (say 12 (== (vecLen (bsParamsVec scope)) 1))
+          (say 13 (== (vecGet (bsCallableVec scope) 0) 1))
+          (set entry.ty mkTErr)
+          (say 14
+            (if (let (Some ty) (curFnSigTy tc))
+              (== (nodeTag ty) TAG_T_ERR)
+              false))
+          (say 15
+            (if (let (Some ty) (bsFnTy (handleScopeOf tc)))
+              (== (nodeTag ty) TAG_T_ERR)
+              false))
+          (set entry.ty (mkTVar ""))
+          (say 16
+            (if (let (Some ty) (curFnSigTy tc))
+              (== (tyIsSilentWild ty) 1)
+              false))
+          (set entry.ty nilNode)
+          (say 17 (isNone (curFnSigTy tc)))
+          (say 18 (isNone (bsFnTy (handleScopeOf tc))))
+          (set entry.ty original)
+          (set tc.curDeclNode (Some (nodeBuildDFn "missing" vecNew (mkEInt 0) 0)))
+          (say 19 (isNone (curFnSigTy tc)))
+          (say 20 (isNone (bsFnTy (handleScopeOf tc))))
+          (set tc.curDeclNode None)
+          (say 21 (isNone (curFnSigTy tc)))
+          (say 22 (isNone (bsFnTy (handleScopeOf tc))))
+          (say 23 (== (countErrorDiags (tcOutVec tc)) 0))
+          0
+        }
+        2)
+      1)
+  })

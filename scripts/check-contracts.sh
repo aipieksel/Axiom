@@ -41,6 +41,7 @@ python3 tests/tools/checker-type-syntax-options.py "$axc"
 python3 tests/tools/checker-effect-macro-options.py "$axc"
 python3 tests/tools/checker-recursion-witness-options.py "$axc"
 python3 tests/tools/checker-declaration-options.py "$axc"
+python3 tests/tools/checker-current-signature-options.py "$axc"
 python3 tests/tools/expansion-option-sequences.py "$axc"
 
 failed=0

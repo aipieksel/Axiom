@@ -22453,11 +22453,13 @@
 (pub :: handleScopeOf (-> TC BScope))
 (pub fn (handleScopeOf tc)
   {
-    (let base (bsNew (tcCurParams tc) (tcCurCallable tc) vecNew (curFnSigTy tc)))
+    (let base
+      (bsMake vecNew (tcCurParams tc) (tcCurCallable tc) vecNew (curFnSigTy tc)
+        (bsCtxOf (vecWithCapacity 1) (vecWithCapacity 1) 0 (vecWithCapacity 1))))
     (seedFrameBinders base (tcScopeVec tc) (tcFrameBase tc))
   })
 
-; The declared type of the function being checked, or 0 outside one.
+; The declared type of the function being checked, or None without one.
 ;
 ; Word 24 is the current declaration - `tcCheckFn` sets it before the
 ; body and clears it after - so this is the same signature
@@ -22465,19 +22467,13 @@
 ; site inside a body needs it for the same reason the body does: a
 ; call through a parameter in there asks which of that parameter's
 ; argument positions could hold a function.
-(pub :: curFnSigTy (-> TC ASTNode))
+(pub :: curFnSigTy (-> TC (Option ASTNode)))
 (pub fn (curFnSigTy tc)
-  {
-    (let d (tcCurDeclNode tc))
-    (if (nodeSame d nilNode)
-      nilNode
-      {
-        (let entFound (findFnEnt tc (nodeAName d)))
-        (if (let (Some ent) entFound)
-          (fnEntTy ent)
-          nilNode)
-      })
-  })
+  (if (let (Some declaration) (tcCurDeclNode tc))
+    (if (let (Some entry) (findFnEnt tc (nodeAName declaration)))
+      (bsTypeOpt (fnEntTy entry))
+      None)
+    None))
 
 (pub :: seedFrameBinders (-> BScope (Vec SEnt) Int BScope))
 (pub fn (seedFrameBinders b scope i)
@@ -23586,35 +23582,37 @@
 (pub fn (checkRecursionInScrutinee tc e scrutTy errsBefore)
   {
     (let d (tcCurDeclNode tc))
-    (if (|| (nodeSame d nilNode) (!= (nodeTag d) TAG_D_FN))
-      0
-      {
-        (let name (nodeAName d))
-        (if (isSome (scopeFindFrame tc name))
-          0
-          {
-            (let found
-              (selfCallIn (nodeAChild e) name (bareOf name)
-                (if (== (vecLen (nodeBNames d)) 0)
-                  1
-                  0)
-                0))
-            (if (let (Some found) found)
-              (if (|| (!= errsBefore (countErrorDiags (tcOutVec tc))) (== (tyIsErr scrutTy) 1))
-                0
-                (if (== (nodeSpan found) 0)
+    (if (let (Some d) d)
+      (if (!= (nodeTag d) TAG_D_FN)
+        0
+        {
+          (let name (nodeAName d))
+          (if (isSome (scopeFindFrame tc name))
+            0
+            {
+              (let found
+                (selfCallIn (nodeAChild e) name (bareOf name)
+                  (if (== (vecLen (nodeBNames d)) 0)
+                    1
+                    0)
+                  0))
+              (if (let (Some found) found)
+                (if (|| (!= errsBefore (countErrorDiags (tcOutVec tc))) (== (tyIsErr scrutTy) 1))
                   0
-                  (emitDiag tc
-                    (diagSetLabel
-                      (mkDiag SEV_WARNING "AX3045" "recursion-in-scrutinee" (nodeSpan found)
-                        (concat (concat "`" (bareOf name))
-                          "` calls itself here, in the scrutinee of a `match`")
-                        0 ""
-                        "bind the scrutinee in a `let` and answer the recursive call from a match arm, where the self call is a tail call and the loop conversion fires")
-                      (concat (concat "recursive call to `" (bareOf name)) "`")))))
-              0)
-          })
-      })
+                  (if (== (nodeSpan found) 0)
+                    0
+                    (emitDiag tc
+                      (diagSetLabel
+                        (mkDiag SEV_WARNING "AX3045" "recursion-in-scrutinee" (nodeSpan found)
+                          (concat (concat "`" (bareOf name))
+                            "` calls itself here, in the scrutinee of a `match`")
+                          0 ""
+                          "bind the scrutinee in a `let` and answer the recursive call from a match arm, where the self call is a tail call and the loop conversion fires")
+                        (concat (concat "recursive call to `" (bareOf name)) "`")))))
+                0)
+            })
+        })
+      0)
   })
 
 ; A bare pattern name that names a nullary constructor is that
