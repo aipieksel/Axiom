@@ -16,15 +16,15 @@ raw_setter = SUPPORT['raw_setter']
 
 BRIDGES = r'''
 ; Private-copy-only forwarding probes; no production raw access is exported.
-(pub :: probePending (-> Int Strings))
+(pub :: probePending (-> CG Strings))
 (pub fn (probePending cg) (cgPendingStrings cg))
-(pub :: probePendingAt (-> Int Int String))
+(pub :: probePendingAt (-> CG Int String))
 (pub fn (probePendingAt cg index) (vecGet (cgPendingStrings cg) index))
-(pub :: probePendingPush (-> Int String Int))
+(pub :: probePendingPush (-> CG String Int))
 (pub fn (probePendingPush cg value) (cgPendingPush cg value))
-(pub :: probePendingTruncate (-> Int Int Int))
+(pub :: probePendingTruncate (-> CG Int Int))
 (pub fn (probePendingTruncate cg size) (cgPendingTruncate cg size))
-(pub :: probePendingReset (-> Int Int))
+(pub :: probePendingReset (-> CG CG))
 (pub fn (probePendingReset cg) (cgPendingReset cg))
 '''
 
@@ -120,13 +120,13 @@ def check(axiom, repo, work):
     raw_truncate = replace_once(
         original,
         '    (let pending (cgPendingStrings cg))\n    (while (> (vecLen pending) size)\n      {\n        (let retired (vecPop pending))\n        0\n      })\n',
-        '    (memSetWord (memGetWord cg 42) 0 size)\n', 'raw length truncation')
+        '    (memSetWord (memGetWord (as cg Int) 42) 0 size)\n', 'raw length truncation')
     raw_schema = replace_once(
         raw_truncate, '(vecPush (cgPendingStrings cg) value)',
         '(vecPush (as (cgPendingStrings cg) Ints) (as value Int))', 'erased pending String store')
     raw_schema = replace_once(
-        raw_schema, '(:: cgPendingPush (-> Int String Int))\n',
-        '(:: cgPendingPush (-> Int String Int))\n;@axiom:effect(unsafe)\n',
+        raw_schema, '(:: cgPendingPush (-> CG String Int))\n',
+        '(:: cgPendingPush (-> CG String Int))\n;@axiom:effect(unsafe)\n',
         'private raw-schema boundary claim')
     reset = raw_setter(original, 'cgPendingReset', 'pendingOwned', 42, 'vecNew')
     for label, source, negative in [

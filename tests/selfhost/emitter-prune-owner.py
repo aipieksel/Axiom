@@ -23,8 +23,8 @@ check_typed_slot = SUPPORT['check_typed_slot']
 
 BRIDGES = r'''
 ; Private-copy-only views; none transfer the CG's existing owner share.
-(pub :: probeLines (-> Int Strings))
-(pub fn (probeLines cg) (memGetWordVec cg 0))
+(pub :: probeLines (-> CG Strings))
+(pub fn (probeLines cg) (memGetWordVec (as cg Int) 0))
 (pub :: probeLineAt (-> Strings Int String))
 (pub fn (probeLineAt lines index) (vecGet lines index))
 (pub :: probeStringCount (-> String Int))

@@ -42,20 +42,21 @@ def check(axiom, repo, work):
                                 (16, "cgSymFloats", "isFloat"), (20, "cgSymKinds", "kind")]:
         binding = replace_once(
             binding, f"    (vecPush ({reader} cg) {value})\n",
-            f"    (memSetWord cg {slot} (vecPush ({reader} cg) {value}))\n",
+            f"    (memSetWord (as cg Int) {slot} (vecPush ({reader} cg) {value}))\n",
             f"symbol slot {slot} same-header ablation")
     entry = original
     for slot, reader in [(6, "cgSymNames"), (7, "cgSymRegs"), (16, "cgSymFloats"), (20, "cgSymKinds")]:
         before = f"(vecClear ({reader} cg))"
         if entry.count(before) != 2:
             raise RuntimeError(f"expected two function/lambda reset anchors for slot {slot}")
-        entry = entry.replace(before, f"(memSetWord cg {slot} vecNew)")
+        entry = entry.replace(before, f"(memSetWord (as cg Int) {slot} vecNew)")
     start = original.index("(pub fn (symRestore cg mark)\n  {\n")
-    end = original.index("    (memSetWord (memGetWord cg 6) 0 mark)", start)
-    restore = original[:start] + "(pub fn (symRestore cg mark)\n  {\n" + original[end:]
+    loop = original.index("    (while (> i mark)", start)
+    end = original.index("    (memSetWord (as names Int) 0 mark)", loop)
+    restore = original[:loop] + "    (set i mark)\n" + original[end:]
     app = replace_once(original,
         '    (set c.argVec nodesNew)\n    (set c.argEv vecNew)\n',
-        '    (memSetWord cg 5 nodesNew)\n    (memSetWord cg 45 vecNew)\n',
+        '    (memSetWord (as cg Int) 5 nodesNew)\n    (memSetWord (as cg Int) 45 vecNew)\n',
         'typed application slot retirement')
     variants = [
         ("binding-shares", binding, (2, 4)),

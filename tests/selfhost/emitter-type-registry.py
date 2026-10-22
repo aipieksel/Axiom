@@ -60,7 +60,7 @@ def check(axiom, repo, work):
     ]:
         missing = work / f'{label}.ax'
         missing.write_text('(import codegen)\n(import core)\n(:: main Int)\n'
-                           ';@axiom:effect(io)\n(fn (main) ' + expression + ')\n')
+                           ';@axiom:effect(io)\n(fn (main) { ' + expression + ' 0 })\n')
         local = dict(env, AXIOM_PATH=str(repo / 'core'))
         binary = work / label
         run_checked([str(axiom), '--diagnostic-format=ai', 'build', str(missing),

@@ -11,8 +11,8 @@ run_checked = SUPPORT['run_checked']
 replace_once = SUPPORT['replace_once']
 check_output = SUPPORT['check_output']
 
-BRIDGE = '''
-(pub :: probeEffectModule (-> Int String Int))
+BRIDGE = r'''
+(pub :: probeEffectModule (-> CG String CG))
 (pub fn (probeEffectModule cg name)
   (cgSetModule cg (as name Int)))
 '''

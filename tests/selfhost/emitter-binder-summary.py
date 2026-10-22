@@ -25,7 +25,7 @@ BRIDGES = r'''
 (pub fn (probeSummaryHeads summary) summary.heads)
 (pub :: probeSummaryAnswers (-> BinderSummary Ints))
 (pub fn (probeSummaryAnswers summary) summary.answers)
-(pub :: probeSlotSummaryRoundtrip (-> Int ASTNode Int Int))
+(pub :: probeSlotSummaryRoundtrip (-> CG ASTNode Int Int))
 (pub fn (probeSlotSummaryRoundtrip cg body cls)
   (if (== cls 2)
     {
@@ -33,10 +33,10 @@ BRIDGES = r'''
       (+ (boundIn "x" summary) (headIsLocal cg "global" summary))
     }
     0))
-(pub :: probeOwnershipFacts (-> Int ASTNode Int Int Int Int))
+(pub :: probeOwnershipFacts (-> CG ASTNode Int Int Int Int))
 (pub fn (probeOwnershipFacts cg node tail cls kept)
   (slotOwnershipFacts cg node tail cls kept))
-(pub :: probeAliasUnknown (-> Int Names ASTNode Bool))
+(pub :: probeAliasUnknown (-> CG Names ASTNode Bool))
 (pub fn (probeAliasUnknown cg aliases body)
   (slotAliasUnknown cg aliases body))
 (pub :: probePatternCollect (-> InternState ASTNode Int))

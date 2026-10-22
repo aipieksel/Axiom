@@ -17,7 +17,7 @@ BRIDGES = r'''
 ;@axiom:effect(unsafe)
 (pub fn (probeCount value)
   (__load64 (as value Int) -2))
-(pub :: probeSetCGVector (-> Int (Vec String) Int Int))
+(pub :: probeSetCGVector (-> CG (Vec String) Int CG))
 (pub fn (probeSetCGVector cg value slot)
   (if (== slot 0)
     (cgReplaceLines cg value)
@@ -26,7 +26,7 @@ BRIDGES = r'''
       (if (== slot 2)
         (cgSetMangleFulls cg value)
         (cgSetTcoSlots cg value)))))
-(pub :: probeCGTailShare (-> Int Bool))
+(pub :: probeCGTailShare (-> CG Bool))
 (pub fn (probeCGTailShare cg)
   {
     (let value nodesNew)
@@ -35,15 +35,15 @@ BRIDGES = r'''
     (== (probeCount value) (+ before 1))
   })
 ; Private-copy-only probes; production does not export raw CG setters.
-(pub :: probeSetHoisted (-> Int (Vec String) Int))
+(pub :: probeSetHoisted (-> CG (Vec String) CG))
 (pub fn (probeSetHoisted cg value) (cgSetHoisted cg value))
-(pub :: probeHoisted (-> Int (Vec String)))
+(pub :: probeHoisted (-> CG (Vec String)))
 (pub fn (probeHoisted cg) (cgHoisted cg))
-(pub :: probeHoistedPayloadCount (-> Int Int Int))
+(pub :: probeHoistedPayloadCount (-> CG Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (probeHoistedPayloadCount cg index)
   { (let line (vecGet (cgHoisted cg) index)) (__load64 (as line Int) -2) })
-(pub :: probeSameHoistedGetter (-> Int String Bool))
+(pub :: probeSameHoistedGetter (-> CG String Bool))
 ;@axiom:effect(unsafe)
 (pub fn (probeSameHoistedGetter cg expected)
   {
@@ -159,11 +159,12 @@ def raw_setter(source, name, field, slot, value='value', *, release_first=False)
     stores = list(re.finditer(r'^    \(set c\.' + re.escape(field) + r' (.*)\)\n', body, re.M))
     if len(stores) != 1 or not re.search(r'\b' + re.escape(value) + r'\b', stores[0][1]):
         raise RuntimeError(name + ': expected one typed field store of ' + value)
-    after = f'    (memSetWord cg {slot} {value})\n'
+    after = f'    (memSetWord (as cg Int) {slot} {value})\n'
     if release_first:
-        after = f'    (let old (memGetWord cg {slot}))\n    (__release old)\n' + after
+        after = f'    (let old (memGetWord (as cg Int) {slot}))\n    (__release old)\n' + after
     body = replace_once(body, stores[0][0], after, name + ' typed store ablation')
-    return source[:begin] + body + source[end:]
+    boundary = ';@axiom:effect(unsafe)\n' if release_first else ''
+    return source[:begin] + boundary + body + source[end:]
 
 
 def check_hoisted_routes(binary):
@@ -284,7 +285,7 @@ def check(axiom, repo, work):
         original,
         '    (vecPush (cgLines cg) (strDup line))\n    cg',
         '    (let updated (vecPush (cgLines cg) (strDup line)))\n'
-        '    (memSetWord cg 0 updated)\n    cg',
+        '    (memSetWord (as cg Int) 0 updated)\n    cg',
         "same-header share ablation"), (2, 4)))
     variants.append(("mutable-snapshot", replace_once(
         original,
@@ -294,7 +295,7 @@ def check(axiom, repo, work):
     alloca = replace_once(
         original,
         '(vecSet (cgLines cg) mark (joinAllocas hoisted))',
-        '(vecSet (memGetWordVec cg 0) mark (as (joinAllocas hoisted) Int))',
+        '(vecSet (memGetWordVec (as cg Int) 0) mark (as (joinAllocas hoisted) Int))',
         "alloca element metadata ablation")
     alloca = replace_once(alloca, '(as 0 (Vec String)))\n          (cgSetAllocaMark cg',
                           '(as 0 (Vec Int)))\n          (cgSetAllocaMark cg', "alloca branch type")
