@@ -3111,11 +3111,11 @@
   (isEffectOp : Int)
   (effects : Strings)
   (eparams : (Vec Int))
-  (calls : (Vec Int))
+  (calls : Names)
   (mut rgn : Int)
   (mut unsafe : Int)
   (uses : (Vec EpUse))
-  (mayCalls : (Vec Int))
+  (mayCalls : Names)
   (mut pending : Int)
   (scoped : (Vec Int))
   (compute : (Vec Int))
@@ -3160,7 +3160,7 @@
   (repr : Int))
 
 ; Typed reads of the other entries the checker's tables hold as words.
-(pub :: fnEntMayCalls (-> Int (Vec Int)))
+(pub :: fnEntMayCalls (-> Int Names))
 ;@axiom:effect(unsafe)
 (pub fn (fnEntMayCalls ent)
   {
@@ -3242,6 +3242,14 @@
     e.ctors
   })
 
+(pub :: dataEntArity (-> Int Int))
+;@axiom:effect(unsafe)
+(pub fn (dataEntArity ent)
+  {
+    (let e (as ent DataEnt))
+    e.arity
+  })
+
 ; Typed reads of a function entry. The function tables hold each
 ; `FnEnt` as a word; a reader views it through the struct's declaration
 ; and answers the field at its type. A writer stores through
@@ -3302,7 +3310,7 @@
     e.eparams
   })
 
-(pub :: fnEntCalls (-> Int (Vec Int)))
+(pub :: fnEntCalls (-> Int Names))
 ;@axiom:effect(unsafe)
 (pub fn (fnEntCalls ent)
   {
@@ -3487,12 +3495,12 @@
   (mut curDeclNode : ASTNode)
   (mut sigTags : Nodes)
   (mut fnSufIdx : Ints)
-  (privIdx : Int)
+  (mut privIdx : Int)
   (mut rgnFactsDone : Int)
-  (mut curCalls : Int)
+  (mut curCalls : (Option Names))
   (mut tyIdx : Ints)
   (mut deprecated : Nodes)
-  (curLamVar : Int)
+  (mut curLamVar : Int)
   (mut rgnGaveUp : Int)
   (mut contractTag : Int)
   (regions : (Vec Int))
@@ -3608,7 +3616,7 @@
   (mut eraseSites : Nodes)
   (eraseCounts : (Vec Int))
   (fieldVals : (Vec FieldStore))
-  (mut mayCalls : Int)
+  (mut mayCalls : (Option Names))
   (walkCtx : (Vec BCtx))
   (mut discard : Int)
   (unknownCallees : (Vec Int))
@@ -4229,8 +4237,13 @@
   })
 
 (:: tcSetPrivIdx (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (tcSetPrivIdx tc v)
-  (memSetWord tc 27 v))
+  {
+    (let t (as tc TC))
+    (set t.privIdx v)
+    tc
+  })
 
 (:: tcRgnFactsDone (-> Int Int))
 ;@axiom:effect(unsafe)
@@ -4249,7 +4262,7 @@
     tc
   })
 
-(:: tcCurCalls (-> Int Int))
+(:: tcCurCalls (-> Int (Option Names)))
 ;@axiom:effect(unsafe)
 (fn (tcCurCalls tc)
   {
@@ -4257,15 +4270,7 @@
     t.curCalls
   })
 
-(:: tcCurCallsVec (-> Int (Vec a)))
-;@axiom:effect(unsafe)
-(fn (tcCurCallsVec tc)
-  {
-    (let t (as tc TC))
-    (as t.curCalls (Vec a))
-  })
-
-(:: tcSetCurCalls (-> Int Int Int))
+(:: tcSetCurCalls (-> Int (Option Names) Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetCurCalls tc v)
   {
@@ -4316,9 +4321,32 @@
     (as t.curLamVar Ints)
   })
 
+(:: tcLamWord (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tcLamWord tc)
+  {
+    (let t (as tc TC))
+    t.curLamVar
+  })
+
+(:: tcSetLamWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (tcSetLamWord tc v)
+  {
+    (let t (as tc TC))
+    (set t.curLamVar v)
+    tc
+  })
+
 (:: tcSetLamVars (-> Int Ints Int))
+;@axiom:effect(unsafe)
 (fn (tcSetLamVars tc v)
-  (memSetWord tc 32 v))
+  {
+    (__retainref v)
+    (let t (as tc TC))
+    (set t.curLamVar (as v Int))
+    tc
+  })
 
 (:: tcRgnGaveUp (-> Int Int))
 ;@axiom:effect(unsafe)
@@ -4594,7 +4622,7 @@
     t.unsafe.eraseCounts
   })
 
-(:: tcMayCalls (-> Int Int))
+(:: tcMayCalls (-> Int (Option Names)))
 ;@axiom:effect(unsafe)
 (fn (tcMayCalls tc)
   {
@@ -4602,7 +4630,7 @@
     t.unsafe.mayCalls
   })
 
-(:: tcSetMayCalls (-> Int Int Int))
+(:: tcSetMayCalls (-> Int (Option Names) Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetMayCalls tc v)
   {
@@ -5578,7 +5606,7 @@
                 :fnSufIdx nilWords
                 :privIdx 0
                 :rgnFactsDone 0
-                :curCalls 0
+                :curCalls None
                 :tyIdx nilWords
                 :deprecated nilNodes
                 :curLamVar 0
@@ -5605,7 +5633,7 @@
                     :eraseSites nilNodes
                     :eraseCounts vecNew
                     :fieldVals vecNew
-                    :mayCalls 0
+                    :mayCalls None
                     :walkCtx (bsCtxOf vecNew vecNew 0 vecNew)
                     :discard 0
                     :unknownCallees vecNew
@@ -7357,6 +7385,46 @@
   (ent : Int)
   (owner : Int))
 
+(:: tyEntName (-> Int String))
+;@axiom:effect(unsafe)
+(fn (tyEntName te)
+  {
+    (let e (as te TyEnt))
+    e.name
+  })
+
+(:: tyEntKind (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tyEntKind te)
+  {
+    (let e (as te TyEnt))
+    e.kind
+  })
+
+(:: tyEntModule (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tyEntModule te)
+  {
+    (let e (as te TyEnt))
+    e.module
+  })
+
+(:: tyEntPayload (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tyEntPayload te)
+  {
+    (let e (as te TyEnt))
+    e.ent
+  })
+
+(:: tyEntOwner (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (tyEntOwner te)
+  {
+    (let e (as te TyEnt))
+    e.owner
+  })
+
 ; Buckets over the entries, keyed on the BARE name - the same shape
 ; and the same hash `ambIdxNew` and `privSetNew` use, sized from the
 ; declaration count, which is an upper bound on the type count.
@@ -7446,26 +7514,26 @@
 (pub :: tyEntMatches (-> Int Int String Int))
 (pub fn (tyEntMatches te kind ref)
   (if (== kind TY_ANY)
-    (if (|| (== (memGetWord te 1) TY_CTOR) (== (memGetWord te 1) TY_DECL))
+    (if (|| (== (tyEntKind te) TY_CTOR) (== (tyEntKind te) TY_DECL))
       0
-      (declMatches (memGetWord te 2) (memGetWordStr te 0) ref))
-    (if (!= (memGetWord te 1) kind)
+      (declMatches (tyEntModule te) (tyEntName te) ref))
+    (if (!= (tyEntKind te) kind)
       0
-      (declMatches (memGetWord te 2) (memGetWordStr te 0) ref))))
+      (declMatches (tyEntModule te) (tyEntName te) ref))))
 
 ; A constructor's key is its DATA TYPE's, which is what
 ; `findCtorFrom` asked before this and what `collectPrivates` records.
 (pub :: tyPrivKey (-> Int String))
 (pub fn (tyPrivKey te)
-  (if (== (memGetWord te 4) 0)
-    (privKey (memGetWord te 2) (memGetWordStr te 0))
-    (privKey (memGetWord (memGetWord te 4) 2) (memGetWordStr (memGetWord te 4) 0))))
+  (if (== (tyEntOwner te) 0)
+    (privKey (tyEntModule te) (tyEntName te))
+    (privKey (dataEntModule (tyEntOwner te)) (dataEntName (tyEntOwner te)))))
 
 (pub :: tyVisible (-> StringRows Int Int Int))
 (pub fn (tyVisible privs te curMod)
   (if (== (as privs Int) 0)
     1
-    (if (&& (!= curMod 0) (&& (== (memGetWord te 2) 0) (== (tyBuiltinEntry te) 0)))
+    (if (&& (!= curMod 0) (&& (== (tyEntModule te) 0) (== (tyBuiltinEntry te) 0)))
       0
       (if (== (privBlocks privs (tyPrivKey te) curMod) 1)
         0
@@ -7476,14 +7544,14 @@
 ; still finds a checked entry type through its canonical name.
 (:: tyBuiltinEntry (-> Int Int))
 (fn (tyBuiltinEntry te)
-  (if (== (memGetWord te 1) TY_DATA)
-    (if (sizedTyIn (memGetWordStr te 0) "Option Vec Link")
+  (if (== (tyEntKind te) TY_DATA)
+    (if (sizedTyIn (tyEntName te) "Option Vec Link")
       1
       0)
-    (if (== (memGetWord te 1) TY_CTOR)
-      (if (== (memGetWord te 4) 0)
+    (if (== (tyEntKind te) TY_CTOR)
+      (if (== (tyEntOwner te) 0)
         0
-        (if (strEq (memGetWordStr (memGetWord te 4) 0) "Option")
+        (if (strEq (dataEntName (tyEntOwner te)) "Option")
           1
           0))
       0)))
@@ -7497,12 +7565,12 @@
   (if (== tier 0)
     1
     (if (== tier 2)
-      (if (== (memGetWord te 2) 0)
+      (if (== (tyEntModule te) 0)
         1
         0)
-      (if (|| (== (memGetWord te 2) 0) (== curMod 0))
+      (if (|| (== (tyEntModule te) 0) (== curMod 0))
         0
-        (if (strEq (as (memGetWord te 2) String) (as curMod String))
+        (if (strEq (as (tyEntModule te) String) (as curMod String))
           1
           0)))))
 
@@ -7575,7 +7643,7 @@
               }))
           (if (== te 0)
             0
-            (memGetWord te 3))
+            (tyEntPayload te))
         }
       })
   })
@@ -7663,9 +7731,9 @@
       (let te (vecGet v i))
       {
         (if (&& (== (tyEntMatches te kind ref) 1)
-              (&& (== (tyVisible privs te curMod) 1) (!= (memGetWord te 2) 0)))
-          (if (! (== (strInVec acc (as (memGetWord te 2) String) 0) 1))
-            (vecPush acc (memGetWord te 2))))
+              (&& (== (tyVisible privs te curMod) 1) (!= (tyEntModule te) 0)))
+          (if (! (== (strInVec acc (as (tyEntModule te) String) 0) 1))
+            (vecPush acc (tyEntModule te))))
         (tyModsOf v kind ref privs curMod acc (+ i 1))
       }
     }))
@@ -7885,7 +7953,7 @@
               }))
           (if (== te 0)
             0
-            (memGetWord te 3))
+            (tyEntPayload te))
         }
       })
   })
@@ -9220,7 +9288,7 @@
       {
         (let de (findDataAnyVis tc name))
         (if (! (== de 0))
-          (memGetWord de 3)
+          (dataEntArity de)
           {
             (let st (findStructAnyVis tc name))
             (if (! (== st 0))
@@ -15657,13 +15725,13 @@
 (pub fn (showFinish tc fnd body)
   {
     (let m (tcCurModule tc))
-    (let calls (memGetWord tc 29))
+    (let calls (tcCurCalls tc))
     (let may (tcMayCalls tc))
     {
       (writeNodeChild fnd 3 body)
       (inferEffectsOne tc fnd)
       (tcSetCurModule tc m)
-      (memSetWord tc 29 calls)
+      (tcSetCurCalls tc calls)
       (tcSetMayCalls tc may)
       0
     }
@@ -18603,16 +18671,16 @@
       (fnValCall tc (vecGet ms 0) args bound acc unboxed true)
       {
         (let rows vecNew)
-        (let certain (memGetWord tc 29))
+        (let certain (tcCurCalls tc))
         {
           ; Each member's edge is one the body MAY take, recorded where
           ; the fixpoint follows it and the call-graph checks do not.
-          (memSetWord tc 29
-            (if (== certain 0)
-              0
-              (tcMayCalls tc)))
+          (tcSetCurCalls tc
+            (if (let (Some _) certain)
+              (tcMayCalls tc)
+              None))
           (fnValsRowsInto tc ms args bound rows unboxed 0)
-          (memSetWord tc 29 certain)
+          (tcSetCurCalls tc certain)
           (fnValsCombine acc rows complete 0)
           (if (== complete 1)
             0
@@ -19147,12 +19215,12 @@
         (set validation.validatingEffects false)
         ; Capture initialisers ran when the closure was built. Resolve
         ; their values without attributing their calls to this caller.
-        (let calls (memGetWord tc 29))
+        (let calls (tcCurCalls tc))
         (let possibleCalls (tcMayCalls tc))
-        (memSetWord tc 29 0)
-        (tcSetMayCalls tc 0)
+        (tcSetCurCalls tc None)
+        (tcSetMayCalls tc None)
         (let scope (fieldLambdaScope tc closure.bindings))
-        (memSetWord tc 29 calls)
+        (tcSetCurCalls tc calls)
         (tcSetMayCalls tc possibleCalls)
         (let latent (walkLambdaLatent tc closure.expression scope))
         (set validation.validatingEffects checking)
@@ -20976,17 +21044,14 @@
 ; multiset.
 (pub :: tcNoteCall (-> Int String Int))
 (pub fn (tcNoteCall tc name)
-  {
-    (let acc (tcCurCallsVec tc))
-    (if (== (as acc Int) 0)
+  (if (let (Some acc) (tcCurCalls tc))
+    (if (== (strInVec acc name 0) 1)
       0
-      (if (== (strInVec acc name 0) 1)
-        0
-        {
-          (vecPush acc name)
-          1
-        }))
-  })
+      {
+        (vecPush acc name)
+        1
+      })
+    0))
 
 ; What naming `n` contributes when it is NOT a call head: stage0's
 ; reference-site rule, which is what keeps a function value's effects
@@ -22603,13 +22668,13 @@
         {
           (let sc (bodyScopeOf tc d))
           {
-            (let _c (memSetWord tc 29 (fnEntCalls ent)))
-            (let _y (memSetWord (memGetWord tc 44) 10 (fnEntMayCalls ent)))
+            (let _c (tcSetCurCalls tc (Some (fnEntCalls ent))))
+            (let _y (tcSetMayCalls tc (Some (fnEntMayCalls ent))))
             (let _s (tcSetPairSites tc (tcPairSitesOf tc d)))
             (let got (collectEffects tc (nodeCChild d) sc))
             (let _s0 (tcClearPairSites tc))
-            (let _c0 (memSetWord tc 29 0))
-            (let _y0 (tcSetMayCalls tc 0))
+            (let _c0 (tcSetCurCalls tc None))
+            (let _y0 (tcSetMayCalls tc None))
             (let _m0 (tcSetCurModule tc 0))
             {
               (let g1 (effUnion (fnEntEffects ent) got 0))
@@ -22823,7 +22888,7 @@
       })
   })
 
-(pub :: callersIdxAddEdges (-> IntRows Ints Int Int Int))
+(pub :: callersIdxAddEdges (-> IntRows Names Int Int Int))
 (pub fn (callersIdxAddEdges bs calls i who)
   (if (== (as calls Int) 0)
     0
@@ -27202,9 +27267,9 @@
         })
       ; `strict` is read off the whole SET, before any name in it is
       ; checked, because it modifies how every one of them answers.
-      (memSetWord tc 32 (restrictHasStrict rs 0))
+      (tcSetLamWord tc (restrictHasStrict rs 0))
       (checkRestrictsFrom tc d rs 0 eff)
-      (memSetWord tc 32 0)
+      (tcSetLamWord tc 0)
     }
   })
 
@@ -27916,7 +27981,7 @@
     }
   })
 
-(pub :: graphCycleEdges (-> Int Ints Int Ints Strings Int Int))
+(pub :: graphCycleEdges (-> Int Names Int Ints Strings Int Int))
 (pub fn (graphCycleEdges tc calls i stack done withMay)
   (if (>= i (vecLen calls))
     0
@@ -28254,7 +28319,7 @@
 ; `graphSeeds` answers 0 for it under every kind, so before this guard
 ; an operation was already counted by neither arm for IO, Alloc,
 ; `extern` or `cast`. It changes exactly the custom case.
-(pub :: graphAnyCalleeCarries (-> Int Ints Int String Int))
+(pub :: graphAnyCalleeCarries (-> Int Names Int String Int))
 (pub fn (graphAnyCalleeCarries tc calls i kind)
   (if (>= i (vecLen calls))
     0
@@ -28276,7 +28341,7 @@
 ; its parent slot. `fnEntExact` and not `findFnEnt`: an edge names the
 ; RESOLVED entry (`Mod$name`), which is the exact-name index's key,
 ; and visibility was decided when the edge was recorded.
-(pub :: graphEnqueue (-> Int Ints Int Ints Ints Strings Int Int Int))
+(pub :: graphEnqueue (-> Int Names Int Ints Ints Strings Int Int Int))
 (pub fn (graphEnqueue tc calls i queue parent seen from skipTrusted)
   (if (>= i (vecLen calls))
     0
@@ -29216,7 +29281,7 @@
     ; for THIS declaration: on a sensitive operation, "the compiler
     ; could not tell" is not the guarantee that was asked for, and a
     ; guarantee that might not hold is worth less than no claim at all.
-    (if (== (memGetWord tc 32) 1)
+    (if (== (tcLamWord tc) 1)
       (emitDiag tc
         (restrictPathSecs tc path 1
           (mkDiag SEV_ERROR "AX3057" "restriction-unproven" (nodeSpan d)
