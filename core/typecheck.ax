@@ -18969,23 +18969,20 @@
                 (vecPushStr said (concat (concat "`effect(" word) ")`"))
                 (if (strEq word "pure")
                   (set pure true)
-                  {
-                    (let why (fieldEffectRefusal tc word))
-                    (if (== (strLen why) 0)
-                      {
-                        (effAdd named (axtagEffectOf tc word))
-                        ()
-                      }
-                      {
-                        (emitFieldDeclBad tc f
-                          (concat
-                            (concat (concat (concat "`effect(" word) ")` on the field `")
-                              (nodeAName f))
-                            "` names no effect a field can declare")
-                          why)
-                        (set good false)
-                      })
-                  })
+                  (if (let (Some why) (fieldEffectRefusal tc word))
+                    {
+                      (emitFieldDeclBad tc f
+                        (concat
+                          (concat (concat (concat "`effect(" word) ")` on the field `")
+                            (nodeAName f))
+                          "` names no effect a field can declare")
+                        why)
+                      (set good false)
+                    }
+                    {
+                      (effAdd named (axtagEffectOf tc word))
+                      ()
+                    }))
               })
           }
           {
@@ -19050,23 +19047,24 @@
     out
   })
 
-; Why `word` is not an effect a field can declare, or "" when it is.
+; Why `word` is not an effect a field can declare, or `None` when it is.
 ; The names are a function's (`axtagEffectOf`), less the two that
 ; describe no stored function: `unsafe` marks a trusted encapsulation,
 ; and nothing infers `div`.
-(pub :: fieldEffectRefusal (-> TC String String))
+(pub :: fieldEffectRefusal (-> TC String (Option String)))
 (pub fn (fieldEffectRefusal tc word)
   {
     (let want (axtagEffectOf tc word))
     (if (== (strLen want) 0)
-      "an `effect(...)` tag names one effect"
+      (Some "an `effect(...)` tag names one effect")
       (if (strEq want (builtinEff "Unsafe"))
-        "`effect(unsafe)` marks a trusted function; each function a field holds keeps its own unsafe boundary"
+        (Some
+          "`effect(unsafe)` marks a trusted function; each function a field holds keeps its own unsafe boundary")
         (if (strEq want (builtinEff "Div"))
-          "nothing infers `Div`, so no stored function could be checked against it"
+          (Some "nothing infers `Div`, so no stored function could be checked against it")
           (if (== (axtagCouldExist tc want) 0)
-            (concat (concat "no effect named `" word) "` is declared")
-            ""))))
+            (Some (concat (concat "no effect named `" word) "` is declared"))
+            None))))
   })
 
 (pub :: emitFieldDeclBad (-> TC ASTNode String String Int))

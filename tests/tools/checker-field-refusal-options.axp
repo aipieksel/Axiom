@@ -1,0 +1,61 @@
+; Field-effect refusal reasons distinguish accepted rows from owned errors.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: refused (-> TC String String Bool))
+(fn (refused tc word expected)
+  (match (fieldEffectRefusal tc word)
+    ((Some reason) (strEq reason expected))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source "(effect Console (write :: (-> String ())))")
+    (let nodes (pResNodes (parseModule (lex source))))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "field-options.ax" :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (say 1 (isNone (fieldEffectRefusal tc "io")))
+    (say 2 (isNone (fieldEffectRefusal tc "IO")))
+    (say 3 (isNone (fieldEffectRefusal tc "alloc")))
+    (say 4 (isNone (fieldEffectRefusal tc "mut")))
+    (say 5 (isNone (fieldEffectRefusal tc "spawn")))
+    (say 6 (isNone (fieldEffectRefusal tc "block")))
+    (say 7 (isNone (fieldEffectRefusal tc "entropy")))
+    (say 8 (isNone (fieldEffectRefusal tc "Console")))
+    (say 9 (isNone (fieldEffectRefusal tc "cOnSoLe")))
+    (say 10 (refused tc "" "an `effect(...)` tag names one effect"))
+    (say 11
+      (refused tc "unsafe"
+        "`effect(unsafe)` marks a trusted function; each function a field holds keeps its own unsafe boundary"))
+    (say 12
+      (refused tc "UNSAFE"
+        "`effect(unsafe)` marks a trusted function; each function a field holds keeps its own unsafe boundary"))
+    (say 13
+      (refused tc "div" "nothing infers `Div`, so no stored function could be checked against it"))
+    (say 14
+      (refused tc "Div" "nothing infers `Div`, so no stored function could be checked against it"))
+    (say 15 (refused tc "teleport" "no effect named `teleport` is declared"))
+    (say 16 (refused tc (concat "owned" "Name") "no effect named `ownedName` is declared"))
+    (say 17 (== (countErrorDiags (tcOutVec tc)) 0))
+    0
+  })

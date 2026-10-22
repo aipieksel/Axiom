@@ -1,0 +1,34 @@
+; A missing declared result differs from a present poison or inferred type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let nodes (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (tcWalkDecls tc 0)
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "1507-field-effect-declaration.ax"
+      "; A field effect declaration the compiler can't read is AX3144: on a\n; field that holds no function, `effect(unsafe)`, `effect(pure)` beside\n; another effect, and an effect nothing declares. A list in one tag is\n; AX3076, another checked key on a field is AX3077, and a slip of\n; `effect` is AX3039. `ok` declares `effect(io)` and is the control.\n(struct Parts\n  ;@axiom:effect(pure)\n  (count : Int)\n  ;@axiom:effect(unsafe)\n  (raw : (-> Int Int))\n  ;@axiom:effect(pure)\n  ;@axiom:effect(io)\n  (both : (-> Int Int))\n  ;@axiom:effect(teleport)\n  (far : (-> Int Int))\n  ;@axiom:effect(io, alloc)\n  (listed : (-> Int Int))\n  ;@axiom:restrict(no-io)\n  (limited : (-> Int Int))\n  ;@axiom:efect(pure)\n  (slipped : (-> Int Int))\n  ;@axiom:effect(io)\n  (ok : (-> Int Int)))\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    (checkSource "field-refusal-extra.ax"
+      "(struct More\n ;@axiom:effect()\n (empty : (-> Int Int))\n ;@axiom:effect(div)\n (loops : (-> Int Int)))\n")
+    0
+  })
