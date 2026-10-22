@@ -3393,7 +3393,7 @@
   (parLends : (Vec ASTNode))
   (exprChecks : ExprChecks))
 
-; packed parser spans, compared as scalar locations
+; Shared parser Span arena handles, kept at the existing Span ABI boundary.
 ; Word 46, `exprChecks`: formatting-cache pairs, compute requests and
 ; the compute activation flag. The formatting cache is a stack of (expression, checked type)
 ; pairs, scoped to a formatting rewrite. The argument is checked once
@@ -18656,7 +18656,10 @@
         (set validation.validatingEffects checking)
         (let row
           (if (==
-                (tagsClaimUnsafe tc (sigAxtagsFor tc (nodeAName closure.owner))
+                (tagsClaimUnsafe tc
+                  (match (sigAxtagsFor tc (nodeAName closure.owner))
+                    ((None) vecNew)
+                    ((Some tags) tags))
                   (nodeAxtagsWords closure.owner))
                 1)
             (effDropUnsafe latent.row)
@@ -22025,7 +22028,9 @@
     (let out vecNew)
     {
       (syscallTagsInto out (nodeAxtagsWords d) 0)
-      (syscallTagsInto out (sigAxtagsFor tc (nodeAName d)) 0)
+      (if (let (Some tags) (sigAxtagsFor tc (nodeAName d)))
+        (syscallTagsInto out tags 0)
+        0)
       out
     }
   })
@@ -26177,7 +26182,11 @@
   ; `effect(unsafe)` claim answers to (`axtagUnsupported`).
   {
     (let own (nodeAxtagsWords d))
-    (let sig (sigAxtagsFor tc (nodeAName d)))
+    ; An absent signature contributes the empty set to this union.
+    (let sig
+      (match (sigAxtagsFor tc (nodeAName d))
+        ((None) vecNew)
+        ((Some tags) tags)))
     {
       (let _m (tcSetCurModule tc (nodeModuleOpt d)))
       (let sc (bodyScopeOf tc d))
@@ -28540,7 +28549,9 @@
       ; The signature's first, because it is written first - the order
       ; `checkRestricts` reads its own two sets in, and the order
       ; `expLowerContracts` lowers them in.
-      (contractTagsInto tags (sigAxtagsFor tc (nodeAName d)))
+      (if (let (Some signature) (sigAxtagsFor tc (nodeAName d)))
+        (contractTagsInto tags signature)
+        0)
       (contractTagsInto tags (nodeAxtagsWords d))
       (checkContractsFrom tc d tags 0 resTy)
     }
@@ -29073,7 +29084,12 @@
         (let d (vecGet decls i))
         (if (== (nodeTag d) TAG_D_FN)
           {
-            (let role (unsafeRoleOfTags tc (sigAxtagsFor tc (nodeAName d)) (nodeAxtagsWords d)))
+            (let role
+              (unsafeRoleOfTags tc
+                (match (sigAxtagsFor tc (nodeAName d))
+                  ((None) vecNew)
+                  ((Some tags) tags))
+                (nodeAxtagsWords d)))
             (if (! (== role 0))
               {
                 (let entFound (restrictOwnEnt tc d))
@@ -29366,9 +29382,8 @@
       })
     0))
 
-; The AXTAGs on the `(:: name ...)` signature for `name`, or 0.
-;
-; The AXTAGs on the signature declaring `name`, or 0.
+; The AXTAGs on the first indexed signature declaring `name`, or None.
+; A present empty tag vector remains Some empty.
 ;
 ; `nameMatches name (nodeA d)` - the FUNCTION's name against the
 ; SIGNATURE's, in that order, and the order is load-bearing. Both
@@ -29380,8 +29395,7 @@
 ; module's signature for a bare name, and one module's `pure` claim
 ; drew a false AX3010 in another (tests/diagnostics/342). A strict
 ; `strEq` instead drops the entry-signature shape above.
-(pub :: sigAxtagsFor (-> TC String Ints))
-;@axiom:effect(unsafe)
+(pub :: sigAxtagsFor (-> TC String (Option Ints)))
 (pub fn (sigAxtagsFor tc name)
   ; Built, then READ BACK: `memSetWord` answers the RECORD it wrote
   ; into, not the value (stdlib/Mem.ax:202-208). Binding its result
@@ -29396,7 +29410,7 @@
           (tcSetSigTags tc (Some built))
           built
         }))
-    (as (sigAxtagsFrom table name 0) (Vec Int))
+    (sigAxtagsFrom table name 0)
   })
 
 ; One pass over the declaration list, keeping only the signatures that
@@ -29505,18 +29519,16 @@
         (sigTagsBuild decls acc (+ i 1))
       })))
 
-(pub :: sigAxtagsFrom (-> (Vec ASTNode) String Int Int))
+(pub :: sigAxtagsFrom (-> Nodes String Int (Option Ints)))
 (pub fn (sigAxtagsFrom tagged name i)
-  (if (== (as tagged Int) 0)
-    0
-    (if (>= i (vecLen tagged))
-      0
-      {
-        (let d (vecGet tagged i))
-        (if (== (nameMatches name (nodeAName d)) 1)
-          (nodeAxtagsWord d)
-          (sigAxtagsFrom tagged name (+ i 1)))
-      })))
+  (if (>= i (vecLen tagged))
+    None
+    {
+      (let d (vecGet tagged i))
+      (if (== (nameMatches name (nodeAName d)) 1)
+        (nodeAxtagsOpt d)
+        (sigAxtagsFrom tagged name (+ i 1)))
+    }))
 
 ; A tag content the signature's set already carries. `checkAxtags`
 ; checks the signature's tags first, so the function's own walk skips
@@ -29627,7 +29639,9 @@
   (if (== (declHasAxtag d "effect(unsafe)") 1)
     1
     ; `declHasAxtagFrom` answers 0 for a name with no signature.
-    (declHasAxtagFrom (sigAxtagsFor tc (nodeAName d)) "effect(unsafe)" 0)))
+    (match (sigAxtagsFor tc (nodeAName d))
+      ((None) 0)
+      ((Some tags) (declHasAxtagFrom tags "effect(unsafe)" 0)))))
 
 ; `result(owned)`: the declaration's type-variable result carries a
 ; share the caller owns (MM-LIFE-2n). Codegen releases such a result
@@ -31504,7 +31518,9 @@
             (if (let (Some ent) entFound)
               {
                 (scopedCollectTags tc d ent (nodeAxtagsWords d) 0)
-                (scopedCollectTags tc d ent (sigAxtagsFor tc (nodeAName d)) 0)
+                (if (let (Some tags) (sigAxtagsFor tc (nodeAName d)))
+                  (scopedCollectTags tc d ent tags 0)
+                  0)
               }
               ())
           })
@@ -33569,7 +33585,9 @@
   {
     (let cs vecNew)
     {
-      (ctCollect (sigAxtagsFor tc (nodeAName d)) cs 0)
+      (if (let (Some tags) (sigAxtagsFor tc (nodeAName d)))
+        (ctCollect tags cs 0)
+        0)
       (ctCollect (nodeAxtagsWords d) cs 0)
       cs
     }

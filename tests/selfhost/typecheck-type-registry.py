@@ -274,6 +274,35 @@ def capture_name_negative_control(compiler, repo, env, work):
     print("capture name negative control rejected Some-empty collapse (status 2)")
 
 
+
+def signature_tag_negative_control(compiler, repo, env, work):
+    """Prove a present empty signature tag vector cannot become None."""
+    overlay = work / "negative-signature-tag-core"
+    overlay.mkdir()
+    for source in (repo / "core").iterdir():
+        if source.is_file() and source.name != "typecheck.ax":
+            (overlay / source.name).symlink_to(source)
+    source = (repo / "core/typecheck.ax").read_text()
+    old = "(nodeAxtagsOpt d)"
+    if source.count(old) != 1:
+        raise SystemExit("signature tag control no longer matches its single lookup site")
+    changed = "(if (== (vecLen (nodeAxtagsWords d)) 0) None (nodeAxtagsOpt d))"
+    (overlay / "typecheck.ax").write_text(source.replace(old, changed))
+    executable = work / "signature-tag-negative"
+    built = subprocess.run(
+        [str(compiler), "--diagnostic-format=ai", "build",
+         str(repo / "tests/selfhost/typecheck-signature-tag-options.ax"),
+         "--opt", "0", "--output", str(executable)],
+        env=dict(env, AXIOM_PATH=str(overlay)), capture_output=True, text=True,
+    )
+    if built.returncode:
+        raise SystemExit(built.stdout + built.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    if ran.returncode != 1 or ran.stdout or ran.stderr:
+        raise SystemExit(f"signature tag control: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+    print("signature tag negative control rejected Some-empty collapse (status 1)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
@@ -289,7 +318,7 @@ def main():
         "typecheck-collector-options.ax", "typecheck-current-decl-options.ax",
         "typecheck-constructor-name-options.ax", "typecheck-exhaustiveness-options.ax",
         "typecheck-declaration-field-options.ax", "typecheck-semantic-string-options.ax",
-        "typecheck-capture-name-options.ax",
+        "typecheck-capture-name-options.ax", "typecheck-signature-tag-options.ax",
         "region-fact-projections.ax",
     ]]
     refusals = [
@@ -307,6 +336,7 @@ def main():
         ("typecheck-semantic-string-refusal.axp", "AX3005", ("None",)),
         ("typecheck-capture-name-refusal.axp", "AX3005", ("None",)),
         ("typecheck-capture-seen-refusal.axp", "AX3004", ("String", "Int")),
+        ("typecheck-signature-tag-refusal.axp", "AX3005", ("None",)),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -342,6 +372,7 @@ def main():
             declaration_field_negative_control(compiler, repo, env, Path(work))
             semantic_string_negative_control(compiler, repo, env, Path(work))
             capture_name_negative_control(compiler, repo, env, Path(work))
+            signature_tag_negative_control(compiler, repo, env, Path(work))
     print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 

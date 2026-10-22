@@ -1,0 +1,83 @@
+; expect 42
+; Signature-tag absence is distinct from a real empty vector. First
+; matching signature, module matching and duplicate diagnostics stay stable.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: signatureTagContext (-> String TC))
+(fn (signatureTagContext source)
+  {
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "signature-tags.ax" :src source :name "" :imports vecNew :library false))
+    (tcNew declarations declarations units)
+  })
+
+(:: tagCountIs (-> (Option Ints) Int Bool))
+(fn (tagCountIs result expected)
+  (match result
+    ((None) false)
+    ((Some tags) (== (vecLen tags) expected))))
+
+(:: signatureTagLookupChecks Bool)
+(fn (signatureTagLookupChecks)
+  {
+    (let empty (nodeBuildDSig "empty" nilWords 0 0))
+    (let missing (nodeBuildDSig "missing" nilWords 0 0))
+    (writeNodeWords empty 7 vecNew)
+    (let tagged (signatureTagContext ";@axiom:effect(pure)\n(:: later Int)\n(pub fn (later) 1)\n"))
+    (let later (vecGet tagged.allDecls 0))
+    (let table (vecPush (vecPush vecNew empty) later))
+    (&& (isNone (nodeAxtagsOpt missing))
+      (&& (tagCountIs (nodeAxtagsOpt empty) 0)
+        (&& (isNone (sigAxtagsFrom vecNew "absent" 0))
+          (&& (isNone (sigAxtagsFrom table "absent" 0))
+            (&& (tagCountIs (sigAxtagsFrom table "empty" 0) 0)
+              (&& (tagCountIs (sigAxtagsFrom table "Team$later" 0) 1)
+                (&& (isNone (sigAxtagsFrom table "empty" 1))
+                  (tagCountIs (sigAxtagsFor tagged "later") 1))))))))
+  })
+
+(:: signatureTagFirstChecks Bool)
+(fn (signatureTagFirstChecks)
+  {
+    (let empty (nodeBuildDSig "same" nilWords 0 0))
+    (let absent (nodeBuildDSig "same" nilWords 0 0))
+    (writeNodeWords empty 7 vecNew)
+    (let tagged (signatureTagContext ";@axiom:effect(pure)\n(:: same Int)\n(pub fn (same) 1)\n"))
+    (let later (vecGet tagged.allDecls 0))
+    (let qualified (nodeBuildDSig "Other$same" nilWords 0 0))
+    (writeNodeWords qualified 7 vecNew)
+    (&& (tagCountIs (sigAxtagsFrom (vecPush (vecPush vecNew empty) later) "same" 0) 0)
+      (&& (isNone (sigAxtagsFrom (vecPush (vecPush vecNew absent) later) "same" 0))
+        (&& (isNone (sigAxtagsFrom (vecPush vecNew qualified) "same" 0))
+          (tagCountIs (sigAxtagsFrom (vecPush vecNew qualified) "Other$same" 0) 0))))
+  })
+
+(:: signatureTagDiagnosticChecks Bool)
+(fn (signatureTagDiagnosticChecks)
+  {
+    (let source
+      ";@axiom:effect(pure)\n(:: liar Int)\n;@axiom:effect(pure)\n(pub fn (liar) (__argc))\n(:: main Int)\n(pub fn (main) 42)\n")
+    (let tc (signatureTagContext source))
+    (let checked (checkModuleTcTyped tc.allDecls tc.allDecls tc.units))
+    (if (== (countErrorDiags (tcOutVec checked)) 1)
+      (strEq (diagCode (vecGet (tcOutVec checked) 0)) "AX3010")
+      false)
+  })
+
+(:: main Int)
+(fn (main)
+  (if (signatureTagLookupChecks)
+    (if (signatureTagFirstChecks)
+      (if (signatureTagDiagnosticChecks)
+        42
+        3)
+      2)
+    1))
