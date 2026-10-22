@@ -1,0 +1,181 @@
+; Typed hygienic stacks retain their records and report missing lookups.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Intern)
+(import core)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: environment (-> Diags Units MEnv))
+(fn (environment diagnostics units)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls vecNew
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNew
+    :structBuckets vecNew))
+
+(:: iteration (-> MEnv String String String Int Int))
+(fn (iteration env name element key index)
+  {
+    (vecPush env.forstack
+      (ForBind :name name :elem element :key key :idx index :seq (expScNextSeq env)))
+    0
+  })
+
+(:: templateIs (-> MEnv String String Bool))
+(fn (templateIs env name want)
+  (if (let (Some binding) (expScResolveTpl env name))
+    (strEq binding.spelling want)
+    false))
+
+(:: iterationIs (-> MEnv String String Bool))
+(fn (iterationIs env name want)
+  (if (let (Some value) (expForLookup env name))
+    (strEq value want)
+    false))
+
+(:: substitutionIs (-> MEnv String String Bool))
+(fn (substitutionIs env name want)
+  (strEq (nodeAName (substTpl (mkEVar name) vecNew vecNew env 0)) want))
+
+(:: same (-> MEnv String String ASTNode))
+(fn (same env first second)
+  (expEvalSame env (vecPush (vecPush vecNew (mkEVar first)) (mkEVar second)) 0))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let diagnostics (:: vecNew Diags))
+    (let env (environment diagnostics vecNew))
+    (say 1
+      (if (let (Some _) (expScResolveTpl env "missing"))
+        false
+        true))
+    (say 2
+      (if (let (Some _) (expForLookup env "missing"))
+        false
+        true))
+    (expScPushTpl env "value" "value.fresh")
+    (say 3 (templateIs env "value" "value.fresh"))
+    (say 4 (substitutionIs env "value" "value.fresh"))
+    (iteration env "value" "item" "sequence" 0)
+    (say 5 (iterationIs env "value" "item"))
+    (say 6 (substitutionIs env "value" "item"))
+    (expScPushTpl env "value" "value.inner")
+    (say 7 (substitutionIs env "value" "value.inner"))
+    (vecPop env.scTpl)
+    (say 8 (substitutionIs env "value" "item"))
+    (vecPop env.forstack)
+    (say 9 (substitutionIs env "value" "value.fresh"))
+    (iteration env "empty" "" "sequence" 0)
+    (say 10 (iterationIs env "empty" ""))
+    (iteration env "value" "item" "sequence" 0)
+    (expScPushTpl env "item" "item.fresh")
+    (say 11 (substitutionIs env "value" "item.fresh"))
+    (vecPush env.scTpl
+      (ScopeBind
+        :name "foreign"
+        :scopes (vecPush vecNew 999)
+        :seq (expScNextSeq env)
+        :spelling "not-visible"))
+    (say 12
+      (if (let (Some _) (expScResolveTpl env "foreign"))
+        false
+        true))
+    (iteration env "foreign" "visible" "sequence" 0)
+    (say 13 (substitutionIs env "foreign" "visible"))
+    (say 14 (== (vecLen diagnostics) 0))
+    (iteration env "a" "left" "shared" 0)
+    (iteration env "b" "right" "shared" 0)
+    (say 15 (strEq (nodeAName (same env "a" "b")) "true"))
+    (iteration env "b" "other" "shared" 1)
+    (say 16 (strEq (nodeAName (same env "a" "b")) "false"))
+    (same env "a" "missing")
+    (say 17 (== (vecLen diagnostics) 1))
+    (say 18
+      (strEq (diagMsg (vecGet diagnostics 0)) "`missing` is not bound by an enclosing syntax/for"))
+    (same env "absent" "also-absent")
+    (say 19 (== (vecLen diagnostics) 2))
+    (say 20
+      (strEq (diagMsg (vecGet diagnostics 1)) "`absent` is not bound by an enclosing syntax/for"))
+    (iteration env "c" "item" "other-sequence" 0)
+    (same env "a" "c")
+    (say 21 (== (vecLen diagnostics) 3))
+    (say 22
+      (strEq (diagMsg (vecGet diagnostics 2))
+        "`a` ranges over `shared` and `c` over `other-sequence`"))
+    (let mut stable true)
+    (for i in 0..1000
+      (set stable (&& stable (templateIs env "value" "value.fresh"))))
+    (say 23 stable)
+    (let locals (:: vecNew ScopeBinds))
+    (say 24
+      (if (let (Some _) (expLocalBinding locals "missing" -1))
+        false
+        true))
+    (expPushLocal locals env "outer")
+    (say 25 (== (expBound locals "outer") 1))
+    (say 26 (== (expBound locals "missing") 0))
+    (let original (nodeBuildELam (vecPush vecNew "parameter") (mkEVar "parameter") 0 0))
+    (let captured (expCaptureSyntax original env locals))
+    (let key (expSyntaxKey (nodeBChild captured) vecNew 0))
+    (say 27 (strStartsWith key "L:"))
+    (say 28 (== (vecLen locals) 1))
+    (let restored (:: vecNew ScopeBinds))
+    (expEnterSyntaxBindings captured env restored)
+    (say 29
+      (if (let (Some binding) (expLocalBinding restored "parameter" 0))
+        (strEq key (concat "L:" (fmtInt binding.seq)))
+        false))
+    (expTrunc restored 0)
+    (expEnterSyntaxBindings captured env restored)
+    (say 30 (== (expBound restored "parameter") 1))
+    (let copied (expCaptureSyntax captured env vecNew))
+    (say 31 (strEq key (expSyntaxKey (nodeBChild copied) vecNew 0)))
+    (let separatelyWritten (expCaptureSyntax original env vecNew))
+    (say 32 (! (strEq key (expSyntaxKey (nodeBChild separatelyWritten) vecNew 0))))
+    0
+  })
