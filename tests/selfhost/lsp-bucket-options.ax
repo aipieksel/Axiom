@@ -1,0 +1,79 @@
+; expect 42
+; Lazy bucket absence is typed. Existing buckets are reused, independent
+; slots stay separate, and replacement and missing-name paths retain values.
+(import core)
+(import parser)
+(import lexer)
+(import typecheck)
+(import lsp)
+(import Str)
+(import Vec)
+
+(:: stringBucket (-> (Vec (Option (Vec String))) Int Int String Bool))
+(fn (stringBucket buckets slot count expected)
+  (if (let (Some bucket) (vecGet buckets slot))
+    (&& (== (vecLen bucket) count) (strEq (vecGet bucket 0) expected))
+    false))
+
+(:: bucketLifetime (-> Int Int))
+(fn (bucketLifetime count)
+  {
+    (let buckets (:: (lspBucketsNew 3) (Vec (Option (Vec String)))))
+    (for i in 0..count
+      (lspHlBucketPut buckets (% i 3) (concat "owned" " value")))
+    (if (let (Some bucket) (vecGet buckets 0))
+      (vecLen bucket)
+      0)
+  })
+
+(:: stableLifetime Bool)
+(fn (stableLifetime)
+  {
+    (bucketLifetime 6)
+    (let before (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+    (let mut seen 0)
+    (for i in 0..100
+      (set seen (+ seen (bucketLifetime 6))))
+    (&& (== seen 200) (== (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)) before))
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let buckets (:: (lspBucketsNew 3) (Vec (Option (Vec String)))))
+    (let offsets (:: (lspBucketsNew 1) (Vec (Option (Vec Int)))))
+    (let tops (lspNavTopBuild (:: vecNew Nodes)))
+    (let nodes lspViewIdxNew)
+    (if (&& (isNone (vecGet buckets 0))
+          (&& (isNone (vecGet buckets 1))
+            (&& (isNone (vecGet buckets 2))
+              (&& (! (lspNavLocalIndexHas offsets 0))
+                (&& (strEq (lspNavTopGet tops "missing") "")
+                  (nodeSame (lspViewIdxFind nodes "missing") nilNode))))))
+      {
+        (lspHlBucketPut buckets 0 (concat "first" " value"))
+        (lspHlBucketPut buckets 0 "second")
+        (lspHlBucketPut buckets 2 (concat "other" " slot"))
+        (lspNavIntPut offsets 0)
+        (lspNavIntPut offsets 7)
+        (lspNavTopPut tops "item" (concat "module" "::item"))
+        (lspNavTopPut tops "item" (concat "local" "::item"))
+        (let decls (pResNodes (parseModule (lex "(:: item Int)\n(fn (item) 42)\n"))))
+        (let decl (vecGet decls 1))
+        (lspViewIdxAdd nodes "item" decl)
+        (if (&& (stringBucket buckets 0 2 "first value")
+              (&& (stringBucket buckets 2 1 "other slot")
+                (&& (isNone (vecGet buckets 1))
+                  (&& (lspNavLocalIndexHas offsets 0)
+                    (&& (lspNavLocalIndexHas offsets 7)
+                      (&& (! (lspNavLocalIndexHas offsets 3))
+                        (&& (strEq (lspNavTopGet tops "item") "local::item")
+                          (&& (strEq (lspNavTopGet tops "absent") "")
+                            (&& (nodeSame (lspViewIdxFind nodes "item") decl)
+                              (&& (nodeSame (lspViewIdxFind nodes "absent") nilNode)
+                                stableLifetime))))))))))
+          42
+          2)
+      }
+      1)
+  })
