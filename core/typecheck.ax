@@ -18565,13 +18565,12 @@
   ; see what it holds.
   {
     (let stores (fieldStores tc))
-    (let k (fieldStoreFind (fieldStores tc) fname 0))
-    (if (< k 0)
-      None
+    (if (let (Some index) (fieldStoreFind stores fname 0))
       {
-        (let st (vecGet stores k))
-        (Some (FnVals :complete st.complete :members (fieldCallableMembers tc st.members)))
-      })
+        (let store (vecGet stores index))
+        (Some (FnVals :complete store.complete :members (fieldCallableMembers tc store.members)))
+      }
+      None)
   })
 
 ; Stored closures are analysed against the bindings they captured.
@@ -18662,14 +18661,14 @@
     (LambdaEffects :row closure.row :uses vecNew :casts closure.casts)
   })
 
-(pub :: fieldStoreFind (-> (Vec FieldStore) String Int Int))
+(pub :: fieldStoreFind (-> (Vec FieldStore) String Int (Option Int)))
 (pub fn (fieldStoreFind stores fname i)
   (if (>= i (vecLen stores))
-    (- 0 1)
+    None
     {
       (let st (vecGet stores i))
       (if (strEq st.name fname)
-        i
+        (Some i)
         (fieldStoreFind stores fname (+ i 1)))
     }))
 
@@ -18758,13 +18757,13 @@
       (fsFillCols st)
     }))
 
-; The index of the innermost local named `n` at or below `i`, or -1.
-(pub :: fsFind (-> FsStack String Int Int))
+; The index of the innermost local named `n` at or below `i`, or `None`.
+(pub :: fsFind (-> FsStack String Int (Option Int)))
 (pub fn (fsFind st n i)
   (if (< i 0)
-    (- 0 1)
+    None
     (if (strEq (vecGetStr st.names i) n)
-      i
+      (Some i)
       (fsFind st n (- i 1)))))
 
 (pub :: fsWalk (-> TC (Vec FieldStore) ASTNode ASTNode FsStack Int))
@@ -18778,7 +18777,7 @@
           (let head (spineHead e))
           {
             (if (&& (== (nodeTag head) TAG_E_VAR)
-                  (< (fsFind st (nodeAName head) (- (fsLen st) 1)) 0))
+                  (isNone (fsFind st (nodeAName head) (- (fsLen st) 1))))
               (fsConstruction tc t d (nodeAName head) e st))
             (fsWalk tc t d head st)
             (fsWalkSpine tc t d e st)
@@ -18948,22 +18947,19 @@
           :active false
           :casts false))
       (if (== tag TAG_E_VAR)
-        {
-          (let k (fsFind st (nodeAName v) (- lim 1)))
-          (if (>= k 0)
-            (if (let (Some initialiser) (vecGet st.inits k))
-              (fsClassify tc d initialiser st (vecGet st.envs k))
-              UnknownFn)
-            {
-              (let entFound (findFnEnt tc (nodeAName v)))
-              (if (let (Some ent) entFound)
-                (if (&& (== (tyIsArrow (fnEntTy ent)) 1)
-                      (&& (!= (fnEntParamCount ent) 0) (== (isSyscallPrim (nodeAName v)) 0)))
-                  (KnownFn (fnValNamed ent))
-                  UnknownFn)
+        (if (let (Some k) (fsFind st (nodeAName v) (- lim 1)))
+          (if (let (Some initialiser) (vecGet st.inits k))
+            (fsClassify tc d initialiser st (vecGet st.envs k))
+            UnknownFn)
+          {
+            (let entFound (findFnEnt tc (nodeAName v)))
+            (if (let (Some ent) entFound)
+              (if (&& (== (tyIsArrow (fnEntTy ent)) 1)
+                    (&& (!= (fnEntParamCount ent) 0) (== (isSyscallPrim (nodeAName v)) 0)))
+                (KnownFn (fnValNamed ent))
                 UnknownFn)
-            })
-        }
+              UnknownFn)
+          })
         (if (== (notCallableShape v) 1)
           NonCallableFn
           UnknownFn)))
@@ -18972,14 +18968,14 @@
 (pub :: fsRecord (-> (Vec FieldStore) String StoredFnVal Int))
 (pub fn (fsRecord table name value)
   {
-    (let index (fieldStoreFind table name 0))
-    (if (< index 0)
-      (vecPush table (FieldStore :name name :complete 1 :members vecNew)))
     (let store
-      (vecGet table
-        (if (< index 0)
-          (- (vecLen table) 1)
-          index)))
+      (if (let (Some index) (fieldStoreFind table name 0))
+        (vecGet table index)
+        {
+          (let added (FieldStore :name name :complete 1 :members vecNew))
+          (vecPush table added)
+          added
+        }))
     (match value
       ((UnknownFn)
         {
@@ -23177,42 +23173,35 @@
       None)
     None))
 
-; The declared index of fname in the first constructor that declares
-; it, or None when no constructor declares the field.
+; The declared index in the first constructor that declares the field.
 (pub :: dataFirstDeclIdx (-> (Vec CtorEnt) String Int (Option Int)))
 (pub fn (dataFirstDeclIdx ctors fname i)
   (if (>= i (vecLen ctors))
     None
     (if (let (Some declared) (ctorEntFieldNames (vecGet ctors i)))
-      {
-        (let j (declaredFieldIndex declared fname 0))
-        (if (< j 0)
-          (dataFirstDeclIdx ctors fname (+ i 1))
-          (Some j))
-      }
+      (if (let (Some index) (declaredFieldIndex declared fname 0))
+        (Some index)
+        (dataFirstDeclIdx ctors fname (+ i 1)))
       (dataFirstDeclIdx ctors fname (+ i 1)))))
 
-; 1 when every constructor declares fname at index idx with a type
-; rendering equal to ty0's, else 0. A constructor with no declared
-; names - nullary or positional - disagrees by construction.
+; Every constructor must declare the same field position and rendered type.
 (pub :: dataCtorsAgree (-> (Vec CtorEnt) String Int Int ASTNode Int))
 (pub fn (dataCtorsAgree ctors fname i idx ty0)
   (if (>= i (vecLen ctors))
     1
     (if (let (Some declared) (ctorEntFieldNames (vecGet ctors i)))
-      {
-        (let j (declaredFieldIndex declared fname 0))
-        (if (!= j idx)
+      (if (let (Some index) (declaredFieldIndex declared fname 0))
+        (if (!= index idx)
           0
           {
             (let tys (ctorEntFieldTys (vecGet ctors i)))
-            (if (>= j (vecLen tys))
+            (if (>= index (vecLen tys))
               0
-              (if (strEq (tyRender (vecGet tys j)) (tyRender ty0))
+              (if (strEq (tyRender (vecGet tys index)) (tyRender ty0))
                 (dataCtorsAgree ctors fname (+ i 1) idx ty0)
                 0))
           })
-      }
+        0)
       0)))
 
 (pub :: emitFieldOnMixed (-> TC String String Int Int))
@@ -23267,29 +23256,23 @@
   (if (>= i (vecLen ctors))
     None
     {
-      (let c (vecGet ctors i))
-      (if (let (Some declared) c.fieldNames)
-        {
-          (let j (declaredFieldIndex declared fname 0))
-          (if (< j 0)
-            (dataFieldTyInCtors ctors fname (+ i 1))
-            {
-              (let tys c.fieldTys)
-              (Some
-                (if (< j (vecLen tys))
-                  (vecGet tys j)
-                  mkTErr))
-            })
-        }
+      (let ctor (vecGet ctors i))
+      (if (let (Some declared) ctor.fieldNames)
+        (if (let (Some index) (declaredFieldIndex declared fname 0))
+          (Some
+            (if (< index (vecLen ctor.fieldTys))
+              (vecGet ctor.fieldTys index)
+              mkTErr))
+          (dataFieldTyInCtors ctors fname (+ i 1)))
         (dataFieldTyInCtors ctors fname (+ i 1)))
     }))
 
-(pub :: declaredFieldIndex (-> Names String Int Int))
+(pub :: declaredFieldIndex (-> Names String Int (Option Int)))
 (pub fn (declaredFieldIndex declared fname i)
   (if (>= i (vecLen declared))
-    (- 0 1)
+    None
     (if (strEq (vecGetStr declared i) fname)
-      i
+      (Some i)
       (declaredFieldIndex declared fname (+ i 1)))))
 
 (pub :: emitFieldNotFound (-> TC String String Int Int))

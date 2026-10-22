@@ -1,0 +1,44 @@
+; Optional lexical and declared field indexes preserve field-effect diagnostics.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let nodes (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew nodes nodes units))
+    (tcWalkDecls tc 0)
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "initializer-captured.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let f dirty) (Hook :run (lambda (x) (f x))) })\n")
+    (checkSource "initializer-parameter.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> (-> Int Int) Hook))\n(pub fn (build f) (Hook :run (lambda (x) (f x))))\n")
+    (checkSource "initializer-mutable.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let mut f dirty) (Hook :run (lambda (x) (f x))) })\n")
+    (checkSource "initializer-alias.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let f dirty) (let alias f) (Hook :run (lambda (x) (alias x))) })\n")
+    (checkSource "initializer-pure.ax"
+      "(struct Hook\n ;@axiom:effect(pure)\n (run : (-> Int Int)))\n(pub :: dirty (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (dirty x) (__syscall1 0 x))\n(pub :: identity (-> Int Int))\n(pub fn (identity x) x)\n(pub :: build (-> Int Hook))\n(pub fn (build seed) { (let f identity) (Hook :run (lambda (x) (f x))) })\n")
+    (checkSource "480-field-on-mixed-data.ax"
+      "; Field access by name on a data type that has a NULLARY\n; constructor. Under the mixed representation (MM-VAL-8) a value of\n; `T` may be an immediate tag, and field access emits an unguarded\n; load - only `match` emits the immediate-or-address guard. So\n; `x.v` on `(E)` passed `check` and died of SIGSEGV at run time.\n; docs/memory-model.md MM-VAL-9a; refused since 2026-08-14. On a\n; data type whose every constructor is fieldful, field access stays\n; legal - tests/stdlib/210-struct-variants.ax exercises that half.\n(data T\n  (E)\n  (N { v : Int }))\n\n(:: main Int)\n(fn (main)\n  {\n    (let x E)\n    x.v\n  })\n")
+    (checkSource "484-field-on-partial-data.ax"
+      "; Field access by name on a `data` type whose constructors do not\n; all declare the field. `Shape` has no nullary constructor, so the\n; 480 arm does not fire - but `Rect` declares no `r`, and field\n; access emits one unguarded load for the name: on a `Rect` value it\n; loads the neighbour's slot, and on a shorter block a word past it\n; (`check` said OK and the program answered 7, or died of SIGSEGV).\n; Only `match` emits the tag guard, so the read is refused in favour\n; of one. A field every constructor declares at the same word with\n; the same type stays legal.\n(data Shape\n  (Circle { r : Int })\n  (Rect { w : Int, h : Int }))\n\n(:: radius (-> Shape Int))\n(fn (radius s)\n  s.r)\n\n(:: main Int)\n(fn (main)\n  (radius (Rect 7 9)))\n")
+    0
+  })

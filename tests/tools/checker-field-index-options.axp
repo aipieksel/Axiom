@@ -1,0 +1,126 @@
+; Optional field and lexical indexes keep zero distinct from missing rows.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: at (-> (Option Int) Int Bool))
+(fn (at result expected)
+  (match result
+    ((Some index) (== index expected))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let stores vecNew)
+    (say 1 (isNone (fieldStoreFind stores "run" 0)))
+    (fsRecord stores "run" NonCallableFn)
+    (say 2 (at (fieldStoreFind stores "run" 0) 0))
+    (say 3 (isNone (fieldStoreFind stores "run" 1)))
+    (fsRecord stores "other" NonCallableFn)
+    (vecPush stores (FieldStore :name "run" :complete 1 :members vecNew))
+    (say 4 (at (fieldStoreFind stores "run" 0) 0))
+    (say 5 (at (fieldStoreFind stores "run" 1) 2))
+    (say 6 (isNone (fieldStoreFind stores "missing" 0)))
+    (say 7 (isNone (fieldStoreFind stores "run" (vecLen stores))))
+    (fsRecord stores "run" UnknownFn)
+    (let first (vecGet stores 0))
+    (let duplicate (vecGet stores 2))
+    (say 8 (&& (== (vecLen stores) 3) (&& (== first.complete 0) (== duplicate.complete 1))))
+    (let tc (tcNew vecNew vecNew vecNew))
+    (say 9 (isNone (fieldValsOf tc "run")))
+    (fsRecord (fieldStores tc) "run" NonCallableFn)
+    (say 10
+      (match (fieldValsOf tc "run")
+        ((Some values) (&& (== values.complete 1) (== (vecLen values.members) 0)))
+        ((None) false)))
+    (fsRecord (fieldStores tc) "run" UnknownFn)
+    (say 11
+      (match (fieldValsOf tc "run")
+        ((Some values) (&& (== values.complete 0) (== (vecLen values.members) 0)))
+        ((None) false)))
+    (let stack (FsStack :names vecNew :inits vecNew :envs vecNew))
+    (say 12 (isNone (fsFind stack "x" (- 0 1))))
+    (fsBind stack "x" None 0)
+    (fsBind stack "middle" None 1)
+    (fsBind stack "x" (Some (mkEInt 3)) 2)
+    (say 13 (at (fsFind stack "x" 2) 2))
+    (say 14 (at (fsFind stack "x" 1) 0))
+    (say 15 (at (fsFind stack "x" 0) 0))
+    (say 16 (isNone (fsFind stack "x" (- 0 1))))
+    (say 17 (isNone (fsFind stack "missing" 2)))
+    (fsPopTo stack 1)
+    (say 18 (at (fsFind stack "x" 0) 0))
+    (let names (vecPush (vecPush (vecPush vecNew "first") "second") "first"))
+    (say 19 (isNone (declaredFieldIndex vecNew "first" 0)))
+    (say 20 (at (declaredFieldIndex names "first" 0) 0))
+    (say 21 (at (declaredFieldIndex names "second" 0) 1))
+    (say 22 (at (declaredFieldIndex names "first" 1) 2))
+    (say 23 (isNone (declaredFieldIndex names "missing" 0)))
+    (say 24 (isNone (declaredFieldIndex names "first" (vecLen names))))
+    (let source
+      "(data Agreed (One { x : Int }) (Two { x : Int })) (data Missing (Here { x : Int }) (There { y : Int })) (data Shifted (Left { x : Int, y : Int }) (Right { y : Int, x : Int })) (data Different (Integer { x : Int }) (Text { x : String })) (data Mixed (Empty) (Full { x : Int }))")
+    (let nodes (pResNodes (parseModule (lex source))))
+    (let registry (tcNew nodes nodes vecNew))
+    (if (let (Some agreed) (findData registry "Agreed"))
+      {
+        (say 25 (at (dataFirstDeclIdx agreed.ctors "x" 0) 0))
+        (say 26 (at (dataFirstDeclIdx agreed.ctors "x" 1) 0))
+        (say 27 (isNone (dataFirstDeclIdx agreed.ctors "x" 2)))
+        (say 28 (isNone (dataFirstDeclIdx agreed.ctors "missing" 0)))
+        (say 29 (isSome (dataAgreedFieldTy agreed.ctors "x")))
+        (say 30 (isNone (dataAgreedFieldTy agreed.ctors "missing")))
+        (say 31 (== (dataCtorsAgree agreed.ctors "x" 0 0 mkIntTy) 1))
+        (say 32 (== (dataCtorsAgree agreed.ctors "missing" 0 (- 0 1) mkIntTy) 0))
+        (let one (vecGet agreed.ctors 0))
+        (vecPop one.fieldTys)
+        (say 33
+          (match (dataFieldTyInCtors agreed.ctors "x" 0)
+            ((Some ty) (== (tyIsErr ty) 1))
+            ((None) false)))
+        (say 34 (isNone (dataAgreedFieldTy agreed.ctors "x")))
+      }
+      (for index in 25..35
+        (say index false)))
+    (if (let (Some missing) (findData registry "Missing"))
+      {
+        (say 35 (isNone (dataAgreedFieldTy missing.ctors "x")))
+        (say 36 (isSome (dataFieldTyInCtors missing.ctors "y" 0)))
+      }
+      {
+        (say 35 false)
+        (say 36 false)
+      })
+    (say 37
+      (if (let (Some shifted) (findData registry "Shifted"))
+        (isNone (dataAgreedFieldTy shifted.ctors "x"))
+        false))
+    (say 38
+      (if (let (Some different) (findData registry "Different"))
+        (isNone (dataAgreedFieldTy different.ctors "x"))
+        false))
+    (say 39
+      (if (let (Some mixed) (findData registry "Mixed"))
+        (at (dataFirstDeclIdx mixed.ctors "x" 0) 0)
+        false))
+    (say 40
+      (if (let (Some mixed) (findData registry "Mixed"))
+        (isNone (dataAgreedFieldTy mixed.ctors "x"))
+        false))
+    0
+  })
