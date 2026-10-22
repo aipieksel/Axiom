@@ -1,0 +1,73 @@
+; expect 42
+; Function tables, indexes and graph paths retain FnEnt references.
+; Missing names are None, exact lookup does not become suffix lookup,
+; and appending after index creation preserves first-match order.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: checkedSource (-> String Int))
+(fn (checkedSource source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units vecNew)
+    (vecPush units (CUnit2 :file "registry.ax" :src source :name "" :imports vecNew :library false))
+    (checkModuleTcTyped declarations declarations units)
+  })
+
+(:: entry (-> String Int FnEnt))
+(fn (entry name arity)
+  (FnEnt
+    :name name
+    :ty mkIntTy
+    :paramCount arity
+    :isBuiltin 0
+    :isEffectOp 0
+    :effects vecNew
+    :eparams vecNew
+    :calls vecNew
+    :rgn 0
+    :unsafe 0
+    :uses vecNew
+    :mayCalls vecNew
+    :pending 0
+    :scoped vecNew
+    :compute vecNew
+    :restrictions vecNew
+    :lambdaCast NoLambdaCast))
+
+(:: main Int)
+(fn (main)
+  {
+    (let tc
+      (checkedSource
+        "(extern \"demo\" (write :: (-> Int Int)))\n(:: helper (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n(pub fn (helper value) (write value))\n(:: main Int)\n;@axiom:effect(io)\n(pub fn (main) (helper 42))\n"))
+    (let bad
+      (checkedSource
+        "(:: helper (-> Int Int))\n(pub fn (helper value) value)\n(:: main Int)\n(pub fn (main) (helper \"bad\"))\n"))
+    (tcPushFn tc (entry "First$duplicate" 1))
+    (tcPushFn tc (entry "Second$duplicate" 2))
+    (if (&& (== (countErrorDiags (tcOutVec tc)) 0)
+          (&& (== (countErrorDiags (tcOutVec bad)) 1)
+            (&& (isNone (findFnEnt tc "missingFunction")) (isNone (fnEntExact tc "duplicate")))))
+      (if (let (Some found) (findFnEnt tc "duplicate"))
+        (if (&& (strEq found.name "First$duplicate") (== found.paramCount 1))
+          {
+            (let path (graphWitness tc (findFnEnt tc "main") "IO"))
+            (if (== (vecLen path) 3)
+              (if (&& (strEq (fnEntName (vecGet path 0)) "main")
+                    (&& (strEq (fnEntName (vecGet path 1)) "helper")
+                      (strEq (fnEntName (vecGet path 2)) "write")))
+                42
+                5)
+              4)
+          }
+          3)
+        2)
+      1)
+  })
