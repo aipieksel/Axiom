@@ -519,6 +519,12 @@ python3 "$repo_root/tests/selfhost/emitter-argument-registers.py" --axiom "$work
 
 python3 "$repo_root/tests/selfhost/emitter-effect-registry.py" --axiom "$work/d3/axc" \
   || fail "emitter typed effect registry regression"
+python3 "$repo_root/tests/selfhost/emitter-type-registry.py" --axiom "$work/d3/axc" \
+  || fail "emitter typed constructor registry regression"
+python3 "$repo_root/tests/selfhost/emitter-import-options.py" --axiom "$work/d3/axc" \
+  || fail "emitter optional import filter regression"
+python3 "$repo_root/tests/selfhost/emitter-signature-options.py" --axiom "$work/d3/axc" \
+  || fail "emitter typed signature registry regression"
 
 # And a program that PRINTS, because every case above communicates
 # through its exit status alone and a compiler can get those right with

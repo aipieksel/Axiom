@@ -78,7 +78,7 @@ integrator would still need.
 | Item | State | Where it's specified or tested |
 |---|---|---|
 | Compiler data uses typed structures and checked effect boundaries across every phase | In progress | Typed AST and effect values cross every phase; the CLI and REPL handoff rejects declaration-list and structural syntax edits and supplies checked function types for numeric lowering. Mutable stamp and packed metadata internals, alias revision tracking, a typed semantic IR, and packed registry and frame storage remain |
-| Optional compiler lookups use typed results throughout the checker, emitter and tools | In progress | Suggestion candidates, checker scope entries, emitter effect lookups and MIR function, binding and block lookups use `Option`; emitter type and signature tables, namespace records, expander state and LSP indexes remain |
+| Optional compiler lookups use typed results throughout the checker, emitter and tools | In progress | Checker scopes, emitter effect, constructor and signature tables, module filters, format specifiers and LSP bucket slots retain their types and use `Option` for absence. Checker definition tables, expander state and further tool lookups remain |
 | Native tool arguments keep their string vector type to the syscall boundary | Done | `scripts/check-driver.sh`, `scripts/check-bootstrap.sh` |
 | Known callback arguments honour effect restrictions through forwarding and captures | Done | `tests/diagnostics/1463-callback-restrictions.ax` |
 | Opaque callback aliases preserve incomplete effect rows through forwarding, captures and mutable bindings | Done | `tests/diagnostics/1482-callback-alias-effects.ax`, `tests/selfhost/1042-callback-alias-effects.ax` |
