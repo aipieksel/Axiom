@@ -1,0 +1,45 @@
+; Arity refusal and effect diagnostics retain their original bytes.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import codegen)
+(import diag)
+(import Vec)
+(import IO)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let nodes (pResNodes parsed))
+        (let units
+          (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+        (let merged (resolveImports nodes vecNew vecNew vecNew 0 "" units))
+        (let tc (checkModuleTcTyped nodes merged units))
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      }
+      (writeStr stderr "invalid arity diagnostic fixture\n"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "110-partial-application.ax"
+      "(:: add (-> Int Int Int))\n(fn (add a b)\n  (+ a b))\n\n(:: main Int)\n(fn (main)\n  (add 1))\n")
+    (checkSource "1014-primitive-value.ax"
+      "; A one-argument primitive applied to nothing, or passed bare. A\n; primitive is lowered in place at every call and has no function\n; symbol, so unlike a one-parameter `fn` - whose bare name is a thunk -\n; it has no value to take. Both shapes checked OK and emitted\n; `%__floatToInt`, a register nothing defines, which llc refused\n; (tests/fuzz/primitive-value.axfuzz, found by the seeded fuzzer\n; 2026-09-27); thirteen primitives were open to it. Every primitive of\n; two or more arguments was AX3013 already, and these are now the same.\n;\n; `(__argc)` takes NO argument, so the one-element list is its call, and\n; it stays legal; so does `useOne`, a one-parameter `fn` passed as a\n; value.\n(:: apply (-> (-> Int Int) Int Int))\n(fn (apply f x)\n  (f x))\n\n(:: one (-> Int Int))\n(fn (one x)\n  x)\n\n(:: appliedToNothing Int)\n(fn (appliedToNothing)\n  (__floatToInt))\n\n(:: passedBare Int)\n(fn (passedBare)\n  (apply __atomic_load 8))\n\n(:: useOne Int)\n(fn (useOne)\n  (apply one 8))\n\n;@axiom:effect(io)\n(:: main Int)\n(fn (main)\n  (__argc))\n")
+    (checkSource "450-effect-op-arity.ax"
+      "; An effect operation was registered with a silent wildcard type and\n; arity -1, so neither of these was a diagnostic. Both checked clean\n; at exit 0 and the process then answered:\n;\n;   (two 3 4 5)   exit 139, SIGSEGV\n;   (two 3)       exit 0, printing a heap address - a different one on\n;                 the next run\n;\n; The declared arrow was never missing. The parser has kept it beside\n; the name since effects landed and `axiom symbols` prints it; one\n; registration site took the parallel name-only vector instead.\n;\n; Over-application is AX3004 rather than AX3013 because it is not an\n; arity question by the time it is asked: `(-> Int Int Int)` right-folds\n; to `(-> Int (-> Int Int))`, so the third argument is applied to the\n; `Int` the second one produced.\n;\n; The effect walk sees the same over-application and, since\n; 2026-08-29, records it as a call it cannot follow - a callee's\n; RESULT is applied, and what applying a value performs is nobody's\n; row - so `over`'s handle draws AX3038 beside the type error. The\n; walk runs before any body is typed and does not know the result is\n; an `Int`; the warning is honest about that, and the error beside it\n; is what refuses the program.\n(effect Two\n  (two :: (-> Int Int Int)))\n\n(:: over (-> Int Int))\n(fn (over n)\n  (handle\n    (two 3 4 5)\n    (Two)\n    (lambda (p)\n      (lambda (q) (* p q))\n    )))\n\n(:: under (-> Int Int))\n(fn (under n)\n  (handle\n    (two 3)\n    (Two)\n    (lambda (p)\n      (lambda (q) (* p q))\n    )))\n\n(:: main ())\n(fn (main)\n  ())\n")
+    (checkSource "arity-compute.ax"
+      "(:: applyKernel (-> (-> Int Int) Int Int))\n;@axiom:compute(worker)\n(fn (applyKernel worker value) (worker value))\n(:: factory (-> Int Int))\n(fn (factory) (lambda (i) i))\n(:: opaque (-> (-> Int Int) Int))\n(fn (opaque worker) (applyKernel worker 0))\n(:: main Int)\n(fn (main) (applyKernel factory 0))\n")
+    (checkSource "arity-signature-only.ax"
+      "(:: unknown (-> Int Int Int))\n(:: one (-> Int Int))\n(fn (one x) x)\n(:: returning (-> Int Int Int))\n(fn (returning x) (lambda (y) (+ x y)))\n(:: main Int)\n(fn (main) { (let f returning) (unknown (f 1 2) 3) })\n")
+    (checkSource "arity-poison-operation.ax"
+      "(effect Bad (missing))\n(:: main Int)\n(fn (main) (missing 1 2))\n")
+    0
+  })

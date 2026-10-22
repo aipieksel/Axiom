@@ -3058,7 +3058,7 @@
 (pub struct FnEnt
   (name : String)
   (mut ty : ASTNode)
-  (mut paramCount : Int)
+  (mut paramCount : (Option Int))
   (isBuiltin : Int)
   (isEffectOp : Int)
   (effects : Strings)
@@ -3195,7 +3195,7 @@
 (pub fn (fnEntTy ent)
   ent.ty)
 
-(pub :: fnEntParamCount (-> FnEnt Int))
+(pub :: fnEntParamCount (-> FnEnt (Option Int)))
 (pub fn (fnEntParamCount ent)
   ent.paramCount)
 
@@ -3250,7 +3250,7 @@
     0
   })
 
-(:: fnEntSetParamCount (-> FnEnt Int Int))
+(:: fnEntSetParamCount (-> FnEnt (Option Int) Int))
 (fn (fnEntSetParamCount ent v)
   {
     (set ent.paramCount v)
@@ -4284,7 +4284,7 @@
     (FnEnt
       :name name
       :ty ty
-      :paramCount (- 0 1)
+      :paramCount None
       :isBuiltin 1
       :isEffectOp 0
       :effects vecNew
@@ -4381,7 +4381,7 @@
         (FnEnt
           :name name
           :ty ty
-          :paramCount (- 0 1)
+          :paramCount None
           :isBuiltin 1
           :isEffectOp 0
           :effects effs
@@ -5622,8 +5622,8 @@
 ;
 ; A type the parser could not read leaves 0 in the field. That field
 ; has already drawn AX3055 (`checkEffectOpTyped`, in the same collect
-; arm), so the operation registers as POISON at arity -1: `tyCompat`
-; matches poison with anything and `repArity` answers -1, and every
+; arm), so the operation registers as POISON with unknown arity: `tyCompat`
+; matches poison with anything and `repArity` answers `None`, and every
 ; use of the operation is quiet behind the one report at its
 ; declaration. It used to register as a silent WILDCARD at arity -1,
 ; which is the same silence with no report behind it - `(effect E
@@ -5640,8 +5640,8 @@
             ty)
         :paramCount
           (if (nodeSame ty nilNode)
-            (- 0 1)
-            (arrowArity ty))
+            None
+            (Some (arrowArity ty)))
         :isBuiltin 0
         :isEffectOp 1
         :effects
@@ -5678,9 +5678,8 @@
 ; seven-way match on `__syscall0`..`__syscall6`; neither effect walk
 ; learns a new shape; nothing else moves.
 ;
-; `paramCount` is the declared arrow's real depth, NOT -1. The removed
-; `foreign` used -1, and `repArity` answers -1 for a non-builtin whose
-; paramCount is negative, which SILENTLY disables both the AX3013
+; `paramCount` retains the declared arrow's real depth. An unknown
+; non-builtin arity makes `repArity` answer `None`, which disables both the AX3013
 ; bare-value refusal and the AX3009/AX3013 saturation check. An extern
 ; therefore gets arity checking that `foreign` never had.
 (pub :: tcAddExtern (-> TC String ASTNode Int))
@@ -5696,8 +5695,8 @@
             ty)
         :paramCount
           (if (nodeSame ty nilNode)
-            (- 0 1)
-            (arrowArity ty))
+            None
+            (Some (arrowArity ty)))
         :isBuiltin 0
         :isEffectOp 2
         :effects
@@ -5893,7 +5892,7 @@
             (FnEnt
               :name (nodeAName d)
               :ty ty
-              :paramCount (- 0 1)
+              :paramCount None
               :isBuiltin 0
               :isEffectOp 0
               :effects vecNew
@@ -5974,7 +5973,7 @@
                 (FnEnt
                   :name (nodeAName d)
                   :ty ph
-                  :paramCount (- 0 1)
+                  :paramCount None
                   :isBuiltin 0
                   :isEffectOp 0
                   :effects vecNew
@@ -5991,7 +5990,7 @@
                   :lambdaCast NoLambdaCast))
             }
           }))
-      (fnEntSetParamCount ent (vecLen (nodeBNames d)))
+      (fnEntSetParamCount ent (Some (vecLen (nodeBNames d))))
     }
   })
 
@@ -6195,7 +6194,7 @@
 ; ownership facts and unsafe role, rather than an empty signature entry.
 (:: signatureEntryOnly (-> FnEnt Bool))
 (fn (signatureEntryOnly ent)
-  (&& (< ent.paramCount 0) (&& (== ent.isBuiltin 0) (== ent.isEffectOp 0))))
+  (&& (isNone ent.paramCount) (&& (== ent.isBuiltin 0) (== ent.isEffectOp 0))))
 
 (:: resolveSignatureEntry (-> TC (Option FnEnt) (Option FnEnt)))
 (fn (resolveSignatureEntry tc ent)
@@ -9350,8 +9349,8 @@
       (let entFound (fnEntExact tc (nodeAName d)))
       (let n
         (if (let (Some ent) entFound)
-          (if (>= (fnEntParamCount ent) 0)
-            (+ (fnEntParamCount ent) 1)
+          (if (let (Some arity) (fnEntParamCount ent))
+            (+ arity 1)
             (if (== (nodeB d) 0)
               0
               (vecLen (nodeBWords d))))
@@ -10227,17 +10226,45 @@
 
 ; How many arguments a function's use must supply before it can be a
 ; value: the declared parameter count when a definition was seen, the
-; ARROW DEPTH for builtins (their type is the whole truth), and -1 -
-; unmeasurable - for a signature-only name (a one-parameter function
+; arrow depth for builtins (their type is the whole truth), and `None`
+; for a signature-only name (a one-parameter function
 ; returning a closure has arrow depth 2 but arity 1, so depth would
 ; wrongly flag legal code).
-(pub :: repArity (-> FnEnt Int))
+(pub :: repArity (-> FnEnt (Option Int)))
 (pub fn (repArity ent)
-  (if (>= (fnEntParamCount ent) 0)
-    (fnEntParamCount ent)
+  (if (let (Some arity) (fnEntParamCount ent))
+    (Some arity)
     (if (== (fnEntIsBuiltin ent) 1)
-      (arrowArity (fnEntTy ent))
-      (- 0 1))))
+      (Some (arrowArity (fnEntTy ent)))
+      None)))
+
+; Unknown arity is never a known nullary or known positive-arity function.
+(pub :: fnEntArityIs (-> FnEnt Int Bool))
+(pub fn (fnEntArityIs ent expected)
+  (match (fnEntParamCount ent)
+    ((Some arity) (== arity expected))
+    ((None) false)))
+
+(pub :: fnEntArityPositive (-> FnEnt Bool))
+(pub fn (fnEntArityPositive ent)
+  (match (fnEntParamCount ent)
+    ((Some arity) (> arity 0))
+    ((None) false)))
+
+; An unresolved signature may hold a function value; only known arity zero
+; proves a bare reference is a nullary call rather than a callable value.
+(pub :: fnEntMayTakeArgs (-> FnEnt Bool))
+(pub fn (fnEntMayTakeArgs ent)
+  (match (fnEntParamCount ent)
+    ((Some arity) (!= arity 0))
+    ((None) true)))
+
+; A partial-call refusal needs a known definition parameter count.
+(pub :: fnEntNeedsArgs (-> FnEnt Int Bool))
+(pub fn (fnEntNeedsArgs ent supplied)
+  (match (fnEntParamCount ent)
+    ((Some arity) (< supplied arity))
+    ((None) false)))
 
 ; ------------------------------------------------------------------
 ; Scope. One entry per binding: name, mutability, the binder's span
@@ -12562,8 +12589,7 @@
                 0 0 0)))
           1
         }
-        {
-          (let ar (repArity ent))
+        (if (let (Some ar) (repArity ent))
           (if (>= ar 2)
             (if (== span 0)
               1
@@ -12599,7 +12625,7 @@
                   " x))`")
                 "a primitive is lowered in place at each call and has no function symbol, so a bare reference to one has no value to take")
               0))
-        })
+          0))
       (if (== (isCastLike name) 1)
         (refuseBareForm tc name
           (if (isValueCastForm name)
@@ -16778,15 +16804,13 @@
         {
           (let entFound (findFnEnt tc hname))
           (if (let (Some ent) entFound)
-            {
-              (let ar (repArity ent))
-              (let arLim
-                (if (> (arrowArity (fnEntTy ent)) ar)
-                  (arrowArity (fnEntTy ent))
-                  ar))
-              (let got (spineArgs e 0))
-              (if (< ar 0)
-                0
+            (if (let (Some ar) (repArity ent))
+              {
+                (let arLim
+                  (if (> (arrowArity (fnEntTy ent)) ar)
+                    (arrowArity (fnEntTy ent))
+                    ar))
+                (let got (spineArgs e 0))
                 (if (&& (> got arLim) (== (fnResultClosed (fnEntTy ent)) 1))
                   (if (|| (== (nodeSpan head) 0) (!= (fnEntIsEffectOp ent) 0))
                     0
@@ -16827,8 +16851,9 @@
                               (concat (fmtInt (- ar got)) " more needed"))))
                         (checkSpineArgsOnly tc e)
                         1
-                      }))))
-            }
+                      })))
+              }
+              0)
             {
               (let ctorFound (rfindCtor tc hname))
               (if (let (Some ctor) ctorFound)
@@ -18279,7 +18304,7 @@
         (let entFound (findFnEnt tc n))
         (if (let (Some ent) entFound)
           (if (&& (== (isSyscallPrim n) 0)
-                (&& (== (tyIsArrow (fnEntTy ent)) 1) (!= (fnEntParamCount ent) 0)))
+                (&& (== (tyIsArrow (fnEntTy ent)) 1) (fnEntMayTakeArgs ent)))
             {
               (unsafeSinkNote tc e bound)
               (Some (fnValsOne (fnValNamed ent)))
@@ -18472,7 +18497,7 @@
                   (let feFound (findFnEnt tc (nodeAName a)))
                   (if (let (Some fe) feFound)
                     (if (&& (== (tyIsArrow fe.ty) 1)
-                          (&& (!= fe.paramCount 0) (== (isSyscallPrim (nodeAName a)) 0)))
+                          (&& (fnEntMayTakeArgs fe) (== (isSyscallPrim (nodeAName a)) 0)))
                       {
                         (let r vecNew)
                         {
@@ -18933,7 +18958,7 @@
             (let entFound (findFnEnt tc (nodeAName v)))
             (if (let (Some ent) entFound)
               (if (&& (== (tyIsArrow (fnEntTy ent)) 1)
-                    (&& (!= (fnEntParamCount ent) 0) (== (isSyscallPrim (nodeAName v)) 0)))
+                    (&& (fnEntMayTakeArgs ent) (== (isSyscallPrim (nodeAName v)) 0)))
                 (KnownFn (fnValNamed ent))
                 UnknownFn)
               UnknownFn)
@@ -20197,10 +20222,12 @@
     ; which for `handoff` is `shout`'s effects as POSSIBLE -
     ; and an untagged `g` calling it read `#effects=IO
     ; #effects-overapprox`, checked clean, and printed.
-    ; `repArity` is -1 for a primitive, whose arity the walk
-    ; cannot state, and the test is skipped there.
-    (if (&& (>= (repArity ent) 0) (> (vecLen args) (repArity ent)))
-      (effAdd acc effIncomplete)
+    ; An unknown arity cannot establish over-application. Builtins use
+    ; their declared arrow depth; unresolved signatures skip this test.
+    (if (let (Some arity) (repArity ent))
+      (if (> (vecLen args) arity)
+        (effAdd acc effIncomplete)
+        0)
       0)
   })
 
@@ -20335,7 +20362,7 @@
 ; bound.
 ; Does this type take an argument? `TAG_T_ARR` is the only shape that
 ; does, and a `FnEnt`'s `paramCount` cannot answer it: every primitive
-; is registered with -1 there, so `__argc` and `__syscall3` would be
+; is registered with `None` there, so `__argc` and `__syscall3` would be
 ; indistinguishable.
 (pub :: tyIsArrow (-> ASTNode Int))
 (pub fn (tyIsArrow t)
@@ -29791,7 +29818,7 @@
           (let ty (fnEntTy ent))
           (if (&& (! (nodeSame ty nilNode))
                 (&& (== (nodeTag ty) TAG_T_VAR)
-                  (&& (!= (strLen (nodeAName ty)) 0) (> (fnEntParamCount ent) 0))))
+                  (&& (!= (strLen (nodeAName ty)) 0) (fnEntArityPositive ent))))
             1
             0)
         }
@@ -31543,7 +31570,7 @@
     (let indices (fnEntScoped ent))
     {
       (let _sat
-        (if (&& (> (vecLen indices) 0) (< (vecLen args) (fnEntParamCount ent)))
+        (if (&& (> (vecLen indices) 0) (fnEntNeedsArgs ent (vecLen args)))
           (if (== (rgnReport rc) 1)
             (emitScopedCallback (rgnTc rc) span
               "a function with a scoped callback contract requires all declared arguments in one call")
@@ -31570,7 +31597,7 @@
     {
       (let entFound (findFnEnt (rgnTc rc) (nodeAName e)))
       (if (let (Some ent) entFound)
-        (if (&& (> (fnEntParamCount ent) 0)
+        (if (&& (fnEntArityPositive ent)
               (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))
           1
           0)
@@ -32218,8 +32245,7 @@
                 "a function with a scoped callback contract must be called directly; a function value would erase its precondition"))
             ())
           (if (if (let (Some ent) entFound)
-            (&& (== (fnEntParamCount ent) 0)
-              (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))
+            (&& (fnEntArityIs ent 0) (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))
             false)
             (rgnApp rc e)
             0)
@@ -34458,7 +34484,7 @@
           {
             (let entFound (findFnEnt tc (nodeAName e)))
             (if (let (Some ent) entFound)
-              (if (&& (== (fnEntParamCount ent) 1)
+              (if (&& (fnEntArityIs ent 1)
                     (&& (== (fnEntIsBuiltin ent) 0) (== (fnEntIsEffectOp ent) 0)))
                 (if (let (Some d) (rgnDeclOf tc (fnEntName ent)))
                   (computeRequest tc (nodeCChild d) (capBoundOf (nodeBNames d)) (nodeModuleOpt d)
@@ -34496,7 +34522,7 @@
                   {
                     (let args (spineArgVec e vecNew))
                     {
-                      (if (< (vecLen args) (fnEntParamCount ent))
+                      (if (fnEntNeedsArgs ent (vecLen args))
                         (emitCompute tc (nodeSpan e)
                           "a function with a compute contract requires all declared arguments in one call"))
                       (for i in 0..(vecLen indices)
@@ -34571,7 +34597,7 @@
     (if (|| (>= (strVecIdx bound name) 0) (sizedTyIn name "true false"))
       0
       (if (let (Some ent) (findFnEnt walk.tc name))
-        (if (!= ent.paramCount 0)
+        (if (fnEntMayTakeArgs ent)
             (computeFail walk
               (concat "compute callback uses an opaque or function value `" (concat name "`")))
           (!= ent.isBuiltin 0)

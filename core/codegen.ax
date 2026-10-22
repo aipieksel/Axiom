@@ -5216,21 +5216,24 @@
 
 ; Stop at the definition's arity: a returned function is one word.
 ; Resolve inference pins at every arrow position before classifying it.
-(:: functionFloatFlags (-> ASTNode Int Ints Ints))
+(:: functionFloatFlags (-> ASTNode (Option Int) Ints Ints))
 (fn (functionFloatFlags ty arity flags)
   {
     (let resolved (tyResolve ty))
-    (if (<= arity 0)
-      (vecPush flags (tyIsBareFloat resolved))
-      (if (== (nodeTag resolved) TAG_T_ARR)
-        {
-          (vecPush flags (tyIsBareFloat (tyResolve (nodeAChild resolved))))
-          (functionFloatFlags (nodeBChild resolved) (- arity 1) flags)
-        }
-        {
-          (vecPush flags 0)
-          (functionFloatFlags resolved (- arity 1) flags)
-        }))
+    (if (let (Some count) arity)
+      (if (<= count 0)
+        (vecPush flags (tyIsBareFloat resolved))
+        (if (== (nodeTag resolved) TAG_T_ARR)
+          {
+            (vecPush flags (tyIsBareFloat (tyResolve (nodeAChild resolved))))
+            (functionFloatFlags (nodeBChild resolved) (Some (- count 1)) flags)
+          }
+          {
+            (vecPush flags 0)
+            (functionFloatFlags resolved (Some (- count 1)) flags)
+          }))
+      ; Unknown arity keeps the existing whole-value representation fact.
+      (vecPush flags (tyIsBareFloat resolved)))
   })
 
 (:: checkedFloatFlags (-> CG String (Option Ints)))
