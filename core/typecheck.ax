@@ -13354,9 +13354,9 @@
 ; a top-level `(-> Int Int)` is a TAG_T_ARR and `evClassOf` answers 1
 ; for one. Value resolution reads the frame only, which is the rule
 ; this has to agree with.
-(pub :: capReport (-> TC (Vec ASTNode) Int Ints Int))
+(pub :: capReport (-> TC (Vec ASTNode) Int Names Int))
 (pub fn (capReport tc occ i seen)
-  (capReportFor tc occ i seen ""))
+  (capReportFor tc occ i seen None))
 
 ; `(parallel$lends b {})`, which only `parallel`'s desugaring writes
 ; (MM-PAR-6b): the borrow record is checked as any name is, the block is
@@ -13376,20 +13376,20 @@
   })
 
 ; A `parallel` binding's thunk: a lambda whose parameter the desugaring
-; named `parallel$_` and the form's number. Answers that number, or ""
+; named `parallel$_` and the form's number. Answers Some number, or None
 ; for any other lambda, whose captures keep AX3064's refusal.
-(pub :: capSpawnBorrowId (-> ASTNode String))
+(pub :: capSpawnBorrowId (-> ASTNode (Option String)))
 (pub fn (capSpawnBorrowId lam)
   {
     (let ps (nodeANames lam))
     (if (== (vecLen ps) 1)
       {
-        (let pn (vecGetStr ps 0))
+        (let pn (vecGet ps 0))
         (if (strStartsWith pn "parallel$_")
-          (strSlice pn 10 (- (strLen pn) 10))
-          "")
+          (Some (strSlice pn 10 (- (strLen pn) 10)))
+          None)
       }
-      "")
+      None)
   })
 
 ; The borrow block of the form numbered `id`: the most recent placeholder
@@ -13521,7 +13521,7 @@
       0
       (capBorrowableFields tc tys seen active depth (+ i 1)))))
 
-(pub :: capReportFor (-> TC (Vec ASTNode) Int Ints String Int))
+(pub :: capReportFor (-> TC (Vec ASTNode) Int Names (Option String) Int))
 (pub fn (capReportFor tc occ i seen borrow)
   (if (>= i (vecLen occ))
     0
@@ -13603,12 +13603,12 @@
                       (let cls (evClassOf tc ty))
                       (if (&& (!= cls 0) (capNotBorrowed tc borrow name ty (nodeSpan v)))
                         {
-                          (vecPush seen (nodeA v))
+                          (vecPush seen name)
                           (emitSpawnCapture tc name ty (nodeSpan v) cls)
                         }
                         (if (== (tyIsUnsharedWord tc ty) 1)
                           {
-                            (vecPush seen (nodeA v))
+                            (vecPush seen name)
                             (emitCaptureUnshared tc name ty (nodeSpan v))
                           }))
                     })
@@ -13621,13 +13621,15 @@
 
 ; A capture a `parallel` thunk may keep: an immutable value
 ; (`capTyBorrowable`) lent to its own form. True means refuse it.
-(pub :: capNotBorrowed (-> TC String String ASTNode Int Bool))
+(pub :: capNotBorrowed (-> TC (Option String) String ASTNode Int Bool))
 (pub fn (capNotBorrowed tc borrow name ty span)
-  (if (== (strLen borrow) 0)
-    true
-    (if (== (capTyBorrowable tc ty) 0)
+  (if (let (Some id) borrow)
+    (if (== (strLen id) 0)
       true
-      (== (capBorrowLend tc borrow name span) 0))))
+      (if (== (capTyBorrowable tc ty) 0)
+        true
+        (== (capBorrowLend tc id name span) 0)))
+    true))
 
 ; A captured type that is a `Vec`, after resolution: a counted
 ; reference whose handle is also a mutable heap buffer, which the
@@ -32001,7 +32003,9 @@
                           (concat
                             (concat
                               (concat "the closure captures `"
-                                (rgnCaptureFor rc valNode (/ (- capBad 1) 64)))
+                                (match (rgnCaptureFor rc valNode (/ (- capBad 1) 64))
+                                  ((None) "")
+                                  ((Some name) name)))
                               "`, which lives in ")
                             (rgnRidText rc (rgnOriginRid rc (/ (- capBad 1) 64))))
                           (concat ", and is stored into " into))
@@ -32511,13 +32515,13 @@
     }))
 
 ; The name of the last lambda's capture that carries origin `bit`,
-; when the value at `node` IS that lambda; "" otherwise.
-(pub :: rgnCaptureFor (-> RgnCtx ASTNode Int String))
+; when the value at `node` is that lambda; None otherwise.
+(pub :: rgnCaptureFor (-> RgnCtx ASTNode Int (Option String)))
 (pub fn (rgnCaptureFor rc node bit)
   (if (nodeSame node nilNode)
-    ""
+    None
     (if (!= (nodeTag node) TAG_E_LAM)
-      ""
+      None
       (rgnCaptureFrom rc.capNames rc.capOrigins bit 0))))
 
 ; When the value at `node` is the last lambda walked: the first
@@ -32544,12 +32548,12 @@
         (rgnCaptureBadFrom rc masks tgtRid (+ i 1)))
     }))
 
-(pub :: rgnCaptureFrom (-> Strings Ints Int Int String))
+(pub :: rgnCaptureFrom (-> Strings Ints Int Int (Option String)))
 (pub fn (rgnCaptureFrom names masks bit i)
   (if (>= i (vecLen names))
-    ""
+    None
     (if (!= (& (vecGet masks i) (<< 1 bit)) 0)
-      (vecGet names i)
+      (Some (vecGet names i))
       (rgnCaptureFrom names masks bit (+ i 1)))))
 
 (pub :: rgnCapBelow (-> RgnCtx Int Int Int))
