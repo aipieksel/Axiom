@@ -260,13 +260,19 @@ echo "--- 1. user-level cast count does not grow ---"
 # operand-table restorations in the MIR ownership control. The controls
 # reproduce the text leak; production removes four reference erasures
 # and the user-level conversions are MM-VAL-23 test subjects.
+# Baseline 1259 adds the checker refusals' fixtures. AX3139's subject is
+# a cast through unit: `tests/diagnostics/1492-as-unit.ax` writes two,
+# its `.human` golden and tests/tools/explain.golden quote them, and its
+# `(as x Int)` is the control between informative types. AX3140's
+# `tests/diagnostics/1493-certain-trap.ax` reads a `Percent` back as
+# `Int`, the subtype's own control. All are MM-VAL-23 test subjects.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1256 ]; then
-  ok "user-level (cast count $cast_count <= 1256)"
+elif [ "$cast_count" -le 1259 ]; then
+  ok "user-level (cast count $cast_count <= 1259)"
 else
-  bad "user-level (cast count $cast_count > 1256): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1259): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
