@@ -1,0 +1,66 @@
+; expect 42
+; Struct fields are a required collection. Parsed fieldless declarations
+; retain an empty vector; a missing packed AST slot normalises once on entry.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: structFieldsContext (-> Nodes TC))
+(fn (structFieldsContext declarations)
+  {
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "struct-fields.ax" :src "" :name "" :imports vecNew :library false))
+    (let tc (tcNew declarations declarations units))
+    tc
+  })
+
+(:: declaredFieldsChecks Bool)
+(fn (declaredFieldsChecks)
+  {
+    (let source "(pub struct Empty)\n(pub struct Pair (first : Int) (mut second : String))\n")
+    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let emptyNode (vecGet declarations 0))
+    (let tc (structFieldsContext declarations))
+    (if (let (Some empty) (findStruct tc "Empty"))
+      (if (let (Some pair) (findStruct tc "Pair"))
+        (&& (! (vecIsNull (nodeBChildren emptyNode)))
+          (&& (! (vecIsNull (structEntFields empty)))
+            (&& (structEntNoFields empty)
+              (&& (! (structEntNoFields pair))
+                (&& (== (vecLen (structEntFields pair)) 2)
+                  (&& (strEq (nodeAName (vecGet (structEntFields pair) 0)) "first")
+                    (&& (strEq (nodeAName (vecGet (structEntFields pair) 1)) "second")
+                      (&& (isNone (structFieldTy empty "missing"))
+                        (&& (isSome (structFieldTy pair "first"))
+                          (&& (== (structFieldMut pair "first") 0)
+                            (&& (== (structFieldMut pair "second") 1)
+                              (== (countErrorDiags (tcOutVec tc)) 0))))))))))))
+        false)
+      false)
+  })
+
+(:: missingWireFieldsChecks Bool)
+(fn (missingWireFieldsChecks)
+  {
+    (let declaration (nodeBuildDStruct "WireEmpty" nilNodes nilNodes 0))
+    ; Query the wire boundary directly; full checker passes require
+    ; the parser's valid declaration schema before this accessor runs.
+    (let fields (nodeStructFields declaration))
+    (let entry (StructEnt :name "WireEmpty" :fields fields :module None :tyvars vecNew :repr 0))
+    (&& (== (nodeB declaration) 0)
+      (&& (! (vecIsNull (structEntFields entry)))
+        (&& (structEntNoFields entry) (isNone (structFieldTy entry "missing")))))
+  })
+
+(:: main Int)
+(fn (main)
+  (if (declaredFieldsChecks)
+    (if (missingWireFieldsChecks)
+      42
+      2)
+    1))

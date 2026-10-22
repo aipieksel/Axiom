@@ -303,6 +303,37 @@ def signature_tag_negative_control(compiler, repo, env, work):
     print("signature tag negative control rejected Some-empty collapse (status 1)")
 
 
+
+def struct_fields_negative_control(compiler, repo, env, work):
+    """Prove the packed missing field slot becomes a real empty collection."""
+    overlay = work / "negative-struct-fields-core"
+    overlay.mkdir()
+    for source in (repo / "core").iterdir():
+        if source.is_file() and source.name != "parser.ax":
+            (overlay / source.name).symlink_to(source)
+    source = (repo / "core/parser.ax").read_text()
+    old = """(pub fn (nodeStructFields node)
+  (if (== (nodeB node) 0)
+    vecNew
+    (nodeBChildren node)))"""
+    if source.count(old) != 1:
+        raise SystemExit("struct fields control no longer matches its single normalisation site")
+    (overlay / "parser.ax").write_text(source.replace(old, old.replace("    vecNew", "    (nodeBChildren node)")))
+    executable = work / "struct-fields-negative"
+    built = subprocess.run(
+        [str(compiler), "--diagnostic-format=ai", "build",
+         str(repo / "tests/selfhost/typecheck-struct-fields.ax"),
+         "--opt", "0", "--output", str(executable)],
+        env=dict(env, AXIOM_PATH=str(overlay)), capture_output=True, text=True,
+    )
+    if built.returncode:
+        raise SystemExit(built.stdout + built.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    if ran.returncode != 2 or ran.stdout or ran.stderr:
+        raise SystemExit(f"struct fields control: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+    print("struct fields negative control rejected missing boundary normalisation (status 2)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--axiom", required=True, type=Path)
@@ -319,7 +350,7 @@ def main():
         "typecheck-constructor-name-options.ax", "typecheck-exhaustiveness-options.ax",
         "typecheck-declaration-field-options.ax", "typecheck-semantic-string-options.ax",
         "typecheck-capture-name-options.ax", "typecheck-signature-tag-options.ax",
-        "region-fact-projections.ax",
+        "region-fact-projections.ax", "typecheck-struct-fields.ax",
     ]]
     refusals = [
         ("typecheck-type-registry-payload.axp", "AX3004", ("DataEnt", "StructEnt")),
@@ -337,6 +368,7 @@ def main():
         ("typecheck-capture-name-refusal.axp", "AX3005", ("None",)),
         ("typecheck-capture-seen-refusal.axp", "AX3004", ("String", "Int")),
         ("typecheck-signature-tag-refusal.axp", "AX3005", ("None",)),
+        ("typecheck-struct-fields-refusal.axp", "AX3004", ("Vec", "ASTNode", "Option")),
     ]
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
         for fixture in fixtures:
@@ -373,6 +405,7 @@ def main():
             semantic_string_negative_control(compiler, repo, env, Path(work))
             capture_name_negative_control(compiler, repo, env, Path(work))
             signature_tag_negative_control(compiler, repo, env, Path(work))
+            struct_fields_negative_control(compiler, repo, env, Path(work))
     print(f"typed checker: {len(fixtures)} runtime fixtures returned 42; {len(refusals)} typed/exhaustiveness refusals passed")
 
 
