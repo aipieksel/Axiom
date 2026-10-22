@@ -9193,46 +9193,51 @@
               (set env.deferHits 0)
               0
             }
-            (if (|| (== (as made Int) 0) (== (expBlown env) 1))
+            (if (== (expBlown env) 1)
               {
                 (writeNodeWord d 3 1)
                 0
               }
-              (if (== (vecLen made) 0)
-                (expInstantiateNothing entryDecls decls env d)
-                {
-                  (let mod (nodeModule d))
-                  (if (== (as mod Int) 0)
-                    {
-                      (expCopyDeclInto d (vecGet made 0))
-                      (expAppendRest entryDecls decls made 1)
-                      (expGiveTags d made tags)
-                      (expRecordGens env made (nodeAName mac) 0)
-                      ; The entry file wins the bare slot, generated
-                      ; declarations included - `recordEntryFns` does
-                      ; this for the ones the parser produced, before
-                      ; any import is read, and these did not exist
-                      ; then.
-                      (expClaimEntryNames made env 0)
-                      1
-                    }
-                    ; Module-side: every generated declaration joins
-                    ; the module's namespace before anything reads the
-                    ; list, and NONE of them joins the entry file's -
-                    ; checkDuplicates and checkReservedNames walk that
-                    ; one, and a module's declarations have never been
-                    ; theirs to judge.
-                    {
-                      (let vis0 (expModuleize made env mod))
+              (if (let (Some made) made)
+                (if (== (vecLen made) 0)
+                  (expInstantiateNothing entryDecls decls env d)
+                  {
+                    (let mod (nodeModule d))
+                    (if (== (as mod Int) 0)
                       {
                         (expCopyDeclInto d (vecGet made 0))
-                        (writeNodeWord d 5 vis0)
-                        (expAppendRestMod decls made 1)
+                        (expAppendRest entryDecls decls made 1)
                         (expGiveTags d made tags)
                         (expRecordGens env made (nodeAName mac) 0)
+                        ; The entry file wins the bare slot, generated
+                        ; declarations included - `recordEntryFns` does
+                        ; this for the ones the parser produced, before
+                        ; any import is read, and these did not exist
+                        ; then.
+                        (expClaimEntryNames made env 0)
                         1
                       }
-                    })
+                      ; Module-side: every generated declaration joins
+                      ; the module's namespace before anything reads the
+                      ; list, and NONE of them joins the entry file's -
+                      ; checkDuplicates and checkReservedNames walk that
+                      ; one, and a module's declarations have never been
+                      ; theirs to judge.
+                      {
+                        (let vis0 (expModuleize made env mod))
+                        {
+                          (expCopyDeclInto d (vecGet made 0))
+                          (writeNodeWord d 5 vis0)
+                          (expAppendRestMod decls made 1)
+                          (expGiveTags d made tags)
+                          (expRecordGens env made (nodeAName mac) 0)
+                          1
+                        }
+                      })
+                  })
+                {
+                  (writeNodeWord d 3 1)
+                  0
                 })))
         }
       }
@@ -9307,11 +9312,10 @@
 
 ; One template declaration spliced: per-element rebuilds through the
 ; ordinary single-declaration path, with each sequence-bound name
-; taking its element. Answers a vec of declarations; answers 0 (with
-; the diagnostic already emitted) when the splice is refused or any
-; element's rebuild fails, because the caller aborts the whole
-; instantiation on 0 and the diagnostic is the signal. The
-; per-element substitution appends singles onto the shared
+; taking its element. Some owns the generated declarations, including an
+; empty sequence. None records a refused splice or failed element and
+; aborts the whole instantiation. Per-element substitution appends singles
+; onto the shared
 ; params/args (last wins) and pops them after: nothing appends to
 ; those vecs during substitution, so the truncation restores exactly
 ; what was there. Mirrors `expSpliceOneArm` one level up.
@@ -9321,8 +9325,7 @@
 ; declaration (a spine, arm, constructor or declaration `...` of its
 ; own - using one sequence at two depths, refused rather than
 ; rebuilt n-squared).
-(pub :: expSpliceOneDecl (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
+(pub :: expSpliceOneDecl (-> ASTNode Names (Vec ASTNode) MEnv Int (Option Nodes)))
 (pub fn (expSpliceOneDecl t params args env isp)
   {
     (let seqs (expSeqBindsVec env))
@@ -9331,14 +9334,14 @@
         (expEllipsisDiag env "..." "follows nothing that repeats"
           "repetition lives in a rule-form macro's match: move the match there, or drop the marker"
           isp)
-        (as 0 Nodes)
+        None
       }
       (if (== (tplDeclHasRepeat t) 1)
         {
           (expEllipsisDiag env "..." "nests a repeat inside a repeat"
             "repeat one level only - splice one declaration per element, never a declaration that splices again inside"
             isp)
-          (as 0 Nodes)
+          None
         }
         {
           (let first (vecGet seqs 0))
@@ -9369,14 +9372,14 @@
                                 })
                               {
                                 (let g (expBuildOneDecl t params args env isp))
-                                (if (nodeSame g nilNode)
-                                  {
-                                    (set bad 1)
-                                    (set j n)
-                                  }
+                                (if (let (Some g) g)
                                   {
                                     (vecPush out g)
                                     (set j (+ j 1))
+                                  }
+                                  {
+                                    (set bad 1)
+                                    (set j n)
                                   })
                               }
                               (while (> (vecLen params) markP)
@@ -9386,8 +9389,8 @@
                             }
                           }))
                       (if (== bad 1)
-                        (as 0 Nodes)
-                        out)
+                        None
+                        (Some out))
                     }
                   }
                 }
@@ -9528,8 +9531,7 @@
 ; past the marker.
 (pub :: expDrainBuilt
   (-> (Vec ASTNode) ASTNode (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int Int
-    (Vec ASTNode)))
-;@axiom:effect(unsafe)
+    (Option Nodes)))
 (pub fn (expDrainBuilt built tmpl tpl params args env isp acc i j)
   (if (>= j (vecLen built))
     (expBuildDecls tpl params args env isp acc (+ i 2))
@@ -9549,7 +9551,7 @@
                     (concat "macro expansion produced more than the limit of "
                       (expFmtInt expMaxDecls))
                     " declarations"))
-                (as 0 Nodes)
+                None
               }
               (expDrainBuilt built tmpl tpl params args env isp acc i (+ j 1)))
           }
@@ -9558,11 +9560,10 @@
     }))
 
 (pub :: expBuildDecls
-  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Option Nodes)))
 (pub fn (expBuildDecls tpl params args env isp acc i)
   (if (>= i (vecLen tpl))
-    acc
+    (Some acc)
     {
       (let t (vecGet tpl i))
       (if (== (nodeTag t) TAG_D_SYNFOR)
@@ -9571,8 +9572,8 @@
         ; where the form stood - through this same function, so
         ; nested iterations compose exactly as the arm-position
         ; splice does.
-        (if (== (expBuildForDecls t params args env isp acc) 0)
-          (as 0 Nodes)
+        (if (! (expBuildForDecls t params args env isp acc))
+          None
           (expBuildDecls tpl params args env isp acc (+ i 1)))
         ; A `decl ...` splice: the declaration rebuilds once per
         ; absorbed element, spliced where the pair stood. A
@@ -9586,19 +9587,18 @@
             (expEllipsisDiag env "..."
               "starts nothing - a repetition marker follows the declaration it repeats"
               "drop it, or move it directly after the repeated declaration" isp)
-            (as 0 Nodes)
+            None
           }
           (if (&& (< (+ i 1) (vecLen tpl)) (== (isEllipsisDecl (vecGet tpl (+ i 1))) 1))
             {
               (let built (expSpliceOneDecl t params args env isp))
-              (if (== (as built Int) 0)
-                (as 0 Nodes)
-                (expDrainBuilt built t tpl params args env isp acc i 0))
+              (if (let (Some built) built)
+                (expDrainBuilt built t tpl params args env isp acc i 0)
+                None)
             }
             {
               (let g (expBuildOneDecl t params args env isp))
-              (if (nodeSame g nilNode)
-                (as 0 Nodes)
+              (if (let (Some g) g)
                 {
                   ; The template's AXTAGs travel to the declaration it
                   ; generated. `g` is a NEW node - everything after
@@ -9635,16 +9635,17 @@
                               (concat "macro expansion produced more than the limit of "
                                 (expFmtInt expMaxDecls))
                               " declarations"))
-                          (as 0 Nodes)
+                          None
                         }
                         (expBuildDecls tpl params args env isp acc (+ i 1)))
                     }
                   }
-                })
+                }
+                None)
             })))
     }))
 
-(pub :: expBuildForDecls (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int))
+(pub :: expBuildForDecls (-> ASTNode Names Nodes MEnv Int Nodes Bool))
 (pub fn (expBuildForDecls f params args env isp acc)
   {
     (let seqs
@@ -9655,14 +9656,13 @@
         isp))
     (if (let (Some seqs) seqs)
       (expBuildForElems f params args env isp acc seqs (expIterLen seqs) 0)
-      0)
+      false)
   })
 
-(pub :: expBuildForElems
-  (-> ASTNode Names (Vec ASTNode) MEnv Int (Vec ASTNode) (Vec ExpIterSequence) Int Int Int))
+(pub :: expBuildForElems (-> ASTNode Names Nodes MEnv Int Nodes (Vec ExpIterSequence) Int Int Bool))
 (pub fn (expBuildForElems f params args env isp acc seqs n j)
   (if (>= j n)
-    1
+    true
     ; The per-ELEMENT half of the same budget. The push site above
     ; refuses the element that crosses the limit, but an element costs
     ; more than the declarations it yields - `expBuildForDecls`
@@ -9674,7 +9674,7 @@
     ; inner sweep; on the 3,200,000-declaration probe that is the
     ; difference between 0.04 s and never returning.
     (if (== (expBlown env) 1)
-      0
+      false
       {
         (let mark (vecLen (expForStackVec env)))
         (let markC (vecLen (expScChainVec env)))
@@ -9686,9 +9686,9 @@
             {
               (expTrunc (expForStackVec env) mark)
               (expScTruncLoop env markC)
-              (if (== (as r Int) 0)
-                0
-                (expBuildForElems f params args env isp acc seqs n (+ j 1)))
+              (if (let (Some r) r)
+                (expBuildForElems f params args env isp acc seqs n (+ j 1))
+                false)
             }
           }
         }
@@ -9929,7 +9929,7 @@
 ; passthrough) - though `expCheckMacros` already refused the template
 ; at the macro's own line, so reaching this arm is the belt after the
 ; braces.
-(pub :: expBuildOneDecl (-> ASTNode Names (Vec ASTNode) MEnv Int ASTNode))
+(pub :: expBuildOneDecl (-> ASTNode Names Nodes MEnv Int (Option ASTNode)))
 
 ; What `pub` a generated declaration is born with. The entry file's
 ; own declarations are all visible - nothing imports them, and import
@@ -9979,13 +9979,13 @@
                   {
                     (writeNodeWord g 5 (expGenVis env t))
                     (nodeCopyWord g t 9)
-                    g
+                    (Some g)
                   }
                 }
               }
-              nilNode)
+              None)
           }
-          nilNode)
+          None)
       }
       (if (== tag TAG_D_SIG)
         {
@@ -10005,11 +10005,11 @@
                 {
                   (writeNodeWord g 5 (expGenVis env t))
                   (writeNodeChild g 6 ty)
-                  g
+                  (Some g)
                 }
               }
             }
-            nilNode)
+            None)
         }
         (if (== tag TAG_D_DATA)
           ; A `data` template (MAC-CAP-7: a macro that generates TYPE
@@ -10027,18 +10027,18 @@
             (if (let (Some nm) nm)
               {
                 (let cs (expBuildCtors (nodeBChildren t) params args env isp))
-                (if (== (as cs Int) 0)
-                  nilNode
+                (if (let (Some cs) cs)
                   {
                     (let g (nodeBuildDData nm cs 0 nsp))
                     {
                       (writeNodeWord g 5 (expGenVis env t))
                       (setNodeTyWord g (nodeTy t))
-                      g
+                      (Some g)
                     }
-                  })
+                  }
+                  None)
               }
-              nilNode)
+              None)
           }
           (if (== tag TAG_D_STRUCT)
             ; A `struct` template. Field NAMES are name positions like
@@ -10050,8 +10050,7 @@
               (if (let (Some nm) nm)
                 {
                   (let fs (expBuildStructFields (nodeBChildren t) params args env isp))
-                  (if (== (as fs Int) 0)
-                    nilNode
+                  (if (let (Some fs) fs)
                     ; Word c is the representation markers
                     ; (`collectStructMarkers`): copied as written, since
                     ; a marker is a keyword and never a name position,
@@ -10060,11 +10059,12 @@
                       (let g (nodeBuildDStruct nm fs (nodeCChildren t) nsp))
                       {
                         (writeNodeWord g 5 (expGenVis env t))
-                        g
+                        (Some g)
                       }
-                    })
+                    }
+                    None)
                 }
-                nilNode)
+                None)
             }
             (if (== tag TAG_D_ALIAS)
               ; A `type` template. The alias's name is a name position, its
@@ -10082,16 +10082,16 @@
                   {
                     (let ty (expSubstTy (nodeBChild t) params args env isp))
                     (if (nodeSame ty nilNode)
-                      nilNode
+                      None
                       {
                         (let g (nodeBuildDAlias nm ty (nodeCNames t) nsp))
                         {
                           (writeNodeWord g 5 (expGenVis env t))
-                          g
+                          (Some g)
                         }
                       })
                   }
-                  nilNode)
+                  None)
               }
               (if (== tag TAG_D_EFFECT)
                 ; An `effect` template. The effect's name and each operation's
@@ -10109,20 +10109,19 @@
                     {
                       (let ops vecNew)
                       (let ofs vecNew)
-                      (if (==
+                      (if (!
                             (expBuildEffectOps (nodeBNames t) (nodeCChildren t) params args env isp
-                              ops ofs 0)
-                            0)
-                        nilNode
+                              ops ofs 0))
+                        None
                         {
                           (let g (nodeBuildDEffect nm ops ofs nsp))
                           {
                             (writeNodeWord g 5 (expGenVis env t))
-                            g
+                            (Some g)
                           }
                         })
                     }
-                    nilNode)
+                    None)
                 }
                 (if (== tag TAG_D_MACROCALL)
                   {
@@ -10130,9 +10129,9 @@
                     (if (let (Some hd) hd)
                       {
                         (let as (expSubstArgs (nodeBChildren t) params args env isp))
-                        (nodeBuildDMacrocall hd as 0 isp)
+                        (Some (nodeBuildDMacrocall hd as 0 isp))
                       }
-                      nilNode)
+                      None)
                   }
                   {
                     (expEmit env
@@ -10140,17 +10139,16 @@
                         "a declaration template may generate `fn`, `::`, `data`, `struct`, `type` and `effect` declarations, or further macro invocations - this form is not supported yet"
                         0 0 "generate the declaration by hand, or extend the template surface"
                         "trait, import and nested macro templates are refusals rather than silent passthroughs, so the commit that adds one adds it loudly (MAC-CAP-2)"))
-                    nilNode
+                    None
                   })))))))
   })
 
-; An `effect` template's operations, both vectors at once. Answers 1,
-; or 0 with the refusal already emitted.
-(pub :: expBuildEffectOps
-  (-> Names (Vec ASTNode) Names (Vec ASTNode) MEnv Int Names (Vec ASTNode) Int Int))
+; An `effect` template's operations, both vectors at once. A refusal
+; returns false after recording its diagnostic.
+(pub :: expBuildEffectOps (-> Names Nodes Names Nodes MEnv Int Names Nodes Int Bool))
 (pub fn (expBuildEffectOps ops ofs params args env isp outOps outFs i)
   (if (>= i (vecLen ops))
-    1
+    true
     {
       (let nm (expSubstName (vecGet ops i) params args env isp))
       (if (let (Some nm) nm)
@@ -10172,7 +10170,7 @@
             (expBuildEffectOps ops ofs params args env isp outOps outFs (+ i 1))
           }
         }
-        0)
+        false)
     }))
 
 ; Each constructor of a `data` template: name substituted, field
@@ -10180,7 +10178,7 @@
 ; out. A struct-variant's field names (word 9) ride along unchanged -
 ; they are already identifiers, and nothing in the substitution can
 ; reach them.
-(pub :: expBuildCtors (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
+(pub :: expBuildCtors (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Option Nodes)))
 (pub fn (expBuildCtors cs params args env isp)
   ; A `...` marker after a form diverts to the splice loop;
   ; otherwise this is the ordinary one-form-per-constructor walk,
@@ -10232,11 +10230,10 @@
     }))
 
 (pub :: expBuildCtorsIn
-  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Option Nodes)))
 (pub fn (expBuildCtorsIn cs params args env isp acc i)
   (if (>= i (vecLen cs))
-    acc
+    (Some acc)
     {
       (let c (vecGet cs i))
       {
@@ -10266,7 +10263,7 @@
               }
             }
           }
-          (as 0 Nodes))
+          None)
       }
     }))
 
@@ -10286,19 +10283,18 @@
 ; never triggers the loop: `csHasSpliceMarker` only fires beside a
 ; marker, and the marker beside nothing repeatable diagnoses.
 (pub :: expBuildCtorsSplice
-  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Option Nodes)))
 (pub fn (expBuildCtorsSplice cs params args env isp acc i)
   (if (>= i (vecLen cs))
-    acc
+    (Some acc)
     {
       (let c (vecGet cs i))
       (if (&& (< (+ i 1) (vecLen cs)) (== (isEllipsisCtor (vecGet cs (+ i 1))) 1))
         {
           (let built (expSpliceOneCtor c params args env isp))
-          (if (== (as built Int) 0)
-            (as 0 Nodes)
-            (expBuildCtorsSplice cs params args env isp (expAppendBuilt acc built 0) (+ i 2)))
+          (if (let (Some built) built)
+            (expBuildCtorsSplice cs params args env isp (expAppendBuilt acc built 0) (+ i 2))
+            None)
         }
         {
           (let one
@@ -10311,9 +10307,11 @@
                 }
               }
               params args env isp))
-          (if (== (vecLen one) 0)
-            (as 0 Nodes)
-            (expBuildCtorsSplice cs params args env isp (expAppendBuilt acc one 0) (+ i 1)))
+          (if (let (Some one) one)
+            (if (== (vecLen one) 0)
+              None
+              (expBuildCtorsSplice cs params args env isp (expAppendBuilt acc one 0) (+ i 1)))
+            None)
         })
     }))
 
@@ -10333,8 +10331,7 @@
 ; onto the shared params/args (last wins) and pops them after:
 ; nothing appends to those vecs during substitution, so the
 ; truncation restores exactly what was there.
-(pub :: expSpliceOneCtor (-> ASTNode Names Nodes MEnv Int Nodes))
-;@axiom:effect(unsafe)
+(pub :: expSpliceOneCtor (-> ASTNode Names Nodes MEnv Int (Option Nodes)))
 (pub fn (expSpliceOneCtor constructor params args env isp)
   {
     (let names (expCtorSeqNames constructor vecNew env))
@@ -10342,13 +10339,13 @@
       {
         (expEllipsisDiag env "..." "follows nothing that repeats"
           "put `...` directly after a constructor form whose names repeat, or drop it" isp)
-        (as 0 Nodes)
+        None
       }
       (if (== (expCtorHasEllipsis constructor) 1)
         {
           (expEllipsisDiag env "..." "nests a repeat inside a repeat"
             "repeat one level only in constructor lists too" isp)
-          (as 0 Nodes)
+          None
         }
         (if (let (Some rows) (expSequenceRows env names isp 0 vecNew))
           {
@@ -10366,17 +10363,19 @@
                       (vecPush args (vecGet (vecGet rows k) j))
                     })
                   (let one (expBuildCtors (vecPush vecNew constructor) params args env isp))
-                  (if (!= (vecLen one) 1)
-                    (set bad true)
-                    (vecPush out (vecGet one 0)))
+                  (if (let (Some one) one)
+                    (if (!= (vecLen one) 1)
+                      (set bad true)
+                      (vecPush out (vecGet one 0)))
+                    (set bad true))
                   (expTrunc params markP)
                   (expTrunc args markA)
                 }))
             (if bad
-              (as 0 Nodes)
-              out)
+              None
+              (Some out))
           }
-          (as 0 Nodes))))
+          None)))
   })
 
 ; Every sequence-bound name a constructor form mentions: its own
@@ -10495,16 +10494,15 @@
     }
   })
 
-(pub :: expBuildStructFields (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
+(pub :: expBuildStructFields (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Option Nodes)))
 (pub fn (expBuildStructFields fs params args env isp)
   (expBuildStructFieldsIn fs params args env isp vecNew 0))
 
 (pub :: expBuildStructFieldsIn
-  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Vec ASTNode)))
-;@axiom:effect(unsafe)
+  (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode) Int (Option Nodes)))
 (pub fn (expBuildStructFieldsIn fs params args env isp acc i)
   (if (>= i (vecLen fs))
-    acc
+    (Some acc)
     {
       (let f (vecGet fs i))
       {
@@ -10546,7 +10544,7 @@
               }
             }
           }
-          (as 0 Nodes))
+          None)
       }
     }))
 
