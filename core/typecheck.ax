@@ -1912,7 +1912,7 @@
 
 (pub :: evDataTyKnown (-> Int String Int))
 (pub fn (evDataTyKnown tc name)
-  (if (|| (! (== (findDataAnyVis tc name) 0)) (! (== (findStructAnyVis tc name) 0)))
+  (if (|| (! (isNone (findDataAnyVis tc name))) (! (isNone (findStructAnyVis tc name))))
     1
     0))
 
@@ -3148,7 +3148,7 @@
 ; module here answers it without renaming anything: see `ctorMatches`.
 (pub struct DataEnt
   (name : String)
-  (ctors : (Vec Int))
+  (ctors : (Vec CtorEnt))
   (module : Int)
   (arity : Int))
 
@@ -3164,111 +3164,72 @@
 (pub fn (fnEntMayCalls ent)
   ent.mayCalls)
 
-(pub :: structEntName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: structEntName (-> StructEnt String))
 (pub fn (structEntName ent)
-  {
-    (let e (as ent StructEnt))
-    e.name
-  })
+  ent.name)
 
-(pub :: structEntNoFields (-> Int Bool))
-;@axiom:effect(unsafe)
+(pub :: structEntNoFields (-> StructEnt Bool))
 (pub fn (structEntNoFields ent)
-  {
-    (let e (as ent StructEnt))
-    (== (as e.fields Int) 0)
-  })
+  (== (as ent.fields Int) 0))
 
-(pub :: structEntFields (-> Int Nodes))
-;@axiom:effect(unsafe)
+(pub :: structEntFields (-> StructEnt Nodes))
 (pub fn (structEntFields ent)
-  {
-    (let e (as ent StructEnt))
-    e.fields
-  })
+  ent.fields)
 
-(pub :: structEntModule (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: structEntModule (-> StructEnt Int))
 (pub fn (structEntModule ent)
-  {
-    (let e (as ent StructEnt))
-    e.module
-  })
+  ent.module)
 
 ; The declaring module's name. Only ask it when `structEntModule` is
 ; not 0, which is the entry file.
-(pub :: structEntModuleName (-> Int String))
+(pub :: structEntModuleName (-> StructEnt String))
 ;@axiom:effect(unsafe)
 (pub fn (structEntModuleName ent)
-  {
-    (let e (as ent StructEnt))
-    (as e.module String)
-  })
+  (as ent.module String))
 
-(pub :: structEntTyvars (-> Int Names))
-;@axiom:effect(unsafe)
+(pub :: structEntTyvars (-> StructEnt Names))
 (pub fn (structEntTyvars ent)
-  {
-    (let e (as ent StructEnt))
-    e.tyvars
-  })
+  ent.tyvars)
 
-(pub :: structEntRepr (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: structEntRepr (-> StructEnt Int))
 (pub fn (structEntRepr ent)
-  {
-    (let e (as ent StructEnt))
-    e.repr
-  })
+  ent.repr)
 
-(pub :: dataEntName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: dataEntName (-> DataEnt String))
 (pub fn (dataEntName ent)
-  {
-    (let e (as ent DataEnt))
-    e.name
-  })
+  ent.name)
 
-(pub :: dataEntModule (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: dataEntModule (-> DataEnt Int))
 (pub fn (dataEntModule ent)
-  {
-    (let e (as ent DataEnt))
-    e.module
-  })
+  ent.module)
 
-(pub :: dataEntCtors (-> Int (Vec Int)))
-;@axiom:effect(unsafe)
+(pub :: dataEntCtors (-> DataEnt (Vec CtorEnt)))
 (pub fn (dataEntCtors ent)
-  {
-    (let e (as ent DataEnt))
-    e.ctors
-  })
+  ent.ctors)
 
-(pub :: ctorEntName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: ctorEntFieldTys (-> CtorEnt Nodes))
+(pub fn (ctorEntFieldTys ent)
+  ent.fieldTys)
+
+(pub :: ctorEntResTy (-> CtorEnt ASTNode))
+(pub fn (ctorEntResTy ent)
+  ent.resTy)
+
+(pub :: ctorEntFieldNames (-> CtorEnt Names))
+(pub fn (ctorEntFieldNames ent)
+  ent.fieldNames)
+
+(pub :: ctorEntName (-> CtorEnt String))
 (pub fn (ctorEntName ent)
-  {
-    (let e (as ent CtorEnt))
-    e.name
-  })
+  ent.name)
 
-(pub :: ctorEntTy (-> Int ASTNode))
-;@axiom:effect(unsafe)
+(pub :: ctorEntTy (-> CtorEnt ASTNode))
 (pub fn (ctorEntTy ent)
-  {
-    (let e (as ent CtorEnt))
-    e.ctorTy
-  })
+  ent.ctorTy)
 
-(pub :: dataEntArity (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: dataEntArity (-> DataEnt Int))
 (pub fn (dataEntArity ent)
-  {
-    (let e (as ent DataEnt))
-    e.arity
-  })
+  ent.arity)
 
 ; Function tables, indexes and graph paths retain typed entries.
 ; These readers expose their fields without forging reference views.
@@ -3381,31 +3342,31 @@
         2
         0))))
 
-(pub :: structEntIsWord (-> Int Int))
+(pub :: structEntIsWord (-> (Option StructEnt) Int))
 (pub fn (structEntIsWord ent)
-  (if (== ent 0)
-    0
-    (if (== (% (structEntRepr ent) 2) 1)
+  (if (let (Some entry) ent)
+    (if (== (% entry.repr 2) 1)
       1
-      0)))
+      0)
+    0))
 
 ; A heap struct its module declared `sealed shared` (MM-PAR-16): a
 ; counted handle a `parallel` form lends its bindings (`capBorrowableIn`).
-(pub :: structEntIsSharedHeap (-> Int Int))
+(pub :: structEntIsSharedHeap (-> (Option StructEnt) Int))
 (pub fn (structEntIsSharedHeap ent)
-  (if (== ent 0)
-    0
-    (if (== (& (structEntRepr ent) 7) 6)
+  (if (let (Some entry) ent)
+    (if (== (& entry.repr 7) 6)
       1
-      0)))
+      0)
+    0))
 
-(pub :: structEntIsShared (-> Int Int))
+(pub :: structEntIsShared (-> (Option StructEnt) Int))
 (pub fn (structEntIsShared ent)
-  (if (== (structEntIsWord ent) 0)
-    0
-    (if (!= (& (structEntRepr ent) 2) 0)
+  (if (let (Some entry) ent)
+    (if (&& (== (structEntIsWord ent) 1) (!= (& entry.repr 2) 0))
       1
-      0)))
+      0)
+    0))
 
 ; The type parameters the declaration named, in order - the vector
 ; `parseStructDecl` hung on the D_STRUCT node. Empty for every
@@ -3425,8 +3386,8 @@
 
 (pub struct TC
   (fns : (Vec FnEnt))
-  (datas : (Vec Int))
-  (structs : (Vec Int))
+  (datas : (Vec DataEnt))
+  (structs : (Vec StructEnt))
   (scope : (Vec SEnt))
   (mut out : Diags)
   (mut counter : Int)
@@ -3454,7 +3415,7 @@
   (mut privIdx : (Option StringRows))
   (mut rgnFactsDone : Int)
   (mut curCalls : (Option Names))
-  (mut tyIdx : Ints)
+  (mut tyIdx : (Option TypeIndex))
   (mut deprecated : Nodes)
   (mut curLamVar : Int)
   (mut rgnGaveUp : Int)
@@ -3801,7 +3762,7 @@
     t.fns
   })
 
-(pub :: tcDatasVec (-> Int Ints))
+(pub :: tcDatasVec (-> Int (Vec DataEnt)))
 ;@axiom:effect(unsafe)
 (pub fn (tcDatasVec tc)
   {
@@ -3809,7 +3770,7 @@
     t.datas
   })
 
-(pub :: tcStructsVec (-> Int Ints))
+(pub :: tcStructsVec (-> Int (Vec StructEnt)))
 ;@axiom:effect(unsafe)
 (pub fn (tcStructsVec tc)
   {
@@ -4219,7 +4180,7 @@
     tc
   })
 
-(:: tcTyIdx (-> Int Ints))
+(:: tcTyIdx (-> Int (Option TypeIndex)))
 ;@axiom:effect(unsafe)
 (fn (tcTyIdx tc)
   {
@@ -4227,12 +4188,12 @@
     t.tyIdx
   })
 
-(:: tcSetTyIdx (-> Int Ints Int))
+(:: tcSetTyIdx (-> Int TypeIndex Int))
 ;@axiom:effect(unsafe)
 (fn (tcSetTyIdx tc v)
   {
     (let t (as tc TC))
-    (set t.tyIdx v)
+    (set t.tyIdx (Some v))
     tc
   })
 
@@ -5465,27 +5426,27 @@
         (let optCtors vecNew)
         {
           (vecPush optCtors
-            (as (CtorEnt
-                  :name "Some"
-                  :fieldTys
-                    {
-                      (let v vecNew)
-                      {
-                        (vecPush v (mkTVar "a"))
-                        v
-                      }
-                    }
-                  :resTy optRes
-                  :ctorTy (mkTArr (mkTVar "a") optRes)
-                  :fieldNames nilNames) Int))
+            (CtorEnt
+              :name "Some"
+              :fieldTys
+                {
+                  (let v vecNew)
+                  {
+                    (vecPush v (mkTVar "a"))
+                    v
+                  }
+                }
+              :resTy optRes
+              :ctorTy (mkTArr (mkTVar "a") optRes)
+              :fieldNames nilNames))
           (vecPush optCtors
-            (as (CtorEnt
-                  :name "None"
-                  :fieldTys vecNew
-                  :resTy optRes
-                  :ctorTy optRes
-                  :fieldNames nilNames) Int))
-          (vecPush datas (as (DataEnt :name "Option" :ctors optCtors :module 0 :arity 1) Int))
+            (CtorEnt
+              :name "None"
+              :fieldTys vecNew
+              :resTy optRes
+              :ctorTy optRes
+              :fieldNames nilNames))
+          (vecPush datas (DataEnt :name "Option" :ctors optCtors :module 0 :arity 1))
           ; `Vec`, ABSTRACT AND PARAMETERISED. No constructors: a `Vec`
           ; is made by `vecNew` and read by `vecGet`, never matched, so
           ; there is nothing for a pattern to name. What the entry buys
@@ -5498,12 +5459,12 @@
           ; type-level change only, which is what makes it separable
           ; from the reference-class question - `fldClass` answers for
           ; `Vec` exactly what it answered for the `Int` it replaces.
-          (vecPush datas (as (DataEnt :name "Vec" :ctors vecNew :module 0 :arity 1) Int))
+          (vecPush datas (DataEnt :name "Vec" :ctors vecNew :module 0 :arity 1))
           ; `(Link T W)`, abstract like `Vec`: an index into a `(Vec T)`
           ; that a struct field stores in `W` bytes (MM-VAL-10b). The
           ; entry gives it its two parameters; `stdlib/Link.ax` makes
           ; and follows one, and every classifier answers "word".
-          (vecPush datas (as (DataEnt :name "Link" :ctors vecNew :module 0 :arity 2) Int))
+          (vecPush datas (DataEnt :name "Link" :ctors vecNew :module 0 :arity 2))
         }
       }
       ; The exact-name index, before collection rather than after:
@@ -5547,7 +5508,7 @@
                 :privIdx None
                 :rgnFactsDone 0
                 :curCalls None
-                :tyIdx nilWords
+                :tyIdx None
                 :deprecated nilNodes
                 :curLamVar 0
                 :rgnGaveUp 0
@@ -5810,15 +5771,15 @@
                   (checkStructMarkers tc d)
                   {
                     (let sent
-                      (as (StructEnt
-                            :name (nodeAName d)
-                            :fields (nodeBChildren d)
-                            :module (nodeModule d)
-                            :tyvars (nodeTyNames d)
-                            :repr (structReprOf d)) Int))
+                      (StructEnt
+                        :name (nodeAName d)
+                        :fields (nodeBChildren d)
+                        :module (nodeModule d)
+                        :tyvars (nodeTyNames d)
+                        :repr (structReprOf d)))
                     {
                       (vecPush (tcStructsVec tc) sent)
-                      (tyIdxPut tc (nodeAName d) TY_STRUCT (nodeModule d) sent 0)
+                      (tyIdxPut tc (nodeAName d) (nodeModule d) (TyStruct sent))
                     }
                   }
                 }
@@ -6241,14 +6202,14 @@
             (tcCollectCtors (nodeBChildren d) resTy ctors 0)
             {
               (let dent
-                (as (DataEnt
-                      :name (nodeAName d)
-                      :ctors ctors
-                      :module (nodeModule d)
-                      :arity
-                        (if (== (as tvs Int) 0)
-                          0
-                          (vecLen tvs))) Int))
+                (DataEnt
+                  :name (nodeAName d)
+                  :ctors ctors
+                  :module (nodeModule d)
+                  :arity
+                    (if (== (as tvs Int) 0)
+                      0
+                      (vecLen tvs))))
               {
                 (vecPush (tcDatasVec tc) dent)
                 (tyIdxAddData tc dent)
@@ -6274,7 +6235,7 @@
 ; A constructor's type is its fields curried onto the APPLIED data
 ; type - `Nil : List a`, never bare `List` (stage0 registers nullary
 ; constructors with the type arguments too, a recorded old bug).
-(pub :: tcCollectCtors (-> (Vec ASTNode) ASTNode Ints Int Int))
+(pub :: tcCollectCtors (-> Nodes ASTNode (Vec CtorEnt) Int Int))
 (pub fn (tcCollectCtors ctorNodes resTy acc i)
   (if (>= i (vecLen ctorNodes))
     0
@@ -6287,12 +6248,12 @@
             (nodeTyChildren c)))
         {
           (vecPush acc
-            (as (CtorEnt
-                  :name (nodeAName c)
-                  :fieldTys fieldTys
-                  :resTy resTy
-                  :ctorTy (ctorArrowOf fieldTys resTy (- (vecLen fieldTys) 1))
-                  :fieldNames (nodeFieldNamesNames c)) Int))
+            (CtorEnt
+              :name (nodeAName c)
+              :fieldTys fieldTys
+              :resTy resTy
+              :ctorTy (ctorArrowOf fieldTys resTy (- (vecLen fieldTys) 1))
+              :fieldNames (nodeFieldNamesNames c)))
           (tcCollectCtors ctorNodes resTy acc (+ i 1))
         }
       }
@@ -7173,7 +7134,7 @@
       {
         (let d (vecGet decls i))
         (if (== (declNamespace (nodeTag d)) NS_TYPE)
-          (tyIdxPut tc (nodeAName d) TY_DECL (nodeModule d) d 0))
+          (tyIdxPut tc (nodeAName d) (nodeModule d) (TyDecl d)))
       }
       (tcIndexTypeDecls tc decls (+ i 1))
     }))
@@ -7235,110 +7196,80 @@
 ; `DataEnt` a constructor belongs to and 0 otherwise: a constructor's
 ; VISIBILITY is its data type's, so the privacy key has to be built
 ; from the owner and not from the constructor's own name.
+(pub data TyPayload
+  (TyStruct StructEnt)
+  (TyData DataEnt)
+  (TyCtor CtorEnt DataEnt)
+  (TyAlias ASTNode)
+  (TySubtype ASTNode)
+  (TyDecl ASTNode))
+
 (pub struct TyEnt
   (name : String)
-  (kind : Int)
   (module : Int)
-  (ent : Int)
-  (owner : Int))
+  (payload : TyPayload))
 
-(:: tyEntName (-> Int String))
-;@axiom:effect(unsafe)
+(pub type TypeIndex (Vec (Vec TyEnt)))
+
+(:: tyEntName (-> TyEnt String))
 (fn (tyEntName te)
-  {
-    (let e (as te TyEnt))
-    e.name
-  })
+  te.name)
 
-(:: tyEntKind (-> Int Int))
-;@axiom:effect(unsafe)
+(:: tyEntKind (-> TyEnt Int))
 (fn (tyEntKind te)
-  {
-    (let e (as te TyEnt))
-    e.kind
-  })
+  (match te.payload
+    ((TyStruct _) TY_STRUCT)
+    ((TyData _) TY_DATA)
+    ((TyCtor _ _) TY_CTOR)
+    ((TyAlias _) TY_ALIAS)
+    ((TySubtype _) TY_SUBTYPE)
+    ((TyDecl _) TY_DECL)))
 
-(:: tyEntModule (-> Int Int))
-;@axiom:effect(unsafe)
+(:: tyEntModule (-> TyEnt Int))
 (fn (tyEntModule te)
-  {
-    (let e (as te TyEnt))
-    e.module
-  })
-
-(:: tyEntPayload (-> Int Int))
-;@axiom:effect(unsafe)
-(fn (tyEntPayload te)
-  {
-    (let e (as te TyEnt))
-    e.ent
-  })
-
-(:: tyEntOwner (-> Int Int))
-;@axiom:effect(unsafe)
-(fn (tyEntOwner te)
-  {
-    (let e (as te TyEnt))
-    e.owner
-  })
+  te.module)
 
 ; Buckets over the entries, keyed on the BARE name - the same shape
 ; and the same hash `ambIdxNew` and `privSetNew` use, sized from the
 ; declaration count, which is an upper bound on the type count.
-(pub :: tyIdxNew (-> Int Ints))
+(pub :: tyIdxNew (-> Int TypeIndex))
 (pub fn (tyIdxNew hint)
   {
     (let nb (fnIdxBuckets hint))
-    (let bs vecNew)
-    {
-      (for i in 0..nb
-        (vecPush bs 0))
-      bs
-    }
+    (let buckets vecNew)
+    (for i in 0..nb
+      (vecPush buckets vecNew))
+    buckets
   })
 
 ; Appended AS EACH DECLARATION IS COLLECTED, beside the `vecPush` that
 ; puts it in `tcDatas`/`tcStructs`/`tcAliases`, so the index and the
 ; Vec can never be out of step - collection itself looks names up.
-(pub :: tyIdxPut (-> Int String Int Int a Int Int))
-(pub fn (tyIdxPut tc name kind m ent owner)
-  {
-    (__retainref ent)
-    (let bs (tcTyIdx tc))
-    (if (== (as bs Int) 0)
+(pub :: tyIdxPut (-> Int String Int TyPayload Int))
+(pub fn (tyIdxPut tc name m payload)
+  (if (let (Some buckets) (tcTyIdx tc))
+    {
+      (let bare (bareOf name))
+      (vecPush (vecGet buckets (% (fnIdxHash bare) (vecLen buckets)))
+        (TyEnt :name bare :module m :payload payload))
       0
-      {
-        (let bare (bareOf name))
-        {
-          (let b (% (fnIdxHash bare) (vecLen bs)))
-          {
-            (if (== (vecGet bs b) 0)
-              {
-                (let v vecNew)
-                (vecSet bs b (as v Int))
-              })
-            (vecPush (vecGetVec bs b)
-              (as (TyEnt :name bare :kind kind :module m :ent (as ent Int) :owner owner) Int))
-            0
-          }
-        }
-      })
-  })
+    }
+    0))
 
-(pub :: tyIdxAddData (-> Int Int Int))
+(pub :: tyIdxAddData (-> Int DataEnt Int))
 (pub fn (tyIdxAddData tc ent)
   {
-    (tyIdxPut tc (dataEntName ent) TY_DATA (dataEntModule ent) ent 0)
-    (tyIdxAddCtors tc ent (dataEntCtors ent) 0)
+    (tyIdxPut tc ent.name ent.module (TyData ent))
+    (tyIdxAddCtors tc ent ent.ctors 0)
   })
 
-(pub :: tyIdxAddCtors (-> Int Int Ints Int Int))
+(pub :: tyIdxAddCtors (-> Int DataEnt (Vec CtorEnt) Int Int))
 (pub fn (tyIdxAddCtors tc owner ctors i)
   (if (>= i (vecLen ctors))
     0
     {
-      (tyIdxPut tc (memGetWordStr (vecGet ctors i) 0) TY_CTOR (memGetWord owner 2) (vecGet ctors i)
-        owner)
+      (let ctor (vecGet ctors i))
+      (tyIdxPut tc ctor.name owner.module (TyCtor ctor owner))
       (tyIdxAddCtors tc owner ctors (+ i 1))
     }))
 
@@ -7346,7 +7277,7 @@
 ; exists, so it has no collection pass to be indexed by. Seeded from
 ; whatever is already in the Vec rather than by naming `Option`, so a
 ; second builtin type cannot be added and silently left unindexed.
-(pub :: tyIdxSeedDatas (-> Int Ints Int Int))
+(pub :: tyIdxSeedDatas (-> Int (Vec DataEnt) Int Int))
 (pub fn (tyIdxSeedDatas tc datas i)
   (if (>= i (vecLen datas))
     0
@@ -7355,20 +7286,16 @@
       (tyIdxSeedDatas tc datas (+ i 1))
     }))
 
-(pub :: tyIdxBucket (-> Int String Ints))
-;@axiom:effect(unsafe)
+(pub :: tyIdxBucket (-> Int String (Vec TyEnt)))
 (pub fn (tyIdxBucket tc name)
-  {
-    (let bs (tcTyIdx tc))
-    (if (== (as bs Int) 0)
-      (as 0 (Vec Int))
-      (vecGetVec bs (% (fnIdxHash (bareOf name)) (vecLen bs))))
-  })
+  (if (let (Some buckets) (tcTyIdx tc))
+    (vecGet buckets (% (fnIdxHash (bareOf name)) (vecLen buckets)))
+    vecNew))
 
 ; A bucket holds whatever hashes together, so every walk below still
 ; asks `declMatches` - which is `nameMatches` for a bare reference and
 ; a real module comparison for a qualified one.
-(pub :: tyEntMatches (-> Int Int String Int))
+(pub :: tyEntMatches (-> TyEnt Int String Int))
 (pub fn (tyEntMatches te kind ref)
   (if (== kind TY_ANY)
     (if (|| (== (tyEntKind te) TY_CTOR) (== (tyEntKind te) TY_DECL))
@@ -7380,13 +7307,17 @@
 
 ; A constructor's key is its DATA TYPE's, which is what
 ; `findCtorFrom` asked before this and what `collectPrivates` records.
-(pub :: tyPrivKey (-> Int String))
+(pub :: tyPrivKey (-> TyEnt String))
 (pub fn (tyPrivKey te)
-  (if (== (tyEntOwner te) 0)
-    (privKey (tyEntModule te) (tyEntName te))
-    (privKey (dataEntModule (tyEntOwner te)) (dataEntName (tyEntOwner te)))))
+  (match te.payload
+    ((TyCtor _ owner) (privKey owner.module owner.name))
+    ((TyStruct _) (privKey te.module te.name))
+    ((TyData _) (privKey te.module te.name))
+    ((TyAlias _) (privKey te.module te.name))
+    ((TySubtype _) (privKey te.module te.name))
+    ((TyDecl _) (privKey te.module te.name))))
 
-(pub :: tyVisible (-> (Option StringRows) Int Int Int))
+(pub :: tyVisible (-> (Option StringRows) TyEnt Int Int))
 (pub fn (tyVisible privs te curMod)
   (if (let (Some _) privs)
     (if (&& (!= curMod 0) (&& (== (tyEntModule te) 0) (== (tyBuiltinEntry te) 0)))
@@ -7399,24 +7330,28 @@
 ; Entry declarations are not imports of another module. Only seeded
 ; Option/Vec entries are visible everywhere; any-visibility classification
 ; still finds a checked entry type through its canonical name.
-(:: tyBuiltinEntry (-> Int Int))
+(:: tyBuiltinEntry (-> TyEnt Int))
 (fn (tyBuiltinEntry te)
-  (if (== (tyEntKind te) TY_DATA)
-    (if (sizedTyIn (tyEntName te) "Option Vec Link")
-      1
-      0)
-    (if (== (tyEntKind te) TY_CTOR)
-      (if (== (tyEntOwner te) 0)
-        0
-        (if (strEq (dataEntName (tyEntOwner te)) "Option")
-          1
-          0))
-      0)))
+  (match te.payload
+    ((TyData _)
+      (if (sizedTyIn te.name "Option Vec Link")
+        1
+        0)
+    )
+    ((TyCtor _ owner)
+      (if (strEq owner.name "Option")
+        1
+        0)
+    )
+    ((TyStruct _) 0)
+    ((TyAlias _) 0)
+    ((TySubtype _) 0)
+    ((TyDecl _) 0)))
 
 ; Which of rules (a), (b) and (c)/(d) this pass is asking for:
 ; 1 = declared by the referencing module, 2 = declared by nobody,
 ; 0 = any candidate at all.
-(pub :: tyTierOk (-> Int Int Int Int))
+(pub :: tyTierOk (-> TyEnt Int Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (tyTierOk te curMod tier)
   (if (== tier 0)
@@ -7431,15 +7366,15 @@
           1
           0)))))
 
-(pub :: tyScanFwd (-> Ints Int String (Option StringRows) Int Int Int Int))
+(pub :: tyScanFwd (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int (Option TyEnt)))
 (pub fn (tyScanFwd v kind ref privs curMod tier i)
   (if (>= i (vecLen v))
-    0
+    None
     {
       (let te (vecGet v i))
       (if (&& (== (tyTierOk te curMod tier) 1)
             (&& (== (tyEntMatches te kind ref) 1) (== (tyVisible privs te curMod) 1)))
-        te
+        (Some te)
         (tyScanFwd v kind ref privs curMod tier (+ i 1)))
     }))
 
@@ -7447,19 +7382,19 @@
 ; bare-value and saturation path and the difference is observable when
 ; two `data` declarations in one module name the same constructor, so
 ; the direction is preserved WITHIN each tier rather than dropped.
-(pub :: tyScanRev (-> Ints Int String (Option StringRows) Int Int Int Int))
+(pub :: tyScanRev (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int (Option TyEnt)))
 (pub fn (tyScanRev v kind ref privs curMod tier i)
   (if (< i 0)
-    0
+    None
     {
       (let te (vecGet v i))
       (if (&& (== (tyTierOk te curMod tier) 1)
             (&& (== (tyEntMatches te kind ref) 1) (== (tyVisible privs te curMod) 1)))
-        te
+        (Some te)
         (tyScanRev v kind ref privs curMod tier (- i 1)))
     }))
 
-(pub :: tyPick (-> Ints Int String (Option StringRows) Int Int Int Int))
+(pub :: tyPick (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int (Option TyEnt)))
 (pub fn (tyPick v kind ref privs curMod last tier)
   (if (== last 0)
     (tyScanFwd v kind ref privs curMod tier 0)
@@ -7474,35 +7409,19 @@
 ; the reference is refused by `checkAmbiguousType` at a site that has
 ; a span, and answering 0 here would turn one AX3044 into an AX3002
 ; cascade about a type that plainly exists.
-(pub :: tyFind (-> Int Int String Int Int))
+(pub :: tyFind (-> Int Int String Int (Option TyEnt)))
 (pub fn (tyFind tc kind name last)
   {
-    (let v (tyIdxBucket tc name))
-    (if (== (as v Int) 0)
-      0
-      {
-        (let privs (tcPrivIdx tc))
-        (let curMod (tcCurModule tc))
-        {
-          (let te
-            (if (!= (modOf name) 0)
-              (tyPick v kind name privs curMod last 0)
-              {
-                (let own (tyPick v kind name privs curMod last 1))
-                (if (!= own 0)
-                  own
-                  {
-                    (let glob (tyPick v kind name privs curMod last 2))
-                    (if (!= glob 0)
-                      glob
-                      (tyPick v kind name privs curMod last 0))
-                  })
-              }))
-          (if (== te 0)
-            0
-            (tyEntPayload te))
-        }
-      })
+    (let entries (tyIdxBucket tc name))
+    (let privs (tcPrivIdx tc))
+    (let curMod (tcCurModule tc))
+    (if (!= (modOf name) 0)
+        (tyPick entries kind name privs curMod last 0)
+      (let (Some own) (tyPick entries kind name privs curMod last 1))
+        (Some own)
+      (let (Some global) (tyPick entries kind name privs curMod last 2))
+        (Some global)
+      (tyPick entries kind name privs curMod last 0))
   })
 
 ; Existence, deliberately IGNORING visibility and the referencing
@@ -7511,14 +7430,9 @@
 ; one that exists.
 (pub :: tyIdxHas (-> Int Int String Int))
 (pub fn (tyIdxHas tc kind name)
-  {
-    (let v (tyIdxBucket tc name))
-    (if (== (as v Int) 0)
-      0
-      (if (== (tyScanFwd v kind name None 0 0 0) 0)
-        0
-        1))
-  })
+  (if (isSome (tyScanFwd (tyIdxBucket tc name) kind name None 0 0 0))
+    1
+    0))
 
 ; Does the bucket hold TWO OR MORE visible declarations of this name?
 ;
@@ -7542,7 +7456,7 @@
         0))
   })
 
-(pub :: tyMatchCount (-> Ints Int String (Option StringRows) Int Int Int Int))
+(pub :: tyMatchCount (-> (Vec TyEnt) Int String (Option StringRows) Int Int Int Int))
 (pub fn (tyMatchCount v kind ref privs curMod acc i)
   (if (>= i (vecLen v))
     acc
@@ -7570,15 +7484,15 @@
         {
           (let privs (tcPrivIdx tc))
           (let curMod (tcCurModule tc))
-          (if (!= (tyScanFwd v kind name privs curMod 1 0) 0)
+          (if (isSome (tyScanFwd v kind name privs curMod 1 0))
             vecNew
-            (if (!= (tyScanFwd v kind name privs curMod 2 0) 0)
+            (if (isSome (tyScanFwd v kind name privs curMod 2 0))
               vecNew
               (tyModsOf v kind name privs curMod vecNew 0)))
         }))
   })
 
-(pub :: tyModsOf (-> Ints Int String (Option StringRows) Int Ints Int Ints))
+(pub :: tyModsOf (-> (Vec TyEnt) Int String (Option StringRows) Int Ints Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (tyModsOf v kind ref privs curMod acc i)
   (if (>= i (vecLen v))
@@ -7706,37 +7620,69 @@
 ; asks the question of a SINGLE declaration rather than of the
 ; program - `ctorHiddenModule`, which walks the datas a reference may
 ; NOT name in order to say "private" instead of "no such name".
-(pub :: ctorInData (-> Ints String String Int Int))
+(pub :: ctorInData (-> (Vec CtorEnt) Int String Int (Option CtorEnt)))
 (pub fn (ctorInData ctors declMod name i)
   (if (>= i (vecLen ctors))
-    0
+    None
     {
       (let c (vecGet ctors i))
-      (if (== (declMatches declMod (memGetWordStr c 0) name) 1)
-        c
+      (if (== (declMatches declMod c.name name) 1)
+        (Some c)
         (ctorInData ctors declMod name (+ i 1)))
     }))
 
 ; Constructor lookup, FORWARD order - Option's are first. Used for
 ; type resolution and patterns (stage0's find_constructor).
-(pub :: findCtor (-> Int String Int))
+(pub :: findCtor (-> Int String (Option CtorEnt)))
 (pub fn (findCtor tc name)
-  (tyFind tc TY_CTOR name 0))
+  (if (let (Some record) (tyFind tc TY_CTOR name 0))
+    (match record.payload
+      ((TyStruct entry) None)
+      ((TyData entry) None)
+      ((TyCtor entry _) (Some entry))
+      ((TyAlias entry) None)
+      ((TySubtype entry) None)
+      ((TyDecl entry) None))
+    None))
 
 ; The LAST matching constructor - stage0's bare-value and saturation
 ; paths use rfind, and the difference is observable when two datas
 ; declare the same constructor name.
-(pub :: rfindCtor (-> Int String Int))
+(pub :: rfindCtor (-> Int String (Option CtorEnt)))
 (pub fn (rfindCtor tc name)
-  (tyFind tc TY_CTOR name 1))
+  (if (let (Some record) (tyFind tc TY_CTOR name 1))
+    (match record.payload
+      ((TyStruct entry) None)
+      ((TyData entry) None)
+      ((TyCtor entry _) (Some entry))
+      ((TyAlias entry) None)
+      ((TySubtype entry) None)
+      ((TyDecl entry) None))
+    None))
 
-(pub :: findStruct (-> Int String Int))
+(pub :: findStruct (-> Int String (Option StructEnt)))
 (pub fn (findStruct tc name)
-  (tyFind tc TY_STRUCT name 0))
+  (if (let (Some record) (tyFind tc TY_STRUCT name 0))
+    (match record.payload
+      ((TyStruct entry) (Some entry))
+      ((TyData entry) None)
+      ((TyCtor entry _) None)
+      ((TyAlias entry) None)
+      ((TySubtype entry) None)
+      ((TyDecl entry) None))
+    None))
 
-(pub :: findData (-> Int String Int))
+(pub :: findData (-> Int String (Option DataEnt)))
 (pub fn (findData tc name)
-  (tyFind tc TY_DATA name 0))
+  (if (let (Some record) (tyFind tc TY_DATA name 0))
+    (match record.payload
+      ((TyStruct entry) None)
+      ((TyData entry) (Some entry))
+      ((TyCtor entry _) None)
+      ((TyAlias entry) None)
+      ((TySubtype entry) None)
+      ((TyDecl entry) None))
+    None))
 
 ; ------------------------------------------------------------------
 ; WORD STRUCTS AND HANDLES (docs/memory-model.md MM-VAL-10a, MM-PAR-8).
@@ -7778,61 +7724,60 @@
 ; is a fact about its declaration, not about who asks. Tiered exactly as
 ; `tyFind` is - the referencing module's own, then a module-less one,
 ; then any - with no privacy set.
-(pub :: tyFindAnyVis (-> Int Int String Int))
+(pub :: tyFindAnyVis (-> Int Int String (Option TyEnt)))
 (pub fn (tyFindAnyVis tc kind name)
   (tyFindAnyVisFrom tc kind name 0))
 
-(:: tyFindAnyVisFrom (-> Int Int String Int Int))
+(:: tyFindAnyVisFrom (-> Int Int String Int (Option TyEnt)))
 (fn (tyFindAnyVisFrom tc kind name last)
   {
-    (let v (tyIdxBucket tc name))
-    (if (== (as v Int) 0)
-      0
-      {
-        (let none None)
-        (let curMod (tcCurModule tc))
-        {
-          (let te
-            (if (!= (modOf name) 0)
-              (tyPick v kind name none curMod last 0)
-              {
-                (let own (tyPick v kind name none curMod last 1))
-                (if (!= own 0)
-                  own
-                  {
-                    (let glob (tyPick v kind name none curMod last 2))
-                    (if (!= glob 0)
-                      glob
-                      (tyPick v kind name none curMod last 0))
-                  })
-              }))
-          (if (== te 0)
-            0
-            (tyEntPayload te))
-        }
-      })
+    (let entries (tyIdxBucket tc name))
+    (let curMod (tcCurModule tc))
+    (if (!= (modOf name) 0)
+        (tyPick entries kind name None curMod last 0)
+      (let (Some own) (tyPick entries kind name None curMod last 1))
+        (Some own)
+      (let (Some global) (tyPick entries kind name None curMod last 2))
+        (Some global)
+      (tyPick entries kind name None curMod last 0))
   })
 
-(pub :: findStructAnyVis (-> Int String Int))
+(pub :: findStructAnyVis (-> Int String (Option StructEnt)))
 (pub fn (findStructAnyVis tc name)
-  (tyFindAnyVis tc TY_STRUCT name))
+  (if (let (Some record) (tyFindAnyVis tc TY_STRUCT name))
+    (match record.payload
+      ((TyStruct entry) (Some entry))
+      ((TyData entry) None)
+      ((TyCtor entry _) None)
+      ((TyAlias entry) None)
+      ((TySubtype entry) None)
+      ((TyDecl entry) None))
+    None))
 
 ; The `data` declaration a name denotes, ignoring visibility, as above.
-(pub :: findDataAnyVis (-> Int String Int))
+(pub :: findDataAnyVis (-> Int String (Option DataEnt)))
 (pub fn (findDataAnyVis tc name)
-  (tyFindAnyVis tc TY_DATA name))
+  (if (let (Some record) (tyFindAnyVis tc TY_DATA name))
+    (match record.payload
+      ((TyStruct entry) None)
+      ((TyData entry) (Some entry))
+      ((TyCtor entry _) None)
+      ((TyAlias entry) None)
+      ((TySubtype entry) None)
+      ((TyDecl entry) None))
+    None))
 
 ; The word struct a type NAME denotes, or 0 - at once when the program
 ; declares none (word 43).
-(pub :: tcWordEnt (-> Int String Int))
+(pub :: tcWordEnt (-> Int String (Option StructEnt)))
 (pub fn (tcWordEnt tc n)
   (if (== (tcWordStructs tc) 0)
-    0
+    None
     {
       (let ent (findStructAnyVis tc n))
       (if (== (structEntIsWord ent) 1)
         ent
-        0)
+        None)
     }))
 
 ; How many of `ds`, from `i`, are struct declarations marked `word`.
@@ -7853,7 +7798,7 @@
 (pub fn (tcWordTyName tc n)
   (if (strEq n "Spawn")
     1
-    (if (! (== (tcWordEnt tc n) 0))
+    (if (! (isNone (tcWordEnt tc n)))
       1
       0)))
 
@@ -7904,45 +7849,43 @@
 
 ; Word structs and explicitly sealed heap structs expose operations,
 ; while their module owns construction and field access.
-(pub :: wordSealedHere (-> Int Int Int))
+(pub :: wordSealedHere (-> Int (Option StructEnt) Int))
 (pub fn (wordSealedHere tc ent)
-  (if (if (== ent 0)
-    true
-    (== (wordEntKeepsFields ent) 0))
-    0
-    (if (== (tcSameModule (structEntModule ent) (tcCurModule tc)) 1)
+  (if (let (Some entry) ent)
+    (if (== (wordEntKeepsFields ent) 0)
       0
-      1)))
+      (if (== (tcSameModule entry.module (tcCurModule tc)) 1)
+        0
+        1))
+    0))
 
 ; A sealed marker keeps the fields in the module. A `word` whose one
 ; field is `Int` does too: that word is a handle. A packed word is a
 ; data record, so its fields are readable everywhere unless it is
 ; also marked `sealed`.
-(pub :: wordEntKeepsFields (-> Int Int))
+(pub :: wordEntKeepsFields (-> (Option StructEnt) Int))
 (pub fn (wordEntKeepsFields ent)
-  (if (== ent 0)
-    0
-    (if (!= (& (structEntRepr ent) 4) 0)
+  (if (let (Some entry) ent)
+    (if (!= (& entry.repr 4) 0)
       1
-      (if (== (structEntIsWord ent) 0)
-        0
-        (if (== (structEntIsLegacyWord ent) 1)
-          1
-          0)))))
+      (if (&& (== (structEntIsWord ent) 1) (== (structEntIsLegacyWord ent) 1))
+        1
+        0))
+    0))
 
 ; One `Int` field. Construction and field reads are that word.
-(pub :: structEntIsLegacyWord (-> Int Int))
+(pub :: structEntIsLegacyWord (-> (Option StructEnt) Int))
 (pub fn (structEntIsLegacyWord ent)
-  (if (== ent 0)
-    0
+  (if (let (Some entry) ent)
     {
-      (let fs (structEntFields ent))
+      (let fs entry.fields)
       (if (!= (vecLen fs) 1)
         0
         (if (tyIsBareInt (nodeTyChild (vecGet fs 0)))
           1
           0))
-    }))
+    }
+    0))
 
 ; ------------------------------------------------------------------
 ; The declaration rules, AX3084. A marker is `word`, `sealed` or
@@ -8188,7 +8131,7 @@
       (wordBin "<<" masked (nodeBuildEInt shift 0 0 span) span))
   })
 
-(pub :: wordPackExpr (-> Int Int Nodes Int ASTNode))
+(pub :: wordPackExpr (-> Int StructEnt Nodes Int ASTNode))
 (pub fn (wordPackExpr tc ent args span)
   {
     (let fields (structEntFields ent))
@@ -8237,7 +8180,7 @@
       (wordBin ">>" (wordBin "<<" recv (nodeBuildEInt (- 64 (+ shift bits)) 0 0 span) span)
         (nodeBuildEInt (- 64 bits) 0 0 span) span))))
 
-(pub :: wordExtractExpr (-> Int Int String ASTNode Int ASTNode))
+(pub :: wordExtractExpr (-> Int StructEnt String ASTNode Int ASTNode))
 (pub fn (wordExtractExpr tc ent fname recv span)
   {
     (let fields (structEntFields ent))
@@ -8276,67 +8219,72 @@
 ; The seal, AX3085 and AX3086: word structs and sealed heap structs
 ; keep their constructor and fields inside their declaring module.
 ; ------------------------------------------------------------------
-(pub :: emitWordSealedBuild (-> Int Int Int Int))
+(pub :: emitWordSealedBuild (-> Int (Option StructEnt) Int Int))
 (pub fn (emitWordSealedBuild tc ent span)
-  (if (== span 0)
-    0
-    {
-      (emitDiag tc
-        (diagSetLabel
-          (mkDiagNote SEV_ERROR "AX3085" "word-struct-sealed" span
-            (concat
-              (concat (concat (concat "only module `" (wordEntModuleName ent)) "` can make a `")
-                (structEntName ent))
-              "`")
-            0 0
-            (concat (concat "get one from a function module `" (wordEntModuleName ent))
-              (if (!= (& (structEntRepr ent) 1) 0)
-                "` provides: a word struct's constructor stays in its module, `pub` or not"
-                "` provides: a sealed struct's constructor stays in its module, `pub` or not"))
-            (if (!= (& (structEntRepr ent) 1) 0)
-              "a word struct is sealed, so every value of its type is one its module made and no other code can forge one (docs/memory-model.md MM-VAL-10a)"
-              "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
-          "built outside its module"))
+  (if (let (Some entry) ent)
+    (if (== span 0)
       0
-    }))
+      {
+        (emitDiag tc
+          (diagSetLabel
+            (mkDiagNote SEV_ERROR "AX3085" "word-struct-sealed" span
+              (concat
+                (concat
+                  (concat (concat "only module `" (wordEntModuleName entry)) "` can make a `")
+                  (structEntName entry))
+                "`")
+              0 0
+              (concat (concat "get one from a function module `" (wordEntModuleName entry))
+                (if (!= (& (structEntRepr entry) 1) 0)
+                  "` provides: a word struct's constructor stays in its module, `pub` or not"
+                  "` provides: a sealed struct's constructor stays in its module, `pub` or not"))
+              (if (!= (& (structEntRepr entry) 1) 0)
+                "a word struct is sealed, so every value of its type is one its module made and no other code can forge one (docs/memory-model.md MM-VAL-10a)"
+                "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
+            "built outside its module"))
+        0
+      })
+    0))
 
-(pub :: emitWordSealedRead (-> Int Int String Int Int))
+(pub :: emitWordSealedRead (-> Int (Option StructEnt) String Int Int))
 (pub fn (emitWordSealedRead tc ent field span)
   (emitWordSealedAccess tc ent field span "read"))
 
-(:: emitWordSealedAccess (-> Int Int String Int String Int))
+(:: emitWordSealedAccess (-> Int (Option StructEnt) String Int String Int))
 (fn (emitWordSealedAccess tc ent field span operation)
-  (if (== span 0)
-    0
-    {
-      (emitDiag tc
-        (diagSetLabel
-          (mkDiagNote SEV_ERROR "AX3086" "word-struct-sealed-field" span
-            (concat
+  (if (let (Some entry) ent)
+    (if (== span 0)
+      0
+      {
+        (emitDiag tc
+          (diagSetLabel
+            (mkDiagNote SEV_ERROR "AX3086" "word-struct-sealed-field" span
               (concat
                 (concat
                   (concat
-                    (concat (concat "only module `" (wordEntModuleName ent))
-                      (concat "` can " (concat operation " field `")))
-                    field)
-                  "` of `")
-                (structEntName ent))
-              "`")
-            0 0
-            (concat (concat "use the functions module `" (wordEntModuleName ent))
-              (if (!= (& (structEntRepr ent) 1) 0)
-                "` provides: a word struct's field stays in its module, `pub` or not"
-                "` provides: a sealed struct's field stays in its module, `pub` or not"))
-            (if (!= (& (structEntRepr ent) 1) 0)
-              "a word struct is sealed: what its word means is its module's business, and code that read it could hand the same word to something else (docs/memory-model.md MM-VAL-10a)"
-              "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
-          (concat operation " outside its module")))
-      0
-    }))
+                    (concat
+                      (concat (concat "only module `" (wordEntModuleName entry))
+                        (concat "` can " (concat operation " field `")))
+                      field)
+                    "` of `")
+                  (structEntName entry))
+                "`")
+              0 0
+              (concat (concat "use the functions module `" (wordEntModuleName entry))
+                (if (!= (& (structEntRepr entry) 1) 0)
+                  "` provides: a word struct's field stays in its module, `pub` or not"
+                  "` provides: a sealed struct's field stays in its module, `pub` or not"))
+              (if (!= (& (structEntRepr entry) 1) 0)
+                "a word struct is sealed: what its word means is its module's business, and code that read it could hand the same word to something else (docs/memory-model.md MM-VAL-10a)"
+                "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
+            (concat operation " outside its module")))
+        0
+      })
+    0))
 
 ; The declaring module's name, for a message: its dotted path, or
 ; `main` for the entry file.
-(pub :: wordEntModuleName (-> Int String))
+(pub :: wordEntModuleName (-> StructEnt String))
 (pub fn (wordEntModuleName ent)
   (if (== (structEntModule ent) 0)
     "the entry file"
@@ -8816,7 +8764,7 @@
         (if (== (nodeTag d) TAG_D_ALIAS)
           {
             (vecPush (tcAliasesVec tc) d)
-            (tyIdxPut tc (nodeAName d) TY_ALIAS (nodeModule d) d 0)
+            (tyIdxPut tc (nodeAName d) (nodeModule d) (TyAlias d))
           })
       }
       (tcCollectAliasDecls tc decls (+ i 1))
@@ -9154,15 +9102,15 @@
     (if (! (nodeSame al nilNode))
       (aliasParamCount al)
       {
-        (let de (findDataAnyVis tc name))
-        (if (! (== de 0))
+        (let deFound (findDataAnyVis tc name))
+        (if (let (Some de) deFound)
           (dataEntArity de)
           {
-            (let st (findStructAnyVis tc name))
-            (if (! (== st 0))
-              (if (== (memGetWord st 3) 0)
+            (let stFound (findStructAnyVis tc name))
+            (if (let (Some st) stFound)
+              (if (== (as st.tyvars Int) 0)
                 0
-                (vecLen (memGetWordVec st 3)))
+                (vecLen st.tyvars))
               (if (|| (!= (as (typeKeywordCanon name) Int) 0)
                     (! (nodeSame (tyFindSyntax tc TY_SUBTYPE name 0) nilNode)))
                 0
@@ -9431,7 +9379,7 @@
         (if (== (nodeTag d) TAG_D_SUBTYPE)
           {
             (vecPush (tcSubtypesVec tc) d)
-            (tyIdxPut tc (nodeAName d) TY_SUBTYPE (nodeModule d) d 0)
+            (tyIdxPut tc (nodeAName d) (nodeModule d) (TySubtype d))
             (tcCheckSubtypeRange tc d)
           })
       }
@@ -10593,7 +10541,7 @@
 
 ; A struct's field type by name, or nilNode when absent. Fields are the
 ; parser's TAG_FIELD nodes: name in a, parsed type in ty.
-(pub :: structFieldTy (-> Int String ASTNode))
+(pub :: structFieldTy (-> StructEnt String ASTNode))
 (pub fn (structFieldTy ent fname)
   (structFieldTyFrom (structEntFields ent) fname 0))
 
@@ -10614,7 +10562,7 @@
 ; struct does not declare at all, which `checkSetField` has already
 ; refused as AX3007 before it asks. The marker rides in word c of the
 ; parser's TAG_FIELD node (`parseOneField`).
-(pub :: structFieldMut (-> Int String Int))
+(pub :: structFieldMut (-> StructEnt String Int))
 (pub fn (structFieldMut ent fname)
   (structFieldMutFrom (structEntFields ent) fname 0))
 
@@ -12546,16 +12494,13 @@
 ; Builtins remain globally visible. Entry-file definitions win only
 ; in the entry file; imported modules choose their own declaration or
 ; a unique visible imported definition.
-(:: ownCtor (-> Int String Int))
+(:: ownCtor (-> Int String (Option CtorEnt)))
 (fn (ownCtor tc name)
-  {
-    (let ctor (findCtor tc name))
-    (if (== ctor 0)
-      0
-      (if (== (typeModuleSame (modOf (nodeAName (readAstNode ctor 2))) (tcCurModule tc)) 1)
-        ctor
-        0))
-  })
+  (if (let (Some ctor) (findCtor tc name))
+    (if (== (typeModuleSame (modOf (nodeAName ctor.resTy)) (tcCurModule tc)) 1)
+      (Some ctor)
+      None)
+    None))
 
 (pub :: checkAmbiguous (-> Int String Int Int))
 (pub fn (checkAmbiguous tc name span)
@@ -12571,7 +12516,7 @@
   {
     (let mods (definingModules tc (bareOf name)))
     (if (|| (!= (modOf name) 0)
-          (|| (! (== (ownCtor tc name) 0))
+          (|| (isSome (ownCtor tc name))
             (if (== (tcCurModule tc) 0)
               false
               {
@@ -12968,7 +12913,7 @@
                   (nodeBuildTErrPlain 0 0 0)
                   {
                     (let entFound
-                      (if (== (ownCtor tc name) 0)
+                      (if (isNone (ownCtor tc name))
                         (findFnEnt tc name)
                         None))
                     (if (let (Some ent) entFound)
@@ -12987,50 +12932,12 @@
                         (tyInstStamped tc (fnEntTy ent) e)
                       }
                       {
-                        (let ctor (findCtor tc name))
-                        (if (! (== ctor 0))
+                        (let ctorFound (findCtor tc name))
+                        (if (let (Some ctor) ctorFound)
                           {
                             (writeNodeText e 1 (ctorResolvedName ctor))
-                            (tyInstStamped tc (readAstNode ctor 3) e)
+                            (tyInstStamped tc ctor.ctorTy e)
                           }
-                          ; `format#` AS A CALL HEAD is the
-                          ; builtin's (`showBuiltin`), which has
-                          ; already rewritten it or reported on it
-                          ; by the time the head is walked - so a
-                          ; second and wrong AX3001 on top of that
-                          ; is suppressed here. Only as a head, and
-                          ; only the reserved spelling: it survives
-                          ; to this point solely on the path where
-                          ; `showBuiltin` refused, and the refusal
-                          ; is the report the call gets.
-                          ;
-                          ; This disjunct read `show` until 0.7.4,
-                          ; and that made the ordinary user-facing
-                          ; name quiet too - `(show x)` as a head
-                          ; got no AX3001 whether or not anything
-                          ; declared it. With the head unwritable,
-                          ; a program that writes `(show 1)` gets
-                          ; the plain undefined-variable error every
-                          ; other unknown name gets, which is what
-                          ; tests/diagnostics/621-show-removed.ax
-                          ; pins.
-                          ;
-                          ; A trait method was quiet here for the
-                          ; same reason until 0.6.0 - it was never
-                          ; in `tcFns` under its own name, because
-                          ; dispatch rewrote the CALL - and the
-                          ; disjunct asking `tcTraits` went with the
-                          ; construct.
-                          ;
-                          ; A declared EFFECT's name was quiet here
-                          ; too, for the reason `isBuiltinName` gives
-                          ; for the built-in ones - a `handle` list
-                          ; parsed as an application - and went with
-                          ; them on 2026-09-27: `(g Console)` and
-                          ; `(Console 1)` checked OK and emitted
-                          ; `%Console` / `@Console`, which nothing
-                          ; defines. A handle list's names are never
-                          ; looked up here now.
                           (if (|| (== (isBuiltinName name) 1)
                                 (|| (== (isMacroName tc name) 1)
                                   (&& (== inHead 1) (== (showIsHead name) 1))))
@@ -13120,11 +13027,10 @@
             (concat (concat "write the type it measures: `(" name) " Int)`"))
           "`as`, `sizeof` and `alignof` require their operands; a bare form has no function value")
         {
-          (let ctor (rfindCtor tc name))
-          (if (== ctor 0)
-            0
+          (let ctorFound (rfindCtor tc name))
+          (if (let (Some ctor) ctorFound)
             {
-              (let fc (vecLen (memGetWordVec ctor 1)))
+              (let fc (vecLen ctor.fieldTys))
               (if (== fc 0)
                 0
                 (if (== span 0)
@@ -13145,7 +13051,8 @@
                         "0 argument(s) provided here"))
                     1
                   }))
-            })
+            }
+            0)
         }))
   })
 
@@ -13254,15 +13161,15 @@
     0
     (ctorHiddenIn (tcDatasVec tc) (tcPrivIdx tc) (tcCurModuleName tc) name 0)))
 
-(pub :: ctorHiddenIn (-> Ints (Option StringRows) String String Int Int))
+(pub :: ctorHiddenIn (-> (Vec DataEnt) (Option StringRows) String String Int Int))
 (pub fn (ctorHiddenIn datas privs curMod name i)
   (if (>= i (vecLen datas))
     0
     {
       (let d (vecGet datas i))
-      (if (&& (== (privBlocks privs (privKey (memGetWord d 2) (memGetWordStr d 0)) curMod) 1)
-            (!= (ctorInData (memGetWordVec d 1) (memGetWordStr d 2) name 0) 0))
-        (memGetWord d 2)
+      (if (&& (== (privBlocks privs (privKey d.module d.name) curMod) 1)
+            (isSome (ctorInData d.ctors d.module name 0)))
+        d.module
         (ctorHiddenIn datas privs curMod name (+ i 1)))
     }))
 
@@ -13950,11 +13857,8 @@
               (if (== (structEntIsSharedHeap (findStructAnyVis tc n)) 1)
                 1
                 {
-                  (let dent (findData tc n))
-                  (if (== dent 0)
-                    0
-                    ; An abstract data entry such as Vec has no
-                    ; constructors; absence of fields proves nothing.
+                  (let dentFound (findData tc n))
+                  (if (let (Some dent) dentFound)
                     {
                       (let ctors (dataEntCtors dent))
                       (if (== (vecLen ctors) 0)
@@ -13977,12 +13881,13 @@
                                 }
                               }))
                         })
-                    })
+                    }
+                    0)
                 }))
           })))
   })
 
-(pub :: capBorrowableCtors (-> Int Ints ASTNode Strings Strings Int Int Int))
+(pub :: capBorrowableCtors (-> Int (Vec CtorEnt) ASTNode Strings Strings Int Int Int))
 (pub fn (capBorrowableCtors tc ctors ty seen active depth i)
   (if (>= i (vecLen ctors))
     1
@@ -14312,9 +14217,9 @@
           (if (let (Some ent) entFound)
             (fnEntTy ent)
             {
-              (let ctor (findCtor tc name))
-              (if (! (== ctor 0))
-                (readAstNode ctor 3)
+              (let ctorFound (findCtor tc name))
+              (if (let (Some ctor) ctorFound)
+                ctor.ctorTy
                 nilNode)
             })
         }
@@ -14327,9 +14232,9 @@
               (if (let (Some ent) entFound)
                 (fnEntTy ent)
                 {
-                  (let ctor (findCtor tc name))
-                  (if (! (== ctor 0))
-                    (readAstNode ctor 3)
+                  (let ctorFound (findCtor tc name))
+                  (if (let (Some ctor) ctorFound)
+                    ctor.ctorTy
                     nilNode)
                 })
             })
@@ -14635,11 +14540,12 @@
                           (checkSpineArgsOnly tc e)
                           mkSilentWild
                         }
-                        (if (&& (== headIsVar 1)
-                              (&&
-                                (|| (== (nodeDefScope head) 1) (isNone (scopeFindFrame tc hname)))
-                                (! (== (findStructIfConstruct tc hname) 0))))
-                          (checkStructCon tc e (findStructIfConstruct tc hname))
+                        (if (let (Some constructor) (if (&& (== headIsVar 1)
+                                                          (|| (== (nodeDefScope head) 1)
+                                                            (isNone (scopeFindFrame tc hname))))
+                          (findStructIfConstruct tc hname)
+                          None))
+                          (checkStructCon tc e constructor)
                           ; MM-LIFE-2d: this level's argument witnesses the callee's
                           ; type parameters; meet into the head's stamp (no-op when
                           ; the head carries none).
@@ -14835,7 +14741,7 @@
                                                 (tyRender (nodeAChild funcTy)) argTy
                                                 (spanOf (nodeBChild e))))
                                             (if (&& (== headIsVar 1)
-                                                  (! (== (rfindCtor tc hname) 0)))
+                                                  (! (isNone (rfindCtor tc hname))))
                                               (emitPayloadSmuggled tc (nodeAChild funcTy)
                                                 (nodeBChild e) (spanOf (nodeBChild e))))
                                           })
@@ -15235,7 +15141,7 @@
                         (showRewriteTo tc head "Fmt" "fmtFloat" (spanOf e))
                         (if (strEq n "Char")
                           (showRewriteGen tc e head arg ty 0)
-                          (if (|| (! (== (findData tc n) 0)) (! (== (findStruct tc n) 0)))
+                          (if (|| (! (isNone (findData tc n))) (! (isNone (findStruct tc n))))
                             (showRewriteGen tc e head arg ty 1)
                             (- 0 1)))))))
               }))
@@ -15442,9 +15348,9 @@
 ; `Some`'s `a` is `Int` over `(Option Int)`. `ctorPatEnv` pairs the
 ; declaration's parameters with the type's arguments, which is what a
 ; constructor pattern does for the same question.
-(pub :: showCtorFieldTys (-> Int Int ASTNode Nodes))
+(pub :: showCtorFieldTys (-> Int CtorEnt ASTNode Nodes))
 (pub fn (showCtorFieldTys tc ctor ty)
-  (tyInstVec tc (readAstNodes ctor 1) (ctorPatEnv (readAstNode ctor 2) ty vecNew) vecNew 0))
+  (tyInstVec tc ctor.fieldTys (ctorPatEnv ctor.resTy ty vecNew) vecNew 0))
 
 ; Can `ty` be rendered, transitively? Answers 0 when it can and the
 ; first type that cannot otherwise: a variable, an arrow, a `Foreign`,
@@ -15472,14 +15378,14 @@
                 (if (== (showSeenName seen key 0) 1)
                   nilNode
                   {
-                    (let dent (findData tc n))
+                    (let dentFound (findData tc n))
                     {
                       (vecPush seen key)
-                      (if (! (== dent 0))
+                      (if (let (Some dent) dentFound)
                         (showDerivableCtors tc (dataEntCtors dent) ty seen 0)
                         {
-                          (let sent (findStruct tc n))
-                          (if (! (== sent 0))
+                          (let sentFound (findStruct tc n))
+                          (if (let (Some sent) sentFound)
                             (showDerivableFields tc (structEntFields sent) seen 0)
                             ty)
                         })
@@ -15497,7 +15403,7 @@
       1
       (showSeenName seen key (+ i 1)))))
 
-(pub :: showDerivableCtors (-> Int Ints ASTNode Strings Int ASTNode))
+(pub :: showDerivableCtors (-> Int (Vec CtorEnt) ASTNode Strings Int ASTNode))
 (pub fn (showDerivableCtors tc ctors ty seen i)
   (if (>= i (vecLen ctors))
     nilNode
@@ -15726,10 +15632,12 @@
     (if (strEq n "Char")
       (showGenChar tc nm sp)
       {
-        (let dent (findData tc n))
-        (if (! (== dent 0))
+        (let dentFound (findData tc n))
+        (if (let (Some dent) dentFound)
           (showGenData tc ty nm sp dent)
-          (showGenStruct tc ty nm sp (findStruct tc n)))
+          (if (let (Some sent) (findStruct tc n))
+            (showGenStruct tc ty nm sp sent)
+            0))
       })
   })
 
@@ -15744,7 +15652,7 @@
 ;
 ; and, for a type none of whose constructors carries a field, the
 ; `match` alone: nothing to recurse into, nothing to guard.
-(pub :: showGenData (-> Int ASTNode String Int Int Int))
+(pub :: showGenData (-> Int ASTNode String Int DataEnt Int))
 (pub fn (showGenData tc ty nm sp dent)
   {
     (let fnd
@@ -15763,11 +15671,11 @@
     }
   })
 
-(pub :: showCtorsHaveFields (-> Ints Int Int))
+(pub :: showCtorsHaveFields (-> (Vec CtorEnt) Int Int))
 (pub fn (showCtorsHaveFields ctors i)
   (if (>= i (vecLen ctors))
     0
-    (if (> (vecLen (memGetWordVec (vecGet ctors i) 1)) 0)
+    (if (> (vecLen (ctorEntFieldTys (vecGet ctors i))) 0)
       1
       (showCtorsHaveFields ctors (+ i 1)))))
 
@@ -15803,14 +15711,14 @@
 
 ; One arm per constructor: `((C) "C")`, or `((D f0 f1) "(D " f0 " " f1 ")")`
 ; with each field rendered by `showFieldExpr` at this instantiation.
-(pub :: showGenArms (-> Int Ints ASTNode (Vec ASTNode) Int Int Int))
+(pub :: showGenArms (-> Int (Vec CtorEnt) ASTNode (Vec ASTNode) Int Int Int))
 (pub fn (showGenArms tc ctors ty arms sp i)
   (if (>= i (vecLen ctors))
     0
     {
       (let ctor (vecGet ctors i))
       {
-        (let cname (memGetWordStr ctor 0))
+        (let cname ctor.name)
         (let ftys (showCtorFieldTys tc ctor ty))
         {
           (if (== (vecLen ftys) 0)
@@ -15854,7 +15762,7 @@
 ; field would be refused as AX3086 at the format hole, over a field the
 ; program never wrote. The same answer inside the module keeps the one
 ; type rendering one way wherever it is printed.
-(pub :: showGenStruct (-> Int ASTNode String Int Int Int))
+(pub :: showGenStruct (-> Int ASTNode String Int StructEnt Int))
 (pub fn (showGenStruct tc ty nm sp sent)
   {
     (let fnd
@@ -16382,15 +16290,15 @@
             ; reference in the module that names it - `Map` is private to
             ; `Map.ax`, and `(cast Map 4096)` in a user file forged one
             ; while this asked `findStruct` and answered 3, "unknown".
-            (if (! (== (findStructAnyVis tc n) 0))
+            (if (! (isNone (findStructAnyVis tc n)))
               1
               {
-                (let de (findDataAnyVis tc n))
-                (if (== de 0)
-                  3
-                  (if (== (castDataAllNullary (memGetWordVec de 1) 0) 1)
+                (let deFound (findDataAnyVis tc n))
+                (if (let (Some de) deFound)
+                  (if (== (castDataAllNullary de.ctors 0) 1)
                     0
-                    1))
+                    1)
+                  3)
               })))))
   })
 
@@ -16398,11 +16306,11 @@
 ; value of it is an immediate word: `(Empty)` allocates nothing
 ; (`ctorAllocArity`). `Vec`'s entry has no constructors at all and
 ; never reaches this - it is answered by name above.
-(pub :: castDataAllNullary (-> Ints Int Int))
+(pub :: castDataAllNullary (-> (Vec CtorEnt) Int Int))
 (pub fn (castDataAllNullary ctors i)
   (if (>= i (vecLen ctors))
     1
-    (if (> (vecLen (memGetWordVec (vecGet ctors i) 1)) 0)
+    (if (> (vecLen (ctorEntFieldTys (vecGet ctors i))) 0)
       0
       (castDataAllNullary ctors (+ i 1)))))
 
@@ -16506,13 +16414,15 @@
     (if (!= (nodeTag s) TAG_T_CON)
       0
       {
-        (let ent (findStructAnyVis tc (nodeAName s)))
-        (if (|| (== ent 0) (== (& (structEntRepr ent) 1) 0))
-          0
-          (if (|| (== (wordSealedHere tc ent) 0)
-                (|| (== (castSameTy tc tgt src) 1) (== (curDeclTrusted tc) 1)))
+        (let entFound (findStructAnyVis tc (nodeAName s)))
+        (if (let (Some ent) entFound)
+          (if (== (& (structEntRepr ent) 1) 0)
             0
-            (emitWordSealedRead tc ent (nodeAName (vecGet (structEntFields ent) 0)) span)))
+            (if (|| (== (wordSealedHere tc (Some ent)) 0)
+                  (|| (== (castSameTy tc tgt src) 1) (== (curDeclTrusted tc) 1)))
+              0
+              (emitWordSealedRead tc (Some ent) (nodeAName (vecGet (structEntFields ent) 0)) span)))
+          0)
       })
   })
 
@@ -17281,11 +17191,10 @@
                       }))))
             }
             {
-              (let ctor (rfindCtor tc hname))
-              (if (== ctor 0)
-                0
+              (let ctorFound (rfindCtor tc hname))
+              (if (let (Some ctor) ctorFound)
                 {
-                  (let want (arrowArity (readAstNode ctor 3)))
+                  (let want (arrowArity ctor.ctorTy))
                   (let got (spineArgs e 0))
                   (if (== got want)
                     0
@@ -17308,7 +17217,8 @@
                         (checkSpineArgsOnly tc e)
                         1
                       }))
-                })
+                }
+                0)
             })
         }))))
 
@@ -17324,15 +17234,15 @@
 ; ARGUMENTS UNCHECKED and a poisoned result; the right count checks
 ; every argument against its field's declared type, reporting each
 ; mismatch and keeping the struct type as the result.
-(pub :: findStructIfConstruct (-> Int String Int))
+(pub :: findStructIfConstruct (-> Int String (Option StructEnt)))
 (pub fn (findStructIfConstruct tc hname)
   (findStruct tc hname))
 
-(pub :: checkStructCon (-> Int ASTNode Int ASTNode))
+(pub :: checkStructCon (-> Int ASTNode StructEnt ASTNode))
 (pub fn (checkStructCon tc e ent)
-  (if (== (wordSealedHere tc ent) 1)
+  (if (== (wordSealedHere tc (Some ent)) 1)
     {
-      (emitWordSealedBuild tc ent (spanOf e))
+      (emitWordSealedBuild tc (Some ent) (spanOf e))
       (checkSpineArgsOnly tc e)
       (nodeBuildTErrPlain 0 0 0)
     }
@@ -17354,7 +17264,7 @@
 ; Use the same first-occurrence ordering as constructor code generation.
 ; The source type arguments remain invariant; evidence records only
 ; whether each declared variable denotes a counted reference.
-(:: stampStructEvidence (-> Int Int ASTNode ASTNode Int))
+(:: stampStructEvidence (-> Int StructEnt ASTNode ASTNode Int))
 (fn (stampStructEvidence tc ent head result)
   (if (== (nodeTag result) TAG_T_CON)
     {
@@ -17400,11 +17310,11 @@
 ; A word struct's construction, once it checks, is recorded for the
 ; lowering (`wordLowerRecord`): the site becomes its one argument.
 ; Answers the construction's type unchanged.
-(pub :: wordLowerIfWord (-> Int Int ASTNode Nodes ASTNode ASTNode))
+(pub :: wordLowerIfWord (-> Int StructEnt ASTNode Nodes ASTNode ASTNode))
 (pub fn (wordLowerIfWord tc ent site args t)
   {
-    (if (&& (== (structEntIsWord ent) 1) (== (tyIsErr t) 0))
-      (if (== (structEntIsLegacyWord ent) 1)
+    (if (&& (== (structEntIsWord (Some ent)) 1) (== (tyIsErr t) 0))
+      (if (== (structEntIsLegacyWord (Some ent)) 1)
         (if (== (vecLen args) 1)
           (wordLowerRecord tc site (vecGet args 0)))
         (if (== (vecLen args) (vecLen (structEntFields ent)))
@@ -17415,7 +17325,7 @@
 ; The construction check proper for `(P 1 2)`, once `checkStructCon`
 ; above has ruled out a sealed word struct: an ambiguous name, the
 ; field count, then each argument against its field's declared type.
-(pub :: checkStructConAt (-> Int Nodes Int Int String ASTNode))
+(pub :: checkStructConAt (-> Int Nodes Int StructEnt String ASTNode))
 (pub fn (checkStructConAt tc args span ent sourceName)
   (if (== (checkAmbiguousType tc TY_ANY sourceName span) 1)
     ; Poison rather than "the first one" - `tyFind` answered a
@@ -17554,16 +17464,16 @@
 (pub :: tcPairCtorNamed (-> Int String Int))
 (pub fn (tcPairCtorNamed tc n)
   {
-    (let ctor (rfindCtor tc n))
-    (if (== ctor 0)
-      0
+    (let ctorFound (rfindCtor tc n))
+    (if (let (Some ctor) ctorFound)
       {
         (let name (ctorResolvedName ctor))
         (if (|| (strEq name "None")
               (|| (strEq name "Some") (|| (strEq name "Err$Ok") (strEq name "Err$Err"))))
           1
           0)
-      })
+      }
+      0)
   })
 
 ; `scalarTyName`, the emitter's list of machine-word type names.
@@ -17600,12 +17510,12 @@
                 (if (|| (strEq n "String")
                       (|| (strEq n "Option") (|| (strEq n "Handle") (strEq n "Vec"))))
                   2
-                  (if (! (== (findDataAnyVis tc n) 0))
+                  (if (! (isNone (findDataAnyVis tc n)))
                     2
                     ; A word struct is codegen's scalar too (`fldClass`).
                     (if (== (tcWordTyName tc n) 1)
                       0
-                      (if (! (== (findStructAnyVis tc n) 0))
+                      (if (! (isNone (findStructAnyVis tc n)))
                         2
                         1)))))
             }
@@ -17708,35 +17618,35 @@
 (pub :: tcCtorOfArity (-> Int String Int Int))
 (pub fn (tcCtorOfArity tc name want)
   {
-    (let c (rfindCtor tc name))
-    (if (== c 0)
-      0
-      (if (!= (arrowArity (readAstNode c 3)) want)
+    (let cFound (rfindCtor tc name))
+    (if (let (Some c) cFound)
+      (if (!= (arrowArity c.ctorTy) want)
         0
         {
-          (let res (readAstNode c 2))
+          (let res c.resTy)
           (if (nodeSame res nilNode)
             0
             (if (!= (nodeTag res) TAG_T_CON)
               0
               {
-                (let d (findData tc (nodeAName res)))
-                (if (== d 0)
-                  0
-                  (if (== (tcDataAllNullary (memGetWordVec d 1) 0) 1)
+                (let dFound (findData tc (nodeAName res)))
+                (if (let (Some d) dFound)
+                  (if (== (tcDataAllNullary d.ctors 0) 1)
                     0
-                    1))
+                    1)
+                  0)
               }))
-        }))
+        })
+      0)
   })
 
-(pub :: tcDataAllNullary (-> Ints Int Int))
+(pub :: tcDataAllNullary (-> (Vec CtorEnt) Int Int))
 (pub fn (tcDataAllNullary ctors i)
   (if (== (as ctors Int) 0)
     1
     (if (>= i (vecLen ctors))
       1
-      (if (> (arrowArity (readAstNode (vecGet ctors i) 3)) 0)
+      (if (> (arrowArity (ctorEntTy (vecGet ctors i))) 0)
         0
         (tcDataAllNullary ctors (+ i 1))))))
 
@@ -19331,10 +19241,12 @@
   (if (isSome (findFnEnt tc n))
     0
     {
-      (let sent (findStruct tc n))
-      (if (|| (== sent 0) (structEntNoFields sent))
-        0
-        (fsFields tc t d (structEntFields sent) e (- (spineArgs e 0) 1) st))
+      (let sentFound (findStruct tc n))
+      (if (let (Some sent) sentFound)
+        (if (structEntNoFields sent)
+          0
+          (fsFields tc t d (structEntFields sent) e (- (spineArgs e 0) 1) st))
+        0)
     }))
 
 (pub :: fsFields (-> Int (Vec FieldStore) ASTNode (Vec ASTNode) ASTNode Int FsStack Int))
@@ -19357,7 +19269,7 @@
 (pub fn (fieldNameCallable tc fname)
   (fieldNameCallableIn (tcStructsVec tc) fname 0))
 
-(pub :: fieldNameCallableIn (-> (Vec Int) String Int Int))
+(pub :: fieldNameCallableIn (-> (Vec StructEnt) String Int Int))
 (pub fn (fieldNameCallableIn structs fname i)
   (if (>= i (vecLen structs))
     0
@@ -19484,7 +19396,7 @@
 ; program that declares no field effect takes none of these paths.
 ; ------------------------------------------------------------------
 (pub struct FieldDecl
-  (owner : Int)
+  (owner : StructEnt)
   (name : String)
   (row : Strings)
   (said : String))
@@ -19534,11 +19446,11 @@
     (let u (tcUState tc))
     (let was (tcCurUnit tc))
     (for s in (tcStructsVec tc)
-      (for f in (readAstNodes s 1)
+      (for f in s.fields
         (if (!= (nodeAxtags f) 0)
           {
-            (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (memGetWord s 2)))
-            (if (let (Some decl) (fieldDeclRead tc f))
+            (tcSetCurUnit tc (unitIndexFor (tcUnits tc) s.module))
+            (if (let (Some decl) (fieldDeclRead tc s f))
               {
                 (vecPush u.fieldDecls
                   (FieldDecl :owner s :name (nodeAName f) :row decl.row :said decl.said))
@@ -19566,8 +19478,8 @@
 ; One field's tags: its declaration, or `None` when it declares nothing
 ; or the declaration was refused. A key other than `effect` is answered
 ; as it is on any declaration that cannot carry it.
-(pub :: fieldDeclRead (-> Int ASTNode (Option FieldDecl)))
-(pub fn (fieldDeclRead tc f)
+(pub :: fieldDeclRead (-> Int StructEnt ASTNode (Option FieldDecl)))
+(pub fn (fieldDeclRead tc owner f)
   {
     (let named vecNew)
     (let said vecNew)
@@ -19646,7 +19558,7 @@
             None
             (Some
               (FieldDecl
-                :owner 0
+                :owner owner
                 :name (nodeAName f)
                 :row
                   (if pure
@@ -19716,12 +19628,12 @@
     found
   })
 
-(pub :: fieldDeclFor (-> UState Int String (Option FieldDecl)))
+(pub :: fieldDeclFor (-> UState StructEnt String (Option FieldDecl)))
 (pub fn (fieldDeclFor u sent fname)
   {
     (let mut found None)
     (for d in u.fieldDecls
-      (if (&& (== d.owner sent) (strEq d.name fname))
+      (if (&& (== (as d.owner Int) (as sent Int)) (strEq d.name fname))
         (set found (Some d))))
     found
   })
@@ -19769,7 +19681,7 @@
 
 ; The struct a field read's base names, when the base is a parameter
 ; (or a local aliasing one) whose declared type is that struct.
-(pub :: fieldParamStruct (-> Int ASTNode Int (Option Int)))
+(pub :: fieldParamStruct (-> Int ASTNode Int (Option StructEnt)))
 (pub fn (fieldParamStruct tc base bound)
   (if (!= (nodeTag base) TAG_E_VAR)
     None
@@ -19779,12 +19691,7 @@
         None
         (if (!= (nodeTag ty) TAG_T_CON)
           None
-          {
-            (let sent (findStruct tc (nodeAName ty)))
-            (if (== sent 0)
-              None
-              (Some sent))
-          }))
+          (findStruct tc (nodeAName ty))))
     }))
 
 ; A call through a declared field: the row, and the stored functions'
@@ -19826,24 +19733,24 @@
 ; `Mod$Name` for one an import declared (`stampFieldStruct`), and the
 ; expander writes a construction's head the same way; a head a macro
 ; wrote bare is looked up as any type name is.
-(pub :: fieldStructNamed (-> Int String Int))
+(pub :: fieldStructNamed (-> Int String (Option StructEnt)))
 (pub fn (fieldStructNamed tc n)
   {
-    (let mut found 0)
+    (let mut found None)
     (for s in (tcStructsVec tc)
-      (if (== found 0)
+      (if (isNone found)
         (if (strEq (fieldStructSpelling s) n)
-          (set found s))))
-    (if (== found 0)
-      (findStruct tc n)
-      found)
+          (set found (Some s)))))
+    (if (isSome found)
+      found
+      (findStruct tc n))
   })
 
-(pub :: fieldStructSpelling (-> Int String))
+(pub :: fieldStructSpelling (-> StructEnt String))
 (pub fn (fieldStructSpelling s)
-  (if (== (memGetWord s 2) 0)
-    (memGetWordStr s 0)
-    (concat (concat (memGetWordStr s 2) "$") (memGetWordStr s 0))))
+  (if (== s.module 0)
+    s.name
+    (concat (concat (structEntModuleName s) "$") s.name)))
 
 ; `(S a1 .. an)`: argument i enters S's i-th field. Asked in the
 ; validation walk only, when every row is final.
@@ -19854,10 +19761,10 @@
     (let state (tcCheckState tc))
     (if (&& state.validatingEffects (> (vecLen u.fieldDecls) 0))
       {
-        (let sent (fieldStructNamed tc n))
-        (if (!= sent 0)
+        (let sentFound (fieldStructNamed tc n))
+        (if (let (Some sent) sentFound)
           {
-            (let fields (readAstNodes sent 1))
+            (let fields sent.fields)
             (if (== (vecLen fields) (vecLen args))
               {
                 (let mut i 0)
@@ -19881,8 +19788,8 @@
     (let state (tcCheckState tc))
     (if (&& state.validatingEffects (&& (> (vecLen u.fieldDecls) 0) (!= (nodeTy e) 0)))
       {
-        (let sent (fieldStructNamed tc (nodeTyText e)))
-        (if (!= sent 0)
+        (let sentFound (fieldStructNamed tc (nodeTyText e)))
+        (if (let (Some sent) sentFound)
           (if (let (Some d) (fieldDeclFor u sent (nodeBName e)))
             (fieldStoreCheck tc sent d (nodeCChild e) bound)
             ()))
@@ -19892,7 +19799,7 @@
 ; One store, answered once: a value the walk meets twice - a lambda
 ; handed to a restricted callee is walked for the restriction and for
 ; the call - draws one diagnostic.
-(pub :: fieldStoreCheck (-> Int Int FieldDecl ASTNode Int ()))
+(pub :: fieldStoreCheck (-> Int StructEnt FieldDecl ASTNode Int ()))
 (pub fn (fieldStoreCheck tc sent d v bound)
   {
     (let u (tcUState tc))
@@ -19923,8 +19830,7 @@
 (pub fn (fieldStoreVerdict tc v row bound)
   (if (let (Some d) (fieldStoreSourceDecl tc v))
     (fieldRowVerdict d.row row
-      (concat (concat (concat "the field `" (bareOf (memGetWordStr d.owner 0))) ".")
-        (concat (nodeBName v) "`")))
+      (concat (concat (concat "the field `" (bareOf d.owner.name)) ".") (concat (nodeBName v) "`")))
     {
       (let state (tcCheckState tc))
       (let checking state.validatingEffects)
@@ -19953,11 +19859,11 @@
   {
     (let src
       (if (== (nodeTy v) 0)
-        0
+        None
         (fieldStructNamed tc (nodeTyText v))))
-    (if (== src 0)
-      (nodeBName v)
-      (concat (concat (bareOf (memGetWordStr src 0)) ".") (nodeBName v)))
+    (if (let (Some entry) src)
+      (concat (concat (bareOf entry.name) ".") (nodeBName v))
+      (nodeBName v))
   })
 
 ; A stored field read the checker stamped, when its field declares.
@@ -19965,12 +19871,9 @@
 (pub fn (fieldStoreSourceDecl tc v)
   (if (|| (!= (nodeTag v) TAG_E_FIELD) (== (nodeTy v) 0))
     None
-    {
-      (let src (fieldStructNamed tc (nodeTyText v)))
-      (if (== src 0)
-        None
-        (fieldDeclFor (tcUState tc) src (nodeBName v)))
-    }))
+    (if (let (Some src) (fieldStructNamed tc (nodeTyText v)))
+      (fieldDeclFor (tcUState tc) src (nodeBName v))
+      None)))
 
 (pub :: fieldMembersVerdict (-> Int (Vec FnVal) Strings Int Int FieldStoreVerdict))
 (pub fn (fieldMembersVerdict tc members row bound i)
@@ -20064,7 +19967,7 @@
       "a value the compiler can't follow to a function")))
 
 ; AX3142: a stored function performs an effect the field does not declare.
-(pub :: emitFieldStoreExceeds (-> Int Int FieldDecl Int String Strings ()))
+(pub :: emitFieldStoreExceeds (-> Int StructEnt FieldDecl Int String Strings ()))
 (pub fn (emitFieldStoreExceeds tc sent d span what effs)
   {
     (let field (concat (concat (bareOf (structEntName sent)) ".") d.name))
@@ -20117,7 +20020,7 @@
     (effRender e)))
 
 ; AX3143: a stored value whose effects the compiler cannot determine.
-(pub :: emitFieldStoreUnknown (-> Int Int FieldDecl Int String ()))
+(pub :: emitFieldStoreUnknown (-> Int StructEnt FieldDecl Int String ()))
 (pub fn (emitFieldStoreUnknown tc sent d span why)
   {
     (let field (concat (concat (bareOf (structEntName sent)) ".") d.name))
@@ -20141,12 +20044,12 @@
 ; `#field-effects=` on a struct's AXSYM row: each declared field and
 ; what a call through it is charged, `pure` for nothing. "" when the
 ; struct declares none.
-(pub :: fieldEffectsMeta (-> Int Int String))
+(pub :: fieldEffectsMeta (-> Int StructEnt String))
 (pub fn (fieldEffectsMeta tc s)
   {
     (let u (tcUState tc))
     (let parts vecNew)
-    (for f in (readAstNodes s 1)
+    (for f in s.fields
       (if (let (Some d) (fieldDeclFor u s (nodeAName f)))
         {
           (vecPushStr parts
@@ -20543,23 +20446,21 @@
 (pub :: ctorAllocArity (-> Int String Int))
 (pub fn (ctorAllocArity tc n)
   {
-    (let ctor (rfindCtor tc n))
-    (if (! (== ctor 0))
-      (arrowArity (readAstNode ctor 3))
+    (let ctorFound (rfindCtor tc n))
+    (if (let (Some ctor) ctorFound)
+      (arrowArity ctor.ctorTy)
       {
-        (let sent (findStruct tc n))
-        (if (== sent 0)
-          0
-          ; A word struct allocates nothing: its construction is its
-          ; one word (MM-VAL-10a), so it charges no `Alloc`.
-          (if (== (structEntIsWord sent) 1)
+        (let sentFound (findStruct tc n))
+        (if (let (Some sent) sentFound)
+          (if (== (structEntIsWord (Some sent)) 1)
             0
             {
               (let fields (structEntFields sent))
               (if (== (as fields Int) 0)
                 0
                 (vecLen fields))
-            }))
+            })
+          0)
       })
   })
 
@@ -23386,7 +23287,7 @@
 ; count differs from the declaration is a type this checker did not
 ; build, and substituting positionally through it would invent a
 ; correspondence.
-(pub :: structSubstField (-> Int ASTNode (Vec ASTNode) ASTNode))
+(pub :: structSubstField (-> StructEnt ASTNode (Vec ASTNode) ASTNode))
 (pub fn (structSubstField ent fty args)
   {
     (let tvs (structEntTyvars ent))
@@ -23421,7 +23322,7 @@
       (refuseUnsignedParam tc baseTy))
     (if (== (nodeTag baseTy) TAG_T_CON)
       {
-        (let ent (findStruct tc (nodeAName baseTy)))
+        (let entFound (findStruct tc (nodeAName baseTy)))
         (if (== (wordSealedHere tc (findStructAnyVis tc (nodeAName baseTy))) 1)
           ; A word struct's field outside its module: AX3086, whatever
           ; `pub` says - and for a private one too, where the lookup
@@ -23452,16 +23353,18 @@
             ; the same path it always did.
             {
               (let fty
-                (if (== ent 0)
-                  nilNode
-                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))))
-              (if (! (nodeSame fty nilNode))
+                (if (let (Some ent) entFound)
+                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))
+                  nilNode))
+              (if (let (Some ent) (if (nodeSame fty nilNode)
+                None
+                entFound))
                 {
                   (stampFieldStruct e ent)
                   ; A legacy word's field is the word. A packed word's
                   ; field is the shift and mask that unpack it.
-                  (if (== (structEntIsWord ent) 1)
-                    (if (== (structEntIsLegacyWord ent) 1)
+                  (if (== (structEntIsWord (Some ent)) 1)
+                    (if (== (structEntIsLegacyWord (Some ent)) 1)
                       (wordLowerRecord tc e (nodeAChild e))
                       (wordLowerRecord tc e
                         (wordExtractExpr tc ent (nodeBName e) (nodeAChild e) (nodeSpan e)))))
@@ -23482,8 +23385,8 @@
                 ; tightening that would refuse programs stage0
                 ; accepts.
                 {
-                  (let dent (findData tc (nodeAName baseTy)))
-                  (if (! (== dent 0))
+                  (let dentFound (findData tc (nodeAName baseTy)))
+                  (if (let (Some dent) dentFound)
                     {
                       (let ctors (dataEntCtors dent))
                       (if (nodeSame (dataFieldTyInCtors ctors (nodeBName e) 0) nilNode)
@@ -23519,7 +23422,7 @@
                               {
                                 (stampFieldData e dent)
                                 (tyEnvSubst agreed
-                                  (ctorPatEnv (readAstNode (vecGet ctors 0) 2) baseTy vecNew))
+                                  (ctorPatEnv (ctorEntResTy (vecGet ctors 0)) baseTy vecNew))
                               })
                           }))
                     }
@@ -23527,10 +23430,14 @@
                       (let dty (dataFieldTy tc (nodeBName e)))
                       (if (! (nodeSame dty nilNode))
                         {
-                          (let own (dataFieldOwner tc (nodeBName e)))
-                          (if (&& (! (== own 0)) (== (dataHasNullary own) 1))
+                          (let ownFound (dataFieldOwner tc (nodeBName e)))
+                          (if (let (Some own) (if (let (Some owner) ownFound)
+                            (if (== (dataHasNullary owner) 1)
+                              (Some owner)
+                              None)
+                            None))
                             {
-                              (emitFieldOnMixed tc (nodeBName e) (memGetWordStr own 0) (nodeSpan e))
+                              (emitFieldOnMixed tc (nodeBName e) own.name (nodeSpan e))
                               (nodeBuildTErrPlain 0 0 0)
                             }
                             {
@@ -23569,7 +23476,7 @@
 ; from the parser and the expander, and nothing between the checker
 ; and the emitter rebuilds them (`lowerConds` answers the node it was
 ; given), so the stamp survives to `emitField`/`emitSetF`.
-(pub :: stampFieldStruct (-> ASTNode Int ASTNode))
+(pub :: stampFieldStruct (-> ASTNode StructEnt ASTNode))
 (pub fn (stampFieldStruct e ent)
   {
     (let name (as (structEntName ent) String))
@@ -23583,7 +23490,7 @@
 ; Every constructor agrees on the field's slot and type here. Keeping
 ; one resolved constructor key lets the emitter use that declaration
 ; even when another module defines the same field or constructor name.
-(:: stampFieldData (-> ASTNode Int ASTNode))
+(:: stampFieldData (-> ASTNode DataEnt ASTNode))
 (fn (stampFieldData e dent)
   {
     (setNodeTyText e "")
@@ -23598,30 +23505,30 @@
 
 ; The DataEnt whose constructor declares the field - the same walk,
 ; answering the owner instead of the type, for MM-VAL-9a's refusal.
-(pub :: dataFieldOwner (-> Int String Int))
+(pub :: dataFieldOwner (-> Int String (Option DataEnt)))
 (pub fn (dataFieldOwner tc fname)
   (dataFieldOwnerFrom (tcDatasVec tc) fname 0))
 
-(pub :: dataFieldOwnerFrom (-> (Vec Int) String Int Int))
+(pub :: dataFieldOwnerFrom (-> (Vec DataEnt) String Int (Option DataEnt)))
 (pub fn (dataFieldOwnerFrom datas fname i)
   (if (>= i (vecLen datas))
-    0
-    (if (! (nodeSame (dataFieldTyInCtors (memGetWordVec (vecGet datas i) 1) fname 0) nilNode))
-      (vecGet datas i)
+    None
+    (if (! (nodeSame (dataFieldTyInCtors (dataEntCtors (vecGet datas i)) fname 0) nilNode))
+      (Some (vecGet datas i))
       (dataFieldOwnerFrom datas fname (+ i 1)))))
 
 ; Does the type declare a nullary constructor? Under MM-VAL-8 its
 ; values may then be immediate tags, and a field load on an immediate
 ; dereferences a small integer.
-(pub :: dataHasNullary (-> Int Int))
+(pub :: dataHasNullary (-> DataEnt Int))
 (pub fn (dataHasNullary dent)
   (dataHasNullaryIn (dataEntCtors dent) 0))
 
-(pub :: dataHasNullaryIn (-> Ints Int Int))
+(pub :: dataHasNullaryIn (-> (Vec CtorEnt) Int Int))
 (pub fn (dataHasNullaryIn ctors i)
   (if (>= i (vecLen ctors))
     0
-    (if (== (vecLen (memGetWordVec (vecGet ctors i) 1)) 0)
+    (if (== (vecLen (ctorEntFieldTys (vecGet ctors i))) 0)
       1
       (dataHasNullaryIn ctors (+ i 1)))))
 
@@ -23633,7 +23540,7 @@
 ; `dataAgreedFieldTy` answers the field's declared type when that
 ; holds, else 0. Type agreement compares renderings, which observe
 ; without unifying: `tyCompat` would pin where this must only look.
-(pub :: dataAgreedFieldTy (-> Ints String ASTNode))
+(pub :: dataAgreedFieldTy (-> (Vec CtorEnt) String ASTNode))
 (pub fn (dataAgreedFieldTy ctors fname)
   {
     (let idx (dataFirstDeclIdx ctors fname 0))
@@ -23651,12 +23558,12 @@
 
 ; The declared index of fname in the first constructor that declares
 ; it, else -1.
-(pub :: dataFirstDeclIdx (-> Ints String Int Int))
+(pub :: dataFirstDeclIdx (-> (Vec CtorEnt) String Int Int))
 (pub fn (dataFirstDeclIdx ctors fname i)
   (if (>= i (vecLen ctors))
     (- 0 1)
     {
-      (let declared (memGetWordVec (vecGet ctors i) 4))
+      (let declared (ctorEntFieldNames (vecGet ctors i)))
       (if (== (as declared Int) 0)
         (dataFirstDeclIdx ctors fname (+ i 1))
         {
@@ -23670,12 +23577,12 @@
 ; 1 when every constructor declares fname at index idx with a type
 ; rendering equal to ty0's, else 0. A constructor with no declared
 ; names - nullary or positional - disagrees by construction.
-(pub :: dataCtorsAgree (-> Ints String Int Int ASTNode Int))
+(pub :: dataCtorsAgree (-> (Vec CtorEnt) String Int Int ASTNode Int))
 (pub fn (dataCtorsAgree ctors fname i idx ty0)
   (if (>= i (vecLen ctors))
     1
     {
-      (let declared (memGetWordVec (vecGet ctors i) 4))
+      (let declared (ctorEntFieldNames (vecGet ctors i)))
       (if (== (as declared Int) 0)
         0
         {
@@ -23683,7 +23590,7 @@
           (if (!= j idx)
             0
             {
-              (let tys (readAstNodes (vecGet ctors i) 1))
+              (let tys (ctorEntFieldTys (vecGet ctors i)))
               (if (>= j (vecLen tys))
                 0
                 (if (strEq (tyRender (vecGet tys j)) (tyRender ty0))
@@ -23732,25 +23639,25 @@
     0
   })
 
-(pub :: dataFieldTyFrom (-> Ints String Int ASTNode))
+(pub :: dataFieldTyFrom (-> (Vec DataEnt) String Int ASTNode))
 (pub fn (dataFieldTyFrom datas fname i)
   (if (>= i (vecLen datas))
     nilNode
     {
-      (let r (dataFieldTyInCtors (memGetWordVec (vecGet datas i) 1) fname 0))
+      (let r (dataFieldTyInCtors (dataEntCtors (vecGet datas i)) fname 0))
       (if (! (nodeSame r nilNode))
         r
         (dataFieldTyFrom datas fname (+ i 1)))
     }))
 
-(pub :: dataFieldTyInCtors (-> Ints String Int ASTNode))
+(pub :: dataFieldTyInCtors (-> (Vec CtorEnt) String Int ASTNode))
 (pub fn (dataFieldTyInCtors ctors fname i)
   (if (>= i (vecLen ctors))
     nilNode
     {
       (let c (vecGet ctors i))
       {
-        (let declared (memGetWordVec c 4))
+        (let declared c.fieldNames)
         (if (== (as declared Int) 0)
           (dataFieldTyInCtors ctors fname (+ i 1))
           {
@@ -23758,7 +23665,7 @@
             (if (< j 0)
               (dataFieldTyInCtors ctors fname (+ i 1))
               {
-                (let tys (readAstNodes c 1))
+                (let tys c.fieldTys)
                 (if (< j (vecLen tys))
                   (vecGet tys j)
                   mkTErr)
@@ -23767,7 +23674,7 @@
       }
     }))
 
-(pub :: declaredFieldIndex (-> Ints String Int Int))
+(pub :: declaredFieldIndex (-> Names String Int Int))
 (pub fn (declaredFieldIndex declared fname i)
   (if (>= i (vecLen declared))
     (- 0 1)
@@ -23803,16 +23710,18 @@
         (refuseUnsignedParam tc baseTy))
       (if (== (nodeTag baseTy) TAG_T_CON)
         {
-          (let ent (findStruct tc (nodeAName baseTy)))
+          (let entFound (findStruct tc (nodeAName baseTy)))
           (if (== (wordSealedHere tc (findStructAnyVis tc (nodeAName baseTy))) 1)
             (emitWordSealedAccess tc (findStructAnyVis tc (nodeAName baseTy)) (nodeBName e)
               (nodeSpan e) "write")
             {
               (let fty
-                (if (== ent 0)
-                  nilNode
-                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))))
-              (if (! (nodeSame fty nilNode))
+                (if (let (Some ent) entFound)
+                  (structSubstField ent (structFieldTy ent (nodeBName e)) (nodeBChildren baseTy))
+                  nilNode))
+              (if (let (Some ent) (if (nodeSame fty nilNode)
+                None
+                entFound))
                 ; Field found: the VALUE is checked, against the
                 ; field's type. On a miss the value is NEVER checked
                 ; - stage0's rule, probed; its diagnostics are lost.
@@ -24451,14 +24360,14 @@
                 (let ctorChecked
                   (if (&& (== (memGetWord catchall 0) 0) (! (nodeSame exhTy nilNode)))
                     {
-                      (let dent (findData tc (nodeAName exhTy)))
-                      (if (== dent 0)
-                        0
+                      (let dentFound (findData tc (nodeAName exhTy)))
+                      (if (let (Some dent) dentFound)
                         {
                           (if (! (armsNameUnknownCtor tc (nodeBChildren e) 0))
                             (checkExhaustiveMatrix tc (nodeBChildren e) exhTy (nodeAChild e)))
                           1
-                        })
+                        }
+                        0)
                     }
                     0))
                 (if (&& (== ctorChecked 0)
@@ -24502,16 +24411,16 @@
         {
           (let ctor
             (if (== cname 0)
-              0
+              None
               (findCtor tc (as cname String))))
-          (if (== ctor 0)
-            (armsCtorTy tc arms (+ i 1))
+          (if (let (Some entry) ctor)
             {
-              (let resTy (readAstNode ctor 2))
+              (let resTy entry.resTy)
               (if (== (nodeTag resTy) TAG_T_CON)
                 resTy
                 (armsCtorTy tc arms (+ i 1)))
-            })
+            }
+            (armsCtorTy tc arms (+ i 1)))
         }
       }
     }))
@@ -24764,11 +24673,11 @@
     {
       (let tag (nodeTag pat))
       (if (|| (== tag TAG_P_CON0) (== tag TAG_P_CONNAMED))
-        (== (findCtor tc (nodeAName pat)) 0)
+        (isNone (findCtor tc (nodeAName pat)))
         (if (== tag TAG_E_APP)
           {
             (let head (spineHead pat))
-            (if (&& (== (nodeTag head) TAG_E_VAR) (== (findCtor tc (nodeAName head)) 0))
+            (if (&& (== (nodeTag head) TAG_E_VAR) (isNone (findCtor tc (nodeAName head))))
               true
               (patArgsNameUnknownCtor tc (spineArgVec pat vecNew) 0))
           }
@@ -24908,18 +24817,18 @@
       (spineArgVec pat vecNew)
       (if (== tag TAG_P_CONNAMED)
         {
-          (let ctor (findCtor tc (nodeAName pat)))
-          (if (== ctor 0)
-            vecNew
+          (let ctorFound (findCtor tc (nodeAName pat)))
+          (if (let (Some ctor) ctorFound)
             {
-              (let declared (memGetWordVec ctor 4))
+              (let declared ctor.fieldNames)
               (if (== (as declared Int) 0)
                 vecNew
                 (spineArgVec
                   (namedPatSpine (nodeAName pat) declared (nodeBChildren pat) (nodeCChildren pat)
                     (nodeSpan pat))
                   vecNew))
-            })
+            }
+            vecNew)
         }
         vecNew))
   })
@@ -24959,14 +24868,14 @@
       (colHasCtor matrix cn (+ i 1)))))
 
 ; The constructors of this type that column 0 never tests.
-(pub :: matMissing (-> NodesRows Ints Strings Int Strings))
+(pub :: matMissing (-> NodesRows (Vec CtorEnt) Strings Int Strings))
 ;@axiom:effect(unsafe)
 (pub fn (matMissing matrix ctors acc i)
   (if (>= i (vecLen ctors))
     acc
     {
       {
-        (let cn (bareOf (memGetWordStr (vecGet ctors i) 0)))
+        (let cn (bareOf (ctorEntName (vecGet ctors i))))
         (if (== (colHasCtor matrix cn 0) 0)
           (vecPush acc cn)
           (as 0 (Vec String)))
@@ -25077,16 +24986,22 @@
         (let dent
           (if (== (nodeTag ty) TAG_T_CON)
             (findData tc (nodeAName ty))
-            0))
-        (if (== dent 0)
-          ; `Bool` is the one non-data column with an enumerable
-          ; value set: `true` and `false` are two nullary
-          ; constructors as far as coverage goes, and a column is
-          ; total when both rows exist or a binder does. Until
-          ; 2026-08-21 only the top-level `armsBoolComplete`
-          ; special case knew this, so `((Some true) ..) ((Some
-          ; false) ..) ((None) ..)` over `(Option Bool)` was
-          ; AX3005.
+            None))
+        (if (let (Some dataEntry) dent)
+          {
+            (let missing (matMissing matrix (dataEntCtors dataEntry) vecNew 0))
+            (if (> (vecLen missing) 0)
+              ; An incomplete constructor set is covered only by
+              ; a binder, and then the binder's row is the only
+              ; one that can still match here.
+              (if (== (colHasWild matrix 0) 1)
+                (matExhaustive tc (matDefault matrix vecNew 0) rest missOut)
+                {
+                  (memSetWord missOut 0 missing)
+                  0
+                })
+              (matCtorsExh tc matrix rest (dataEntCtors dataEntry) ty missOut 0))
+          }
           (if (== (tyIsBoolTy ty) 1)
             (if (== (colHasWild matrix 0) 1)
               (matExhaustive tc (matDefault matrix vecNew 0) rest missOut)
@@ -25120,21 +25035,7 @@
               {
                 (memSetWord missOut 0 vecNew)
                 0
-              }))
-          {
-            (let missing (matMissing matrix (dataEntCtors dent) vecNew 0))
-            (if (> (vecLen missing) 0)
-              ; An incomplete constructor set is covered only by
-              ; a binder, and then the binder's row is the only
-              ; one that can still match here.
-              (if (== (colHasWild matrix 0) 1)
-                (matExhaustive tc (matDefault matrix vecNew 0) rest missOut)
-                {
-                  (memSetWord missOut 0 missing)
-                  0
-                })
-              (matCtorsExh tc matrix rest (dataEntCtors dent) ty missOut 0))
-          })
+              })))
       }
     }))
 
@@ -25148,18 +25049,17 @@
 ; its refutation pass. `tyEnvSubst` replaces what the column pins and
 ; leaves the rest as written; it mints nothing, so the placeholder
 ; numbering every later diagnostic in the file renders is untouched.
-(pub :: matCtorsExh (-> Int NodesRows Nodes Ints ASTNode Int Int Int))
+(pub :: matCtorsExh (-> Int NodesRows Nodes (Vec CtorEnt) ASTNode Int Int Int))
 (pub fn (matCtorsExh tc matrix rest ctors ty missOut i)
   (if (>= i (vecLen ctors))
     1
     {
       (let c (vecGet ctors i))
       {
-        (let fieldTys
-          (tyEnvSubstVec (readAstNodes c 1) (ctorPatEnv (readAstNode c 2) ty vecNew) vecNew 0))
+        (let fieldTys (tyEnvSubstVec c.fieldTys (ctorPatEnv c.resTy ty vecNew) vecNew 0))
         (if (==
               (matExhaustive tc
-                (matSpecialize tc matrix (bareOf (memGetWordStr c 0)) (vecLen fieldTys) vecNew 0)
+                (matSpecialize tc matrix (bareOf c.name) (vecLen fieldTys) vecNew 0)
                 (vecAppendFrom rest (vecAppendFrom fieldTys vecNew 0) 0) missOut)
               0)
           0
@@ -25570,9 +25470,8 @@
 (pub :: missingArmsText (-> Int ASTNode NodesRows Ints Int String))
 (pub fn (missingArmsText tc scrutTy matrix missing indent)
   {
-    (let dent (findData tc (nodeAName scrutTy)))
-    (if (== dent 0)
-      ""
+    (let dentFound (findData tc (nodeAName scrutTy)))
+    (if (let (Some dent) dentFound)
       {
         (let ctors (dataEntCtors dent))
         (let pad (spacesOf indent))
@@ -25597,19 +25496,20 @@
             (catStrs parts)
             "")
         }
-      })
+      }
+      "")
   })
 
 ; The field count of the constructor `cn` names among `ctors`
 ; (CtorEnt word 1 is its field types), or -1.
-(pub :: ctorArityIn (-> Ints String Int Int))
+(pub :: ctorArityIn (-> (Vec CtorEnt) String Int Int))
 (pub fn (ctorArityIn ctors cn i)
   (if (>= i (vecLen ctors))
     (- 0 1)
     {
       (let c (vecGet ctors i))
-      (if (strEq (bareOf (memGetWordStr c 0)) cn)
-        (vecLen (memGetWordVec c 1))
+      (if (strEq (bareOf c.name) cn)
+        (vecLen c.fieldTys)
         (ctorArityIn ctors cn (+ i 1)))
     }))
 
@@ -25907,11 +25807,10 @@
           (if (== tag TAG_P_CONNAMED)
             {
               (let _resolved (stampCtorName tc pat))
-              (let ctor (findCtor tc (nodeAName pat)))
-              (if (== ctor 0)
-                (checkCtorPattern tc (nodeAName pat) vecNew (nodeSpan pat) fitTy scrutTy)
+              (let ctorFound (findCtor tc (nodeAName pat)))
+              (if (let (Some ctor) ctorFound)
                 {
-                  (let declared (memGetWordVec ctor 4))
+                  (let declared ctor.fieldNames)
                   {
                     (checkNamedPatFields tc (nodeBChildren pat) declared (bareOf (nodeAName pat)) 0)
                     (if (== (as declared Int) 0)
@@ -25923,7 +25822,8 @@
                           vecNew)
                         (nodeSpan pat) fitTy scrutTy))
                   }
-                })
+                }
+                (checkCtorPattern tc (nodeAName pat) vecNew (nodeSpan pat) fitTy scrutTy))
             }
             0))))
   })
@@ -26037,57 +25937,29 @@
 ; Constructor references and patterns retain the same resolved declaration
 ; the checker used. The emitter's qualified registry entries carry its
 ; tag, field offsets, Float flags and ownership map.
-(:: ctorResolvedName (-> Int String))
+(:: ctorResolvedName (-> CtorEnt String))
 (fn (ctorResolvedName ctor)
-  (nominalName (memGetWordStr ctor 0) (modOf (nodeAName (readAstNode ctor 2)))))
+  (nominalName ctor.name (modOf (nodeAName ctor.resTy))))
 
 (:: stampCtorName (-> Int ASTNode Int))
 (fn (stampCtorName tc node)
   {
-    (let ctor (findCtor tc (nodeAName node)))
-    (if (== ctor 0)
-      0
-      (writeNodeText node 1 (ctorResolvedName ctor)))
+    (let ctorFound (findCtor tc (nodeAName node)))
+    (if (let (Some ctor) ctorFound)
+      (writeNodeText node 1 (ctorResolvedName ctor))
+      0)
   })
 
 (pub :: checkCtorPattern (-> Int String Nodes Int ASTNode ASTNode Int))
 (pub fn (checkCtorPattern tc cname args span scrutTy envTy)
   {
-    (let ctor (findCtor tc cname))
-    (if (== ctor 0)
+    (let ctorFound (findCtor tc cname))
+    (if (let (Some ctor) ctorFound)
       {
-        (emitUndefinedCtor tc cname span)
-        (bindPatternArgsPoison tc args 0)
-        0
-      }
-      ; Instantiated for the same reason a reference to the
-      ; constructor is: a pattern BINDS these types onto names, and
-      ; a binder holding the declaring type's own rigid `a` would
-      ; make `(match (Some 42) ((Some x) x))` answer a variable no
-      ; concrete type is compatible with.
-      ;
-      ; Instantiated AT THE SCRUTINEE'S ARGUMENTS where it has them
-      ; (`ctorPatEnv`, 2026-08-21): over `(Option Int)` the `a` of
-      ; `Some` is `Int`, not a fresh placeholder, so a nested
-      ; literal `(Some "x")` is AX3004 - the refutation pass found
-      ; it passing `check` and then dereferencing 5 as a header
-      ; under the content comparison - and a binder carries the
-      ; type it has. Over `(Option a)` the binder is the rigid `a`,
-      ; which is the policy everywhere else. A parameter the
-      ; scrutinee does not pin stays a fresh placeholder - and
-      ; `envTy` is the scrutinee's REAL type for exactly that
-      ; reason, never the fit type `checkMatch` derives from the
-      ; arms: that one is the declaration's own `Option a`, and
-      ; pinning from it bound every binder over a lambda parameter
-      ; at a rigid `a` (the third refutation pass: `(lambda (o)
-      ; (match o ((Some x) (+ x 1))))` refused).
-      {
-        (let fieldTys
-          (tyInstVec tc (memGetWordVec ctor 1) (ctorPatEnv (readAstNode ctor 2) envTy vecNew)
-            vecNew 0))
+        (let fieldTys (tyInstVec tc ctor.fieldTys (ctorPatEnv ctor.resTy envTy vecNew) vecNew 0))
         {
-          (if (&& (!= span 0) (== (ctorPatFits tc (readAstNode ctor 2) scrutTy) 0))
-            (emitMismatchTy tc (readAstNode ctor 2) scrutTy span))
+          (if (&& (!= span 0) (== (ctorPatFits tc ctor.resTy scrutTy) 0))
+            (emitMismatchTy tc ctor.resTy scrutTy span))
           (if (!= (vecLen args) (vecLen fieldTys))
             (if (! (== span 0))
               (emitDiag tc
@@ -26106,6 +25978,11 @@
           (bindPatternArgs tc args fieldTys 0)
           0
         }
+      }
+      {
+        (emitUndefinedCtor tc cname span)
+        (bindPatternArgsPoison tc args 0)
+        0
       })
   })
 
@@ -26460,7 +26337,7 @@
       (offerFnEnts best name fns (+ i 1))
     }))
 
-(pub :: offerCtorEnts (-> Suggest String Ints Int Int))
+(pub :: offerCtorEnts (-> Suggest String (Vec DataEnt) Int Int))
 (pub fn (offerCtorEnts best name datas i)
   (if (>= i (vecLen datas))
     0
@@ -26469,7 +26346,7 @@
       (offerCtorEnts best name datas (+ i 1))
     }))
 
-(pub :: offerCtorsOf (-> Suggest String Ints Int Int))
+(pub :: offerCtorsOf (-> Suggest String (Vec CtorEnt) Int Int))
 (pub fn (offerCtorsOf best name ctors i)
   (if (>= i (vecLen ctors))
     0
@@ -33359,9 +33236,9 @@
               (rgnRecoverForm rc args (spanOf e))
               (if (== (isCastLike n) 1)
                 (rgnLastArg rc args)
-                (if (! (== (findCtor tc n) 0))
+                (if (! (isNone (findCtor tc n)))
                   (| rc.curBit (rgnArgsUnion rc args 0 0))
-                  (if (! (== (findStructIfConstruct tc n) 0))
+                  (if (! (isNone (findStructIfConstruct tc n)))
                     (| rc.curBit (rgnArgsUnion rc args 0 0))
                     {
                       (let entFound (findFnEnt tc n))
@@ -35301,16 +35178,37 @@
 
 ; Syntax lookup views are confined to the type index's tagged entry boundary.
 (:: tyFindSyntax (-> Int Int String Int ASTNode))
-;@axiom:effect(unsafe)
 (fn (tyFindSyntax tc kind name last)
-  (as (tyFind tc kind name last) ASTNode))
+  (if (let (Some record) (tyFind tc kind name last))
+    (match record.payload
+      ((TyAlias node) node)
+      ((TySubtype node) node)
+      ((TyDecl node) node)
+      ((TyStruct _) nilNode)
+      ((TyData _) nilNode)
+      ((TyCtor _ _) nilNode))
+    nilNode))
 
 (:: tyFindAnyVisSyntax (-> Int Int String ASTNode))
-;@axiom:effect(unsafe)
 (fn (tyFindAnyVisSyntax tc kind name)
-  (as (tyFindAnyVis tc kind name) ASTNode))
+  (if (let (Some record) (tyFindAnyVis tc kind name))
+    (match record.payload
+      ((TyAlias node) node)
+      ((TySubtype node) node)
+      ((TyDecl node) node)
+      ((TyStruct _) nilNode)
+      ((TyData _) nilNode)
+      ((TyCtor _ _) nilNode))
+    nilNode))
 
 (:: tyFindAnyVisFromSyntax (-> Int Int String Int ASTNode))
-;@axiom:effect(unsafe)
 (fn (tyFindAnyVisFromSyntax tc kind name last)
-  (as (tyFindAnyVisFrom tc kind name last) ASTNode))
+  (if (let (Some record) (tyFindAnyVisFrom tc kind name last))
+    (match record.payload
+      ((TyAlias node) node)
+      ((TySubtype node) node)
+      ((TyDecl node) node)
+      ((TyStruct _) nilNode)
+      ((TyData _) nilNode)
+      ((TyCtor _ _) nilNode))
+    nilNode))

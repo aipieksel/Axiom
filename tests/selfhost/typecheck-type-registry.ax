@@ -1,0 +1,72 @@
+; expect 42
+; Type indexes retain typed payloads and constructor owners. Missing
+; names and wrong namespaces are None; first/last constructor probes
+; retain insertion order after the index has already been built.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+
+(:: typeRegistrySource (-> String Int))
+(fn (typeRegistrySource source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units vecNew)
+    (vecPush units
+      (CUnit2 :file "type-registry.ax" :src source :name "" :imports vecNew :library false))
+    (checkModuleTcTyped declarations declarations units)
+  })
+
+(:: main Int)
+(fn (main)
+  {
+    (let tc
+      (typeRegistrySource
+        "(pub data Choice (Hit Int) (Miss))\n(pub struct Record (value : Int))\n(:: main Int)\n(pub fn (main) 42)\n"))
+    (let bad
+      (typeRegistrySource
+        "(pub data Choice (Hit Int) (Miss))\n(:: main Int)\n(pub fn (main) (match (Hit 42) ((Hit value) value)))\n"))
+    (if (&& (== (countErrorDiags (tcOutVec tc)) 0)
+          (&& (== (countErrorDiags (tcOutVec bad)) 1)
+            (&& (isNone (findStruct tc "Choice"))
+              (&& (isNone (findData tc "Record"))
+                (&& (isNone (findCtor tc "missingConstructor"))
+                  (isNone (tyFind tc TY_ANY "Hit" 0)))))))
+      (if (let (Some owner) (findData tc "Choice"))
+        (if (let (Some record) (findStruct tc "Record"))
+          (if (let (Some first) (findCtor tc "Hit"))
+            {
+              (let late
+                (CtorEnt
+                  :name "Hit"
+                  :fieldTys vecNew
+                  :resTy (mkTCon "Later" vecNew)
+                  :ctorTy (mkTCon "Later" vecNew)
+                  :fieldNames nilNames))
+              (let lateCtors vecNew)
+              (vecPush lateCtors late)
+              (let later (DataEnt :name "Later" :ctors lateCtors :module 0 :arity 0))
+              (vecPush (tcDatasVec tc) later)
+              (tyIdxAddData tc later)
+              (if (let (Some last) (rfindCtor tc "Hit"))
+                (if (let (Some original) (findCtor tc "Hit"))
+                  (if (&& (== (vecLen owner.ctors) 2)
+                        (&& (== (vecLen record.fields) 1)
+                          (&& (== (vecLen first.fieldTys) 1)
+                            (&& (== (vecLen original.fieldTys) 1)
+                              (&& (== (vecLen last.fieldTys) 0)
+                                (strEq (nodeAName last.resTy) "Later"))))))
+                    42
+                    7)
+                  6)
+                5)
+            }
+            4)
+          3)
+        2)
+      1)
+  })
