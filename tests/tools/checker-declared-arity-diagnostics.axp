@@ -1,0 +1,38 @@
+; A missing declared result differs from a present poison or inferred type.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let nodes (pResNodes parsed))
+        (let units
+          (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+        (let tc (tcNew nodes nodes units))
+        (tcWalkDecls tc 0)
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      }
+      (println (concat name " invalid diagnostic fixture")))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "1420-generic-alias-arity.ax"
+      "; Type uses supply exactly the alias's declared arguments.\n(type Items a (Option a))\n\n(type Plain Int)\n\n(type BadTarget Items)\n\n(type Unknown NotDeclared)\n\n(:: missing (-> Items Int))\n(fn (missing x)\n  0)\n\n(:: extra (-> (Items Int Float) Int))\n(fn (extra x)\n  0)\n\n(:: plainExtra (-> (Plain Int) Int))\n(fn (plainExtra x)\n  0)\n\n(struct BadField\n  (item : Items))\n\n(data BadPayload\n  (Payload (Items Int Float)))\n\n(data Box a\n  (Boxed a))\n\n(struct Holder (a)\n  (value : a))\n\n(:: bareBox (-> Box Int))\n(fn (bareBox x)\n  0)\n\n(:: extraBox (-> (Box Int String) Int))\n(fn (extraBox x)\n  0)\n\n(:: bareHolder (-> Holder Int))\n(fn (bareHolder x)\n  0)\n\n(:: bareOption (-> Option Int))\n(fn (bareOption x)\n  0)\n\n(:: bareVec (-> Vec Int))\n(fn (bareVec x)\n  0)\n\n(:: conversionTarget Int)\n(fn (conversionTarget)\n  (as 0 Items))\n\n(:: sizeTarget Int)\n(fn (sizeTarget)\n  (sizeof (Items Int Float)))\n\n(:: alignTarget Int)\n(fn (alignTarget)\n  (alignof Box))\n\n(:: main Int)\n(fn (main)\n  0)\n")
+    (checkSource "declared-arity-missing.ax"
+      "(type Items a (Option a))\n(type Plain Int)\n(pub :: first (-> (Plain String) Int))\n(pub fn (first x) 0)\n(pub :: nested (-> (Ghost Items) Int))\n(pub fn (nested x) 0)\n(pub :: wrongWidth (-> (Link Int Int) Int))\n(pub fn (wrongWidth x) 0)\n")
+    0
+  })

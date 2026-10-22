@@ -1,0 +1,91 @@
+; Missing declarations differ from known zero-argument types and poison results.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: at (-> (Option Int) Int Bool))
+(fn (at result expected)
+  (match result
+    ((Some arity) (== arity expected))
+    ((None) false)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source
+      "(data Empty) (data Pair a b (Paired a b)) (struct Record (a) (value : a)) (struct UnitRecord) (type Plain Int) (type Items a (Option a)) (type Poisoned MissingType) (subtype Small is Int range 0..5)")
+    (let parsed (parseModule (lex source)))
+    (if (! (pResOk parsed))
+      (println "invalid positive fixture"))
+    (let nodes (pResNodes parsed))
+    (let tc (tcNew nodes nodes vecNew))
+    (say 1 (at (tyDeclaredArity tc "Int") 0))
+    (say 2 (at (tyDeclaredArity tc "Option") 1))
+    (say 3 (at (tyDeclaredArity tc "Vec") 1))
+    (say 4 (at (tyDeclaredArity tc "Link") 2))
+    (say 5 (at (tyDeclaredArity tc "Plain") 0))
+    (say 6 (at (tyDeclaredArity tc "Items") 1))
+    (say 7 (at (tyDeclaredArity tc "Pair") 2))
+    (say 8 (at (tyDeclaredArity tc "Record") 1))
+    (say 9 (at (tyDeclaredArity tc "UnitRecord") 0))
+    (say 10 (at (tyDeclaredArity tc "Empty") 0))
+    (say 11 (at (tyDeclaredArity tc "Small") 0))
+    (say 12 (isNone (tyDeclaredArity tc "Unknown")))
+    (say 13 (at (tyDeclaredArity tc "String") 0))
+    (say 14 (at (tyDeclaredArity tc "UInt16") 0))
+    (say 15 (at (tyDeclaredArity tc "Poisoned") 0))
+    (let bareOption (mkTCon "Option" vecNew))
+    (let bareVec (mkTCon "Vec" vecNew))
+    (let optionInt (mkTCon "Option" (vecPush vecNew mkIntTy)))
+    (let tooMany (mkTCon "Option" (vecPush (vecPush vecNew mkIntTy) mkStringTy)))
+    (say 16 (== (tyCheckArityIn tc bareVec 0 false) 0))
+    (say 17 (== (tyCheckArityIn tc bareVec 0 true) 1))
+    (say 18 (== (tyCheckArityIn tc optionInt 0 false) 1))
+    (say 19 (== (tyCheckArityIn tc tooMany 0 false) 0))
+    (say 20 (== (tyCheckArityIn tc (mkTCon "Unknown" vecNew) 0 false) 1))
+    (let nested (mkTCon "Unknown" (vecPush vecNew bareOption)))
+    (say 21 (== (tyCheckArityIn tc nested 0 false) 0))
+    (say 22
+      (== (tyCheckArityIn tc (mkTCon "Unknown" (vecPush vecNew (mkTCon "Items" vecNew))) 0 true) 0))
+    (say 23 (== (tyCheckArityIn tc (mkTCon "Link" (vecPush vecNew mkIntTy)) 0 false) 0))
+    (let badWidth (mkTCon "Link" (vecPush (vecPush vecNew mkIntTy) mkIntTy)))
+    (say 24 (== (tyCheckArityIn tc badWidth 0 false) 0))
+    (say 25 (== (tyCheckArityIn tc badWidth 0 true) 1))
+    (say 26 (== (tyIsErr (tyPoisonBadArity tc bareOption)) 1))
+    (let nestedPoison (tyPoisonBadArity tc nested))
+    (say 27
+      (&& (== (nodeTag nestedPoison) TAG_T_CON)
+        (&& (strEq (nodeAName nestedPoison) "Unknown")
+          (== (tyIsErr (vecGet (nodeBChildren nestedPoison) 0)) 1))))
+    (say 28 (== (tyIsErr (tyPoisonBadArity tc optionInt)) 0))
+    (let arrow (tyPoisonBadArity tc (mkTArr bareOption mkIntTy)))
+    (say 29
+      (&& (== (nodeTag arrow) TAG_T_ARR)
+        (&& (== (tyIsErr (nodeAChild arrow)) 1) (strEq (nodeAName (nodeBChild arrow)) "Int"))))
+    (let poison mkTErr)
+    (say 30 (nodeSame (tyPoisonBadArity tc poison) poison))
+    (say 31 (nodeSame (tyPoisonBadArity tc nilNode) nilNode))
+    (say 32 (== (tyCheckArityIn tc nilNode 0 false) 1))
+    (say 33 (== (tyCheckArityIn tc poison 0 false) 1))
+    (say 34
+      (==
+        (tyCheckArityIn tc
+          (mkTCon "Link" (vecPush (vecPush vecNew mkIntTy) (mkTCon "UInt16" vecNew))) 0 false)
+        1))
+    0
+  })

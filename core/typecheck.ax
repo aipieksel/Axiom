@@ -8733,21 +8733,28 @@
       (let tg (nodeTag t))
       (if (== tg TAG_T_CON)
         {
-          (let arity
-            (if (&& aliasesOnly (isNone (tcAliasFind tc (nodeAName t))))
-              (- 0 1)
-              (tyDeclaredArity tc (nodeAName t))))
-          (if (&& (>= arity 0) (!= (vecLen (nodeBChildren t)) arity))
-            {
-              (if (!= span 0)
-                (emitDiag tc
-                  (mkDiag SEV_ERROR "AX3124" "type-argument-arity" span
-                    (concat (concat "type `" (concat (srcSpelling (nodeAName t)) "` takes "))
-                      (concat (fmtInt arity)
-                        (concat " type argument(s), found " (fmtInt (vecLen (nodeBChildren t))))))
-                    0 0 "supply exactly the declared number of type arguments")))
-              0
-            }
+          (let declared
+            (:: (if (&& aliasesOnly (isNone (tcAliasFind tc (nodeAName t))))
+              None
+              (tyDeclaredArity tc (nodeAName t))) (Option Int)))
+          (let arityOk
+            (if (let (Some arity) declared)
+              (if (!= (vecLen (nodeBChildren t)) arity)
+                {
+                  (if (!= span 0)
+                    (emitDiag tc
+                      (mkDiag SEV_ERROR "AX3124" "type-argument-arity" span
+                        (concat (concat "type `" (concat (srcSpelling (nodeAName t)) "` takes "))
+                          (concat (fmtInt arity)
+                            (concat " type argument(s), found "
+                              (fmtInt (vecLen (nodeBChildren t))))))
+                        0 0 "supply exactly the declared number of type arguments")))
+                  false
+                }
+                true)
+              true))
+          (if (! arityOk)
+            0
             (if (&& (! aliasesOnly) (== (tyLinkWidthOk tc t span) 0))
               0
               (tyCheckArityVecIn tc (nodeBChildren t) span 0 aliasesOnly)))
@@ -8793,29 +8800,21 @@
 
 ; Declared arity, including empty data types and abstract builtins.
 ; Unknown constructors are left to AX3002's resolver.
-(pub :: tyDeclaredArity (-> TC String Int))
+(pub :: tyDeclaredArity (-> TC String (Option Int)))
 (pub fn (tyDeclaredArity tc name)
-  {
-    (let al (tcAliasFind tc name))
-    (if (let (Some al) al)
-      (aliasParamCount al)
-      {
-        (let deFound (findDataAnyVis tc name))
-        (if (let (Some de) deFound)
-          (dataEntArity de)
-          {
-            (let stFound (findStructAnyVis tc name))
-            (if (let (Some st) stFound)
-              (if (== (as st.tyvars Int) 0)
-                0
-                (vecLen st.tyvars))
-              (if (|| (!= (as (typeKeywordCanon name) Int) 0)
-                    (isSome (tyFindSyntax tc TY_SUBTYPE name 0)))
-                0
-                (- 0 1)))
-          })
-      })
-  })
+  (if (let (Some alias) (tcAliasFind tc name))
+    (Some (aliasParamCount alias))
+    (if (let (Some data) (findDataAnyVis tc name))
+      (Some (dataEntArity data))
+      (if (let (Some record) (findStructAnyVis tc name))
+        (Some
+          (if (== (as record.tyvars Int) 0)
+            0
+            (vecLen record.tyvars)))
+        (if (|| (!= (as (typeKeywordCanon name) Int) 0)
+              (isSome (tyFindSyntax tc TY_SUBTYPE name 0)))
+          (Some 0)
+          None)))))
 
 (pub :: tyCheckAliasArityVec (-> TC (Vec ASTNode) Int Int Int))
 (pub fn (tyCheckAliasArityVec tc xs span i)
@@ -8841,8 +8840,11 @@
       (let tg (nodeTag t))
       (if (== tg TAG_T_CON)
         {
-          (let arity (tyDeclaredArity tc (nodeAName t)))
-          (if (&& (>= arity 0) (!= arity (vecLen (nodeBChildren t))))
+          (let wrongArity
+            (match (tyDeclaredArity tc (nodeAName t))
+              ((Some arity) (!= arity (vecLen (nodeBChildren t))))
+              ((None) false)))
+          (if wrongArity
             mkTErr
             (mkTCon (nodeAName t) (tyPoisonBadArityVec tc (nodeBChildren t) vecNew 0)))
         }

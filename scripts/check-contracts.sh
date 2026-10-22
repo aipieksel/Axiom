@@ -60,6 +60,7 @@ python3 tests/tools/checker-field-initializer-options.py "$axc"
 python3 tests/tools/checker-field-index-options.py "$axc"
 python3 tests/tools/checker-type-variable-index-options.py "$axc"
 python3 tests/tools/checker-parameter-index-options.py "$axc"
+python3 tests/tools/checker-declared-arity-options.py "$axc"
 python3 tests/tools/expansion-option-sequences.py "$axc"
 
 failed=0
