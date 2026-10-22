@@ -14,20 +14,23 @@ def main():
     compiler = args.axiom.resolve()
     repo = Path(__file__).resolve().parents[2]
     env = dict(os.environ, AXIOM_PATH=str(repo / "core"), AXIOM_STDLIB=str(repo / "stdlib"))
-    fixture = repo / "tests/selfhost/typecheck-type-registry.ax"
+    fixtures = [repo / "tests/selfhost" / name for name in [
+        "typecheck-type-registry.ax", "typecheck-module-options.ax",
+    ]]
     refusal = repo / "tests/selfhost/typecheck-type-registry-payload.axp"
     with tempfile.TemporaryDirectory(prefix="axiom-type-registry-") as work:
-        executable = Path(work) / "registry"
-        built = subprocess.run(
-            [str(compiler), "--diagnostic-format=ai", "build", str(fixture),
-             "--opt", "0", "--output", str(executable)],
-            env=env, capture_output=True, text=True,
-        )
-        if built.returncode:
-            raise SystemExit(built.stdout + built.stderr)
-        ran = subprocess.run([str(executable)], capture_output=True, text=True)
-        if ran.returncode != 42 or ran.stdout or ran.stderr:
-            raise SystemExit(f"registry fixture: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
+        for fixture in fixtures:
+            executable = Path(work) / "registry"
+            built = subprocess.run(
+                [str(compiler), "--diagnostic-format=ai", "build", str(fixture),
+                 "--opt", "0", "--output", str(executable)],
+                env=env, capture_output=True, text=True,
+            )
+            if built.returncode:
+                raise SystemExit(built.stdout + built.stderr)
+            ran = subprocess.run([str(executable)], capture_output=True, text=True)
+            if ran.returncode != 42 or ran.stdout or ran.stderr:
+                raise SystemExit(f"registry fixture: status={ran.returncode}, stdout={ran.stdout!r}, stderr={ran.stderr!r}")
         checked = subprocess.run(
             [str(compiler), "--diagnostic-format=ai", "check", str(refusal)],
             env=env, capture_output=True, text=True,
@@ -37,7 +40,7 @@ def main():
             raise SystemExit(f"payload refusal: status={checked.returncode}\n{checked.stdout}{checked.stderr}")
         if "DataEnt" not in errors[0] or "StructEnt" not in errors[0]:
             raise SystemExit(f"payload refusal named unexpected types: {errors[0]}")
-    print("typed registry: lookup/order runtime 42; mismatched payload AX3004")
+    print("typed registry: lookup/order and module runtime 42; mismatched payload AX3004")
 
 
 if __name__ == "__main__":
