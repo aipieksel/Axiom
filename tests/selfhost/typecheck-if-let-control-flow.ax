@@ -1,0 +1,51 @@
+; expect 42
+; A selected if-let branch stops the chain. Failed tests continue to
+; the next branch, whose pattern owns its own bindings. Else-less
+; if-let stays a conditional statement; Option matches cover both cases.
+(struct Probe
+  (mut count : Int))
+
+(:: present (-> Probe (Option Int)))
+(fn (present probe)
+  {
+    (set probe.count (+ probe.count 1))
+    (Some 21)
+  })
+
+(:: absent (-> Probe (Option Int)))
+(fn (absent probe)
+  {
+    (set probe.count (+ probe.count 1))
+    None
+  })
+
+(:: valueOf (-> (Option Int) Int))
+(fn (valueOf value)
+  (match value
+    ((Some n) n)
+    ((None) 0)))
+
+(:: main Int)
+(fn (main)
+  {
+    (let probe (Probe :count 0))
+    (let first
+      (if (let (Some n) (present probe))
+          n
+        (let (Some n) (present probe))
+          (+ n 1)
+        0))
+    (let second
+      (if (let (Some n) (absent probe))
+          (+ n 1)
+        false
+          99
+        (let (Some n) (present probe))
+          n
+        0))
+    (if (let (Some n) None)
+      (set probe.count n))
+    (if (&& (== probe.count 3) (&& (== (valueOf None) 0) (== (valueOf (Some first)) 21)))
+      (+ first second)
+      1)
+  })
