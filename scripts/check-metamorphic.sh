@@ -252,9 +252,9 @@ ablate "module-view" codegen.ax \
   shadow
 ablate "entry-out-of-scope" typecheck.ax \
   "(pub fn (fnEntOutOfModuleScope tc m name e)
-  (if (== m 0)" \
+  (if (isNone m)" \
   "(pub fn (fnEntOutOfModuleScope tc m name e)
-  (if (== m m)" \
+  (if true" \
   shadow
 ablate "fresh-names" symbols.ax \
   "(concat (symFreshNames ty) \"\\\"\")" \
@@ -264,9 +264,9 @@ ablate "result-renderer" codegen.ax \
   "(pub fn (mainResultErrorText cg)
   \"Err\$errorText\")" \
   "(pub fn (mainResultErrorText cg)
-  (if (== (findFSigCg cg \"errorText\") 0)
-    \"Err\$errorText\"
-    \"errorText\"))" \
+  (if (let (Some _) (findFSigCg cg \"errorText\"))
+    \"errorText\"
+    \"Err\$errorText\"))" \
   shadow tests/stdlib/490-main-result-ok.ax
 
 if (( long )); then
