@@ -115,6 +115,12 @@ else
   exit 1
 fi
 
+if python3 tests/tools/mir-option-results.py "$axc"; then
+  ok "optional MIR lookup and lowering results preserve refusals and register zero"
+else
+  bad "optional MIR lookup or lowering results changed"
+fi
+
 # ---------------------------------------------------------------
 echo
 echo "--- 2. the printer, against tests/mir/NAME.mir ---"

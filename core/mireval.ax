@@ -34,23 +34,15 @@
 
 ; The function table is a plain `Vec` scanned by name, because a
 ; direct call is the only call this IR has and a fixture holds a
-; handful of functions. Answers a `Vec` of at most one, the same
-; shape `mLowerFn` answers, so "not found" is a length and not a
-; sentinel pointer.
-(:: mvalFind (-> (Vec MFunc) String Int (Vec MFunc)))
+; handful of functions. A missing name answers `None`.
+(:: mvalFind (-> (Vec MFunc) String Int (Option MFunc)))
 (fn (mvalFind fns nm i)
   (if (>= i (vecLen fns))
-    vecNew
+    None
     {
       (let f (vecGet fns i))
       (if (strEq f.name nm)
-        {
-          (let v vecNew)
-          {
-            (vecPush v f)
-            v
-          }
-        }
+        (Some f)
         (mvalFind fns nm (+ i 1)))
     }))
 
@@ -193,24 +185,15 @@
 (:: mvalCall (-> (Vec MFunc) String Ints Int))
 ;@axiom:effect(io)
 (fn (mvalCall fns nm args)
-  {
-    (let got (mvalFind fns nm 0))
-    (if (== (vecLen got) 0)
-      0
-      (mvalRunFn fns (vecGet got 0) args))
-  })
+  (if (let (Some target) (mvalFind fns nm 0))
+    (mvalRunFn fns target args)
+    0))
 
-(:: mvalBlockAt (-> MFunc Int (Vec MBlock)))
+(:: mvalBlockAt (-> MFunc Int (Option MBlock)))
 (fn (mvalBlockAt f id)
   (if (|| (< id 0) (>= id (vecLen f.blocks)))
-    vecNew
-    {
-      (let v vecNew)
-      {
-        (vecPush v (vecGet f.blocks id))
-        v
-      }
-    }))
+    None
+    (Some (vecGet f.blocks id))))
 
 (:: mvalRunBlock (-> (Vec MFunc) MFunc Ints MBlock Ints Int))
 ;@axiom:effect(io)
@@ -270,12 +253,9 @@
 (:: mvalGoto (-> (Vec MFunc) MFunc Ints Int Ints Int))
 ;@axiom:effect(io)
 (fn (mvalGoto fns f regs id vals)
-  {
-    (let got (mvalBlockAt f id))
-    (if (== (vecLen got) 0)
-      0
-      (mvalRunBlock fns f regs (vecGet got 0) vals))
-  })
+  (if (let (Some target) (mvalBlockAt f id))
+    (mvalRunBlock fns f regs target vals)
+    0))
 
 ; One call. The register file is exactly `nreg` words and is fresh
 ; per call, which is what makes recursion work: `mirVerify` has

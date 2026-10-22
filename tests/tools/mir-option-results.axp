@@ -1,0 +1,85 @@
+; Optional MIR results retain register zero, binding scope and refusal.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import lexer)
+(import parser)
+(import mir)
+(import mireval)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: lower (-> String (Option MFunc)))
+(fn (lower source)
+  {
+    (let parsed (parseModule (lex source)))
+    (if (pResOk parsed)
+      (mLowerFn (vecGet (pResNodes parsed) 0))
+      None)
+  })
+
+(:: refused (-> String Bool))
+(fn (refused source)
+  (if (let (Some _) (lower source))
+    false
+    true))
+
+(:: evaluates (-> String Int Bool))
+;@axiom:effect(io)
+(fn (evaluates source want)
+  (if (let (Some lowered) (lower source))
+    {
+      (let functions (vecPush vecNew lowered))
+      (&& (== (vecLen (mirVerify lowered)) 0) (== (mvalCall1 functions "probe" 17) want))
+    }
+    false))
+
+(:: jump (-> Int MFunc))
+(fn (jump target)
+  {
+    (let terminator (MInst :op MT_BR :dst -1 :a 0 :b 0 :name "" :args vecNew :tgt target :alt 0))
+    (let entry (MBlock :id 0 :params vecNew :instrs vecNew :term (vecPush vecNew terminator)))
+    (MFunc :name "probe" :params vecNew :pnames vecNew :blocks (vecPush vecNew entry) :nreg 0)
+  })
+
+(:: invalidTarget (-> Int Bool))
+;@axiom:effect(io)
+(fn (invalidTarget target)
+  {
+    (let function (jump target))
+    (let complaints (mirVerify function))
+    (&& (== (vecLen complaints) 1)
+      (&&
+        (strEq (vecGet complaints 0)
+          (concat "bb0: branches to bb" (concat (fmtInt target) ", which does not exist")))
+        (== (mvalCall1 (vecPush vecNew function) "probe" 17) 0)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (evaluates "(fn (probe x) x)" 17))
+    (say 2 (evaluates "(fn (probe x) 0)" 0))
+    (say 3 (refused "(fn (probe x) missing)"))
+    (say 4 (refused "(fn (probe x) (set x 4))"))
+    (say 5 (refused "(fn (probe x) (set missing 4))"))
+    (say 6 (refused "(fn (probe x) (x 4))"))
+    (say 7 (evaluates "(fn (probe x) { (let mut n x) (set n 4) n })" 4))
+    (say 8 (evaluates "(fn (probe x) { (let mut n x) { (let n 4) n } n })" 17))
+    (say 9 (refused "(fn (probe x) { (let mut n x) { (let n 4) (set n 8) } n })"))
+    (say 10 (evaluates "(fn (probe x) { (let mut n 0) (while (< n 4) (set n (+ n 1))) n })" 4))
+    (say 11 (refused "(fn (probe x) (lambda (y) y))"))
+    (say 12 (== (mvalCall1 vecNew "missing" 17) 0))
+    (say 13 (invalidTarget -1))
+    (say 14 (invalidTarget 2))
+    0
+  })

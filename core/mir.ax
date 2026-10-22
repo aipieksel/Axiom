@@ -453,40 +453,20 @@
     }
   })
 
-(:: mEnvLook (-> (Vec MBind) String Int Int))
+(:: mEnvLook (-> (Vec MBind) String Int (Option MBind)))
 (fn (mEnvLook env name i)
   (if (< i 0)
-    (- 0 1)
+    None
     {
       (let bnd (vecGet env i))
       (if (strEq bnd.name name)
-        bnd.reg
+        (Some bnd)
         (mEnvLook env name (- i 1)))
     }))
 
-(:: mEnvFind (-> (Vec MBind) String Int))
+(:: mEnvFind (-> (Vec MBind) String (Option MBind)))
 (fn (mEnvFind env name)
   (mEnvLook env name (- (vecLen env) 1)))
-
-; The innermost binding's mutability: 1 for a `mut` binding, 0 for
-; anything else, -1 when no binding answers the name at all. `set`
-; reads this, not the register: storing through a `let` would be a
-; program the checker refused, and the subset refuses it here rather
-; than rebinding a name that cannot change.
-(:: mEnvLookMut (-> (Vec MBind) String Int Int))
-(fn (mEnvLookMut env name i)
-  (if (< i 0)
-    (- 0 1)
-    {
-      (let bnd (vecGet env i))
-      (if (strEq bnd.name name)
-        bnd.isMut
-        (mEnvLookMut env name (- i 1)))
-    }))
-
-(:: mEnvMut (-> (Vec MBind) String Int))
-(fn (mEnvMut env name)
-  (mEnvLookMut env name (- (vecLen env) 1)))
 
 ; Pop the environment back to `n` bindings. `while` binds its
 ; carried `mut`s three times over - header, body, exit - and the
@@ -687,34 +667,23 @@
         ; consults its symbol table first, so a shadowing binding -
         ; to the extent the checker lets one stand - reads the same
         ; register on both paths.
-        {
-          (let r (mEnvFind env (nodeAName e)))
-          (if (>= r 0)
-            r
-            (if (strEq (nodeAName e) "true")
+        (if (let (Some binding) (mEnvFind env (nodeAName e)))
+          binding.reg
+          (if (strEq (nodeAName e) "true")
+            (mlcEmit lc
+              (MInst :op MO_CONST :dst (mlcFresh lc) :a 1 :b 0 :name "" :args vecNew :tgt 0 :alt 0))
+            (if (strEq (nodeAName e) "false")
               (mlcEmit lc
                 (MInst
                   :op MO_CONST
                   :dst (mlcFresh lc)
-                  :a 1
+                  :a 0
                   :b 0
                   :name ""
                   :args vecNew
                   :tgt 0
                   :alt 0))
-              (if (strEq (nodeAName e) "false")
-                (mlcEmit lc
-                  (MInst
-                    :op MO_CONST
-                    :dst (mlcFresh lc)
-                    :a 0
-                    :b 0
-                    :name ""
-                    :args vecNew
-                    :tgt 0
-                    :alt 0))
-                (- 0 1))))
-        }
+              (- 0 1))))
         (if (== t TAG_E_LET)
           (mLowerLet lc env e 0)
           (if (== t TAG_E_LETM)
@@ -779,22 +748,19 @@
 (fn (mLowerSet lc env e)
   (if (!= lc.cond 0)
     (- 0 1)
-    {
-      (let m (mEnvMut env (nodeAName e)))
-      (if (< m 0)
+    (if (let (Some binding) (mEnvFind env (nodeAName e)))
+      (if (== binding.isMut 0)
         (- 0 1)
-        (if (== m 0)
-          (- 0 1)
-          {
-            (let rv (mLower lc env (nodeBChild e)))
-            (if (< rv 0)
-              (- 0 1)
-              {
-                (vecPush env (MBind :name (nodeAName e) :reg rv :isMut 1))
-                rv
-              })
-          }))
-    }))
+        {
+          (let rv (mLower lc env (nodeBChild e)))
+          (if (< rv 0)
+            (- 0 1)
+            {
+              (vecPush env (MBind :name (nodeAName e) :reg rv :isMut 1))
+              rv
+            })
+        })
+      (- 0 1))))
 
 ; The loop-carried set: every `mut` binding in scope at the loop's
 ; entry, innermost shadowing outermost. Scanned from the END so the
@@ -846,14 +812,16 @@
 
 ; The registers the carried names hold NOW - after the body's `set`s
 ; - in carry order. These are the back-edge's arguments.
-(:: mCurRegs (-> (Vec MBind) Strings Int Ints Ints))
+(:: mCurRegs (-> (Vec MBind) Strings Int Ints (Option Ints)))
 (fn (mCurRegs env names i out)
   (if (>= i (vecLen names))
-    out
-    {
-      (vecPush out (mEnvFind env (vecGet names i)))
-      (mCurRegs env names (+ i 1) out)
-    }))
+    (Some out)
+    (if (let (Some binding) (mEnvFind env (vecGet names i)))
+      {
+        (vecPush out binding.reg)
+        (mCurRegs env names (+ i 1) out)
+      }
+      None)))
 
 ; `while` is a header, a body and an exit, and the `mut` bindings in
 ; scope are carried as block parameters on all three. The entry edge
@@ -933,31 +901,33 @@
                       (let bodyVal (mLowerSeq lc env (nodeBChildren e) 0 (- 0 1)))
                       (if (< bodyVal 0)
                         (- 0 1)
-                        {
-                          (mlcTerm lc
-                            (MInst
-                              :op MT_BR
-                              :dst (- 0 1)
-                              :a 0
-                              :b 0
-                              :name ""
-                              :args (mCurRegs env names 0 vecNew)
-                              :tgt hd.id
-                              :alt 0))
-                          (set lc.cur bx)
-                          (mEnvTrunc env base)
-                          (mRebind env names px 0)
-                          (mlcEmit lc
-                            (MInst
-                              :op MO_CONST
-                              :dst (mlcFresh lc)
-                              :a 0
-                              :b 0
-                              :name ""
-                              :args vecNew
-                              :tgt 0
-                              :alt 0))
-                        })
+                        (if (let (Some backRegs) (mCurRegs env names 0 vecNew))
+                          {
+                            (mlcTerm lc
+                              (MInst
+                                :op MT_BR
+                                :dst (- 0 1)
+                                :a 0
+                                :b 0
+                                :name ""
+                                :args backRegs
+                                :tgt hd.id
+                                :alt 0))
+                            (set lc.cur bx)
+                            (mEnvTrunc env base)
+                            (mRebind env names px 0)
+                            (mlcEmit lc
+                              (MInst
+                                :op MO_CONST
+                                :dst (mlcFresh lc)
+                                :a 0
+                                :b 0
+                                :name ""
+                                :args vecNew
+                                :tgt 0
+                                :alt 0))
+                          }
+                          (- 0 1)))
                     }
                   })
               }
@@ -1290,7 +1260,7 @@
         (let args (spineArgVec e vecNew))
         (let out vecNew)
         (if (&& (strEq nm "cast") (== (vecLen args) 2))
-          (if (>= (mEnvFind env nm) 0)
+          (if (let (Some _) (mEnvFind env nm))
             (- 0 1)
             {
               (let dst (vecGet args 0))
@@ -1334,7 +1304,7 @@
                           :alt 0))
                     }
                     (- 0 1))
-                  (if (>= (mEnvFind env nm) 0)
+                  (if (let (Some _) (mEnvFind env nm))
                     (- 0 1)
                     (mlcEmit lc
                       (MInst
@@ -1492,17 +1462,15 @@
 
 ; Lower one `TAG_D_FN`.
 ;
-; Answers a `Vec` of at most one `MFunc`: the function, or nothing at
-; all. There is no third answer and in particular no PARTIAL
+; Answers the complete function, or `None`. There is no partial
 ; function - a lowering that emitted what it understood and stopped
 ; would produce a block with no terminator, which the verifier would
 ; then report as a defect in this file rather than as the refusal it
 ; is.
-(pub :: mLowerFn (-> ASTNode (Vec MFunc)))
+(pub :: mLowerFn (-> ASTNode (Option MFunc)))
 (pub fn (mLowerFn d)
   {
     (let entry (MBlock :id 0 :params vecNew :instrs vecNew :term vecNew))
-    (let out vecNew)
     {
       (let lc (MLC :nreg 0 :blocks vecNew :cur entry :cond 0))
       {
@@ -1514,11 +1482,12 @@
             (mBindParams lc env (nodeBNames d) 0 pregs)
             {
               (let r (mLower lc env (nodeCChild d)))
-              (if (! (< r 0))
+              (if (< r 0)
+                None
                 {
                   (mlcTerm lc
                     (MInst :op MT_RET :dst (- 0 1) :a r :b 0 :name "" :args vecNew :tgt 0 :alt 0))
-                  (vecPush out
+                  (Some
                     (MFunc
                       :name (nodeAName d)
                       :params pregs
@@ -1529,7 +1498,6 @@
             }
           }
         }
-        out
       }
     }
   })
@@ -1547,12 +1515,9 @@
       (let d (vecGet ds i))
       {
         (if (== (nodeTag d) TAG_D_FN)
-          {
-            (let got (mLowerFn d))
-            (if (== (vecLen got) 0)
-              (vecPush refused (nodeAName d))
-              (vecPush out (vecGet got 0)))
-          })
+          (if (let (Some lowered) (mLowerFn d))
+            (vecPush out lowered)
+            (vecPush refused (nodeAName d))))
         (mLowerDecls ds out refused (+ i 1))
       }
     }))
@@ -1950,14 +1915,11 @@
       (mvCheckInsts f dom defBlk defIdx out insts blk (+ i 1))
     }))
 
-(:: mvBlockAt (-> MFunc Int Int))
+(:: mvBlockAt (-> MFunc Int (Option MBlock)))
 (fn (mvBlockAt f id)
   (if (|| (< id 0) (>= id (vecLen f.blocks)))
-    (- 0 1)
-    {
-      (let b (vecGet f.blocks id))
-      (vecLen b.params)
-    }))
+    None
+    (Some (vecGet f.blocks id))))
 
 (:: mvCheckTerm (-> MFunc Ints Ints Ints Strings MBlock Int))
 (fn (mvCheckTerm f dom defBlk defIdx out b)
@@ -1972,21 +1934,19 @@
       (if (== t.op MT_RET)
         (mvUse f dom defBlk defIdx out what t.a b.id idx)
         (if (== t.op MT_BR)
-          {
-            (let np (mvBlockAt f t.tgt))
-            (if (< np 0)
-              (mvSay out
-                (concat what
-                  (concat " branches to " (concat (mirBB t.tgt) ", which does not exist"))))
-              {
-                (if (!= np (vecLen t.args))
-                  (mvSay out
-                    (concat (concat what (concat " passes " (fmtInt (vecLen t.args))))
-                      (concat (concat " arguments to " (concat (mirBB t.tgt) ", which takes "))
-                        (fmtInt np)))))
-                (mvUseList f dom defBlk defIdx out what t.args b.id idx 0)
-              })
-          }
+          (if (let (Some target) (mvBlockAt f t.tgt))
+            {
+              (let np (vecLen target.params))
+              (if (!= np (vecLen t.args))
+                (mvSay out
+                  (concat (concat what (concat " passes " (fmtInt (vecLen t.args))))
+                    (concat (concat " arguments to " (concat (mirBB t.tgt) ", which takes "))
+                      (fmtInt np)))))
+              (mvUseList f dom defBlk defIdx out what t.args b.id idx 0)
+            }
+            (mvSay out
+              (concat what
+                (concat " branches to " (concat (mirBB t.tgt) ", which does not exist")))))
           (if (== t.op MT_CONDBR)
             {
               (mvUse f dom defBlk defIdx out what t.a b.id idx)
@@ -2016,17 +1976,17 @@
 ; the target declares what the list lands in.
 (:: mvCondTarget (-> MFunc Strings String Int Int Int))
 (fn (mvCondTarget f out what id want)
-  {
-    (let np (mvBlockAt f id))
-    (if (< np 0)
-      (mvSay out
-        (concat what (concat " branches to " (concat (mirBB id) ", which does not exist"))))
+  (if (let (Some target) (mvBlockAt f id))
+    {
+      (let np (vecLen target.params))
       (if (!= np want)
         (mvSay out
           (concat (concat what (concat " passes " (fmtInt want)))
             (concat (concat " arguments to " (concat (mirBB id) ", which takes ")) (fmtInt np))))
-        0))
-  })
+        0)
+    }
+    (mvSay out
+      (concat what (concat " branches to " (concat (mirBB id) ", which does not exist"))))))
 
 (:: mvCheckBlocks (-> MFunc Ints Ints Ints Ints Strings Int Int))
 (fn (mvCheckBlocks f dom defBlk defIdx seen out i)
