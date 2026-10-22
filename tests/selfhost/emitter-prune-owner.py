@@ -19,6 +19,7 @@ SUPPORT = runpy.run_path(str(Path(__file__).with_name('emitter-line-buffer.py'))
 run_checked = SUPPORT['run_checked']
 replace_once = SUPPORT['replace_once']
 check_output = SUPPORT['check_output']
+check_typed_slot = SUPPORT['check_typed_slot']
 
 BRIDGES = r'''
 ; Private-copy-only views; none transfer the CG's existing owner share.
@@ -72,11 +73,7 @@ def check_owner_ir(path):
     # The swap publishes the rebuilt buffer before it retires the
     # displaced one, so a survivor never outlives both.
     swap = function(ir, 'codegen$cgReplaceLines')
-    old_lines = result(swap, 'raw$memGetWord', r'i64 %cg, i64 0\)')
-    publish = '@raw$memSetWord(i64 %cg, i64 0, i64 %lines, i64 1)'
-    retire = f'call void @axiom_release(i64 {old_lines})'
-    if swap.count(publish) != 1 or swap.count(retire) != 1 or swap.index(publish) > swap.index(retire):
-        raise RuntimeError('line buffer swap must publish once, then retire the displaced buffer once')
+    check_typed_slot(swap, 0, '%lines')
     drop = body.index(release)
     for operation in required:
         if operation not in body or body.rindex(operation) >= drop:

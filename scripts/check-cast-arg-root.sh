@@ -266,13 +266,17 @@ echo "--- 1. user-level cast count does not grow ---"
 # `(as x Int)` is the control between informative types. AX3140's
 # `tests/diagnostics/1493-certain-trap.ax` reads a `Percent` back as
 # `Int`, the subtype's own control. All are MM-VAL-23 test subjects.
+# The typed-CG replacement-share probe reads a held vector's header count
+# through one private erasure in emitter-line-buffer.py's probeCount.
+# Its subject is the reference count itself, which a safe view cannot read:
+# the MM-VAL-23 reason for this one additional test-only cast.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1259 ]; then
-  ok "user-level (cast count $cast_count <= 1259)"
+elif [ "$cast_count" -le 1260 ]; then
+  ok "user-level (cast count $cast_count <= 1260)"
 else
-  bad "user-level (cast count $cast_count > 1259): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1260): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"

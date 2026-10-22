@@ -11,6 +11,8 @@ SUPPORT = runpy.run_path(str(Path(__file__).with_name('emitter-line-buffer.py'))
 run_checked = SUPPORT['run_checked']
 replace_once = SUPPORT['replace_once']
 check_output = SUPPORT['check_output']
+check_typed_slot = SUPPORT['check_typed_slot']
+raw_setter = SUPPORT['raw_setter']
 
 BRIDGES = r'''
 ; Private-copy-only forwarding probes; no production raw access is exported.
@@ -44,10 +46,7 @@ def check_ir(path):
     if not pop or f'call void @axiom_release(i64 {pop[1]})' not in truncate:
         raise RuntimeError('discarded pending pop did not retire its transferred String share')
     reset = function(ir, 'codegen$cgPendingReset')
-    old = re.search(r'(%\S+) = call i64 @raw\$memGetWord\(i64 %cg, i64 42\)', reset)
-    store = re.search(r'@raw\$memSetWord\(i64 %cg, i64 42, i64 %\S+, i64 1\)', reset)
-    if not old or not store or reset.find(f'call void @axiom_release(i64 {old[1]})') < store.end():
-        raise RuntimeError('pending reset must retain/publish before retiring its old slot share')
+    check_typed_slot(reset, 42)
     parked = []
     for name in ('emitLetAt', 'emitMatch', 'emitMatchTail'):
         body = function(ir, f'codegen${name}')
@@ -129,12 +128,7 @@ def check(axiom, repo, work):
         raw_schema, '(:: cgPendingPush (-> Int String Int))\n',
         '(:: cgPendingPush (-> Int String Int))\n;@axiom:effect(unsafe)\n',
         'private raw-schema boundary claim')
-    reset = replace_once(original,
-                         '    (let old (memGetWord cg 42))\n    (memSetWord cg 42 vecNew)\n    (__release old)\n',
-                         '    (memSetWord cg 42 vecNew)\n', 'pending reset retirement')
-    reset = replace_once(reset,
-                         '(:: cgPendingReset (-> Int Int))\n;@axiom:effect(unsafe)\n',
-                         '(:: cgPendingReset (-> Int Int))\n', 'removed reset primitive claim')
+    reset = raw_setter(original, 'cgPendingReset', 'pendingOwned', 42, 'vecNew')
     for label, source, negative in [
         ('raw-schema', raw_schema, (2, 3, 8, 11, 22, 33)),
         ('raw-truncate', raw_truncate, (5, 8, 12, 14, 18, 23, 24, 33)),

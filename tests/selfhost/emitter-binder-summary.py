@@ -201,11 +201,24 @@ def check_summary_ir(path):
                 raise RuntimeError(f'{name}: loop replacement must preserve the same borrowed summary')
         loops[name] = {'entry': 1, 'replacement_stores': len(stores) - 1,
                        'ordinary_final_releases': len(released)}
-    for name in ('headIsLocal', 'boundIn'):
+    for name, base, slots in [('headIsLocal', 'bound', (2, 3)), ('boundIn', 'sum', (1,))]:
         body = function(ir, 'codegen$' + name)
-        fields = re.findall(r'(%\S+) = load i64, ptr %\S+\n  call void @axiom_retain\(i64 \1\)', body)
-        if not fields or any(cleanup(body, value) != 1 for value in fields):
-            raise RuntimeError(f'{name}: typed summary field getter temporary leaked')
+        roots = re.findall(r'(%\S+) = inttoptr i64 %' + base + r' to ptr', body)
+        for slot in slots:
+            fields = []
+            for root in roots:
+                pointers = re.findall(r'(%\S+) = getelementptr i64, ptr ' + re.escape(root)
+                                      + r', i64 ' + str(slot) + r'\n', body)
+                for pointer in pointers:
+                    fields.extend(re.findall(r'(%\S+) = load i64, ptr ' + re.escape(pointer)
+                                             + r'\n', body))
+            if len(fields) != 1:
+                raise RuntimeError(f'{name}: expected one typed summary field{slot} read')
+            value = fields[0]
+            taken = body.count(f'call void @axiom_retain(i64 {value})')
+            given = cleanup(body, value)
+            if taken != given or taken > 1:
+                raise RuntimeError(f'{name}: field{slot} takes {taken} shares and retires {given}')
     direct = function(ir, 'codegen$binderCollectArms')
     if '@codegen$patBindersCg(' in direct or '@codegen$binderCollectPattern(' not in direct:
         raise RuntimeError('summary arm walk must collect patterns without temporary Names vectors')

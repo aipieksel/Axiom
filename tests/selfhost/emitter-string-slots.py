@@ -12,6 +12,8 @@ SUPPORT = runpy.run_path(str(Path(__file__).with_name("emitter-line-buffer.py"))
 run_checked = SUPPORT["run_checked"]
 replace_once = SUPPORT["replace_once"]
 check_output = SUPPORT["check_output"]
+check_typed_slot = SUPPORT["check_typed_slot"]
+raw_setter = SUPPORT["raw_setter"]
 
 BRIDGES = r'''
 ; Private-copy-only probes: no production raw setter is exported.
@@ -106,15 +108,7 @@ def emitted_function(module, name):
 def check_args_routes(binary):
     module = Path(str(binary) + ".ll").read_text()
     setter = emitted_function(module, "codegen$cgSetArgsTyped")
-    old = re.search(r'(%\S+) = call i64 @raw\$memGetWord\(i64 %cg, i64 9\)', setter)
-    if old is None:
-        raise RuntimeError("argument setter no longer reads its displaced String slot")
-    publish = "@raw$memSetWord(i64 %cg, i64 9, i64 %value, i64 1)"
-    retire = f"call void @axiom_release(i64 {old[1]})"
-    if setter.count(publish) != 1 or setter.count(retire) != 1:
-        raise RuntimeError("argument String setter must publish with witness 1 and retire once")
-    if setter.index(publish) >= setter.index(retire):
-        raise RuntimeError("argument String setter retires before taking its replacement share")
+    check_typed_slot(setter, 9, '%value')
     for name in ("emitArgsRegs", "emitArgsList"):
         body = emitted_function(module, "codegen$" + name)
         if body.count("@codegen$cgSetArgsTyped(") != 3:
@@ -171,21 +165,9 @@ def check(axiom, repo, work):
     no_retire = original
     release_first = original
     for name, slot in (("cgSetResult", 2), ("cgSetBlock", 11), ("cgSetArgsTyped", 9)):
-        signature = f"(:: {name} (-> Int String Int))\n;@axiom:effect(unsafe)\n"
-        begin = original.index(f"(fn ({name} cg value)\n")
-        end = original.index("\n  })", begin) + len("\n  })")
-        body = original[begin:end]
-        absent = replace_once(body, "    (__release old)\n", "", f"{name} retirement ablation")
-        no_retire = replace_once(no_retire, body, absent, f"{name} function body")
-        # The private module has no raw primitive after its release is removed.
-        no_retire = replace_once(no_retire, signature,
-                                 signature.replace(";@axiom:effect(unsafe)\n", ""),
-                                 f"{name} primitive effect")
-        ordered = replace_once(
-            body, f"    (memSetWord cg {slot} value)\n    (__release old)\n",
-            f"    (__release old)\n    (memSetWord cg {slot} value)\n",
-            f"{name} retain order ablation")
-        release_first = replace_once(release_first, body, ordered, f"{name} function order")
+        field = {2: 'result', 11: 'curBlock', 9: 'argsTyped'}[slot]
+        no_retire = raw_setter(no_retire, name, field, slot)
+        release_first = raw_setter(release_first, name, field, slot, release_first=True)
 
     for label, source, negative in [
         ("no-retirement", no_retire, (9, 14, 24, 25, 32, 38, 45, 46, 62)),

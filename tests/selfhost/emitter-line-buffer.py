@@ -13,6 +13,27 @@ import tempfile
 
 
 BRIDGES = r'''
+(pub :: probeCount (-> a Int))
+;@axiom:effect(unsafe)
+(pub fn (probeCount value)
+  (__load64 (as value Int) -2))
+(pub :: probeSetCGVector (-> Int (Vec String) Int Int))
+(pub fn (probeSetCGVector cg value slot)
+  (if (== slot 0)
+    (cgReplaceLines cg value)
+    (if (== slot 1)
+      (cgSetMangleBares cg value)
+      (if (== slot 2)
+        (cgSetMangleFulls cg value)
+        (cgSetTcoSlots cg value)))))
+(pub :: probeCGTailShare (-> Int Bool))
+(pub fn (probeCGTailShare cg)
+  {
+    (let value nodesNew)
+    (let before (probeCount value))
+    (cgSetTailRetain cg value)
+    (== (probeCount value) (+ before 1))
+  })
 ; Private-copy-only probes; production does not export raw CG setters.
 (pub :: probeSetHoisted (-> Int (Vec String) Int))
 (pub fn (probeSetHoisted cg value) (cgSetHoisted cg value))
@@ -106,18 +127,53 @@ def emitted_function(module, name):
     return match.group()
 
 
+def check_typed_slot(body, slot, value=None):
+    """Check the actual field load, replacement share, store and retirement."""
+    pointers = []
+    for root in re.findall(r'(%\S+) = inttoptr i64 %cg to ptr', body):
+        pointers.extend(re.findall(r'(%\S+) = getelementptr i64, ptr '
+                                  + re.escape(root) + r', i64 ' + str(slot) + r'\n', body))
+    loads = []
+    stores = []
+    for pointer in pointers:
+        loads.extend(re.findall(r'(%\S+) = load i64, ptr ' + re.escape(pointer) + r'\n', body))
+        stores.extend(re.finditer(r'store i64 (%\S+), ptr ' + re.escape(pointer) + r'\n', body))
+    if len(loads) != 1 or len(stores) != 1:
+        raise RuntimeError(f'typed slot {slot}: expected one displaced load and one store')
+    old, store = loads[0], stores[0]
+    if value is not None and store[1] != value:
+        raise RuntimeError(f'typed slot {slot}: stored {store[1]}, expected {value}')
+    retain = f'call void @axiom_retain(i64 {store[1]})'
+    retire = f'call void @axiom_release(i64 {old})'
+    if body.count(retain) != 1 or body.count(retire) != 1:
+        raise RuntimeError(f'typed slot {slot}: replacement and displaced shares must each balance once')
+    if not body.index(retain) < store.start() < body.index(retire):
+        raise RuntimeError(f'typed slot {slot}: retain, publish and retire are out of order')
+
+
+def raw_setter(source, name, field, slot, value='value', *, release_first=False):
+    """Restore an unbalanced raw store only in a private negative module."""
+    begin = source.index(f'(fn ({name} ')
+    end = source.index('\n  })', begin) + len('\n  })')
+    body = source[begin:end]
+    stores = list(re.finditer(r'^    \(set c\.' + re.escape(field) + r' (.*)\)\n', body, re.M))
+    if len(stores) != 1 or not re.search(r'\b' + re.escape(value) + r'\b', stores[0][1]):
+        raise RuntimeError(name + ': expected one typed field store of ' + value)
+    after = f'    (memSetWord cg {slot} {value})\n'
+    if release_first:
+        after = f'    (let old (memGetWord cg {slot}))\n    (__release old)\n' + after
+    body = replace_once(body, stores[0][0], after, name + ' typed store ablation')
+    return source[:begin] + body + source[end:]
+
+
 def check_hoisted_routes(binary):
     module = Path(str(binary) + ".ll").read_text()
     setter = emitted_function(module, "codegen$cgSetHoisted")
-    old = re.search(r'(%\S+) = call i64 @raw\$memGetWord\(i64 %cg, i64 44\)', setter)
-    if old is None:
-        raise RuntimeError("hoisted setter no longer reads its displaced vector slot")
-    publish = "@raw$memSetWord(i64 %cg, i64 44, i64 %value, i64 1)"
-    retire = f"call void @axiom_release(i64 {old[1]})"
-    if setter.count(publish) != 1 or setter.count(retire) != 1:
-        raise RuntimeError("hoisted setter must publish with witness 1 and retire once")
-    if setter.index(publish) >= setter.index(retire):
-        raise RuntimeError("hoisted setter retires before taking its replacement share")
+    check_typed_slot(setter, 44, '%value')
+    check_typed_slot(emitted_function(module, 'codegen$cgReplaceLines'), 0, '%lines')
+    for name, slot, value in [('cgSetMangleBares', 12, 'bares'), ('cgSetMangleFulls', 13, 'fulls'),
+                              ('cgSetTcoSlots', 28, 'slots'), ('cgSetTailRetain', 41, 'leaves')]:
+        check_typed_slot(emitted_function(module, 'codegen$' + name), slot, '%' + value)
     for name in ("openAllocaMark", "closeAllocaMark"):
         body = emitted_function(module, "codegen$" + name)
         if body.count("@codegen$cgSetHoisted(") != 1:
@@ -171,8 +227,8 @@ def check(axiom, repo, work):
     fixture = work / source.with_suffix(".ax").name
     fixture.write_bytes(source.read_bytes())
     expected = source.with_suffix(".out").read_text().splitlines()
-    if expected != [f"{i} true" for i in range(1, 58)]:
-        raise RuntimeError("update the explicit 57-case assertion count")
+    if expected != [f"{i} true" for i in range(1, 63)]:
+        raise RuntimeError("update the explicit 62-case assertion count")
     env = dict(os.environ, AXIOM_PATH=str(repo / "core"), AXIOM_STDLIB=str(repo / "stdlib"))
 
     run_checked([str(axiom), "--diagnostic-format=ai", "fmt", "--check", str(fixture)],
@@ -213,9 +269,17 @@ def check(axiom, repo, work):
     for level in (0, 2):
         label = f"positive-O{level}"
         build_run(label, level, prepare_module(label, original))
-        print(f"ok   emitter line-buffer ownership: 57 cases at -O{level} with allocation poisoning", flush=True)
+        print(f"ok   emitter line-buffer ownership: 62 cases at -O{level} with allocation poisoning", flush=True)
 
     variants = []
+    duplicate = original
+    for name, arg in [('cgReplaceLines', 'lines'), ('cgSetMangleBares', 'bares'),
+                      ('cgSetMangleFulls', 'fulls'), ('cgSetTcoSlots', 'slots'),
+                      ('cgSetTailRetain', 'leaves')]:
+        start = duplicate.index('(fn (' + name + ' ')
+        anchor = duplicate.index('    (let c ', start)
+        duplicate = duplicate[:anchor] + '    (__retainref ' + arg + ')\n' + duplicate[anchor:]
+    variants.append(('duplicate-vector-shares', duplicate, (58, 59, 60, 61, 62)))
     variants.append(("header-share", replace_once(
         original,
         '    (vecPush (cgLines cg) (strDup line))\n    cg',
@@ -235,50 +299,29 @@ def check(axiom, repo, work):
     alloca = replace_once(alloca, '(as 0 (Vec String)))\n          (cgSetAllocaMark cg',
                           '(as 0 (Vec Int)))\n          (cgSetAllocaMark cg', "alloca branch type")
     variants.append(("alloca-metadata", alloca, (11,)))
-    displaced = replace_once(
-        original, '    (memSetWord cg 0 lines)\n    (__release old)\n', '    (memSetWord cg 0 lines)\n',
-        "displaced CG-slot share ablation")
-    # This newly added tag describes the removed primitive. Keep the
-    # private negative module truthful so the executable, not AX3010,
-    # demonstrates that the fixture detects the retained slot share.
-    displaced = replace_once(
-        displaced,
-        '(:: cgReplaceLines (-> Int Strings Int))\n;@axiom:effect(unsafe)\n',
-        '(:: cgReplaceLines (-> Int Strings Int))\n',
-        "displaced-slot primitive effect")
+    displaced = raw_setter(original, 'cgReplaceLines', 'lines', 0, 'lines')
     variants.append(("displaced-slot", displaced, (14, 15)))
 
     name = "cgSetHoisted"
-    signature = f"(:: {name} (-> Int (Vec String) Int))\n;@axiom:effect(unsafe)\n"
     begin = original.index(f"(fn ({name} cg value)\n")
     end = original.index("\n  })", begin) + len("\n  })")
     body = original[begin:end]
-    absent = replace_once(body, "    (__release old)\n", "", "hoisted retirement ablation")
-    no_retire = replace_once(original, body, absent, "hoisted setter body")
-    # Removing this primitive also removes the copied helper's direct
-    # unsafe claim, so runtime assertions demonstrate the negative control.
-    no_retire = replace_once(no_retire, signature,
-                             signature.replace(";@axiom:effect(unsafe)\n", ""),
-                             "hoisted setter primitive effect")
+    no_retire = raw_setter(original, name, 'hoisted', 44)
     variants.append(("hoisted-no-retirement", no_retire, (24, 27, 28, 29, 30, 31, 37, 40, 42, 43)))
-    ordered = replace_once(body,
-        "    (memSetWord cg 44 value)\n    (__release old)\n",
-        "    (__release old)\n    (memSetWord cg 44 value)\n",
-        "hoisted retain order ablation")
-    variants.append(("hoisted-release-first", replace_once(
-        original, body, ordered, "hoisted setter order"), (43,)))
+    variants.append(("hoisted-release-first", raw_setter(
+        original, name, 'hoisted', 44, release_first=True), (43,)))
 
     # Keep the header's retain/publish/retire ledger intact while making
     # element storage plain. This deliberately recreates the old payload
     # leak direction; it never manually spends an ordinary String share.
-    plain_payload = replace_once(body, "    (__release old)\n", """    (let h (as value Int))
+    plain_payload = replace_once(body, "    (set c.hoisted value)\n", """    (set c.hoisted value)
+    (let h (as value Int))
     (if (> h 0)
       {
         (let data (memGetWord h 2))
         (if (> data 0)
           { (memMarkLeaf data) (memSetWord h 3 2) })
       })
-    (__release old)
 """, "hoisted payload metadata ablation")
     variants.append(("hoisted-plain-payload", replace_once(
         original, body, plain_payload, "hoisted payload map"), (42, 44, 51, 53)))

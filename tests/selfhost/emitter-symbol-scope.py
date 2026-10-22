@@ -53,13 +53,10 @@ def check(axiom, repo, work):
     start = original.index("(pub fn (symRestore cg mark)\n  {\n")
     end = original.index("    (memSetWord (memGetWord cg 6) 0 mark)", start)
     restore = original[:start] + "(pub fn (symRestore cg mark)\n  {\n" + original[end:]
-    app = replace_once(original, "    (__release oldArgs)\n", "", "application argument share")
-    app = replace_once(app, "    (__release oldEvs)\n", "", "application evidence share")
-    # The removed primitives are the sole basis of this newly added tag.
-    # Keep the private negative module truthful and require execution failures.
-    app = replace_once(
-        app, "(:: cgResetAppArgs (-> Int Int))\n;@axiom:effect(unsafe)\n",
-        "(:: cgResetAppArgs (-> Int Int))\n", "application primitive effect")
+    app = replace_once(original,
+        '    (set c.argVec nodesNew)\n    (set c.argEv vecNew)\n',
+        '    (memSetWord cg 5 nodesNew)\n    (memSetWord cg 45 vecNew)\n',
+        'typed application slot retirement')
     variants = [
         ("binding-shares", binding, (2, 4)),
         ("entry-replacement", entry, (23, 26, 31, 34)),
