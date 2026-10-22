@@ -1,0 +1,52 @@
+; Effect and macro lookups retain declaration identity and explicit absence.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: checkBody (-> String String ()))
+;@axiom:effect(io)
+(fn (checkBody name body)
+  {
+    (let source
+      (concat
+        "(effect Ask (ask :: (-> Int Int))) (effect Log (log :: (-> String Int))) (pub fn (probe) "
+        (concat body ")")))
+    (let parsed (parseModule (lex source)))
+    (let declarations (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew declarations declarations units))
+    (checkExprH tc (nodeCChild (vecGet declarations 2)) 0)
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (pResNodes parsed))
+    (let units
+      (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+    (let tc (tcNew declarations declarations units))
+    (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkBody "good.ax" "(handle (ask 1) (Ask) (lambda (value) (+ value 1)))")
+    (checkBody "order.ax" "(handle missingBody (Missing) missingHandler)")
+    (checkBody "handler.ax" "(handle (ask 1) (Ask) 0)")
+    (checkBody "many.ax" "(handle (ask 1) (Ask Log) 0)")
+    (checkSource "387-effect-op-untyped.ax"
+      "; An effect operation must declare its type. `(effect E (op))` used to\n; register `op` as a silent wildcard with arity -1, so `(op 1 2 3)` on a\n; one-argument handler checked clean and SIGSEGVed at run time - the\n; dispatch applied the handler's result as a function. AX3055 at the\n; operation's name, once per operation; the operation registers as\n; poison behind it, so the over-applied call below draws nothing\n; further - one report per cause. A type the parser cannot read is the\n; same field left at 0, so `notAType` draws it too. `Typed` is the\n; control: no diagnostic.\n(effect Untyped\n  (op))\n\n(effect Odd\n  (fine :: (-> Int Int))\n  (notAType :: 5))\n\n(effect Typed\n  (ask :: (-> Int Int)))\n\n(:: overApplied Int)\n(fn (overApplied)\n  (handle\n    (op 1 2 3)\n    (Untyped)\n    (lambda (x) (* x 10))))\n\n(:: main Int)\n(fn (main)\n  (handle\n    (ask 1)\n    (Typed)\n    (lambda (x) (* x 10))))\n")
+    0
+  })

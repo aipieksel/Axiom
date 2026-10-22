@@ -11072,32 +11072,22 @@
   {
     (let qm (modOf n))
     (if (isSome qm)
-      ; A QUALIFIED reference - `Pre::when`, flattened by the parser
-      ; to `Pre$when` - splits: bare part against the macro's name,
-      ; module part against the declaration's module. MAC-LANG-12.
-      (if (nodeSame
+      ; A qualified reference splits its bare name and declaring module (MAC-LANG-12).
+      (if (isSome
             (macroQualVisible (tcMacrosVec tc) (bareOf n) (modOfName n) (tcCurModule tc)
-              (- (vecLen (tcMacrosVec tc)) 1))
-            nilNode)
-        0
-        1)
-      {
-        (let m
-          (isMacroVisible (tcMacrosVec tc) n (tcCurModule tc) (- (vecLen (tcMacrosVec tc)) 1)))
-        (if (nodeSame m nilNode)
+              (- (vecLen (tcMacrosVec tc)) 1)))
+        1
+        0)
+      (if (let (Some macro) (isMacroVisible (tcMacrosVec tc) n (tcCurModule tc)
+                              (- (vecLen (tcMacrosVec tc)) 1)))
+        ; A bare function wins over an imported macro, unless the macro
+        ; belongs to the module being checked (MAC-HYG-8).
+        (if (&& (isSome (nodeModuleOpt macro))
+              (&& (== (macroSameMod (nodeModuleOpt macro) (tcCurModule tc)) 0)
+                (isSome (fnEntExact tc n))))
           0
-          ; The fn-wins veto, mirroring `expFindMacro`: a bare
-          ; invocation whose name a bare `fn`/`::` declares is the
-          ; function's, unless the macro belongs to the module
-          ; being checked. MAC-HYG-8's third hole; the two sides
-          ; have to agree or the checker types against one meaning
-          ; while expansion produced the other.
-          (if (&& (isSome (nodeModuleOpt m))
-                (&& (== (macroSameMod (nodeModuleOpt m) (tcCurModule tc)) 0)
-                  (isSome (fnEntExact tc n))))
-            0
-            1))
-      })
+          1)
+        0))
   })
 
 ; Visible from the module being checked: exported, or the entry
@@ -11105,29 +11095,29 @@
 ; so a later declaration wins, exactly as `expFindMacroIn` walks. The
 ; same rule and the same veto apply in the expander - one side decides
 ; whether the name type-checks and the other whether it expands.
-(pub :: isMacroVisible (-> (Vec ASTNode) String (Option String) Int ASTNode))
+(pub :: isMacroVisible (-> (Vec ASTNode) String (Option String) Int (Option ASTNode)))
 (pub fn (isMacroVisible ms n curMod i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let m (vecGet ms i))
       (if (&& (strEq (nodeAName m) n)
             (|| (== (nodeVis m) 1)
               (|| (isNone (nodeModuleOpt m)) (== (typeModuleSame (nodeModuleOpt m) curMod) 1))))
-        m
+        (Some m)
         (isMacroVisible ms n curMod (- i 1)))
     }))
 
-(pub :: macroQualVisible (-> (Vec ASTNode) String String (Option String) Int ASTNode))
+(pub :: macroQualVisible (-> (Vec ASTNode) String String (Option String) Int (Option ASTNode)))
 (pub fn (macroQualVisible ms bare qm curMod i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let m (vecGet ms i))
       (if (&& (strEq (nodeAName m) bare)
             (&& (== (typeModuleSame (nodeModuleOpt m) (Some qm)) 1)
               (|| (== (nodeVis m) 1) (== (typeModuleSame curMod (Some qm)) 1))))
-        m
+        (Some m)
         (macroQualVisible ms bare qm curMod (- i 1)))
     }))
 
@@ -11179,20 +11169,20 @@
         (isMacroQualNamedIn ms bare qm (+ i 1)))
     }))
 
-; The TAG_D_EFFECT node declaring `n`, or 0. Its ops vector's length
+; The TAG_D_EFFECT node declaring `n`, or None. Its ops vector's length
 ; is what AX3017 reports.
-(pub :: findEffectDecl (-> TC String ASTNode))
+(pub :: findEffectDecl (-> TC String (Option ASTNode)))
 (pub fn (findEffectDecl tc n)
   (findEffectDeclFrom (tcEffectsVec tc) n 0))
 
-(pub :: findEffectDeclFrom (-> (Vec ASTNode) String Int ASTNode))
+(pub :: findEffectDeclFrom (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (findEffectDeclFrom effs n i)
   (if (>= i (vecLen effs))
-    nilNode
+    None
     {
       (let d (vecGet effs i))
       (if (strEq (nodeAName d) n)
-        d
+        (Some d)
         (findEffectDeclFrom effs n (+ i 1)))
     }))
 
@@ -19758,7 +19748,7 @@
     0
     {
       (let n (nodeAName (vecGet effs i)))
-      (if (&& (== (isBuiltinEffect n) 0) (! (nodeSame (findEffectDecl tc n) nilNode)))
+      (if (&& (== (isBuiltinEffect n) 0) (isSome (findEffectDecl tc n)))
         (if (strEq (customEff n) (effDefiniteOf e))
           1
           (effDischargedBy tc effs e (+ i 1)))
@@ -19796,7 +19786,7 @@
     0
     {
       (let n (nodeAName (vecGet effs i)))
-      (if (&& (== (isBuiltinEffect n) 0) (! (nodeSame (findEffectDecl tc n) nilNode)))
+      (if (&& (== (isBuiltinEffect n) 0) (isSome (findEffectDecl tc n)))
         1
         (handleIsDynamic tc effs (+ i 1)))
     }))
@@ -21108,7 +21098,7 @@
     {
       (let n (nodeAName (vecGet effs i)))
       {
-        (if (&& (== (isBuiltinEffect n) 0) (! (nodeSame (findEffectDecl tc n) nilNode)))
+        (if (&& (== (isBuiltinEffect n) 0) (isSome (findEffectDecl tc n)))
           (effAdd h (customEff n)))
         (handledInto tc h effs (+ i 1))
       }
@@ -22281,45 +22271,48 @@
     }))
 
 ; The declaration of the ONE handleable effect a `handle` list names
-; - declared, single-operation - or 0: none (a built-in-only list is
+; - declared, single-operation - or None: absent (a built-in-only list is
 ; a measurement, and its handler is never evaluated), or more than
 ; one (the shape `checkHandleEffects` refuses at the form with
 ; AX3017; there is no one arrow to hold a single handler to). Reports
 ; nothing: `checkHandleEffects` owns the list's diagnostics and runs
 ; AFTER the handler is checked, which keeps stage0's order - body,
 ; handler, list.
-(pub :: handleOpDecl (-> TC (Vec ASTNode) Int ASTNode ASTNode))
+(pub :: handleOpDecl (-> TC (Vec ASTNode) Int (Option ASTNode) (Option ASTNode)))
 (pub fn (handleOpDecl tc effs i found)
   (if (>= i (vecLen effs))
     found
     {
-      (let n (nodeAName (vecGet effs i)))
-      (if (== (isBuiltinEffect n) 1)
+      (let name (nodeAName (vecGet effs i)))
+      (if (== (isBuiltinEffect name) 1)
         (handleOpDecl tc effs (+ i 1) found)
-        {
-          (let d (findEffectDecl tc n))
-          (if (|| (nodeSame d nilNode) (!= (vecLen (nodeBNames d)) 1))
+        (if (let (Some declaration) (findEffectDecl tc name))
+          (if (!= (vecLen (nodeBNames declaration)) 1)
             (handleOpDecl tc effs (+ i 1) found)
-            (if (! (nodeSame found nilNode))
-              nilNode
-              (handleOpDecl tc effs (+ i 1) d)))
-        })
+            (if (isSome found)
+              None
+              (handleOpDecl tc effs (+ i 1) (Some declaration))))
+          (handleOpDecl tc effs (+ i 1) found)))
     }))
 
-; The declared arrow of the operation a handler answers, or 0 when
+; The declared arrow of the operation a handler answers, or None when
 ; there is none to hold it to: no single handleable effect
 ; (`handleOpDecl`), or an operation that declares no type (AX3055 at
 ; its declaration; its field is 0). The arrow rides in slot b of the
 ; TAG_FIELD node in the declaration's slot c - the same slot
 ; `tcAddEffectOp` registers the operation's callable type from.
-(pub :: handleOpType (-> TC (Vec ASTNode) ASTNode))
+(pub :: handleOpType (-> TC (Vec ASTNode) (Option ASTNode)))
 (pub fn (handleOpType tc effs)
-  {
-    (let d (handleOpDecl tc effs 0 nilNode))
-    (if (|| (nodeSame d nilNode) (== (nodeC d) 0))
-      nilNode
-      (nodeBChild (vecGet (nodeCChildren d) 0)))
-  })
+  (if (let (Some declaration) (handleOpDecl tc effs 0 None))
+    (if (== (nodeC declaration) 0)
+      None
+      {
+        (let arrow (nodeBChild (vecGet (nodeCChildren declaration) 0)))
+        (if (nodeSame arrow nilNode)
+          None
+          (Some arrow))
+      })
+    None))
 
 ; The handler, held to the operation's arrow. A lambda literal is
 ; checked AGAINST it (`checkLamAgainst`), so its parameters carry the
@@ -22333,34 +22326,34 @@
 ; With no arrow the handler is checked as an expression, exactly as
 ; before - `(handle BODY (Pure) 0)`, the agent-harness boundary, stays
 ; legal, and its `0` is never evaluated (`emitHandle`).
-(pub :: checkHandler (-> TC ASTNode ASTNode Int))
+(pub :: checkHandler (-> TC ASTNode (Option ASTNode) Int))
 (pub fn (checkHandler tc h arrow)
-  (if (|| (nodeSame h nilNode) (nodeSame arrow nilNode))
+  (if (nodeSame h nilNode)
     {
       (checkExprH tc h 0)
       0
     }
-    ; A pending handler grounds BY the operation's declared
-    ; arrow (`groundArgByDecl`): its parameters carry the types the
-    ; author wrote. Anything else flows through to the comparison.
-    ; A literal handler never passes the defer (nothing checks it
-    ; as an expression first), so it is validated here, once.
-    {
-      (let hty
-        (if (== (nodeTag h) TAG_E_LAM)
+    (if (let (Some arrow) arrow)
+      {
+        (let hty
+          (if (== (nodeTag h) TAG_E_LAM)
+            {
+              (checkLamValidate tc h)
+              (checkLamAgainst tc h arrow)
+            }
+            (groundArgByDecl tc (checkExprH tc h 0) arrow (spanOf h))))
+        (if (== (tyCompat tc hty arrow) 0)
           {
-            (checkLamValidate tc h)
-            (checkLamAgainst tc h arrow)
+            (emitMismatchTy tc arrow hty (spanOf h))
+            (setNodeBinderTyChild h (nodeBuildTErrPlain 0 0 0))
+            0
           }
-          (groundArgByDecl tc (checkExprH tc h 0) arrow (spanOf h))))
-      (if (== (tyCompat tc hty arrow) 0)
-        {
-          (emitMismatchTy tc arrow hty (spanOf h))
-          (setNodeBinderTyChild h (nodeBuildTErrPlain 0 0 0))
-          0
-        }
-        0)
-    }))
+          0)
+      }
+      {
+        (checkExprH tc h 0)
+        0
+      })))
 
 ; `(handle body (Effect...) handler)`. stage0's order is the whole
 ; rule and it is not the source order: the BODY is checked, then the
@@ -22544,17 +22537,7 @@
         (checkHandleEffects tc effs (+ i 1) dynN formSpan)
         {
           (let d (findEffectDecl tc (nodeAName nm)))
-          (if (nodeSame d nilNode)
-            {
-              (if (!= (nodeSpan nm) 0)
-                (emitDiag tc
-                  (diagSetLabel
-                    (mkDiag SEV_ERROR "AX3016" "unknown-effect" (nodeSpan nm)
-                      (concat (concat "unknown effect `" (nodeAName nm)) "`") 0 0
-                      "declare it with `(effect Name (op :: sig))`, import the module that does, or fix the spelling")
-                    (concat (concat "no effect named `" (nodeAName nm)) "` is declared"))))
-              (checkHandleEffects tc effs (+ i 1) dynN formSpan)
-            }
+          (if (let (Some d) d)
             (if (!= (vecLen (nodeBNames d)) 1)
               {
                 (if (!= (nodeSpan nm) 0)
@@ -22567,7 +22550,17 @@
                       0 0 0)))
                 (checkHandleEffects tc effs (+ i 1) dynN formSpan)
               }
-              (checkHandleEffects tc effs (+ i 1) (+ dynN 1) formSpan)))
+              (checkHandleEffects tc effs (+ i 1) (+ dynN 1) formSpan))
+            {
+              (if (!= (nodeSpan nm) 0)
+                (emitDiag tc
+                  (diagSetLabel
+                    (mkDiag SEV_ERROR "AX3016" "unknown-effect" (nodeSpan nm)
+                      (concat (concat "unknown effect `" (nodeAName nm)) "`") 0 0
+                      "declare it with `(effect Name (op :: sig))`, import the module that does, or fix the spelling")
+                    (concat (concat "no effect named `" (nodeAName nm)) "` is declared"))))
+              (checkHandleEffects tc effs (+ i 1) dynN formSpan)
+            })
         })
     }))
 
@@ -29794,14 +29787,11 @@
 ; word the compiler never agreed to.
 (pub :: effectDeclTraps (-> TC String Int))
 (pub fn (effectDeclTraps tc name)
-  {
-    (let d (findEffectDecl tc name))
-    (if (nodeSame d nilNode)
-      0
-      (if (strEq (axtagValueOf d "unhandled") "trap")
-        1
-        0))
-  })
+  (if (let (Some declaration) (findEffectDecl tc name))
+    (if (strEq (axtagValueOf declaration "unhandled") "trap")
+      1
+      0)
+    0))
 
 ; The entry file's `main`, or 0. `nodeAName` is the MANGLED name for
 ; an imported declaration (`Mod$name`), so a bare `main` belongs to the
@@ -29942,17 +29932,15 @@
 ; one of its operations would point at the wrong half of the problem.
 (pub :: unhandledOpText (-> TC String String))
 (pub fn (unhandledOpText tc name)
-  {
-    (let decl (findEffectDecl tc name))
-    (if (nodeSame decl nilNode)
-      (concat (concat "effect `" name) "`")
-      (if (== (vecLen (nodeBNames decl)) 1)
+  (if (let (Some declaration) (findEffectDecl tc name))
+    (if (== (vecLen (nodeBNames declaration)) 1)
+      (concat
         (concat
-          (concat (concat (concat "operation `" (vecGetStr (nodeBNames decl) 0)) "` of effect `")
-            name)
-          "`")
-        (concat (concat "effect `" name) "`")))
-  })
+          (concat (concat "operation `" (vecGetStr (nodeBNames declaration) 0)) "` of effect `")
+          name)
+        "`")
+      (concat (concat "effect `" name) "`"))
+    (concat (concat "effect `" name) "`")))
 
 ; The path, in `graphRender`'s spelling, so it cross-checks
 ; `symbols --calls` hop for hop as AX3049's does. A path of one entry
@@ -30726,7 +30714,7 @@
 (pub fn (axtagCouldExist tc e)
   (if (strEq (strSlice e 0 2) "b:")
     1
-    (if (nodeSame (findEffectDecl tc (effRender e)) nilNode)
+    (if (isNone (findEffectDecl tc (effRender e)))
       0
       1)))
 
@@ -30783,7 +30771,7 @@
 (pub fn (axtagCustomOrBuiltinCI tc val)
   {
     (let canon (canonicalEffectName tc val))
-    (if (! (nodeSame (findEffectDecl tc canon) nilNode))
+    (if (isSome (findEffectDecl tc canon))
       (customEff canon)
       (if (== (strEqCI val "io") 1)
         (builtinEff "IO")
@@ -30806,26 +30794,20 @@
 
 (pub :: canonicalEffectName (-> TC String String))
 (pub fn (canonicalEffectName tc val)
-  {
-    (let exact (findEffectDecl tc val))
-    (if (! (nodeSame exact nilNode))
-      val
-      {
-        (let ci (findEffectDeclCI (tcEffectsVec tc) val 0))
-        (if (nodeSame ci nilNode)
-          val
-          (nodeAName ci))
-      })
-  })
+  (if (isSome (findEffectDecl tc val))
+    val
+    (if (let (Some declaration) (findEffectDeclCI (tcEffectsVec tc) val 0))
+      (nodeAName declaration)
+      val)))
 
-(pub :: findEffectDeclCI (-> (Vec ASTNode) String Int ASTNode))
+(pub :: findEffectDeclCI (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (findEffectDeclCI effs val i)
   (if (>= i (vecLen effs))
-    nilNode
+    None
     {
       (let dd (vecGet effs i))
       (if (== (strEqCI (nodeAName dd) val) 1)
-        dd
+        (Some dd)
         (findEffectDeclCI effs val (+ i 1)))
     }))
 
@@ -32551,7 +32533,7 @@
     (set rc.reclaim 0)
     (let b (rgnExpr rc (nodeAChild e)))
     (let shorter rc.reclaim)
-    (if (! (nodeSame (handleOpDecl (rgnTc rc) (nodeBChildren e) 0 nilNode) nilNode))
+    (if (isSome (handleOpDecl (rgnTc rc) (nodeBChildren e) 0 None))
       (if (== shorter 1)
         (rgnHandlerValue rc (nodeCChild e))
         (rgnHandlerLocal rc (nodeCChild e))))
