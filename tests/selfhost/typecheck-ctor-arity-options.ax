@@ -1,0 +1,72 @@
+; expect 42
+; A nullary constructor has Some zero arity. Missing constructors
+; suppress suggestions, while valid holes retain order and wildcards.
+(import core)
+(import parser)
+(import typecheck)
+(import Str)
+(import Vec)
+
+(:: arityConstructor (-> String Nodes CtorEnt))
+(fn (arityConstructor name fields)
+  (CtorEnt
+    :name name
+    :fieldTys fields
+    :resTy (mkTCon "Choice" vecNew)
+    :ctorTy (mkTCon "Choice" vecNew)
+    :fieldNames None))
+
+(:: arityIs (-> (Option Int) Int Bool))
+(fn (arityIs result expected)
+  (match result
+    ((None) false)
+    ((Some value) (== value expected))))
+
+(:: constructorArityChecks Bool)
+(fn (constructorArityChecks)
+  {
+    (let ctors vecNew)
+    (vecPush ctors (arityConstructor "Zero" vecNew))
+    (vecPush ctors (arityConstructor "One" (vecPush vecNew mkIntTy)))
+    (vecPush ctors (arityConstructor "Team$Two" (vecPush (vecPush vecNew mkIntTy) mkIntTy)))
+    (vecPush ctors (arityConstructor "Zero" (vecPush vecNew mkIntTy)))
+    (&& (isNone (ctorArityIn vecNew "missing" 0))
+      (&& (isNone (ctorArityIn ctors "missing" 0))
+        (&& (arityIs (ctorArityIn ctors "Zero" 0) 0)
+          (&& (arityIs (ctorArityIn ctors "One" 0) 1)
+            (&& (arityIs (ctorArityIn ctors "Two" 0) 2)
+              (&& (arityIs (ctorArityIn ctors "Zero" 1) 1)
+                (isNone (ctorArityIn ctors "Zero" 4))))))))
+  })
+
+(:: missingArmSuggestionChecks Bool)
+(fn (missingArmSuggestionChecks)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (let ctors
+      (vecPush (vecPush vecNew (arityConstructor "Zero" vecNew))
+        (arityConstructor "One" (vecPush vecNew mkIntTy))))
+    (let data (DataEnt :name "Choice" :ctors ctors :module None :arity 0))
+    (vecPush (tcDatasVec tc) data)
+    (tyIdxAddData tc data)
+    (let ty (mkTCon "Choice" vecNew))
+    (let holes (vecPush (vecPush vecNew "One") "Zero"))
+    (let covered (vecPush vecNew (vecPush vecNew (nodeBuildPCon0 "Zero" 0 0 0))))
+    (&&
+      (strEq (missingArmsText tc ty vecNew (vecPush vecNew "Zero") 2)
+        "\n  ((Zero) (todo \"Zero\"))")
+      (&&
+        (strEq (missingArmsText tc ty vecNew holes 2)
+          "\n  ((One _) (todo \"One\"))\n  ((Zero) (todo \"Zero\"))")
+        (&& (strEq (missingArmsText tc ty vecNew (vecPush vecNew "Missing") 2) "")
+          (&& (strEq (missingArmsText tc ty covered (vecPush vecNew "Zero") 2) "")
+            (strEq (missingArmsText tc (mkTCon "Unknown" vecNew) vecNew holes 2) "")))))
+  })
+
+(:: main Int)
+(fn (main)
+  (if (constructorArityChecks)
+    (if (missingArmSuggestionChecks)
+      42
+      2)
+    1))

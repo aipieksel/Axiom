@@ -22,6 +22,13 @@ CASES = [
         "new": "None",
         "negative_status": 1,
     },
+    {
+        "name": "ctor-arity",
+        "function": "ctorArityIn",
+        "old": "(Some (vecLen c.fieldTys))",
+        "new": "None",
+        "negative_status": 1,
+    },
 ]
 
 
