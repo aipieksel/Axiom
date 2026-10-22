@@ -22,14 +22,14 @@ check_output = SUPPORT['check_output']
 
 BRIDGES = r'''
 ; Private-copy-only views; none transfer the CG's existing owner share.
-(pub :: probeLines (-> Int Ints))
+(pub :: probeLines (-> Int Strings))
 (pub fn (probeLines cg) (memGetWordVec cg 0))
-(pub :: probeLineAt (-> Ints Int String))
-(pub fn (probeLineAt lines index) (vecGetStr lines index))
+(pub :: probeLineAt (-> Strings Int String))
+(pub fn (probeLineAt lines index) (vecGet lines index))
 (pub :: probeStringCount (-> String Int))
 ;@axiom:effect(unsafe)
 (pub fn (probeStringCount value) (__load64 (as value Int) -2))
-(pub :: probeLineHeaderCount (-> Ints Int Int))
+(pub :: probeLineHeaderCount (-> Strings Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (probeLineHeaderCount lines index)
   {
@@ -67,10 +67,16 @@ def check_owner_ir(path):
     if f'call void @axiom_release(i64 {raw})' in body:
         raise RuntimeError('borrowed scalar interner address must not be released')
     required = ('@codegen$pruneIndexDefs(', '@codegen$pruneWalk(',
-                '@codegen$pruneRebuild(', '@raw$memSetWord(i64 %cg, i64 0,',
+                '@codegen$pruneRebuild(', '@codegen$cgReplaceLines(i64 %cg,',
                 f'call void @axiom_release(i64 {ctx})')
-    old_lines = result(body, 'raw$memGetWord', r'i64 %cg, i64 0\)')
-    required += (f'call void @axiom_release(i64 {old_lines})',)
+    # The swap publishes the rebuilt buffer before it retires the
+    # displaced one, so a survivor never outlives both.
+    swap = function(ir, 'codegen$cgReplaceLines')
+    old_lines = result(swap, 'raw$memGetWord', r'i64 %cg, i64 0\)')
+    publish = '@raw$memSetWord(i64 %cg, i64 0, i64 %lines, i64 1)'
+    retire = f'call void @axiom_release(i64 {old_lines})'
+    if swap.count(publish) != 1 or swap.count(retire) != 1 or swap.index(publish) > swap.index(retire):
+        raise RuntimeError('line buffer swap must publish once, then retire the displaced buffer once')
     drop = body.index(release)
     for operation in required:
         if operation not in body or body.rindex(operation) >= drop:
@@ -92,7 +98,7 @@ def check_owner_ir(path):
 def check_cursor_ir(path):
     ir = path.read_text()
     outer = function(ir, 'codegen$pruneIndexDefs')
-    line = result(outer, 'raw$vecGetStr')
+    line = result(outer, 'Vec$vecGet')
     if outer.count(f'call void @axiom_release(i64 {line})') != 1:
         raise RuntimeError('line getter must have one ordinary release per iteration')
     cursor = result(outer, 'axiom_alloc', r'i64 24\)')
@@ -160,7 +166,7 @@ def restore_old_loop(source):
     body = '\n'.join('    ' + line for line in body.splitlines())
     outer_start = source.index('(pub fn (pruneIndexDefs ')
     outer_end = form_end(source, outer_start)
-    declaration = '(pub :: pruneIndexDefs (-> Ints Int Ints Ints Ints Ints Ints Int))'
+    declaration = '(pub :: pruneIndexDefs (-> Strings Int Ints Ints Ints Ints Ints Int))'
     if source.count(declaration) != 1:
         raise RuntimeError('cursor ablation needs the unchanged public index signature')
     old = declaration + '''

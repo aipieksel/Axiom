@@ -210,32 +210,33 @@ def check(axiom, repo, work):
     variants = []
     variants.append(("header-share", replace_once(
         original,
-        '    (vecPush (memGetWordVec cg 0) (strDup line))\n    cg',
-        '    (let updated (vecPush (memGetWordVec cg 0) (strDup line)))\n'
+        '    (vecPush (cgLines cg) (strDup line))\n    cg',
+        '    (let updated (vecPush (cgLines cg) (strDup line)))\n'
         '    (memSetWord cg 0 updated)\n    cg',
         "same-header share ablation"), (2, 4)))
     variants.append(("mutable-snapshot", replace_once(
         original,
-        '(vecPush (memGetWordVec cg 0) (strDup line))',
-        '(vecPush (memGetWordVec cg 0) line)',
+        '(vecPush (cgLines cg) (strDup line))',
+        '(vecPush (cgLines cg) line)',
         "snapshot ablation"), (1, 5)))
     alloca = replace_once(
         original,
-        '(vecSet (memGetWordVec cg 0) mark (joinAllocas hoisted))',
+        '(vecSet (cgLines cg) mark (joinAllocas hoisted))',
         '(vecSet (memGetWordVec cg 0) mark (as (joinAllocas hoisted) Int))',
         "alloca element metadata ablation")
-    alloca = replace_once(alloca, '(as 0 (Vec String)))\n          (memSetWord cg 43',
-                          '(as 0 (Vec Int)))\n          (memSetWord cg 43', "alloca branch type")
+    alloca = replace_once(alloca, '(as 0 (Vec String)))\n          (cgSetAllocaMark cg',
+                          '(as 0 (Vec Int)))\n          (cgSetAllocaMark cg', "alloca branch type")
     variants.append(("alloca-metadata", alloca, (11,)))
     displaced = replace_once(
-        original, '          (__release oldLines)\n', '', "displaced CG-slot share ablation")
+        original, '    (memSetWord cg 0 lines)\n    (__release old)\n', '    (memSetWord cg 0 lines)\n',
+        "displaced CG-slot share ablation")
     # This newly added tag describes the removed primitive. Keep the
     # private negative module truthful so the executable, not AX3010,
     # demonstrates that the fixture detects the retained slot share.
     displaced = replace_once(
         displaced,
-        '(pub :: pruneDeadDefs (-> Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n',
-        '(pub :: pruneDeadDefs (-> Int Int))\n;@axiom:effect(io)\n',
+        '(:: cgReplaceLines (-> Int Strings Int))\n;@axiom:effect(unsafe)\n',
+        '(:: cgReplaceLines (-> Int Strings Int))\n',
         "displaced-slot primitive effect")
     variants.append(("displaced-slot", displaced, (14, 15)))
 

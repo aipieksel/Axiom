@@ -389,7 +389,7 @@ fi
 # For each binding, the emitter decides whether it escapes by walking
 # the rest of the `let`. Asking, per call, whether its head is a local
 # by walking the whole root (`boundWithin`) and scanning the symbols
-# (`lookupSym`) is cubic. Instead the walk reads a summary of the root's
+# (`symIndex`) is cubic. Instead the walk reads a summary of the root's
 # binders, built once per binding, and memoises each head's answer
 # (`binderSummary`, `headIsLocal` in core/codegen.ax). What is left
 # is quadratic: a doubling ratio tending to 4, where cubic tends to 8.
@@ -463,7 +463,7 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 old = "              (if (== (headIsLocal cg n bound) 1)"
-new = "              (if (|| (!= (lookupSym cg n) 0) (|| (>= (paramIndexOf cg n) 0) (== (boundInScan n bound) 1)))"
+new = "              (if (|| (hasSym cg n) (|| (>= (paramIndexOf cg n) 0) (== (boundInScan n bound) 1)))"
 n = s.count(old)
 if n != 1:
     sys.exit("the headIsLocal ablation matched %d times, wanted 1" % n)

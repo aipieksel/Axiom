@@ -66,7 +66,7 @@ ABLATIONS = {
     # chunk lines in the anchor read the effective chunk, which the heap
     # ceiling flag can change, so re-anchor here if that code moves.
     "literal": (
-        '    (emitLine cg\n      (concat "  %big = icmp ugt i64 %need, "\n        (concat (fmtInt (arenaChunkBytes (memGetWord cg 26))) "")))\n    (emitLine cg\n      (concat "  %rounded0 = add i64 %need, "\n        (concat (fmtInt (- (targetArenaGrainBytes (memGetWord cg 26)) 1)) "")))\n    (emitLine cg\n      (concat "  %rounded = and i64 %rounded0, "\n        (concat (fmtInt (- 0 (targetArenaGrainBytes (memGetWord cg 26)))) "")))\n    (emitLine cg\n      (concat "  %chunk = select i1 %big, i64 %rounded, i64 "\n        (concat (fmtInt (arenaChunkBytes (memGetWord cg 26))) "")))',
+        '    (emitLine cg\n      (concat "  %big = icmp ugt i64 %need, " (concat (fmtInt (arenaChunkBytes (cgTarget cg))) "")))\n    (emitLine cg\n      (concat "  %rounded0 = add i64 %need, "\n        (concat (fmtInt (- (targetArenaGrainBytes (cgTarget cg)) 1)) "")))\n    (emitLine cg\n      (concat "  %rounded = and i64 %rounded0, "\n        (concat (fmtInt (- 0 (targetArenaGrainBytes (cgTarget cg)))) "")))\n    (emitLine cg\n      (concat "  %chunk = select i1 %big, i64 %rounded, i64 "\n        (concat (fmtInt (arenaChunkBytes (cgTarget cg))) "")))',
         """    (emitLine cg "  %big = icmp ugt i64 %need, 1048576")
     (emitLine cg "  %rounded0 = add i64 %need, 65535")
     (emitLine cg "  %rounded = and i64 %rounded0, -65536")
@@ -89,12 +89,12 @@ ABLATIONS = {
     # leaving no IO under the `effect(io)` tag, and the build would fail
     # on AX3010: red for the wrong reason, hiding whether A5 can fail.
     "strategy": (
-        """  (if (> (arenaStaticBytes (memGetWord cg 26)) 0)
+        """  (if (> (arenaStaticBytes (cgTarget cg)) 0)
     (emitArenaCarve cg sizeExpr)
-    (if (== (targetUsesSyscallAsm (memGetWord cg 26)) 1)""",
-        """  (if (> (arenaStaticBytes (memGetWord cg 26)) 999999999999)
+    (if (== (targetUsesSyscallAsm (cgTarget cg)) 1)""",
+        """  (if (> (arenaStaticBytes (cgTarget cg)) 999999999999)
     (emitArenaCarve cg sizeExpr)
-    (if (== (targetUsesSyscallAsm (memGetWord cg 26)) 1)""",
+    (if (== (targetUsesSyscallAsm (cgTarget cg)) 1)""",
         "A5 - the emitted program containing one strategy and not the other",
     ),
     # The carve never advances its cursor, so every chunk is the same
@@ -125,9 +125,9 @@ ABLATIONS = {
     # The silent branch never fires, so a silent target still writes:
     # the strategy row is read and ignored.
     "trapwrite": (
-        """  (if (== (targetTrapSilent (memGetWord cg 26)) 1)
+        """  (if (== (targetTrapSilent (cgTarget cg)) 1)
     (emitLine cg "  ; trap message suppressed: the target asked for silent traps")""",
-        """  (if (== (targetTrapSilent (memGetWord cg 26)) 999)
+        """  (if (== (targetTrapSilent (cgTarget cg)) 999)
     (emitLine cg "  ; trap message suppressed: the target asked for silent traps")""",
         "A9 - the silent branch carrying the write away",
     ),

@@ -276,12 +276,12 @@
 (pub :: lookupEffFor (-> Int Ints String Int))
 (pub fn (lookupEffFor cg tbl name)
   {
-    (let m (memGetWord cg 34))
+    (let m (cgModuleWord cg))
     {
       (let local
         (if (== m 0)
           0
-          (lookupEffIn tbl (concat (memGetWordStr cg 34) (concat "$" name)) 0 0)))
+          (lookupEffIn tbl (concat (cgModule cg) (concat "$" name)) 0 0)))
       (if (!= local 0)
         local
         (lookupEff tbl name))
@@ -757,6 +757,420 @@
     cg
   })
 
+; ------------------------------------------------------------------
+; Field access for `CG`.
+;
+; The emitter hands its `CG` around as the record's address, an `Int`.
+; The functions below are the only code that reads or writes its words
+; by number, and each one answers or takes the field's own type. A
+; `String` or `Vec` reader answers a share of its own, as
+; `memGetWordStr` and `memGetWordVec` do. A plain setter takes a share
+; of what it stores and keeps none of the value it displaces; the
+; `cgSet*` setters above, and `cgReplaceLines` and `cgResetAppArgs`
+; below, give the displaced share back.
+; ------------------------------------------------------------------
+; Word 0: the emitted lines, in order.
+(:: cgLines (-> Int Strings))
+(fn (cgLines cg)
+  (memGetWordVec cg 0))
+
+; Word 0 again, as the word vector `symtabNames` and `linesCallSym`
+; take. obfuscate.ax calls `symtabNames` with its own buffer as words.
+(:: cgLineWords (-> Int Ints))
+(fn (cgLineWords cg)
+  (memGetWordVec cg 0))
+
+; Word 1: the next register number.
+(:: cgTmp (-> Int Int))
+(fn (cgTmp cg)
+  (memGetWord cg 1))
+
+(:: cgSetTmp (-> Int Int Int))
+(fn (cgSetTmp cg n)
+  (memSetWord cg 1 n))
+
+; Word 2: the register or constant that holds the value just emitted.
+(:: cgResult (-> Int String))
+(fn (cgResult cg)
+  (memGetWordStr cg 2))
+
+; Word 3: the type registry, one `TypeEntry` address per constructor
+; and struct (`lookupType`).
+(:: cgTypes (-> Int Ints))
+(fn (cgTypes cg)
+  (memGetWordVec cg 3))
+
+(:: cgSetTypes (-> Int Ints Int))
+(fn (cgSetTypes cg types)
+  (memSetWord cg 3 types))
+
+; Word 4: the next constructor tag.
+(:: cgTagN (-> Int Int))
+(fn (cgTagN cg)
+  (memGetWord cg 4))
+
+(:: cgSetTagN (-> Int Int Int))
+(fn (cgSetTagN cg n)
+  (memSetWord cg 4 n))
+
+; Word 5: the arguments `walkAppChain` collects, innermost first.
+(:: cgArgVec (-> Int Nodes))
+(fn (cgArgVec cg)
+  (readAstNodes cg 5))
+
+; Words 6, 7, 16 and 20: the symbol table, four parallel vectors of
+; names, registers, float flags and binding kinds (`bindSym`,
+; `symRestore`).
+(:: cgSymNames (-> Int Strings))
+(fn (cgSymNames cg)
+  (memGetWordVec cg 6))
+
+(:: cgSymRegs (-> Int Strings))
+(fn (cgSymRegs cg)
+  (memGetWordVec cg 7))
+
+(:: cgSymFloats (-> Int Ints))
+(fn (cgSymFloats cg)
+  (memGetWordVec cg 16))
+
+(:: cgSymKinds (-> Int Ints))
+(fn (cgSymKinds cg)
+  (memGetWordVec cg 20))
+
+; Word 8: every declaration in the program.
+(:: cgDecls (-> Int Nodes))
+(fn (cgDecls cg)
+  (readAstNodes cg 8))
+
+(:: cgSetDecls (-> Int Nodes Int))
+(fn (cgSetDecls cg decls)
+  (memSetWord cg 8 decls))
+
+; Word 9: the argument list `emitArgsList` spelled with its types.
+(:: cgArgsTyped (-> Int String))
+(fn (cgArgsTyped cg)
+  (memGetWordStr cg 9))
+
+; Word 10: the string literals, in first-use order (`internString`).
+(:: cgStrings (-> Int Strings))
+(fn (cgStrings cg)
+  (memGetWordVec cg 10))
+
+; Word 11: the label of the block being emitted.
+(:: cgBlock (-> Int String))
+(fn (cgBlock cg)
+  (memGetWordStr cg 11))
+
+; Words 12 and 13: the mangle map, each bare name beside its full
+; spelling.
+(:: cgMangleBares (-> Int Strings))
+(fn (cgMangleBares cg)
+  (memGetWordVec cg 12))
+
+(:: cgSetMangleBares (-> Int Strings Int))
+(fn (cgSetMangleBares cg bares)
+  (memSetWord cg 12 bares))
+
+(:: cgMangleFulls (-> Int Strings))
+(fn (cgMangleFulls cg)
+  (memGetWordVec cg 13))
+
+(:: cgSetMangleFulls (-> Int Strings Int))
+(fn (cgSetMangleFulls cg fulls)
+  (memSetWord cg 13 fulls))
+
+; Word 14: 1 when the value just emitted is a `Float`.
+(:: cgResultFloat (-> Int Int))
+(fn (cgResultFloat cg)
+  (memGetWord cg 14))
+
+(:: cgSetResultFloat (-> Int Int Int))
+(fn (cgSetResultFloat cg flag)
+  (memSetWord cg 14 flag))
+
+; Word 15: the `FSig` table, one address per signature.
+(:: cgFloatSigs (-> Int Ints))
+(fn (cgFloatSigs cg)
+  (memGetWordVec cg 15))
+
+(:: cgSetFloatSigs (-> Int Ints Int))
+(fn (cgSetFloatSigs cg sigs)
+  (memSetWord cg 15 sigs))
+
+; Word 17: the parameter names of the function or lambda being emitted,
+; or the word 0 before the first one.
+(:: cgHasParams (-> Int Bool))
+(fn (cgHasParams cg)
+  (!= (memGetWord cg 17) 0))
+
+(:: cgParams (-> Int Names))
+(fn (cgParams cg)
+  (memGetWordVec cg 17))
+
+(:: cgSetParams (-> Int Names Int))
+(fn (cgSetParams cg params)
+  (memSetWord cg 17 params))
+
+; Word 18: the float flags of the signature being emitted, one per
+; arrow position, or no vector at all for a lifted lambda.
+(:: cgHasParamFlags (-> Int Bool))
+(fn (cgHasParamFlags cg)
+  (!= (memGetWord cg 18) 0))
+
+(:: cgParamFlags (-> Int Ints))
+(fn (cgParamFlags cg)
+  (memGetWordVec cg 18))
+
+(:: cgSetParamFlags (-> Int Ints Int))
+(fn (cgSetParamFlags cg flags)
+  (memSetWord cg 18 flags))
+
+(:: cgClearParamFlags (-> Int Int))
+(fn (cgClearParamFlags cg)
+  (memSetWord cg 18 0))
+
+; Word 21: the lambdas waiting to be lifted, one `mkLamDesc` record
+; each.
+(:: cgPendingLams (-> Int Ints))
+(fn (cgPendingLams cg)
+  (memGetWordVec cg 21))
+
+; Word 22: the next lambda number.
+(:: cgLamN (-> Int Int))
+(fn (cgLamN cg)
+  (memGetWord cg 22))
+
+(:: cgSetLamN (-> Int Int Int))
+(fn (cgSetLamN cg n)
+  (memSetWord cg 22 n))
+
+; Words 23 to 25: the thunks bare function references demanded, their
+; arities, and how many of them are written out.
+(:: cgThunkFulls (-> Int Strings))
+(fn (cgThunkFulls cg)
+  (memGetWordVec cg 23))
+
+(:: cgThunkArities (-> Int Ints))
+(fn (cgThunkArities cg)
+  (memGetWordVec cg 24))
+
+(:: cgThunksEmitted (-> Int Int))
+(fn (cgThunksEmitted cg)
+  (memGetWord cg 25))
+
+(:: cgSetThunksEmitted (-> Int Int Int))
+(fn (cgSetThunksEmitted cg n)
+  (memSetWord cg 25 n))
+
+; Word 26: the target code (`targetCode`).
+(:: cgTarget (-> Int Int))
+(fn (cgTarget cg)
+  (memGetWord cg 26))
+
+(:: cgSetTarget (-> Int Int Int))
+(fn (cgSetTarget cg t)
+  (memSetWord cg 26 t))
+
+; Word 27: the symbol of the function whose self tail calls are being
+; turned into jumps, or the word 0 outside one (`openTailLoop`).
+(:: cgInTailLoop (-> Int Bool))
+(fn (cgInTailLoop cg)
+  (!= (memGetWord cg 27) 0))
+
+(:: cgTcoName (-> Int String))
+(fn (cgTcoName cg)
+  (memGetWordStr cg 27))
+
+(:: cgTcoNameWord (-> Int Int))
+(fn (cgTcoNameWord cg)
+  (memGetWord cg 27))
+
+(:: cgSetTcoName (-> Int String Int))
+(fn (cgSetTcoName cg name)
+  (memSetWord cg 27 name))
+
+(:: cgSetTcoNameWord (-> Int Int Int))
+(fn (cgSetTcoNameWord cg w)
+  (memSetWord cg 27 w))
+
+; Words 28 and 29: that loop's parameter slots and its header label.
+(:: cgTcoSlots (-> Int Strings))
+(fn (cgTcoSlots cg)
+  (memGetWordVec cg 28))
+
+(:: cgSetTcoSlots (-> Int Strings Int))
+(fn (cgSetTcoSlots cg slots)
+  (memSetWord cg 28 slots))
+
+(:: cgTcoLabel (-> Int String))
+(fn (cgTcoLabel cg)
+  (memGetWordStr cg 29))
+
+(:: cgSetTcoLabel (-> Int String Int))
+(fn (cgSetTcoLabel cg label)
+  (memSetWord cg 29 label))
+
+; Word 30: the tail-call token `emitExprTail` arms for `dispatchCall`.
+(:: cgTailOK (-> Int Int))
+(fn (cgTailOK cg)
+  (memGetWord cg 30))
+
+(:: cgSetTailOK (-> Int Int Int))
+(fn (cgSetTailOK cg token)
+  (memSetWord cg 30 token))
+
+; Word 31: 1 when the current block already ended with a terminator.
+(:: cgTerminated (-> Int Int))
+(fn (cgTerminated cg)
+  (memGetWord cg 31))
+
+(:: cgSetTerminated (-> Int Int Int))
+(fn (cgSetTerminated cg flag)
+  (memSetWord cg 31 flag))
+
+; Words 32 and 33: the effect declarations and the effect operations,
+; one `EffEnt` address each.
+(:: cgEffDecls (-> Int Ints))
+(fn (cgEffDecls cg)
+  (memGetWordVec cg 32))
+
+(:: cgEffOps (-> Int Ints))
+(fn (cgEffOps cg)
+  (memGetWordVec cg 33))
+
+; Word 34: the module of the declaration being emitted, as `nodeModule`
+; answers it: its name, or the word 0 for the entry file.
+(:: cgModuleWord (-> Int Int))
+(fn (cgModuleWord cg)
+  (memGetWord cg 34))
+
+(:: cgModule (-> Int String))
+(fn (cgModule cg)
+  (memGetWordStr cg 34))
+
+(:: cgSetModule (-> Int Int Int))
+(fn (cgSetModule cg m)
+  (memSetWord cg 34 m))
+
+; Word 35: the names of the program's `data` types.
+(:: cgDataTyNames (-> Int Strings))
+(fn (cgDataTyNames cg)
+  (memGetWordVec cg 35))
+
+; Word 36: the declaration being emitted, or `nilNode`.
+(:: cgCurDecl (-> Int ASTNode))
+(fn (cgCurDecl cg)
+  (readAstNode cg 36))
+
+(:: cgSetCurDecl (-> Int ASTNode Int))
+(fn (cgSetCurDecl cg d)
+  (memSetWord cg 36 d))
+
+; Words 37 and 38: the signature index `buildNameIndexes` writes, an
+; `Intern` of names and the `FSig` for each id. Word 37 is 0 until it
+; is built.
+(:: cgSigIntern (-> Int Int))
+(fn (cgSigIntern cg)
+  (memGetWord cg 37))
+
+(:: cgSigById (-> Int Ints))
+(fn (cgSigById cg)
+  (memGetWordVec cg 38))
+
+; Words 39 and 40: the mangle and declaration indexes. Word 39 is the
+; `Intern` of bare names, 0 until it is built; word 40 is the record
+; `[first, decls, nullary, defined, arity]`, empty until it is built.
+(:: cgBareIntern (-> Int Int))
+(fn (cgBareIntern cg)
+  (memGetWord cg 39))
+
+(:: cgSetNameIndexes (-> Int Int Ints Int Ints Int))
+(fn (cgSetNameIndexes cg si byId bi rest)
+  {
+    (memSetWord cg 37 si)
+    (memSetWord cg 38 byId)
+    (memSetWord cg 39 bi)
+    (memSetWord cg 40 rest)
+  })
+
+(:: cgDeclIndexBuilt (-> Int Bool))
+(fn (cgDeclIndexBuilt cg)
+  (>= (vecLen (memGetWordVec cg 40)) 5))
+
+(:: cgBareFirst (-> Int Ints))
+(fn (cgBareFirst cg)
+  (vecGetVec (memGetWordVec cg 40) 0))
+
+(:: cgDeclIntern (-> Int Int))
+(fn (cgDeclIntern cg)
+  (vecGet (memGetWordVec cg 40) 1))
+
+(:: cgDeclNullary (-> Int Ints))
+(fn (cgDeclNullary cg)
+  (vecGetVec (memGetWordVec cg 40) 2))
+
+(:: cgDeclDefined (-> Int Ints))
+(fn (cgDeclDefined cg)
+  (vecGetVec (memGetWordVec cg 40) 3))
+
+(:: cgDeclArity (-> Int Ints))
+(fn (cgDeclArity cg)
+  (vecGetVec (memGetWordVec cg 40) 4))
+
+; Word 41: the borrowed tail leaves of the function being emitted
+; (`borrowedTailLeaves`).
+(:: cgTailRetain (-> Int Nodes))
+(fn (cgTailRetain cg)
+  (readAstNodes cg 41))
+
+(:: cgSetTailRetain (-> Int Nodes Int))
+(fn (cgSetTailRetain cg leaves)
+  (memSetWord cg 41 leaves))
+
+; Word 43: the line the function's hoisted allocas go in front of, or
+; -1 outside a function body.
+(:: cgAllocaMark (-> Int Int))
+(fn (cgAllocaMark cg)
+  (memGetWord cg 43))
+
+(:: cgSetAllocaMark (-> Int Int Int))
+(fn (cgSetAllocaMark cg mark)
+  (memSetWord cg 43 mark))
+
+; Word 45: the evidence class of each argument in word 5, pushed in
+; lockstep with it.
+(:: cgArgEv (-> Int Ints))
+(fn (cgArgEv cg)
+  (memGetWordVec cg 45))
+
+; Swap in a rebuilt line buffer. The displaced buffer's share is given
+; back only after the new one is in place.
+(:: cgReplaceLines (-> Int Strings Int))
+;@axiom:effect(unsafe)
+(fn (cgReplaceLines cg lines)
+  {
+    (let old (memGetWord cg 0))
+    (memSetWord cg 0 lines)
+    (__release old)
+    cg
+  })
+
+; Fresh word 5 and word 45 accumulators for a nested call. Both are
+; published before the displaced vectors' shares are given back, so a
+; reader that took a share of its own keeps a live vector.
+(:: cgResetAppArgs (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (cgResetAppArgs cg)
+  {
+    (let oldArgs (memGetWord cg 5))
+    (let oldEvs (memGetWord cg 45))
+    (memSetWord cg 5 nodesNew)
+    (memSetWord cg 45 vecNew)
+    (__release oldArgs)
+    (__release oldEvs)
+    cg
+  })
+
 ; Slot `i` of the register-pair state: 0 mode, 1 arm, 2 names, 3 tag -
 ; and, beside them, 4 `cgThreads` and 5 `parUsed` (see `newCG`).
 ;
@@ -778,6 +1192,22 @@
     (vecSet (memGetWordVec cg 46) i v)
     cg
   })
+
+; Pair slot 2: the names of the functions eligible for the register-pair
+; return (`buildNameIndexes`).
+(:: pairNames (-> Int Names))
+(fn (pairNames cg)
+  (vecGetVec (memGetWordVec cg 46) 2))
+
+; Pair slot 3: the register holding the tag of the pair being returned.
+(:: pairTagReg (-> Int String))
+(fn (pairTagReg cg)
+  (vecGetStr (memGetWordVec cg 46) 3))
+
+; Pair slot 17: the owning `mut` slots in scope (`emitLetMAt`).
+(:: pairOwningSlots (-> Int Ints))
+(fn (pairOwningSlots cg)
+  (vecGetVec (memGetWordVec cg 46) 17))
 
 (:: cgNullVec (Vec a))
 ;@axiom:effect(unsafe)
@@ -805,7 +1235,7 @@
 (pub :: zeroFloat (-> Int Int))
 (pub fn (zeroFloat cg)
   {
-    (memSetWord cg 14 0)
+    (cgSetResultFloat cg 0)
     cg
   })
 
@@ -1008,13 +1438,13 @@
 ;@axiom:effect(unsafe)
 (pub fn (buildNameIndexes cg)
   {
-    (let sigs (memGetWordVec cg 15))
+    (let sigs (cgFloatSigs cg))
     (let si internNew)
     (let byId vecNew)
-    (let bares (memGetWordVec cg 12))
+    (let bares (cgMangleBares cg))
     (let bi internNew)
     (let first vecNew)
-    (let decls (readAstNodes cg 8))
+    (let decls (cgDecls cg))
     (let dn internNew)
     (let dnull vecNew)
     (let ddef vecNew)
@@ -1068,10 +1498,7 @@
       (vecPushVec rest dnull)
       (vecPushVec rest ddef)
       (vecPushVec rest dar)
-      (memSetWord cg 37 si)
-      (memSetWord cg 38 byId)
-      (memSetWord cg 39 bi)
-      (memSetWord cg 40 rest)
+      (cgSetNameIndexes cg si byId bi rest)
       ; AFTER the four above, because `pairFnOK` reads the signature
       ; through them. Names, not nodes: a match site has a name.
       ;
@@ -1091,7 +1518,7 @@
       ; modules declare is not.
       {
         (let pn vecNew)
-        (let savedMod (memGetWord cg 34))
+        (let savedMod (cgModuleWord cg))
         {
           (pairSetSlot cg 2 (as pn Int))
           (if (! (== (as decls Int) 0))
@@ -1109,7 +1536,7 @@
                           (if (== (nodeTag d) TAG_D_FN)
                             (if (== (pairNamesHas pn (nodeAName d)) 0)
                               {
-                                (memSetWord cg 34 (nodeModule d))
+                                (cgSetModule cg (nodeModule d))
                                 (if (== (pairFnOK cg d) 1)
                                   {
                                     (vecPush pn (nodeAName d))
@@ -1122,7 +1549,7 @@
                   }
                 })
             })
-          (memSetWord cg 34 savedMod)
+          (cgSetModule cg savedMod)
         }
       }
       cg
@@ -1211,11 +1638,11 @@
 (pub :: findFSigCg (-> Int String Int))
 (pub fn (findFSigCg cg name)
   {
-    (let si (memGetWord cg 37))
+    (let si (cgSigIntern cg))
     (if (== si 0)
-      (findFSig (memGetWordVec cg 15) name)
+      (findFSig (cgFloatSigs cg) name)
       (match (internFind si (declSpellingOf name))
-        ((Some id) (vecGet (memGetWordVec cg 38) id))
+        ((Some id) (vecGet (cgSigById cg) id))
         ((None) 0)))
   })
 
@@ -1224,7 +1651,7 @@
 (pub :: mangledForCg (-> Int String String))
 (pub fn (mangledForCg cg name)
   {
-    (let bi (memGetWord cg 39))
+    (let bi (cgBareIntern cg))
     (if (== bi 0)
       (mangledFor cg name)
       (if (strEq name "main")
@@ -1242,16 +1669,14 @@
         ; because one branch returns it - measured at +69 MiB of
         ; peak, see this commit.
         {
-          (let m (memGetWordStr cg 34))
+          (let m (cgModule cg))
           {
             (let hit
               (if (== (as m Int) 0)
                 None
                 (internFind bi (concat m (concat "$" name)))))
             (match hit
-              ((Some h)
-                (vecGetStr (memGetWordVec cg 13) (vecGet (vecGet (memGetWordVec cg 40) 0) h))
-              )
+              ((Some h) (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) h)))
               ((None) (mangledForModCg cg bi name m)))
           }
         }))
@@ -1269,7 +1694,7 @@
   (match (internFind bi name)
     ((Some id)
       {
-        (let full (vecGetStr (memGetWordVec cg 13) (vecGet (vecGet (memGetWordVec cg 40) 0) id)))
+        (let full (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) id)))
         (if (== (as m Int) 0)
           full
           (if (|| (strEq full name)
@@ -1277,9 +1702,7 @@
                   ((Some _) true)
                   ((None) false)))
             (match (internFind bi (concat "$" name))
-              ((Some v)
-                (vecGetStr (memGetWordVec cg 13) (vecGet (vecGet (memGetWordVec cg 40) 0) v))
-              )
+              ((Some v) (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) v)))
               ((None) full))
             full))
       }
@@ -1295,46 +1718,37 @@
 ; anyway - there has never been a second declaration list to ask.
 (pub :: isNullaryFnCg (-> Int String Bool))
 (pub fn (isNullaryFnCg cg name)
-  {
-    (let rest (memGetWordVec cg 40))
-    (if (< (vecLen rest) 5)
-      (isNullaryFn (readAstNodes cg 8) name)
-      (match (internFind (vecGet rest 1) (declSpellingOf name))
-        ((Some id) (== (vecGet (vecGetVec rest 2) id) 1))
-        ((None) false)))
-  })
+  (if (cgDeclIndexBuilt cg)
+    (match (internFind (cgDeclIntern cg) (declSpellingOf name))
+      ((Some id) (== (vecGet (cgDeclNullary cg) id) 1))
+      ((None) false))
+    (isNullaryFn (cgDecls cg) name)))
 
 (pub :: isDefinedFnCg (-> Int String Bool))
 (pub fn (isDefinedFnCg cg name)
-  {
-    (let rest (memGetWordVec cg 40))
-    (if (< (vecLen rest) 5)
-      (isDefinedFn (readAstNodes cg 8) name)
-      (match (internFind (vecGet rest 1) (declSpellingOf name))
-        ((Some id) (== (vecGet (vecGetVec rest 3) id) 1))
-        ((None) false)))
-  })
+  (if (cgDeclIndexBuilt cg)
+    (match (internFind (cgDeclIntern cg) (declSpellingOf name))
+      ((Some id) (== (vecGet (cgDeclDefined cg) id) 1))
+      ((None) false))
+    (isDefinedFn (cgDecls cg) name)))
 
 ; `fnArityIn` answers 0 for a name it never finds, and so does this:
 ; slot [4] holds -1 for a name only an `extern` item put in the index,
 ; and there is no id at all for a name no declaration carries.
 (pub :: fnArityOfCg (-> Int String Int))
 (pub fn (fnArityOfCg cg name)
-  {
-    (let rest (memGetWordVec cg 40))
-    (if (< (vecLen rest) 5)
-      (fnArityOf (readAstNodes cg 8) name)
-      (match (internFind (vecGet rest 1) (declSpellingOf name))
-        ((Some id)
-          {
-            (let ar (vecGet (vecGetVec rest 4) id))
-            (if (< ar 0)
-              0
-              ar)
-          }
-        )
-        ((None) 0)))
-  })
+  (if (cgDeclIndexBuilt cg)
+    (match (internFind (cgDeclIntern cg) (declSpellingOf name))
+      ((Some id)
+        {
+          (let ar (vecGet (cgDeclArity cg) id))
+          (if (< ar 0)
+            0
+            ar)
+        }
+      )
+      ((None) 0))
+    (fnArityOf (cgDecls cg) name)))
 
 ; A signed function's parameter count, recorded by `inferOwnership`
 ; from its definition; -1 for a name with no signature or no body.
@@ -1528,7 +1942,7 @@
 ; the id.
 (pub :: fsigIdCg (-> Int String Int))
 (pub fn (fsigIdCg cg name)
-  (match (internFind (memGetWord cg 37) (declSpellingOf name))
+  (match (internFind (cgSigIntern cg) (declSpellingOf name))
     ((Some id) id)
     ((None) (- 0 1))))
 
@@ -1580,9 +1994,9 @@
 (pub :: callersIdxBuildCg (-> Int (Vec ASTNode) Ints))
 (pub fn (callersIdxBuildCg cg decls)
   {
-    (let byId (memGetWordVec cg 38))
+    (let byId (cgSigById cg))
     (let rows vecNew)
-    (let savedMod (memGetWord cg 34))
+    (let savedMod (cgModuleWord cg))
     {
       {
         (let mut i 0)
@@ -1600,7 +2014,7 @@
               (let d (vecGet decls j))
               (if (== (nodeTag d) TAG_D_FN)
                 {
-                  (memSetWord cg 34 (nodeModule d))
+                  (cgSetModule cg (nodeModule d))
                   (collectCallsCg cg (nodeCChild d) j rows)
                 }
                 0)
@@ -1608,7 +2022,7 @@
             (set j (+ j 1))
           })
       }
-      (memSetWord cg 34 savedMod)
+      (cgSetModule cg savedMod)
       {
         (let mut k 0)
         (while (< k (vecLen byId))
@@ -1642,8 +2056,8 @@
 (pub fn (inferOwnership cg decls)
   {
     (inferOwnershipRounds cg decls)
-    (memSetWord cg 34 0)
-    (memSetWord cg 36 nilNode)
+    (cgSetModule cg 0)
+    (cgSetCurDecl cg nilNode)
   })
 
 ; The rounds: one full pass, then worklist rounds over the caller
@@ -1655,7 +2069,7 @@
 (pub fn (inferOwnershipRounds cg decls)
   (if (== (inferOwnershipPass cg decls 0 0) 0)
     0
-    (if (== (memGetWord cg 37) 0)
+    (if (== (cgSigIntern cg) 0)
       (inferOwnershipRounds cg decls)
       (inferOwnershipWork cg decls (callersIdxBuildCg cg decls) (cgAllIndexes (vecLen decls))
         (cgFlagsNew (vecLen decls))))))
@@ -1714,8 +2128,8 @@
   (if (!= (nodeTag d) TAG_D_FN)
     0
     {
-      (let _m (memSetWord cg 34 (nodeModule d)))
-      (let _d (memSetWord cg 36 d))
+      (let _m (cgSetModule cg (nodeModule d)))
+      (let _d (cgSetCurDecl cg d))
       (let e (findFSigCg cg (nodeAName d)))
       (if (|| (== e 0) (== (memGetWord e 5) 0))
         0
@@ -1779,7 +2193,7 @@
                 0
                 ; a nullary constructor is an immediate: owned,
                 ; and releasing it is a no-op
-                (if (!= (lookupType (memGetWordVec cg 3) (nodeAName e)) 0)
+                (if (!= (lookupType (cgTypes cg) (nodeAName e)) 0)
                   1
                   ; A nullary global answers according to its own flag;
                   ; a named function value is an immortal descriptor.
@@ -1877,7 +2291,7 @@
                       (if (== (fnResultClass cg n) 2)
                         1
                         (fnResultOwned cg n))
-                      (if (!= (lookupType (memGetWordVec cg 3) n) 0)
+                      (if (!= (lookupType (cgTypes cg) n) 0)
                         1
                         0))))))))
       })
@@ -1976,7 +2390,7 @@
             {
               (let entry
                 (if (== (nodeTag hd) TAG_E_VAR)
-                  (lookupType (memGetWordVec cg 3) (nodeAName hd))
+                  (lookupType (cgTypes cg) (nodeAName hd))
                   0))
               (envPushPatArgs cg v pat (spineArity pat) entry flag 0)
             }
@@ -2081,8 +2495,8 @@
 (pub fn (inferFlows cg decls)
   {
     (inferFlowsRounds cg decls)
-    (memSetWord cg 34 0)
-    (memSetWord cg 36 nilNode)
+    (cgSetModule cg 0)
+    (cgSetCurDecl cg nilNode)
   })
 
 ; The rounds: one full pass, then worklist rounds over the caller
@@ -2093,7 +2507,7 @@
 (pub fn (inferFlowsRounds cg decls)
   (if (== (inferFlowsPass cg decls 0 0) 0)
     0
-    (if (== (memGetWord cg 37) 0)
+    (if (== (cgSigIntern cg) 0)
       (inferFlowsRounds cg decls)
       (inferFlowsWork cg decls (callersIdxBuildCg cg decls) (cgAllIndexes (vecLen decls))
         (cgFlagsNew (vecLen decls))))))
@@ -2150,8 +2564,8 @@
   (if (!= (nodeTag d) TAG_D_FN)
     0
     {
-      (let _m (memSetWord cg 34 (nodeModule d)))
-      (let _d (memSetWord cg 36 d))
+      (let _m (cgSetModule cg (nodeModule d)))
+      (let _d (cgSetCurDecl cg d))
       (let e (findFSigCg cg (nodeAName d)))
       (if (== e 0)
         0
@@ -2233,7 +2647,7 @@
     (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_CON))
       0
       {
-        (let t (lookupType (memGetWordVec cg 3) (as (nodeA res) String)))
+        (let t (lookupType (cgTypes cg) (as (nodeA res) String)))
         (if (== t 0)
           0
           (if (== (eKind t) TF_WORD)
@@ -2632,7 +3046,7 @@
   (if (< i 0)
     0
     {
-      (let d (readAstNode cg 36))
+      (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
         (paramBit i)
         (if (|| (!= (vecLen params) (vecLen (nodeBNames d)))
@@ -2703,7 +3117,7 @@
                             ; a counted reference of its own (event 2)
                             0
                             (flowMaskSel cg e n_ params env (callRetMask cg e n) 0))
-                          (if (!= (lookupType (memGetWordVec cg 3) n) 0)
+                          (if (!= (lookupType (cgTypes cg) n) 0)
                             ; a construction is a fresh block
                             0
                             (flowMaskAll cg e n_ params env 0)))))))))))
@@ -2730,7 +3144,7 @@
               (if (|| (isCastName n)
                     (|| (isPrimName n) (|| (isBinop n) (|| (isCmpOp n) (isAndOr n)))))
                 0
-                (if (|| (!= (lookupType (memGetWordVec cg 3) n) 0) (== (fnResultClass cg n) 2))
+                (if (|| (!= (lookupType (cgTypes cg) n) 0) (== (fnResultClass cg n) 2))
                   (aliasFlowAll cg e (spineArity e) params env 0)
                   0))
             })
@@ -3001,7 +3415,7 @@
                                 (parkForms (lamCaptureMask cg (nodeBChild e) params env)))
                               (if (== tg TAG_E_STRUCTCON)
                                 {
-                                  (let entry (lookupType (memGetWordVec cg 3) (nodeAName e)))
+                                  (let entry (lookupType (cgTypes cg) (nodeAName e)))
                                   {
                                     (flowStashesVec cg (nodeBChildren e) params env cell 0)
                                     (if (== entry 0)
@@ -3554,7 +3968,7 @@
                       0
                     }
                     {
-                      (let entry (lookupType (memGetWordVec cg 3) n))
+                      (let entry (lookupType (cgTypes cg) n))
                       (if (== entry 0)
                         ; an effect operation, or a name nothing signed
                         (stashAdd cell (parkForms (flowMaskAll cg e n_ params env 0)))
@@ -3588,7 +4002,7 @@
 (pub :: selfSlotParks (-> Int ASTNode ASTNode Int Names Ints Int Int))
 (pub fn (selfSlotParks cg e hd n_ params env cell)
   {
-    (let d (readAstNode cg 36))
+    (let d (cgCurDecl cg))
     (if (|| (nodeSame d nilNode) (!= (nodeTag hd) TAG_E_VAR))
       0
       (if (if (strEq (mangledForCg cg (nodeAName hd)) (nodeAName d))
@@ -3752,7 +4166,7 @@
             (if (|| (isCastName n)
                   (|| (isPrimName n) (|| (isBinop n) (|| (isCmpOp n) (isAndOr n)))))
               0
-              (if (!= (lookupType (memGetWordVec cg 3) n) 0)
+              (if (!= (lookupType (cgTypes cg) n) 0)
                 1
                 (if (== (fnResultClass cg n) 2)
                   1
@@ -3768,7 +4182,7 @@
   (if (< i 0)
     0
     {
-      (let d (readAstNode cg 36))
+      (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
         0
         (if (|| (!= (vecLen params) (vecLen (nodeBNames d)))
@@ -3798,7 +4212,7 @@
 (pub :: paramClassOf (-> Int Names Int Int))
 (pub fn (paramClassOf cg params i)
   {
-    (let d (readAstNode cg 36))
+    (let d (cgCurDecl cg))
     (if (nodeSame d nilNode)
       2
       (if (!= (vecLen params) (vecLen (nodeBNames d)))
@@ -3888,7 +4302,7 @@
                   scoped
                   (if (&& (!= (nodeDefScope e) 1) (isLocalValue cg name))
                     0
-                    (if (!= (lookupType (memGetWordVec cg 3) name) 0)
+                    (if (!= (lookupType (cgTypes cg) name) 0)
                       1
                       (if (|| (isCastName name) (isPrimName name))
                         0
@@ -3921,7 +4335,7 @@
                               (|| (isPrimName name)
                                 (&& (!= (nodeDefScope head) 1) (isLocalValue cg name))))
                           0
-                          (if (!= (lookupType (memGetWordVec cg 3) name) 0)
+                          (if (!= (lookupType (cgTypes cg) name) 0)
                             0
                             (if (== (spineArity e) (fnArityCg cg name))
                               1
@@ -4074,7 +4488,7 @@
     nilNode
     (if (!= (nodeTag stamp) TAG_EVSTAMP)
       nilNode
-      (if (nodeSame (nodeAChild stamp) (readAstNode cg 36))
+      (if (nodeSame (nodeAChild stamp) (cgCurDecl cg))
         stamp
         nilNode))))
 
@@ -4103,27 +4517,25 @@
     (concat "__evwa." (fmtInt d))))
 
 (pub :: emitEvwaRead (-> Int Int Int))
-;@axiom:effect(unsafe)
 (pub fn (emitEvwaRead cg d)
   {
-    (let symReg (lookupSym cg (evwaSym d)))
-    (if (== symReg 0)
+    (let symIdx (symIndex cg (evwaSym d)))
+    (if (< symIdx 0)
       {
         (cgSetResult cg (constStr 0))
         cg
       }
       {
-        (cgSetResult cg (strDup (as symReg String)))
+        (cgSetResult cg (strDup (symRegAt cg symIdx)))
         cg
       })
   })
 
 (pub :: emitEvwRead (-> Int Int))
-;@axiom:effect(unsafe)
 (pub fn (emitEvwRead cg)
   {
-    (let symReg (lookupSym cg "__evw."))
-    (if (== symReg 0)
+    (let symIdx (symIndex cg "__evw."))
+    (if (< symIdx 0)
       {
         (cgSetResult cg (constStr 0))
         cg
@@ -4136,14 +4548,14 @@
             {
               (emitLine cg
                 (concat (concat "  " r)
-                  (concat " = load i64, ptr " (concat (strDup (as symReg String)) ""))))
+                  (concat " = load i64, ptr " (concat (strDup (symRegAt cg symIdx)) ""))))
               (cgSetResult cg r)
               cg
             }
           }
         }
         {
-          (cgSetResult cg (strDup (as symReg String)))
+          (cgSetResult cg (strDup (symRegAt cg symIdx)))
           cg
         }))
   })
@@ -4204,7 +4616,7 @@
             {
               (let src
                 (if (== hasSym 1)
-                  (strDup (memGetWordStr cgR 2))
+                  (strDup (cgResult cgR))
                   ""))
               {
                 (let cgL cgR)
@@ -4302,7 +4714,7 @@
                                 {
                                   (let cgLr (emitEvwaRead cgX (- (- 0 2) v2)))
                                   {
-                                    (let lamSrc (strDup (memGetWordStr cgLr 2)))
+                                    (let lamSrc (strDup (cgResult cgLr)))
                                     {
                                       (let bn3 (allocReg cgLr))
                                       {
@@ -4442,14 +4854,14 @@
 ; parameter flags at all.
 (pub :: paramIsFloat (-> Int Int Int))
 (pub fn (paramIsFloat cg idx)
-  {
-    (let flags (memGetWordVec cg 18))
-    (if (== (as flags Int) 0)
-      (lambdaParamIsFloat (pairNode cg 14) idx)
+  (if (cgHasParamFlags cg)
+    {
+      (let flags (cgParamFlags cg))
       (if (>= idx (- (vecLen flags) 1))
         0
-        (vecGet flags idx)))
-  })
+        (vecGet flags idx))
+    }
+    (lambdaParamIsFloat (pairNode cg 14) idx)))
 
 ; A lifted lambda has a checked arrow rather than a named function's
 ; flag vector. Read the parameter through its pins, which may have
@@ -4470,7 +4882,7 @@
 (pub :: paramFloatByName (-> Int String Int))
 (pub fn (paramFloatByName cg name)
   {
-    (let params (memGetWordVec cg 17))
+    (let params (cgParams cg))
     (if (== (as params Int) 0)
       0
       (paramFloatIdx cg params name 0))
@@ -4505,16 +4917,16 @@
     ; already owns that header; storing it again would retain another
     ; share on every line. Keep the byte copy: callers may reuse their
     ; mutable input after this snapshot has been appended.
-    (vecPush (memGetWordVec cg 0) (strDup line))
+    (vecPush (cgLines cg) (strDup line))
     cg
   })
 
 (pub :: allocReg (-> Int Int))
 (pub fn (allocReg cg)
   {
-    (let n (memGetWord cg 1))
+    (let n (cgTmp cg))
     {
-      (memSetWord cg 1 (+ n 1))
+      (cgSetTmp cg (+ n 1))
       n
     }
   })
@@ -4554,10 +4966,10 @@
 ; ------------------------------------------------------------------
 (pub :: renderCG (-> Int String))
 (pub fn (renderCG cg)
-  (joinLines (memGetWordVec cg 0)))
+  (joinLines (cgLines cg)))
 
 ; The exact size of the joined result: every line plus its newline.
-(pub :: joinSize (-> Ints Int))
+(pub :: joinSize (-> Strings Int))
 (pub fn (joinSize lines)
   {
     (let mut i 0)
@@ -4565,14 +4977,14 @@
     {
       (while (< i (vecLen lines))
         {
-          (set n (+ n (+ (strLen (vecGetStr lines i)) 1)))
+          (set n (+ n (+ (strLen (vecGet lines i)) 1)))
           (set i (+ i 1))
         })
       n
     }
   })
 
-(pub :: joinLines (-> Ints String))
+(pub :: joinLines (-> Strings String))
 ;@axiom:effect(unsafe)
 (pub fn (joinLines lines)
   {
@@ -4582,7 +4994,7 @@
     {
       (while (< i (vecLen lines))
         {
-          (let line (vecGetStr lines i))
+          (let line (vecGet lines i))
           {
             (memCopy (+ (strData out) off) (strData line) (strLen line))
             (set off (+ off (strLen line)))
@@ -4660,7 +5072,7 @@
 (pub :: internString (-> Int String Int))
 (pub fn (internString cg lexeme)
   {
-    (let tbl (memGetWordVec cg 10))
+    (let tbl (cgStrings cg))
     (let found (findString tbl lexeme 0))
     (if (>= found 0)
       found
@@ -4880,7 +5292,7 @@
 (pub :: emitStringGlobals (-> Int Int Int))
 (pub fn (emitStringGlobals cg i)
   {
-    (let tbl (memGetWordVec cg 10))
+    (let tbl (cgStrings cg))
     (if (>= i (vecLen tbl))
       cg
       {
@@ -5011,7 +5423,7 @@
 (pub :: scanEffect (-> ASTNode Int Int))
 (pub fn (scanEffect node cg)
   {
-    (let tbl (memGetWordVec cg 32))
+    (let tbl (cgEffDecls cg))
     (let slot (effSlotFor (nodeAName node) (nodeModule node)))
     (let isEntry
       (if (== (nodeModule node) 0)
@@ -5035,7 +5447,7 @@
                   :name (concat (nodeModuleName node) (concat "$" (nodeAName node)))
                   :slot slot
                   :isEntry isEntry) Int)))
-        (scanEffectOps (nodeBNames node) slot isEntry (nodeModule node) (memGetWordVec cg 33) 0)
+        (scanEffectOps (nodeBNames node) slot isEntry (nodeModule node) (cgEffOps cg) 0)
         cg
       })
   })
@@ -5073,8 +5485,8 @@
           (let name (nodeAName node))
           (let ctors (nodeBChildren node))
           {
-            (vecPush (memGetWordVec cg 35) (cgDeclaredTypeName node))
-            (scanCtors ctors cg 0 (ctorsRep ctors (memGetWord cg 4)) (nodeModuleName node))
+            (vecPush (cgDataTyNames cg) (cgDeclaredTypeName node))
+            (scanCtors ctors cg 0 (ctorsRep ctors (cgTagN cg)) (nodeModuleName node))
           }
         }
         (if (== tag TAG_D_STRUCT)
@@ -5084,13 +5496,13 @@
           {
             (let name (nodeAName node))
             (let fields (nodeBChildren node))
-            (let types (memGetWordVec cg 3))
+            (let types (cgTypes cg))
             (let kind
               (if (structIsWord node)
                 TF_WORD
                 TF_STRUCT))
             {
-              (memSetWord cg 3
+              (cgSetTypes cg
                 (addQualified
                   (addTypeNamed types name kind (vecLen fields) 0 0 vecNew cgNullVec fields)
                   (nodeModule node) name kind (vecLen fields) 0 0 vecNew cgNullVec fields))
@@ -5168,11 +5580,11 @@
       {
         (let n (nodeAName node))
         (let a (nodeB node))
-        (let t (memGetWord cg 4))
-        (let types (memGetWordVec cg 3))
+        (let t (cgTagN cg))
+        (let types (cgTypes cg))
         {
-          (memSetWord cg 4 (+ t 1))
-          (memSetWord cg 3
+          (cgSetTagN cg (+ t 1))
+          (cgSetTypes cg
             (addQualified
               (addTypeNamed types n TF_DATA a t rep (nodeCWords node) (nodeFieldNamesNames node)
                 (nodeTyChildren node))
@@ -6123,7 +6535,7 @@
 (pub fn (parLibcFork cg)
   (if (cgThreads cg)
     {
-      (let t (memGetWord cg 26))
+      (let t (cgTarget cg))
       (if (|| (== t 0) (== t 1))
         1
         0)
@@ -6370,14 +6782,13 @@
         1
         (handleAnyNamed decls)))
     (pairSetSlot cg 10
-      (if (&& (== (targetHasThreads (memGetWord cg 26)) 1)
+      (if (&& (== (targetHasThreads (cgTarget cg)) 1)
             (&& (== (declsNamePrim decls "__par_spawn" 0) 1)
-              (|| (argHas "--threads" 1) (parThreadsByDefault (memGetWord cg 26)))))
+              (|| (argHas "--threads" 1) (parThreadsByDefault (cgTarget cg)))))
         1
         0))
     (pairSetSlot cg 4
-      (if (&& (== (targetHasThreads (memGetWord cg 26)) 1)
-            (parThreadsWanted decls (memGetWord cg 26)))
+      (if (&& (== (targetHasThreads (cgTarget cg)) 1) (parThreadsWanted decls (cgTarget cg)))
         1
         0))
     (pairSetSlot cg 19 (resRegistryWanted decls))
@@ -6443,7 +6854,7 @@
   {
     (let cgB (emitExpr (vecGet args 0) cg))
     {
-      (let b (strDup (memGetWordStr cgB 2)))
+      (let b (strDup (cgResult cgB)))
       (let xs (nodeAChildren (vecGet args 1)))
       (let mut c cgB)
       (let mut i 0)
@@ -6469,7 +6880,7 @@
   {
     (let cgA (emitExpr (vecGet args 0) cg))
     {
-      (let a (strDup (memGetWordStr cgA 2)))
+      (let a (strDup (cgResult cgA)))
       (let r (regStr (allocReg cgA)))
       {
         (if (strEq fnName "parallel$borrow")
@@ -6478,7 +6889,7 @@
             (concat (concat "  " r)
               (concat " = call i64 @__axiom_par_return(i64 " (concat a ")")))))
         (cgSetResult cgA r)
-        (memSetWord cgA 14 0)
+        (cgSetResultFloat cgA 0)
         cgA
       }
     }
@@ -6493,7 +6904,7 @@
 ; and no `fork`, everything but the three process primitives.
 (pub :: parPrimLowered (-> Int String Int))
 (pub fn (parPrimLowered cg fnName)
-  (if (== (targetHasSpawn (memGetWord cg 26)) 1)
+  (if (== (targetHasSpawn (cgTarget cg)) 1)
     1
     (if (&& (cgThreads cg) (! (strStartsWith fnName "__proc_")))
       1
@@ -6505,7 +6916,7 @@
   {
     (let cgF (emitExpr (vecGet args 0) cg))
     {
-      (let f (strDup (memGetWordStr cgF 2)))
+      (let f (strDup (cgResult cgF)))
       {
         (let cgR
           (if (== (argIsDirectCon cgF (vecGet args 0)) 1)
@@ -6514,7 +6925,7 @@
         {
           (let cgA (emitExpr (vecGet args 1) cgR))
           {
-            (let a (strDup (memGetWordStr cgA 2)))
+            (let a (strDup (cgResult cgA)))
             (let r (regStr (allocReg cgA)))
             {
               (if (== (parPrimLowered cgA fnName) 1)
@@ -6525,7 +6936,7 @@
                       (concat f (concat ", i64 " (concat a ")"))))))
                 (emitLine cgA (concat (concat "  " r) " = call i64 @__axiom_par_unsupported()")))
               (cgSetResult cgA r)
-              (memSetWord cgA 14 0)
+              (cgSetResultFloat cgA 0)
               cgA
             }
           }
@@ -6542,7 +6953,7 @@
     {
       (let cgH (emitExpr (vecGet args 0) cg))
       {
-        (let h (strDup (memGetWordStr cgH 2)))
+        (let h (strDup (cgResult cgH)))
         (let r (regStr (allocReg cgH)))
         {
           (if (== (parPrimLowered cgH fnName) 1)
@@ -6552,7 +6963,7 @@
                   (concat h ")"))))
             (emitLine cgH (concat (concat "  " r) " = call i64 @__axiom_par_unsupported()")))
           (cgSetResult cgH r)
-          (memSetWord cgH 14 0)
+          (cgSetResultFloat cgH 0)
           cgH
         }
       }
@@ -6570,11 +6981,11 @@
   {
     (let cgH (emitExpr (vecGet args 0) cg))
     {
-      (let h (strDup (memGetWordStr cgH 2)))
+      (let h (strDup (cgResult cgH)))
       {
         (let cgC (emitExpr (vecGet args 1) cgH))
         {
-          (let c (strDup (memGetWordStr cgC 2)))
+          (let c (strDup (cgResult cgC)))
           (let r (regStr (allocReg cgC)))
           {
             (if (== (parPrimLowered cgC fnName) 1)
@@ -6585,7 +6996,7 @@
                     (concat h (concat ", i64 " (concat c ")"))))))
               (emitLine cgC (concat (concat "  " r) " = call i64 @__axiom_par_unsupported()")))
             (cgSetResult cgC r)
-            (memSetWord cgC 14 0)
+            (cgSetResultFloat cgC 0)
             cgC
           }
         }
@@ -6597,7 +7008,7 @@
 (pub :: parSys (-> Int String String String))
 (pub fn (parSys cg num rest)
   (concat "call i64 asm sideeffect "
-    (concat (targetSyscallAsm (memGetWord cg 26))
+    (concat (targetSyscallAsm (cgTarget cg))
       (concat (concat "(i64 " (concat num ", ")) (concat rest ")")))))
 
 ; The runtime, beside the allocator, and ONLY for a module that names
@@ -6863,7 +7274,7 @@
 (pub fn (emitParRuntime cg)
   (if (== (pairSlot cg 5) 0)
     cg
-    (if (== (targetHasSpawn (memGetWord cg 26)) 1)
+    (if (== (targetHasSpawn (cgTarget cg)) 1)
       {
         (emitParTrap cg)
         (emitParCommon cg)
@@ -7015,7 +7426,7 @@
     {
       (let cgH (emitExpr (vecGet args 0) cg))
       {
-        (let h (strDup (memGetWordStr cgH 2)))
+        (let h (strDup (cgResult cgH)))
         (let pg (regStr (allocReg cgH)))
         (let pp (regStr (allocReg cgH)))
         (let r (regStr (allocReg cgH)))
@@ -7026,7 +7437,7 @@
           (emitLine cgH (concat "  " (concat pp (concat " = inttoptr i64 " (concat pg " to ptr")))))
           (emitLine cgH (concat "  " (concat r (concat " = load i64, ptr " pp))))
           (cgSetResult cgH r)
-          (memSetWord cgH 14 0)
+          (cgSetResultFloat cgH 0)
           cgH
         }
       }
@@ -7039,11 +7450,11 @@
   {
     (let cgK (emitExpr (vecGet args 0) cg))
     {
-      (let k (strDup (memGetWordStr cgK 2)))
+      (let k (strDup (cgResult cgK)))
       {
         (let cgV (emitExpr (vecGet args 1) cgK))
         {
-          (let v (strDup (memGetWordStr cgV 2)))
+          (let v (strDup (cgResult cgV)))
           (let r (regStr (allocReg cgV)))
           (let fn
             (if (strEq fnName "__handle_new")
@@ -7058,7 +7469,7 @@
                   (concat " = call i64 "
                     (concat fn (concat "(i64 " (concat k (concat ", i64 " (concat v ")")))))))))
             (cgSetResult cgV r)
-            (memSetWord cgV 14 0)
+            (cgSetResultFloat cgV 0)
             cgV
           }
         }
@@ -7131,7 +7542,7 @@
   (if (== (pairSlot cg 13) 0)
     cg
     {
-      (let t (memGetWord cg 26))
+      (let t (cgTarget cg))
       {
         (emitLine cg "")
         (emitLine cg "@__axiom_htab = internal global i64 0")
@@ -7485,7 +7896,7 @@
 (pub :: emitParCommon (-> Int Int))
 (pub fn (emitParCommon cg)
   {
-    (let t (memGetWord cg 26))
+    (let t (cgTarget cg))
     {
       (emitLine cg (concat "@__axiom_par_live = " (concat (cgMutGlobal cg) " i64 0")))
       (emitLine cg (concat "@__axiom_par_seq = " (concat (cgMutGlobal cg) " i64 0")))
@@ -7727,13 +8138,13 @@
 (pub fn (parRegistryOn cg)
   (if (== (pairSlot cg 5) 0)
     0
-    (targetHasSpawn (memGetWord cg 26))))
+    (targetHasSpawn (cgTarget cg))))
 
 ; Where a recovery record keeps the spawn sequence number its arm saw:
 ; the word after the evidence-slot snapshot, which starts at 128.
 (pub :: parRecSeqOffset (-> Int Int))
 (pub fn (parRecSeqOffset cg)
-  (+ 128 (* 8 (distinctSlotCount (memGetWordVec cg 32) 0 0))))
+  (+ 128 (* 8 (distinctSlotCount (cgEffDecls cg) 0 0))))
 
 ; The process lowering: fork, run the thunk in the child, write the
 ; answer through the shared page, exit; the parent's join is a `wait4`
@@ -7766,7 +8177,7 @@
 (pub fn (emitParJoinUnlist cg)
   (if (cgThreads cg)
     {
-      (let t (memGetWord cg 26))
+      (let t (cgTarget cg))
       {
         (emitLine cg "  %sib = getelementptr i64, ptr %hp, i64 16")
         (emitLine cg "  %sibw = ptrtoint ptr %sib to i64")
@@ -7789,7 +8200,7 @@
 (pub :: emitParProc (-> Int Int))
 (pub fn (emitParProc cg)
   {
-    (let t (memGetWord cg 26))
+    (let t (cgTarget cg))
     {
       (emitLine cg "define internal i64 @__axiom_par_spawn_proc(i64 %fn, i64 %arg) #0 {")
       (emitLine cg "entry:")
@@ -8004,7 +8415,7 @@
 (pub :: emitParKillList (-> Int Int))
 (pub fn (emitParKillList cg)
   {
-    (let t (memGetWord cg 26))
+    (let t (cgTarget cg))
     {
       (emitLine cg "@__axiom_par_procs = internal global i64 0")
       (emitLine cg "@__axiom_par_procs_lock = internal global i64 0")
@@ -8121,7 +8532,7 @@
 (pub :: emitParThread (-> Int Int))
 (pub fn (emitParThread cg)
   {
-    (let t (memGetWord cg 26))
+    (let t (cgTarget cg))
     {
       (emitLine cg "declare i32 @pthread_create(ptr, ptr, ptr, ptr) #0")
       (emitLine cg "declare i32 @pthread_join(ptr, ptr) #0")
@@ -9253,14 +9664,14 @@
   (if (strEq name "main")
     "__axiom_user_main"
     {
-      (let m (memGetWordStr cg 34))
+      (let m (cgModule cg))
       (if (== (as m Int) 0)
-        (mangledForIn (memGetWordVec cg 12) (memGetWordVec cg 13) name 0)
+        (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) name 0)
         {
           (let local (concat m (concat "$" name)))
-          (if (mangleHasIn (memGetWordVec cg 12) local 0)
-            (mangledForIn (memGetWordVec cg 12) (memGetWordVec cg 13) local 0)
-            (mangledForModIn (memGetWordVec cg 12) (memGetWordVec cg 13) name))
+          (if (mangleHasIn (cgMangleBares cg) local 0)
+            (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) local 0)
+            (mangledForModIn (cgMangleBares cg) (cgMangleFulls cg) name))
         })
     }))
 
@@ -10649,8 +11060,8 @@
 ;@axiom:effect(io)
 (pub fn (emitArenaRegion cg)
   {
-    (let n (arenaStaticBytes (memGetWord cg 26)))
-    (let b (targetArenaStaticBase (memGetWord cg 26)))
+    (let n (arenaStaticBytes (cgTarget cg)))
+    (let b (targetArenaStaticBase (cgTarget cg)))
     {
       (if (== b 0)
         {
@@ -10685,16 +11096,16 @@
   ; 4.2's ONE branch, taken at emission time. A program built for a
   ; static target contains the carve and no `mmap`; a program built for
   ; any supported target contains what it always did.
-  (if (> (arenaStaticBytes (memGetWord cg 26)) 0)
+  (if (> (arenaStaticBytes (cgTarget cg)) 0)
     (emitArenaCarve cg sizeExpr)
-    (if (== (targetUsesSyscallAsm (memGetWord cg 26)) 1)
+    (if (== (targetUsesSyscallAsm (cgTarget cg)) 1)
       (emitLine cg
         (concat
           (concat "  %addr = call i64 asm sideeffect "
-            (concat (targetSyscallAsm (memGetWord cg 26))
-              (concat "(i64 " (fmtInt (targetMmapNum (memGetWord cg 26))))))
+            (concat (targetSyscallAsm (cgTarget cg))
+              (concat "(i64 " (fmtInt (targetMmapNum (cgTarget cg))))))
           (concat (concat ", i64 0, i64 " (concat sizeExpr ", i64 3, i64 "))
-            (concat (fmtInt (targetMapFlags (memGetWord cg 26))) (concat ", i64 -1, i64 0)" "")))))
+            (concat (fmtInt (targetMapFlags (cgTarget cg))) (concat ", i64 -1, i64 0)" "")))))
       ; MEM_COMMIT|MEM_RESERVE = 0x3000 = 12288, PAGE_READWRITE = 4.
       (emitLine cg
         (concat "  %addr = call i64 @VirtualAlloc(i64 0, i64 "
@@ -10705,18 +11116,17 @@
 ; stay distinct. `lenExpr` is a literal or a register.
 (pub :: emitRuntimeWrite (-> Int String String Int))
 (pub fn (emitRuntimeWrite cg ptrExpr lenExpr)
-  (if (== (targetTrapSilent (memGetWord cg 26)) 1)
+  (if (== (targetTrapSilent (cgTarget cg)) 1)
     (emitLine cg "  ; trap message suppressed: the target asked for silent traps")
-    (if (> (targetUartBase (memGetWord cg 26)) 0)
+    (if (> (targetUartBase (cgTarget cg)) 0)
       (emitLine cg
         (concat "  call void @__axiom_uart_write(i64 "
           (concat ptrExpr (concat ", i64 " (concat lenExpr ")")))))
-      (if (== (targetUsesSyscallAsm (memGetWord cg 26)) 1)
+      (if (== (targetUsesSyscallAsm (cgTarget cg)) 1)
         (emitLine cg
           (concat
-            (concat "  call i64 asm sideeffect "
-              (concat (targetSyscallAsm (memGetWord cg 26)) "(i64 "))
-            (concat (fmtInt (targetWriteNum (memGetWord cg 26)))
+            (concat "  call i64 asm sideeffect " (concat (targetSyscallAsm (cgTarget cg)) "(i64 "))
+            (concat (fmtInt (targetWriteNum (cgTarget cg)))
               (concat ", i64 2, i64 "
                 (concat ptrExpr (concat ", i64 " (concat lenExpr ", i64 0, i64 0, i64 0)")))))))
         {
@@ -10736,14 +11146,14 @@
 
 (pub :: emitRuntimeExit (-> Int String Int))
 (pub fn (emitRuntimeExit cg status)
-  (if (== (targetUsesSyscallAsm (memGetWord cg 26)) 1)
+  (if (== (targetUsesSyscallAsm (cgTarget cg)) 1)
     (emitLine cg
       (concat
         (concat "  call i64 asm sideeffect "
-          (concat (targetSyscallAsm (memGetWord cg 26))
-            (concat "(i64 " (fmtInt (targetExitNum (memGetWord cg 26))))))
+          (concat (targetSyscallAsm (cgTarget cg))
+            (concat "(i64 " (fmtInt (targetExitNum (cgTarget cg))))))
         (concat ", i64 " (concat status ", i64 0, i64 0, i64 0, i64 0, i64 0)"))))
-    (if (> (targetUartBase (memGetWord cg 26)) 0)
+    (if (> (targetUartBase (cgTarget cg)) 0)
       (emitBaremetalTrapExit cg status)
       (emitLine cg (concat "  call i64 @ExitProcess(i64 " (concat status ")"))))))
 
@@ -10855,7 +11265,7 @@
   {
     (let msg "axiom: stack overflow: the fault address is in the guard below a mapped stack")
     (let n (fmtInt (+ (strLen msg) 1)))
-    (let t (memGetWord cg 26))
+    (let t (cgTarget cg))
     {
       (emitLine cg
         (concat "@__axiom_win_stack_msg = private unnamed_addr constant ["
@@ -10975,7 +11385,7 @@
     (emitLine cg "; axiom-extern-lib kernel32")
     (emitLine cg "declare dllimport i64 @VirtualAlloc(i64, i64, i64, i64) #0")
     (emitLine cg "declare dllimport i64 @VirtualFree(i64, i64, i64) #0")
-    (if (== (memGetWord cg 26) 6)
+    (if (== (cgTarget cg) 6)
       (emitLine cg "declare dllimport i64 @RtlCaptureStackBackTrace(i64, i64, i64, i64) #0"))
     (emitLine cg "declare dllimport i64 @AddVectoredExceptionHandler(i64, i64) #0")
     (emitLine cg "declare dllimport i64 @SetThreadStackGuarantee(i64) #0")
@@ -11062,7 +11472,7 @@
     (emitLine cg "define weak_odr void @__chkstk() naked {")
     (emitLine cg "entry:")
     (emitLine cg
-      (if (== (memGetWord cg 26) 6)
+      (if (== (cgTarget cg) 6)
         "  call void asm sideeffect \"movq %rax, %r10\\0Aleaq 8(%rsp), %r11\\0Atestq %r10, %r10\\0Ajz 3f\\0Acmpq $$4096, %r10\\0Ajbe 2f\\0A1:\\0Asubq $$4096, %r11\\0Atestb $$0, (%r11)\\0Asubq $$4096, %r10\\0Acmpq $$4096, %r10\\0Aja 1b\\0A2:\\0Asubq %r10, %r11\\0Atestb $$0, (%r11)\\0A3:\\0Aretq\", \"~{r10},~{r11},~{memory},~{cc}\"()"
         "  call void asm sideeffect \"lsl x16, x15, #4\\0Amov x17, sp\\0Acbz x16, 3f\\0Acmp x16, #4096\\0Ab.ls 2f\\0A1:\\0Asub x17, x17, #4096\\0Aldr xzr, [x17]\\0Asub x16, x16, #4096\\0Acmp x16, #4096\\0Ab.hi 1b\\0A2:\\0Asub x17, x17, x16\\0Aldr xzr, [x17]\\0A3:\\0Aret\", \"~{x16},~{x17},~{memory},~{cc}\"()"))
     (emitLine cg "  unreachable")
@@ -12100,7 +12510,7 @@
     (emitLine cg "  %b = load i8, ptr %p")
     (emitLine cg
       (concat "  store volatile i8 %b, ptr inttoptr (i64 "
-        (concat (fmtInt (targetUartBase (memGetWord cg 26))) " to ptr)")))
+        (concat (fmtInt (targetUartBase (cgTarget cg))) " to ptr)")))
     (emitLine cg "  %in = add i64 %i, 1")
     (emitLine cg "  br label %loop")
     (emitLine cg "done:")
@@ -12485,7 +12895,7 @@
 (pub :: baremetalFaultHandler (-> Int String))
 (pub fn (baremetalFaultHandler cg)
   {
-    (let fs (isrVectorNames (isrBindings (readAstNodes cg 8) vecNew 0) "fault" 0 vecNew))
+    (let fs (isrVectorNames (isrBindings (cgDecls cg) vecNew 0) "fault" 0 vecNew))
     (if (== (vecLen fs) 1)
       (vecGetStr fs 0)
       "")
@@ -12502,8 +12912,8 @@
 ;@axiom:effect(io)
 (pub fn (emitIsrBinding cg)
   {
-    (let bs (isrBindings (readAstNodes cg 8) vecNew 0))
-    (let t (memGetWord cg 26))
+    (let bs (isrBindings (cgDecls cg) vecNew 0))
+    (let t (cgTarget cg))
     {
       (let irqs (isrVectorNames bs "irq" 0 vecNew))
       (let faults (isrVectorNames bs "fault" 0 vecNew))
@@ -12800,7 +13210,7 @@
       (emitLine cg "  %b = trunc i64 %c to i8")
       (emitLine cg
         (concat "  store volatile i8 %b, ptr inttoptr (i64 "
-          (concat (fmtInt (targetUartBase (memGetWord cg 26))) " to ptr)")))
+          (concat (fmtInt (targetUartBase (cgTarget cg))) " to ptr)")))
       (emitLine cg "  %next = sub i64 %sh, 4")
       (emitLine cg "  %more = icmp sge i64 %sh, 4")
       (emitLine cg "  br i1 %more, label %loop, label %done")
@@ -13677,8 +14087,8 @@
                       (== (isNamedConTy (nodeBChild ety) "String") 0))
                   0
                   {
-                    (let okE (lookupType (memGetWordVec cg 3) "Err$Ok"))
-                    (let errE (lookupType (memGetWordVec cg 3) "Err$Err"))
+                    (let okE (lookupType (cgTypes cg) "Err$Ok"))
+                    (let errE (lookupType (cgTypes cg) "Err$Err"))
                     (if (|| (== okE 0) (== errE 0))
                       0
                       (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
@@ -13697,7 +14107,7 @@
 (pub :: emitMainResultTail (-> Int Int Int))
 (pub fn (emitMainResultTail cg wind)
   {
-    (let okTag (eTag (lookupType (memGetWordVec cg 3) "Err$Ok")))
+    (let okTag (eTag (lookupType (cgTypes cg) "Err$Ok")))
     (let etext (llvmSym (mainResultErrorText cg)))
     {
       (emitLine cg "  %mres_tp = inttoptr i64 %r to ptr")
@@ -13766,12 +14176,12 @@
     ; trap paths' `WriteFile` writes through - whether or not there is a
     ; `main`, because the allocator below and the three traps need them
     ; in an archive too.
-    (if (! (== (targetUsesSyscallAsm (memGetWord cg 26)) 1))
-      (if (== (memGetWord cg 26) 7)
+    (if (! (== (targetUsesSyscallAsm (cgTarget cg)) 1))
+      (if (== (cgTarget cg) 7)
         (emitBaremetalRuntime cg)
         (emitWinRuntime cg)))
     (if (! cgStaticlib)
-      (if (strEq (targetEntryName (memGetWord cg 26)) "main")
+      (if (strEq (targetEntryName (cgTarget cg)) "main")
         {
           (if (== (mainReturnsResult cg) 1)
             {
@@ -13802,7 +14212,7 @@
     ; archive must not carry it (`_start` names `main`, and the host
     ; linking the archive answers that name itself).
     (if (! cgStaticlib)
-      (if (== (memGetWord cg 26) 7)
+      (if (== (cgTarget cg) 7)
         (emitBaremetalStart cg)))
     ; `isr(...)` bindings: the vector table on the bare target, an
     ; AX4008 marker for a binding a target cannot honour, and nothing
@@ -13811,7 +14221,7 @@
     ; 4.2's region, before the bump pointer that will point into it.
     ; Nothing is emitted here on a target whose arena comes from the
     ; kernel, which is every supported one.
-    (if (> (arenaStaticBytes (memGetWord cg 26)) 0)
+    (if (> (arenaStaticBytes (cgTarget cg)) 0)
       (emitArenaRegion cg))
     (emitLine cg (concat "@__axiom_bump = " (concat (cgMutGlobal cg) " i64 0")))
     (emitLine cg (concat "@__axiom_bump_end = " (concat (cgMutGlobal cg) " i64 0")))
@@ -14032,17 +14442,16 @@
     ; EFFECTIVE chunk: under `--heap-ceiling` it is capped by the
     ; region, so the growth unit always fits what it grows in.
     (emitLine cg
-      (concat "  %big = icmp ugt i64 %need, "
-        (concat (fmtInt (arenaChunkBytes (memGetWord cg 26))) "")))
+      (concat "  %big = icmp ugt i64 %need, " (concat (fmtInt (arenaChunkBytes (cgTarget cg))) "")))
     (emitLine cg
       (concat "  %rounded0 = add i64 %need, "
-        (concat (fmtInt (- (targetArenaGrainBytes (memGetWord cg 26)) 1)) "")))
+        (concat (fmtInt (- (targetArenaGrainBytes (cgTarget cg)) 1)) "")))
     (emitLine cg
       (concat "  %rounded = and i64 %rounded0, "
-        (concat (fmtInt (- 0 (targetArenaGrainBytes (memGetWord cg 26)))) "")))
+        (concat (fmtInt (- 0 (targetArenaGrainBytes (cgTarget cg)))) "")))
     (emitLine cg
       (concat "  %chunk = select i1 %big, i64 %rounded, i64 "
-        (concat (fmtInt (arenaChunkBytes (memGetWord cg 26))) "")))
+        (concat (fmtInt (arenaChunkBytes (cgTarget cg))) "")))
     ; First fit over the chunks a reset has freed. The list is short -
     ; it holds only what outlived a mark - and a chunk on it is a whole
     ; mapping, so reuse is what keeps a resetting loop's RSS flat
@@ -14942,7 +15351,7 @@
       (emitLine cg "  store i64 0, ptr @__axiom_res_unwinding"))
     (emitLine cg
       (concat "  call void asm sideeffect "
-        (concat (targetRecoverJumpAsm (memGetWord cg 26)) "(i64 %top, i64 %sp, i64 %fp, i64 %pc)")))
+        (concat (targetRecoverJumpAsm (cgTarget cg)) "(i64 %top, i64 %sp, i64 %fp, i64 %pc)")))
     ; ON WINDOWS-X86_64 THE JUMP NEEDS A REAL INSTRUCTION AFTER IT.
     ; LLVM's Win64 unwinder pass (X86AvoidTrailingCall) puts an `int3`
     ; after a call that ends a function, and it does not count inline
@@ -14954,11 +15363,11 @@
     ; and leaves the jump no longer the function's tail. windows-aarch64
     ; has no such pass and emits its `brk` after the block. Tested by
     ; `scripts/check-recover.sh`.
-    (if (== (memGetWord cg 26) 6)
+    (if (== (cgTarget cg) 6)
       (emitLine cg "  call void @llvm.trap()"))
     (emitLine cg "  unreachable")
     (emitLine cg "}")
-    (if (== (memGetWord cg 26) 6)
+    (if (== (cgTarget cg) 6)
       (emitLine cg "declare void @llvm.trap() cold noreturn nounwind"))
     cg
   })
@@ -14999,7 +15408,7 @@
 (pub :: emitRecoverSlotMoves (-> Int Int Int Int Int))
 (pub fn (emitRecoverSlotMoves cg i k save)
   {
-    (let tbl (memGetWordVec cg 32))
+    (let tbl (cgEffDecls cg))
     (if (>= i (vecLen tbl))
       k
       (if (== (slotFirstIndex tbl (effSlot (vecGet tbl i)) 0) i)
@@ -15051,7 +15460,7 @@
 (pub fn (emitOomTrap cg)
   {
     (let msg
-      (if (> (arenaStaticBytes (memGetWord cg 26)) 0)
+      (if (> (arenaStaticBytes (cgTarget cg)) 0)
         "axiom: out of memory (arena exhausted)"
         "axiom: out of memory (mmap failed)"))
     {
@@ -15301,7 +15710,7 @@
   ; function nothing could reach. Two lines is not a cost worth
   ; arguing about, and that is exactly why it had to go: the rule is
   ; byte-identity, not "small enough".
-  (if (== (distinctSlotCount (memGetWordVec cg 32) 0 0) 0)
+  (if (== (distinctSlotCount (cgEffDecls cg) 0 0) 0)
     cg
     {
       (emitLine cg "")
@@ -15352,14 +15761,14 @@
 ; no-effect program one instruction would cost EVERY program one.
 (pub :: emitEvCall (-> Int String String Int))
 (pub fn (emitEvCall cg lo hi)
-  (if (== (distinctSlotCount (memGetWordVec cg 32) 0 0) 0)
+  (if (== (distinctSlotCount (cgEffDecls cg) 0 0) 0)
     cg
     (emitLine cg
       (concat "  call i64 @__axiom_ev_check(i64 " (concat lo (concat ", i64 " (concat hi ")")))))))
 
 (pub :: emitEvChunkCall (-> Int Int))
 (pub fn (emitEvChunkCall cg)
-  (if (== (distinctSlotCount (memGetWordVec cg 32) 0 0) 0)
+  (if (== (distinctSlotCount (cgEffDecls cg) 0 0) 0)
     cg
     {
       (emitLine cg "  %csizep = inttoptr i64 %c to ptr")
@@ -15372,7 +15781,7 @@
 (pub :: emitEvCheck (-> Int Int))
 (pub fn (emitEvCheck cg)
   {
-    (let n (distinctSlotCount (memGetWordVec cg 32) 0 0))
+    (let n (distinctSlotCount (cgEffDecls cg) 0 0))
     (if (== n 0)
       cg
       {
@@ -15399,7 +15808,7 @@
 (pub :: emitEvCheckSlots (-> Int Int Int Int))
 (pub fn (emitEvCheckSlots cg i k)
   {
-    (let tbl (memGetWordVec cg 32))
+    (let tbl (cgEffDecls cg))
     (if (>= i (vecLen tbl))
       k
       (if (== (slotFirstIndex tbl (effSlot (vecGet tbl i)) 0) i)
@@ -15912,14 +16321,14 @@
     ()
   })
 
-(pub :: pruneIndexDefs (-> Ints Int Ints Ints Ints Ints Ints Int))
+(pub :: pruneIndexDefs (-> Strings Int Ints Ints Ints Ints Ints Int))
 (pub fn (pruneIndexDefs lines si idToDef defStart defEnd live defOf)
   {
     (let cursor (PruneCursor :current (- 0 1) :function 0 :depth 0))
     (let mut i 0)
     (while (< i (vecLen lines))
       {
-        (let line (vecGetStr lines i))
+        (let line (vecGet lines i))
         (pruneIndexLine line i cursor si idToDef defStart defEnd live defOf)
         (set i (+ i 1))
       })
@@ -15929,7 +16338,7 @@
 ; The transitive closure, as a worklist rather than a fixpoint sweep:
 ; `stack` only grows, and `sp` is how far it has been read, so every
 ; define's body is scanned exactly once.
-(pub :: pruneWalk (-> Ints Ints Ints Ints Int))
+(pub :: pruneWalk (-> Ints Strings Ints Ints Int))
 (pub fn (pruneWalk ctx lines defStart defEnd)
   {
     (let stack (vecGetVec ctx 3))
@@ -15943,7 +16352,7 @@
             (set k (vecGet defStart d))
             (while (<= k (vecGet defEnd d))
               {
-                (pruneScanLine ctx (vecGetStr lines k))
+                (pruneScanLine ctx (vecGet lines k))
                 (set k (+ k 1))
               })
             (set sp (+ sp 1))
@@ -15954,7 +16363,13 @@
   })
 
 ; The buffer without unreachable functions and module-local globals.
-(pub :: pruneRebuild (-> Ints Ints Ints Strings))
+;
+; The lines are read with `vecGetStr` rather than `vecGet`. A typed read
+; tells the flow walk that the answer holds parts of `lines`, and
+; `pruneDeadDefs` would then keep the displaced buffer alive instead of
+; giving its share back (tests/selfhost/emitter-line-buffer.py, cases
+; 14 and 15). Each line pushed takes a share of its own either way.
+(pub :: pruneRebuild (-> Strings Ints Ints Strings))
 ;@axiom:effect(unsafe)
 (pub fn (pruneRebuild lines defOf live)
   {
@@ -15979,12 +16394,11 @@
 
 (pub :: pruneDeadDefs (-> Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (pruneDeadDefs cg)
   (if cgStaticlib
     cg
     {
-      (let lines (memGetWordVec cg 0))
+      (let lines (cgLines cg))
       ; The context borrows this handle through the last scan and rebuild.
       (let siOwner internNewTyped)
       (let si (internWordOf siOwner))
@@ -16006,14 +16420,14 @@
           ; ------------------------------------------------------------
           ; `main`, or `mainCRTStartup` on Windows. The linker starts
           ; the program here and no IR of ours calls it.
-          (pruneMark ctx (targetEntryName (memGetWord cg 26)))
+          (pruneMark ctx (targetEntryName (cgTarget cg)))
           ; `_start`, on the bare target only, for the same reason:
           ; the linker script's ENTRY starts the program here and no
           ; IR of ours calls it. Marked only where it is emitted
           ; (see `emitBaremetalStart`); where it was never emitted
           ; there is no define by that name and the mark retains
           ; nothing.
-          (if (== (memGetWord cg 26) 7)
+          (if (== (cgTarget cg) 7)
             (pruneMark ctx "_start"))
           ; The C ABI a linked host calls. All three are `pub` in
           ; `rust/axiom_ffi` and `rust/examples/demo/src/lib.rs` states
@@ -16044,10 +16458,7 @@
           ; Retire the context's displaced share, independently of the
           ; retained getter share in `lines`. Survivors already have a
           ; share in the rebuilt buffer before the old buffer can die.
-          (let oldLines (memGetWord cg 0))
-          (memSetWord cg 0 (pruneRebuild lines defOf live))
-          (__release oldLines)
-          cg
+          (cgReplaceLines cg (pruneRebuild lines defOf live))
         }
       }
     }))
@@ -16135,7 +16546,7 @@
 ; read-only text avoids a page-sized data segment in small executables.
 (:: btRelative (-> Int Bool))
 (fn (btRelative cg)
-  (|| (== (memGetWord cg 26) 0) (== (memGetWord cg 26) 1)))
+  (|| (== (cgTarget cg) 0) (== (cgTarget cg) 1)))
 
 (:: btStoredAddress (-> Int String String))
 (fn (btStoredAddress cg sym)
@@ -16211,7 +16622,7 @@
 ;@axiom:effect(io)
 (pub fn (emitLineTable cg)
   {
-    (let lines (memGetWordVec cg 0))
+    (let lines (cgLines cg))
     {
       (let marks (scanLineMarks lines 0 "" "" vecNew))
       {
@@ -16254,13 +16665,13 @@
 ; return addresses resolving to a NEIGHBOURING block's line, which is
 ; exactly the confident misattribution this table exists to remove;
 ; the build fails here instead, naming the compiler bug.
-(pub :: scanLineMarks (-> Ints Int String String LineMarks LineMarks))
+(pub :: scanLineMarks (-> Strings Int String String LineMarks LineMarks))
 ;@axiom:effect(io)
 (pub fn (scanLineMarks lines i curfn lastlabel marks)
   (if (>= i (vecLen lines))
     marks
     {
-      (let ln (vecGetStr lines i))
+      (let ln (vecGet lines i))
       (if (strStartsWith ln "; @@line ")
         (if (== (strLen lastlabel) 0)
           {
@@ -16433,7 +16844,7 @@
 (pub fn (markPath modname cg)
   (if (== (strLen modname) 0)
     (baseName (entryInputPath))
-    (baseName (moduleSrcPath modname (memGetWord cg 26) (pathDir (entryInputPath))))))
+    (baseName (moduleSrcPath modname (cgTarget cg) (pathDir (entryInputPath))))))
 
 ; Everything after the last separator, or the whole string when there
 ; is none: `pathBase`, which knows `\` where the platform does.
@@ -16453,7 +16864,7 @@
         ""
         (unwrapOr (readFile p) ""))
     }
-    (readModuleSrcOr modname (memGetWord cg 26) (pathDir (entryInputPath)) "")))
+    (readModuleSrcOr modname (cgTarget cg) (pathDir (entryInputPath)) "")))
 
 ; First-sight index of a path in `files`, appending. Linear, like
 ; `findString` beside it: tables here are tens of rows, and an index
@@ -16909,7 +17320,7 @@
 ; would bury the message it exists to qualify.
 (pub :: emitBtWalk (-> Int Names Int))
 (pub fn (emitBtWalk cg names)
-  (if (== (memGetWord cg 26) 6)
+  (if (== (cgTarget cg) 6)
     (emitBtWalkCaptured cg names)
     (emitBtWalkFrames cg names)))
 
@@ -16917,7 +17328,7 @@
 ; symbol table's base when the module is position-independent.
 (pub :: emitBtMainAddr (-> Int Names Int))
 (pub fn (emitBtMainAddr cg names)
-  (if (&& (btRelative cg) (symtabHas names (targetEntryName (memGetWord cg 26)) 0))
+  (if (&& (btRelative cg) (symtabHas names (targetEntryName (cgTarget cg)) 0))
     {
       (emitLine cg "  %maoff = load i64, ptr @__axiom_bt_mainaddr")
       (emitLine cg "  %mbase = ptrtoint ptr @__axiom_symtab to i64")
@@ -16996,8 +17407,7 @@
     (emitLine cg "define internal void @__axiom_backtrace() #0 {")
     (emitLine cg "entry:")
     (emitLine cg
-      (concat "  %fpi = call i64 asm sideeffect "
-        (concat (targetFrameAsm (memGetWord cg 26)) "()")))
+      (concat "  %fpi = call i64 asm sideeffect " (concat (targetFrameAsm (cgTarget cg)) "()")))
     (emitLine cg "  notail call void @__axiom_backtrace_from(i64 %fpi, i64 0, i64 -1, i64 0)")
     (emitLine cg "  ret void")
     (emitLine cg "}")
@@ -17148,9 +17558,9 @@
       ; `main`, or `mainCRTStartup` on Windows: `targetEntryName` is the
       ; one place the spelling lives.
       (emitLine cg
-        (if (symtabHas names (targetEntryName (memGetWord cg 26)) 0)
+        (if (symtabHas names (targetEntryName (cgTarget cg)) 0)
           (concat "@__axiom_bt_mainaddr = internal constant i64 "
-            (concat (btStoredAddress cg (targetEntryName (memGetWord cg 26))) (btTableSection cg)))
+            (concat (btStoredAddress cg (targetEntryName (cgTarget cg))) (btTableSection cg)))
           "@__axiom_bt_mainaddr = internal constant i64 -1"))
       (emitLine cg "")
       (emitBtName cg n ln)
@@ -17559,10 +17969,10 @@
       (emitLine cg "  ret i64 %r")
       (emitLine cg "}")
       (emitLine cg "")
-      (if (== (targetHasSpawn (memGetWord cg 26)) 1)
+      (if (== (targetHasSpawn (cgTarget cg)) 1)
         {
-          (emitStackRunGuarded cg (memGetWord cg 26))
-          (emitStackDisarm cg (memGetWord cg 26))
+          (emitStackRunGuarded cg (cgTarget cg))
+          (emitStackDisarm cg (cgTarget cg))
           (if (programStackOn cg)
             (emitProgramStack cg))
           cg
@@ -17950,10 +18360,10 @@
     ; static region on a keep that fits.
     (emitLine cg
       (concat "  %rounded0 = add i64 %need, "
-        (concat (fmtInt (- (targetArenaGrainBytes (memGetWord cg 26)) 1)) "")))
+        (concat (fmtInt (- (targetArenaGrainBytes (cgTarget cg)) 1)) "")))
     (emitLine cg
       (concat "  %want = and i64 %rounded0, "
-        (concat (fmtInt (- 0 (targetArenaGrainBytes (memGetWord cg 26)))) "")))
+        (concat (fmtInt (- 0 (targetArenaGrainBytes (cgTarget cg)))) "")))
     (emitLine cg "  %srcend = add i64 %src, %bytes")
     (emitLine cg "  %srcvalid = icmp uge i64 %srcend, %src")
     (emitLine cg "  %fhead = load i64, ptr @__axiom_free")
@@ -18140,9 +18550,9 @@
           (if obscure
             1
             0)))
-      (let _ (memSetWord cg 12 bares))
-      (let _2 (memSetWord cg 13 fulls))
-      (let _2t (memSetWord cg 26 tcode))
+      (let _ (cgSetMangleBares cg bares))
+      (let _2 (cgSetMangleFulls cg fulls))
+      (let _2t (cgSetTarget cg tcode))
       (let _stackMode
         (pairSetSlot cg 24
           (if cgStaticlib
@@ -18150,7 +18560,7 @@
             (targetHasSpawn tcode))))
       (let _2p (parScan cg allDecls))
       (let _3
-        (memSetWord cg 15
+        (cgSetFloatSigs cg
           {
             (let sigs (scanFloatSigs allDecls vecNew 0))
             {
@@ -18158,11 +18568,10 @@
               sigs
             }
           }))
-      (let _4 (memSetWord cg 19 vecNew))
       {
         (let cg0 (scanDecls allDecls cg 0))
         {
-          (let cg0b (memSetWord cg0 8 allDecls))
+          (let cg0b (cgSetDecls cg0 allDecls))
           {
             (let _idx (buildNameIndexes cg0b))
             {
@@ -18262,12 +18671,12 @@
           (pruneDeadDefs
             (emitExternDeclares decls
               (emitRecoverSlotHelpers (emitEffectGlobals (emitStringGlobals nextCg 0) 0)) 0
-              (runtimeDeclaredSyms (memGetWord nextCg 26) (cgThreads nextCg)))))
+              (runtimeDeclaredSyms (cgTarget nextCg) (cgThreads nextCg)))))
         (renderCG
           (emitAsmFiles
             (emitLine
-              (emitLine (emitBacktrace tailCg (symtabNames (memGetWordVec tailCg 0)))
-                (attrGroupZero (memGetWord tailCg 26)))
+              (emitLine (emitBacktrace tailCg (symtabNames (cgLineWords tailCg)))
+                (attrGroupZero (cgTarget tailCg)))
               "attributes #1 = { alwaysinline }")))
       }
       (emitModuleTail decls nextCg (+ i 1)))
@@ -18342,7 +18751,7 @@
           (emitExternItems
             items
             (if (|| (== (externSeen seen sym 0) 1)
-                  (== (linesCallSym (memGetWordVec cg 0) (llvmSym (strDup sym)) 0) 0))
+                  (== (linesCallSym (cgLineWords cg) (llvmSym (strDup sym)) 0) 0))
               ; only a symbol the module CALLS is declared:
               ; a binding module imports fifteen items and a
               ; program calls two, and every declare must
@@ -18364,7 +18773,10 @@
       })))
 
 ; Does any emitted line call `@sym(`? A substring scan over the
-; module's lines, once per extern item at the end of emission.
+; module's lines, once per extern item at the end of emission. It reads
+; the buffer as words, through `cgLineWords`: a typed line handed to
+; `asmLineNamesSym` would count as parked there, and the caller would
+; never give its share of the buffer back.
 (pub :: linesCallSym (-> Ints String Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (linesCallSym lines sym i)
@@ -18488,11 +18900,11 @@
     ; here: the call sites read the set, so the set is what the
     ; definition must agree with.
     {
-      (let _ (memSetWord cg 34 (nodeModule node)))
-      (let _e (memSetWord cg 36 node))
+      (let _ (cgSetModule cg (nodeModule node)))
+      (let _e (cgSetCurDecl cg node))
       {
         (let cgD
-          (if (== (pairNamesHas (vecGetVec (memGetWordVec cg 46) 2) (nodeAName node)) 1)
+          (if (== (pairNamesHas (pairNames cg) (nodeAName node)) 1)
             {
               (pairSetSlot cg 0 (pairRetTyOf cg node))
               {
@@ -18507,9 +18919,9 @@
         {
           (let cgP cgD)
           {
-            (memSetWord cgP 34 0)
-            (memSetWord cgP 36 nilNode)
-            (memSetWord cgP 41 vecNew)
+            (cgSetModule cgP 0)
+            (cgSetCurDecl cgP nilNode)
+            (cgSetTailRetain cgP vecNew)
             cgP
           }
         }
@@ -18718,16 +19130,16 @@
     (let body (nodeCChild node))
     {
       (let paramStr (emitParams params cg 0))
-      (let _ (memSetWord cg 1 0))
-      (let _2 (vecClear (memGetWordVec cg 6)))
-      (let _3 (vecClear (memGetWordVec cg 7)))
-      (let _4 (vecClear (memGetWordVec cg 16)))
-      (let _4b (vecClear (memGetWordVec cg 20)))
-      (let _5 (memSetWord cg 17 params))
-      (let _5r (memSetWord cg 41 (borrowedTailLeaves cg name body params)))
+      (let _ (cgSetTmp cg 0))
+      (let _2 (vecClear (cgSymNames cg)))
+      (let _3 (vecClear (cgSymRegs cg)))
+      (let _4 (vecClear (cgSymFloats cg)))
+      (let _4b (vecClear (cgSymKinds cg)))
+      (let _5 (cgSetParams cg params))
+      (let _5r (cgSetTailRetain cg (borrowedTailLeaves cg name body params)))
       (let _5p (cgPendingReset cg))
       (let _5s (memSetWord (pairSlot cg 18) 0 0))
-      (let _6 (memSetWord cg 18 (functionFlags cg name)))
+      (let _6 (cgSetParamFlags cg (functionFlags cg name)))
       {
         (let takesEv (fnTakesEvw cg name))
         {
@@ -18783,19 +19195,19 @@
                             (let cg2
                               (if (|| (!= (pairSlot cg1c 0) 0)
                                     (|| (== wantsTCO 1)
-                                      (|| (> (vecLen (memGetWordVec cg1c 41)) 0)
+                                      (|| (> (vecLen (cgTailRetain cg1c)) 0)
                                         (== (tailCallsKnown cg1c body selfName) 1))))
                                 (emitExprTail body cg1c)
                                 (emitExpr body cg1c)))
                             {
-                              (memSetWord cg2 27 0)
-                              (memSetWord cg2 30 0)
+                              (cgSetTcoNameWord cg2 0)
+                              (cgSetTailOK cg2 0)
                               ; A body that ended by jumping back to the header
                               ; has already terminated its block; a `ret` after it
                               ; is a second terminator and invalid LLVM.
-                              (if (== (memGetWord cg2 31) 1)
+                              (if (== (cgTerminated cg2) 1)
                                 {
-                                  (memSetWord cg2 31 0)
+                                  (cgSetTerminated cg2 0)
                                   (emitLine (closeAllocaMark cg2) "}")
                                 }
                                 ; MM-LIFE-2c event 2: a function returns its
@@ -18832,8 +19244,7 @@
                                       cg2))
                                   {
                                     (let ret
-                                      (concat "  ret i64 "
-                                        (concat (strDup (memGetWordStr cgP 2)) "")))
+                                      (concat "  ret i64 " (concat (strDup (cgResult cgP)) "")))
                                     (emitLine (emitLine (closeAllocaMark cgP) ret) "}")
                                   }
                                 })
@@ -19084,7 +19495,7 @@
       1
       0)
     {
-      (let d (readAstNode cg 36))
+      (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
         0
         {
@@ -19111,7 +19522,7 @@
   (if (== (pairSlot cg 7) 1)
     (- 0 1)
     {
-      (let d (readAstNode cg 36))
+      (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
         (- 0 1)
         {
@@ -19169,9 +19580,9 @@
       {
         (allocParamSlots params slots cg 0)
         (retainRefParams params cg 0)
-        (memSetWord cg 27 (strDup name))
-        (memSetWord cg 28 slots)
-        (memSetWord cg 29 hdrB)
+        (cgSetTcoName cg (strDup name))
+        (cgSetTcoSlots cg slots)
+        (cgSetTcoLabel cg hdrB)
         (emitLine cg (concat "  br label %" hdrB))
         (emitLabel cg hdrB)
         cg
@@ -19214,14 +19625,14 @@
 ; the signature flags the emitter already carries.
 (pub :: paramFloatFlag (-> Int Int Int))
 (pub fn (paramFloatFlag cg i)
-  {
-    (let flags (memGetWordVec cg 18))
-    (if (== (as flags Int) 0)
-      0
+  (if (cgHasParamFlags cg)
+    {
+      (let flags (cgParamFlags cg))
       (if (>= i (vecLen flags))
         0
-        (vecGet flags i)))
-  })
+        (vecGet flags i))
+    }
+    0))
 
 ; The tail jump: every argument is evaluated into its own register
 ; FIRST, and only then are the parameter slots written. Assigning as
@@ -19247,22 +19658,22 @@
       ; iteration's (new values are retained by it), stored back
       ; like any reassigned parameter. Words 0 and 1 of `words`.
       {
-        (let sreg (lookupSym cg "__evw."))
-        (if (if (== sreg 0)
+        (let sidx (symIndex cg "__evw."))
+        (if (if (< sidx 0)
           false
           (>= (lookupSymKind cg "__evw.") 1))
           {
             (let cgO (emitEvwRead cg))
             {
-              (let oldW (strDup (memGetWordStr cgO 2)))
+              (let oldW (strDup (cgResult cgO)))
               {
                 (let cgV (emitEvWordVal cgO stamp))
                 {
-                  (let newW (strDup (memGetWordStr cgV 2)))
+                  (let newW (strDup (cgResult cgV)))
                   {
                     (emitLine cgV
                       (concat "  store i64 "
-                        (concat newW (concat ", ptr " (strDup (as sreg String))))))
+                        (concat newW (concat ", ptr " (strDup (symRegAt cg sidx))))))
                     (vecPush words (as oldW Int))
                     (vecPush words (as newW Int))
                   }
@@ -19296,15 +19707,15 @@
       ; name still resolves to the slot (a `let` shadowing it is a
       ; different value and pays).
       {
-        (let same (tailArgsUnchanged cg (memGetWordVec cg 28) args vecNew 0))
+        (let same (tailArgsUnchanged cg (cgTcoSlots cg) args vecNew 0))
         {
-          (retainTailVals (memGetWordVec cg 28) vals same cg (as (vecGet words 1) String) 0)
+          (retainTailVals (cgTcoSlots cg) vals same cg (as (vecGet words 1) String) 0)
           {
             (let olds vecNew)
             {
-              (loadTailOlds (memGetWordVec cg 28) olds cg 0)
-              (storeTailSlots (memGetWordVec cg 28) vals cg 0)
-              (releaseTailOlds (memGetWord cg 28) olds same cg (as (vecGet words 0) String) 0)
+              (loadTailOlds (cgTcoSlots cg) olds cg 0)
+              (storeTailSlots (cgTcoSlots cg) vals cg 0)
+              (releaseTailOlds olds same cg (as (vecGet words 0) String) 0)
             }
           }
         }
@@ -19313,15 +19724,15 @@
       ; back, exactly as after an ordinary call (`releaseOwnedArgs`):
       ; the boundary retain above is the slot's share, and
       ; `(grind (wide n) (- n 1))` otherwise kept one per iteration
-      (releaseTailTemps (memGetWordVec cg 28) args vals cg (as (vecGet words 1) String) 0)
+      (releaseTailTemps (cgTcoSlots cg) args vals cg (as (vecGet words 1) String) 0)
       ; and every releasable `let` (and owned scrutinee) still in scope:
       ; their scope ends are past the jump and will not be reached on
       ; this path; the values the slots keep were retained above
       (releasePending cg (cgPendingStrings cg) 0)
       ; and every owning `mut` slot still in scope, by what it holds now
       (releasePendingSlots cg (as (pairSlot cg 17) (Vec Int)) 0)
-      (emitLine cg (concat "  br label %" (memGetWordStr cg 29)))
-      (memSetWord cg 31 1)
+      (emitLine cg (concat "  br label %" (cgTcoLabel cg)))
+      (cgSetTerminated cg 1)
       (cgSetResult cg "0")
       cg
     }
@@ -19335,7 +19746,7 @@
   ; name (word 27): the exit release runs after the loop name is
   ; cleared, and read through it the mask was 0 at every `ret`
   {
-    (let d (readAstNode cg 36))
+    (let d (cgCurDecl cg))
     (if (nodeSame d nilNode)
       0
       {
@@ -19349,7 +19760,7 @@
 (pub :: curFnRetMask (-> Int Int))
 (pub fn (curFnRetMask cg)
   {
-    (let d (readAstNode cg 36))
+    (let d (cgCurDecl cg))
     (if (nodeSame d nilNode)
       0
       {
@@ -19416,7 +19827,7 @@
 ; the slot's, and a parameter this function parks keeps the slot's
 ; share for the stash (`releaseTailOlds` and the exit leave it), not
 ; the temporary's as well.
-(pub :: releaseTailTemps (-> Ints Nodes Strings Int String Int Int))
+(pub :: releaseTailTemps (-> Strings Nodes Strings Int String Int Int))
 (pub fn (releaseTailTemps slots args vals cg newW i)
   (if (>= i (vecLen slots))
     cg
@@ -19465,20 +19876,20 @@
 (pub :: releaseRefParamSlots (-> Int Int))
 (pub fn (releaseRefParamSlots cg)
   {
-    (let v (strDup (memGetWordStr cg 2)))
-    (let fl (memGetWord cg 14))
-    (let slots (memGetWordVec cg 28))
+    (let v (strDup (cgResult cg)))
+    (let fl (cgResultFloat cg))
+    (let slots (cgTcoSlots cg))
     {
       (let cgR (releaseRefParamSlotsFrom cg slots 0))
       {
         (cgSetResult cgR v)
-        (memSetWord cgR 14 fl)
+        (cgSetResultFloat cgR fl)
         cgR
       }
     }
   })
 
-(pub :: releaseRefParamSlotsFrom (-> Int Ints Int Int))
+(pub :: releaseRefParamSlotsFrom (-> Int Strings Int Int))
 (pub fn (releaseRefParamSlotsFrom cg slots i)
   (if (>= i (vecLen slots))
     cg
@@ -19494,9 +19905,8 @@
       (releaseRefParamSlotsFrom cg slots (+ i 1))
       (if (== (curParamRefClass cg i) 1)
         {
-          (let cgL (loadFromSlot cg (vecGetStr slots i)))
-          (releaseRefParamSlotsFrom (emitReleaseOf cgL (strDup (memGetWordStr cgL 2))) slots
-            (+ i 1))
+          (let cgL (loadFromSlot cg (vecGet slots i)))
+          (releaseRefParamSlotsFrom (emitReleaseOf cgL (strDup (cgResult cgL))) slots (+ i 1))
         }
         {
           (let k (curParamEvBit cg i))
@@ -19504,19 +19914,19 @@
             (releaseRefParamSlotsFrom cg slots (+ i 1))
             ; a type-variable slot: by the word current for it
             {
-              (let cgL (loadFromSlot cg (vecGetStr slots i)))
+              (let cgL (loadFromSlot cg (vecGet slots i)))
               {
-                (let v (strDup (memGetWordStr cgL 2)))
+                (let v (strDup (cgResult cgL)))
                 {
                   (let cgW (emitEvwRead cgL))
-                  (releaseRefParamSlotsFrom
-                    (emitRcIfBitOf cgW v k (strDup (memGetWordStr cgW 2)) 0) slots (+ i 1))
+                  (releaseRefParamSlotsFrom (emitRcIfBitOf cgW v k (strDup (cgResult cgW)) 0) slots
+                    (+ i 1))
                 }
               }
             })
         }))))
 
-(pub :: retainTailVals (-> Ints Strings Ints Int String Int Int))
+(pub :: retainTailVals (-> Strings Strings Ints Int String Int Int))
 (pub fn (retainTailVals slots vals same cg newW i)
   (if (>= i (vecLen slots))
     cg
@@ -19537,8 +19947,7 @@
 
 ; Flag per slot: 1 when argument i is the VAR of parameter i and the
 ; name still names the slot.
-(pub :: tailArgsUnchanged (-> Int Ints Nodes Ints Int Ints))
-;@axiom:effect(unsafe)
+(pub :: tailArgsUnchanged (-> Int Strings Nodes Ints Int Ints))
 (pub fn (tailArgsUnchanged cg slots args out i)
   (if (>= i (vecLen slots))
     out
@@ -19549,10 +19958,10 @@
           (if (!= (nodeTag a) TAG_E_VAR)
             0
             {
-              (let r (lookupSym cg (nodeAName a)))
-              (if (== r 0)
+              (let ri (symIndex cg (nodeAName a)))
+              (if (< ri 0)
                 0
-                (if (strEq (as r String) (vecGetStr slots i))
+                (if (strEq (symRegAt cg ri) (vecGet slots i))
                   1
                   0))
             }))
@@ -19560,15 +19969,15 @@
       }
     }))
 
-(pub :: loadTailOlds (-> Ints Strings Int Int Int))
+(pub :: loadTailOlds (-> Strings Strings Int Int Int))
 (pub fn (loadTailOlds slots olds cg i)
   (if (>= i (vecLen slots))
     cg
     {
       (if (|| (== (curParamRefClass cg i) 1) (>= (curParamEvBit cg i) 0))
         {
-          (loadFromSlot cg (vecGetStr slots i))
-          (vecPush olds (strDup (memGetWordStr cg 2)))
+          (loadFromSlot cg (vecGet slots i))
+          (vecPush olds (strDup (cgResult cg)))
         }
         (vecPush olds ""))
       (loadTailOlds slots olds cg (+ i 1))
@@ -19577,8 +19986,8 @@
 ; Not a parameter this function parks a word of: the iteration that
 ; parked it left the slot's share as the stash's keeper, and the
 ; jump must not take it back.
-(pub :: releaseTailOlds (-> Int Strings Ints Int String Int Int))
-(pub fn (releaseTailOlds slots olds same cg oldW i)
+(pub :: releaseTailOlds (-> Strings Ints Int String Int Int))
+(pub fn (releaseTailOlds olds same cg oldW i)
   (if (>= i (vecLen olds))
     cg
     {
@@ -19593,7 +20002,7 @@
                 cg
                 (emitRcIfBitOf cg (as (vecGet olds i) String) k oldW 0))
             })))
-      (releaseTailOlds slots olds same cg1 oldW (+ i 1))
+      (releaseTailOlds olds same cg1 oldW (+ i 1))
     }))
 
 ; A parameter slot is an `alloca`; reading it is the same load
@@ -19620,17 +20029,17 @@
     0
     {
       (emitExpr (vecGet args i) cg)
-      (vecPush vals (strDup (memGetWordStr cg 2)))
+      (vecPush vals (strDup (cgResult cg)))
       (evalTailArgs args vals cg (+ i 1))
     }))
 
-(pub :: storeTailSlots (-> Ints (Vec a) Int Int Int))
+(pub :: storeTailSlots (-> Strings (Vec a) Int Int Int))
 (pub fn (storeTailSlots slots vals cg i)
   (if (>= i (vecLen slots))
     0
     {
       (emitLine cg
-        (concat "  store i64 " (concat (vecGetStr vals i) (concat ", ptr " (vecGetStr slots i)))))
+        (concat "  store i64 " (concat (vecGetStr vals i) (concat ", ptr " (vecGet slots i)))))
       (storeTailSlots slots vals cg (+ i 1))
     }))
 
@@ -19803,14 +20212,14 @@
               ; retain is owed for this node - which is what a `musttail`
               ; needs (`mustTailOK`); 1 when `retainTailLeaf` will retain
               ; after it. Both read as "tail" in `dispatchCall`.
-              (memSetWord cg 30
-                (if (== (nodeInVec (readAstNodes cg 41) e 0) 1)
+              (cgSetTailOK cg
+                (if (== (nodeInVec (cgTailRetain cg) e 0) 1)
                   1
                   3))
               {
                 (let cgA (emitExpr e cg))
                 {
-                  (memSetWord cgA 30 0)
+                  (cgSetTailOK cgA 0)
                   (retainTailLeaf e cgA)
                 }
               }
@@ -19862,7 +20271,7 @@
           {
             (let cg2
               (if (== (valueOwnedRef cg1 e) 1)
-                (emitReleaseOf cg1 (strDup (memGetWordStr cg1 2)))
+                (emitReleaseOf cg1 (strDup (cgResult cg1)))
                 cg1))
             (emitSeqTail exprs cg2 (+ i 1))
           }
@@ -19909,10 +20318,10 @@
     (let cg1 (emitExpr scrutExpr cg))
     (let gotPair (pairSlot cg1 1))
     (let _z (pairSetSlot cg1 1 0))
-    (let sv (strDup (memGetWordStr cg1 2)))
+    (let sv (strDup (cgResult cg1)))
     (let tagR
       (if (== gotPair 2)
-        (strDup (vecGetStr (memGetWordVec cg1 46) 3))
+        (strDup (pairTagReg cg1))
         ""))
     (let cn (allocReg cg1))
     (let cell (regStr cn))
@@ -19948,11 +20357,11 @@
     (let cg3 (loadWordAt cg2 cell 0))
     (let armFlag (memGetWord ff 0))
     (let _3
-      (memSetWord cg3 14
+      (cgSetResultFloat cg3
         (if (== armFlag (- 0 1))
           0
           armFlag)))
-    (let _4 (memSetWord cg3 31 0))
+    (let _4 (cgSetTerminated cg3 0))
     (if (== rel 1)
       (releaseScrutinee sv cg3 scrutExpr)
       cg3)
@@ -19983,17 +20392,17 @@
           (let cgB (emitExprTail body cgP))
           (let _ff
             (if (== i 0)
-              (memSetWord ff 0 (memGetWord cgB 14))
+              (memSetWord ff 0 (cgResultFloat cgB))
               0))
           {
-            (let termd (memGetWord cgB 31))
+            (let termd (cgTerminated cgB))
             {
               (if (! (== termd 1))
                 {
-                  (storeWordAt cgB cell 0 (strDup (memGetWordStr cgB 2)))
+                  (storeWordAt cgB cell 0 (strDup (cgResult cgB)))
                   (emitLine cgB (concat "  br label %" mergeB))
                 })
-              (memSetWord cgB 31 0)
+              (cgSetTerminated cgB 0)
               (emitLabel cgB nextB)
               (symRestore cgB mark)
               (emitArmsTail arms sv cell mergeB cgB (+ i 1) ff)
@@ -20016,7 +20425,7 @@
     (let thenExpr (nodeBChild node))
     (let elseExpr (nodeCChild node))
     (let cg1 (emitExpr testExpr cg))
-    (let testReg (strDup (memGetWordStr cg1 2)))
+    (let testReg (strDup (cgResult cg1)))
     (let cmpN (allocReg cg1))
     (let thenLbl (allocReg cg1))
     (let elseLbl (allocReg cg1))
@@ -20033,20 +20442,20 @@
           (concat thenB (concat (concat ", label %" elseB) "")))))
     (let _3 (emitLabel cg1 thenB))
     (let cg2 (emitExprTail thenExpr cg1))
-    (let thenTerm (memGetWord cg2 31))
-    (let thenVal (strDup (memGetWordStr cg2 2)))
-    (let thenFlag (memGetWord cg2 14))
-    (let thenPred (strDup (memGetWordStr cg2 11)))
+    (let thenTerm (cgTerminated cg2))
+    (let thenVal (strDup (cgResult cg2)))
+    (let thenFlag (cgResultFloat cg2))
+    (let thenPred (strDup (cgBlock cg2)))
     (let _4
       (if (== thenTerm 1)
         0
         (emitLine cg2 (concat "  br label %" mergeB))))
-    (let _4b (memSetWord cg2 31 0))
+    (let _4b (cgSetTerminated cg2 0))
     (let _5 (emitLabel cg2 elseB))
     (let cg3 (emitExprTail elseExpr cg2))
-    (let elseTerm (memGetWord cg3 31))
-    (let elseVal (strDup (memGetWordStr cg3 2)))
-    (let elsePred (strDup (memGetWordStr cg3 11)))
+    (let elseTerm (cgTerminated cg3))
+    (let elseVal (strDup (cgResult cg3)))
+    (let elsePred (strDup (cgBlock cg3)))
     (let _6
       (if (== elseTerm 1)
         0
@@ -20055,7 +20464,7 @@
       ; Neither arm falls through: the whole `if` is a jump, there is
       ; nothing to merge, and the caller must not emit a `ret`.
       {
-        (memSetWord cg3 31 1)
+        (cgSetTerminated cg3 1)
         cg3
       }
       (if (== thenTerm 1)
@@ -20065,16 +20474,16 @@
         {
           (emitLabel cg3 mergeB)
           (cgSetResult cg3 elseVal)
-          (memSetWord cg3 14 (memGetWord cg3 14))
-          (memSetWord cg3 31 0)
+          (cgSetResultFloat cg3 (cgResultFloat cg3))
+          (cgSetTerminated cg3 0)
           cg3
         }
         (if (== elseTerm 1)
           {
             (emitLabel cg3 mergeB)
             (cgSetResult cg3 thenVal)
-            (memSetWord cg3 14 thenFlag)
-            (memSetWord cg3 31 0)
+            (cgSetResultFloat cg3 thenFlag)
+            (cgSetTerminated cg3 0)
             cg3
           }
           {
@@ -20088,8 +20497,8 @@
                     (concat (concat ", %" (concat thenPred " ], [ "))
                       (concat (concat elseVal (concat ", %" elsePred)) " ]"))))
                 (cgSetResult cg3 phiR)
-                (memSetWord cg3 14 thenFlag)
-                (memSetWord cg3 31 0)
+                (cgSetResultFloat cg3 thenFlag)
+                (cgSetTerminated cg3 0)
                 cg3
               }
             }
@@ -20168,37 +20577,37 @@
   {
     (let out vecNew)
     {
-      (capFromVec (memGetWordVec cg 17) lparams body out 0)
-      (capFromVec (memGetWordVec cg 6) lparams body out 0)
+      (if (cgHasParams cg)
+        (capFromVec (cgParams cg) lparams body out 0))
+      (capFromVec (cgSymNames cg) lparams body out 0)
       out
     }
   })
 
-(pub :: capFromVec (-> Ints Strings ASTNode Strings Int Int))
+; Each name is read with `vecGetStr`, as `pruneRebuild` reads its lines,
+; so `out` does not count as holding parts of `src`.
+(pub :: capFromVec (-> Strings Strings ASTNode Strings Int Int))
 (pub fn (capFromVec src lparams body out i)
-  (if (== (as src Int) 0)
+  (if (>= i (vecLen src))
     0
-    (if (>= i (vecLen src))
-      0
+    {
       {
-        {
-          (let name (vecGetStr src i))
-          (if (! (>= (strIndexIn lparams name) 0))
-            (if (! (>= (strIndexIn out name) 0))
-              ; `"__evw."` is the enclosing FUNCTION's word and
-              ; `"__evwa."*` are the enclosing LAMBDAS' - a body reads
-              ; either without naming it, so `mentions` cannot see
-              ; them and they are taken unconditionally. Without the
-              ; second, `(lambda (a b) (vecPush box a))` stored `a`
-              ; uncounted: by the time the store runs `a` is a capture
-              ; in the inner lambda, and the word that classifies it
-              ; belonged to the outer one.
-              (if (|| (strEq name "__evw.")
-                    (|| (== (isEvwaName name) 1) (== (mentions name body) 1)))
-                (vecPush out name))))
-        }
-        (capFromVec src lparams body out (+ i 1))
-      })))
+        (let name (vecGetStr src i))
+        (if (! (>= (strIndexIn lparams name) 0))
+          (if (! (>= (strIndexIn out name) 0))
+            ; `"__evw."` is the enclosing FUNCTION's word and
+            ; `"__evwa."*` are the enclosing LAMBDAS' - a body reads
+            ; either without naming it, so `mentions` cannot see
+            ; them and they are taken unconditionally. Without the
+            ; second, `(lambda (a b) (vecPush box a))` stored `a`
+            ; uncounted: by the time the store runs `a` is a capture
+            ; in the inner lambda, and the word that classifies it
+            ; belonged to the outer one.
+            (if (|| (strEq name "__evw.") (|| (== (isEvwaName name) 1) (== (mentions name body) 1)))
+              (vecPush out name))))
+      }
+      (capFromVec src lparams body out (+ i 1))
+    }))
 
 (pub :: strIndexIn (-> (Vec a) String Int))
 (pub fn (strIndexIn v name)
@@ -20225,9 +20634,9 @@
     {
       (let cg1 (emitVar (mkEVar (vecGetStr capNames i)) cg))
       {
-        (vecPush capRegs (strDup (memGetWordStr cg1 2)))
+        (vecPush capRegs (strDup (cgResult cg1)))
         (vecPush capFloats
-          (+ (memGetWord cg1 14)
+          (+ (cgResultFloat cg1)
             (if (captureCounted cg1 (vecGetStr capNames i))
               2
               0)))
@@ -20271,14 +20680,14 @@
   {
     (let lparams (nodeANames node))
     (let body (nodeBChild node))
-    (let n (memGetWord cg 22))
+    (let n (cgLamN cg))
     {
       (let lname (concat "_lam_" (fmtInt n)))
       (let capNames (collectCapNames cg lparams body))
       (let capRegs vecNew)
       (let capFloats vecNew)
       {
-        (memSetWord cg 22 (+ n 1))
+        (cgSetLamN cg (+ n 1))
         (capValues cg capNames capRegs capFloats 0)
         {
           (let k (vecLen capNames))
@@ -20346,11 +20755,10 @@
               ; their outer frame cannot prove a release safe.
               (retainParamCaps cg capNames capRegs 0)
               (storeCaps cg pr capRegs 0)
-              (memSetWord cg 21
-                (vecPush (memGetWordVec cg 21)
-                  (mkLamDesc lname lparams body capNames capFloats (nodeBinderTyChild node))))
+              (vecPush (cgPendingLams cg)
+                (mkLamDesc lname lparams body capNames capFloats (nodeBinderTyChild node)))
               (cgSetResult cg pr)
-              (memSetWord cg 14 0)
+              (cgSetResultFloat cg 0)
               cg
             }
           }
@@ -20388,7 +20796,7 @@
 (pub :: curParamIndex (-> Int String Int))
 (pub fn (curParamIndex cg name)
   {
-    (let ps (memGetWordVec cg 17))
+    (let ps (cgParams cg))
     (if (== (as ps Int) 0)
       (- 0 1)
       (strIndexIn ps name))
@@ -20419,7 +20827,7 @@
 ;@axiom:effect(io)
 (pub fn (drainPending cg)
   {
-    (let pend (memGetWordVec cg 21))
+    (let pend (cgPendingLams cg))
     (if (== (vecLen pend) 0)
       (drainThunks cg)
       (drainPending (emitLamDef (vecPop pend) cg)))
@@ -20474,21 +20882,21 @@
       (if (nodeSame checkedTy nilNode)
         nilNode
         (tyResolve (nodeBChild checkedTy))))
-    (let savedSelf (memGetWord cg 27))
-    (let savedTails (memGetWordVec cg 41))
+    (let savedSelf (cgTcoNameWord cg))
+    (let savedTails (cgTailRetain cg))
     {
       (let paramStr (emitParams lparams cg 0))
-      (let _ (memSetWord cg 1 0))
-      (let _2 (vecClear (memGetWordVec cg 6)))
-      (let _3 (vecClear (memGetWordVec cg 7)))
-      (let _4 (vecClear (memGetWordVec cg 16)))
-      (let _4b (vecClear (memGetWordVec cg 20)))
-      (let _5 (memSetWord cg 17 lparams))
-      (let _6 (memSetWord cg 18 0))
+      (let _ (cgSetTmp cg 0))
+      (let _2 (vecClear (cgSymNames cg)))
+      (let _3 (vecClear (cgSymRegs cg)))
+      (let _4 (vecClear (cgSymFloats cg)))
+      (let _4b (vecClear (cgSymKinds cg)))
+      (let _5 (cgSetParams cg lparams))
+      (let _6 (cgClearParamFlags cg))
       (let _6b (pairSetSlot cg 6 0))
       (let _6c (pairSetSlot cg 7 1))
       (let _6e (pairSetSlot cg 14 checkedTy))
-      (let _6f (memSetWord cg 27 0))
+      (let _6f (cgSetTcoNameWord cg 0))
       (let _6s (memSetWord (pairSlot cg 18) 0 0))
       (let rgnSaved (pairSlot cg 9))
       (let _6d (pairSetSlot cg 9 0))
@@ -20519,7 +20927,7 @@
               (let cg1c (bindCaps cg1b capNames capFloats 0))
               {
                 (let _t
-                  (memSetWord cg1c 41
+                  (cgSetTailRetain cg1c
                     (if (!= (fldClass cg1c resultTy) 0)
                       {
                         (let tails vecNew)
@@ -20532,10 +20940,10 @@
                 {
                   (let cg2 (emitExprTail body cg1c))
                   {
-                    (let ret (concat "  ret i64 " (concat (strDup (memGetWordStr cg2 2)) "")))
+                    (let ret (concat "  ret i64 " (concat (strDup (cgResult cg2)) "")))
                     {
-                      (memSetWord cg2 41 savedTails)
-                      (memSetWord cg2 27 savedSelf)
+                      (cgSetTailRetain cg2 savedTails)
+                      (cgSetTcoNameWord cg2 savedSelf)
                       (pairSetSlot cg2 14 0)
                       (pairSetSlot
                         (pairSetSlot (emitLine (emitLine (closeAllocaMark cg2) ret) "}") 7 0) 9
@@ -20565,7 +20973,7 @@
               (evwaDeeper nm)
               nm)
           }
-          (strDup (memGetWordStr cg1 2)) (% (vecGet capFloats i) 2)
+          (strDup (cgResult cg1)) (% (vecGet capFloats i) 2)
           (if (>= (vecGet capFloats i) 2)
             3
             0))
@@ -20578,14 +20986,14 @@
 (pub :: thunkIndexFor (-> Int String Int Int))
 (pub fn (thunkIndexFor cg full ar)
   {
-    (let idx (strIndexIn (memGetWordVec cg 23) full))
+    (let idx (strIndexIn (cgThunkFulls cg) full))
     (if (>= idx 0)
       idx
       {
-        (let n (vecLen (memGetWordVec cg 23)))
+        (let n (vecLen (cgThunkFulls cg)))
         {
-          (vecPush (memGetWordVec cg 23) (strDup full))
-          (vecPush (memGetWordVec cg 24) ar)
+          (vecPush (cgThunkFulls cg) (strDup full))
+          (vecPush (cgThunkArities cg) ar)
           n
         }
       })
@@ -20609,11 +21017,11 @@
 (pub :: drainThunks (-> Int Int))
 (pub fn (drainThunks cg)
   {
-    (let i (memGetWord cg 25))
-    (if (>= i (vecLen (memGetWordVec cg 23)))
+    (let i (cgThunksEmitted cg))
+    (if (>= i (vecLen (cgThunkFulls cg)))
       cg
       {
-        (memSetWord cg 25 (+ i 1))
+        (cgSetThunksEmitted cg (+ i 1))
         (drainThunks (emitThunkDef i cg))
       })
   })
@@ -20634,8 +21042,8 @@
   ; definition called with three would leave the callee reading a
   ; register nobody set.
   {
-    (let full (vecGetStr (memGetWordVec cg 23) i))
-    (let ar (vecGet (memGetWordVec cg 24) i))
+    (let full (vecGetStr (cgThunkFulls cg) i))
+    (let ar (vecGet (cgThunkArities cg) i))
     {
       ; Payload word zero is the code pointer. The two preceding words
       ; preserve the runtime's count/shape ABI; -1 makes retains and
@@ -20752,10 +21160,10 @@
 (pub fn (bindSym cg name reg isFloat kind)
   {
     ; These scratch headers remain stable across growth and scopes.
-    (vecPush (memGetWordVec cg 6) name)
-    (vecPush (memGetWordVec cg 7) reg)
-    (vecPush (memGetWordVec cg 16) isFloat)
-    (vecPush (memGetWordVec cg 20) kind)
+    (vecPush (cgSymNames cg) name)
+    (vecPush (cgSymRegs cg) reg)
+    (vecPush (cgSymFloats cg) isFloat)
+    (vecPush (cgSymKinds cg) kind)
     cg
   })
 
@@ -20766,13 +21174,13 @@
 ; value that does not exist on the path that reaches it.
 (pub :: symMark (-> Int Int))
 (pub fn (symMark cg)
-  (vecLen (memGetWordVec cg 6)))
+  (vecLen (cgSymNames cg)))
 
 (pub :: symRestore (-> Int Int Int))
 (pub fn (symRestore cg mark)
   {
-    (let names (memGetWordVec cg 6))
-    (let regs (memGetWordVec cg 7))
+    (let names (cgSymNames cg))
+    (let regs (cgSymRegs cg))
     (let mut i (vecLen names))
     ; Replacing counted slots gives their shares back before the raw
     ; length change hides them. Static empty strings need no storage.
@@ -20803,7 +21211,7 @@
     (let tg (nodeTag pat))
     (if (== tg TAG_P_CON0)
       {
-        (let en (lookupType (memGetWordVec cg 3) (nodeAName pat)))
+        (let en (lookupType (cgTypes cg) (nodeAName pat)))
         (if (== en 0)
           cg
           (emitPatTest (constStr (eTag en)) (strDup tagR) failB cg))
@@ -20813,7 +21221,7 @@
         (if (== h 0)
           cg
           {
-            (let en (lookupType (memGetWordVec cg 3) (as h String)))
+            (let en (lookupType (cgTypes cg) (as h String)))
             (if (== en 0)
               cg
               {
@@ -20896,10 +21304,10 @@
           (let cgB (emitExpr body cgP))
           (let _ff
             (if (== i 0)
-              (memSetWord ff 0 (memGetWord cgB 14))
+              (memSetWord ff 0 (cgResultFloat cgB))
               0))
-          (let termd (memGetWord cgB 31))
-          (let bv (strDup (memGetWordStr cgB 2)))
+          (let termd (cgTerminated cgB))
+          (let bv (strDup (cgResult cgB)))
           (let _r
             (if (== termd 1)
               cgB
@@ -20916,7 +21324,7 @@
             (if (== termd 1)
               0
               (emitLine cgB (concat "  br label %" mergeB))))
-          (let _z (memSetWord cgB 31 0))
+          (let _z (cgSetTerminated cgB 0))
           (let _f (emitLabel cgB nextB))
           (let _g (symRestore cgB mark))
           (emitPairArms arms tagR payR cell mergeB cgB (+ i 1) ff rt rel)
@@ -20969,17 +21377,17 @@
           (let cgB (emitExprTail body cgP))
           (let _ff
             (if (== i 0)
-              (memSetWord ff 0 (memGetWord cgB 14))
+              (memSetWord ff 0 (cgResultFloat cgB))
               0))
           {
-            (let termd (memGetWord cgB 31))
+            (let termd (cgTerminated cgB))
             {
               (if (! (== termd 1))
                 {
-                  (storeWordAt cgB cell 0 (strDup (memGetWordStr cgB 2)))
+                  (storeWordAt cgB cell 0 (strDup (cgResult cgB)))
                   (emitLine cgB (concat "  br label %" mergeB))
                 })
-              (memSetWord cgB 31 0)
+              (cgSetTerminated cgB 0)
               (emitLabel cgB nextB)
               (symRestore cgB mark)
               (emitPairArmsTail arms tagR payR cell mergeB cgB (+ i 1) ff)
@@ -21051,7 +21459,7 @@
       (let hn (spineHeadName scrutExpr))
       (if (== (strLen hn) 0)
         0
-        (if (== (pairNamesHas (vecGetVec (memGetWordVec cg 46) 2) (mangledForCg cg hn)) 0)
+        (if (== (pairNamesHas (pairNames cg) (mangledForCg cg hn)) 0)
           0
           (pairArmsOK cg arms 0)))
     }))
@@ -21084,10 +21492,10 @@
     (let cg1 (emitExpr scrutExpr cg))
     (let gotPair (pairSlot cg1 1))
     (let _z (pairSetSlot cg1 1 0))
-    (let sv (strDup (memGetWordStr cg1 2)))
+    (let sv (strDup (cgResult cg1)))
     (let tagR
       (if (== gotPair 2)
-        (strDup (vecGetStr (memGetWordVec cg1 46) 3))
+        (strDup (pairTagReg cg1))
         ""))
     (let cn (allocReg cg1))
     (let cell (regStr cn))
@@ -21130,7 +21538,7 @@
     (let cg3 (loadWordAt cg2 cell 0))
     (let armFlag (memGetWord ff 0))
     (let _3
-      (memSetWord cg3 14
+      (cgSetResultFloat cg3
         (if (== armFlag (- 0 1))
           0
           armFlag)))
@@ -21227,8 +21635,8 @@
   ; drift. Shared by the tail and non-tail emitters: the rule is
   ; position-independent by construction.
   {
-    (let v (strDup (memGetWordStr cg 2)))
-    (let fl (memGetWord cg 14))
+    (let v (strDup (cgResult cg)))
+    (let fl (cgResultFloat cg))
     {
       (let cgR
         (if (&& (!= (pairSlot cg 9) 0)
@@ -21240,7 +21648,7 @@
           (emitReleaseOf cg sv)))
       {
         (cgSetResult cgR v)
-        (memSetWord cgR 14 fl)
+        (cgSetResultFloat cgR fl)
         cgR
       }
     }
@@ -21289,10 +21697,10 @@
           (let cgB (emitExpr body cgP))
           (let _ff
             (if (== i 0)
-              (memSetWord ff 0 (memGetWord cgB 14))
+              (memSetWord ff 0 (cgResultFloat cgB))
               0))
-          (let termd (memGetWord cgB 31))
-          (let bv (strDup (memGetWordStr cgB 2)))
+          (let termd (cgTerminated cgB))
+          (let bv (strDup (cgResult cgB)))
           (let _d
             (if (== termd 1)
               0
@@ -21301,7 +21709,7 @@
             (if (== termd 1)
               0
               (emitLine cgB (concat "  br label %" mergeB))))
-          (let _z (memSetWord cgB 31 0))
+          (let _z (cgSetTerminated cgB 0))
           (let _f (emitLabel cgB nextB))
           (let _g (symRestore cgB mark))
           (emitArms arms sv cell mergeB cgB (+ i 1) ff)
@@ -21384,7 +21792,7 @@
             ; agreement of the two.
             {
               (let cgS (emitStrExpr pat cg))
-              (emitPatStrTest (strDup (memGetWordStr cgS 2)) vr failB cgS)
+              (emitPatStrTest (strDup (cgResult cgS)) vr failB cgS)
             }
             (if (== tag TAG_E_VAR)
               ; `true`/`false` are literal tests. Every OTHER bare name - a
@@ -21405,15 +21813,14 @@
                 ; constructor of a non-unboxing type is still a one-word block
                 ; whose tag loads from word 0.
                 {
-                  (let entry (lookupType (memGetWordVec cg 3) (nodeAName pat)))
+                  (let entry (lookupType (cgTypes cg) (nodeAName pat)))
                   (if (== entry 0)
                     (bindSym cg (nodeAName pat) (strDup vr) (patFloatFlag pat isFloat) 0)
                     (if (!= (eRep entry) 0)
                       (emitPatTest (constStr (eTag entry)) vr failB cg)
                       {
                         (let cgL (loadWordAt cg vr 0))
-                        (emitPatTest (constStr (eTag entry)) (strDup (memGetWordStr cgL 2)) failB
-                          cgL)
+                        (emitPatTest (constStr (eTag entry)) (strDup (cgResult cgL)) failB cgL)
                       }))
                 }
                 ; A NAMED constructor pattern is reordered into the positional
@@ -21425,7 +21832,7 @@
                 ; answer.
                 (if (== tag TAG_P_CONNAMED)
                   {
-                    (let ent (lookupType (memGetWordVec cg 3) (nodeAName pat)))
+                    (let ent (lookupType (cgTypes cg) (nodeAName pat)))
                     (if (|| (== ent 0) (== (eFieldNames ent) 0))
                       cg
                       (emitPatMatch
@@ -21440,7 +21847,7 @@
                         (let entry
                           (if (== cname 0)
                             0
-                            (lookupType (memGetWordVec cg 3) (as cname String))))
+                            (lookupType (cgTypes cg) (as cname String))))
                         (if (== entry 0)
                           ; An application whose head is no constructor - nothing
                           ; well-typed produces this; match everything, bind
@@ -21458,8 +21865,8 @@
                                 (loadWordAt cg vr 0)))
                             {
                               (let cgT
-                                (emitPatTest (constStr (eTag entry)) (strDup (memGetWordStr cgL 2))
-                                  failB cgL))
+                                (emitPatTest (constStr (eTag entry)) (strDup (cgResult cgL)) failB
+                                  cgL))
                               (emitPatFields (patArgs pat vecNew) (eFieldFlagsVec entry) vr failB
                                 cgT 0)
                             }
@@ -21513,7 +21920,7 @@
                     {
                       (let cg8 (loadWordAt cg7 vr 0))
                       {
-                        (let cg9 (storeWordAt cg8 cell 0 (strDup (memGetWordStr cg8 2))))
+                        (let cg9 (storeWordAt cg8 cell 0 (strDup (cgResult cg8))))
                         {
                           (let cg10 (emitLine cg9 (concat "  br label %" mergeB)))
                           {
@@ -21583,7 +21990,7 @@
     {
       (let cgL (loadWordAt cg vr (+ i 1)))
       {
-        (let fr (strDup (memGetWordStr cgL 2)))
+        (let fr (strDup (cgResult cgL)))
         (let fl
           (if (== (as flags Int) 0)
             0
@@ -21647,15 +22054,15 @@
 (pub :: retainTailLeaf (-> ASTNode Int Int))
 (pub fn (retainTailLeaf node cg)
   {
-    (let tr (readAstNodes cg 41))
+    (let tr (cgTailRetain cg))
     (if (== (vecLen tr) 0)
       cg
-      (if (== (memGetWord cg 31) 1)
+      (if (== (cgTerminated cg) 1)
         cg
         (if (== (nodeInVec tr node 0) 1)
           {
-            (let v (strDup (memGetWordStr cg 2)))
-            (let fl (memGetWord cg 14))
+            (let v (strDup (cgResult cg)))
+            (let fl (cgResultFloat cg))
             (let lamTy (pairNode cg 14))
             {
               (let cgR
@@ -21670,7 +22077,7 @@
                   (emitRetainOf cg v)))
               {
                 (cgSetResult cgR v)
-                (memSetWord cgR 14 fl)
+                (cgSetResultFloat cgR fl)
                 cgR
               }
             }
@@ -21766,7 +22173,7 @@
   (if (>= i (vecLen effs))
     0
     {
-      (let e (lookupEffFor cg (memGetWordVec cg 32) (nodeAName (vecGet effs i))))
+      (let e (lookupEffFor cg (cgEffDecls cg) (nodeAName (vecGet effs i))))
       (if (!= e 0)
         e
         (handleEffectEntFrom effs cg (+ i 1)))
@@ -21814,11 +22221,11 @@
   ; balance the standing rule demands, that a retain
   ; must be one an existing map can return.
   {
-    (let _0 (memSetWord cg 30 0))
+    (let _0 (cgSetTailOK cg 0))
     {
       (let cgH (emitExpr (nodeCChild node) cg))
       {
-        (let hval (strDup (memGetWordStr cgH 2)))
+        (let hval (strDup (cgResult cgH)))
         (let recN (allocReg cgH))
         (let oldN (allocReg cgH))
         {
@@ -21839,12 +22246,12 @@
             (let _3b (emitRetainOf cgH old))
             (let _4 (storeWordAt cgH rec 1 old))
             (let _5 (emitLine cgH (concat "  store i64 " (concat rec (concat ", ptr @" slot)))))
-            (let _6 (memSetWord cgH 30 0))
+            (let _6 (cgSetTailOK cgH 0))
             {
               (let cgB (emitExpr (nodeAChild node) cgH))
               {
-                (let res (strDup (memGetWordStr cgB 2)))
-                (let flag (memGetWord cgB 14))
+                (let res (strDup (cgResult cgB)))
+                (let flag (cgResultFloat cgB))
                 {
                   {
                     (emitLine cgB (concat "  store i64 " (concat old (concat ", ptr @" slot))))
@@ -21861,7 +22268,7 @@
                     (emitReleaseOf cgB (strDup rec))
                   }
                   (cgSetResult cgB res)
-                  (memSetWord cgB 14 flag)
+                  (cgSetResultFloat cgB flag)
                   cgB
                 }
               }
@@ -21929,11 +22336,11 @@
             {
               (let cgL (loadWordAt cgA rec 0))
               {
-                (let handler (strDup (memGetWordStr cgL 2)))
+                (let handler (strDup (cgResult cgL)))
                 {
                   (let cgP (loadWordAt cgL rec 1))
                   {
-                    (let prev (strDup (memGetWordStr cgP 2)))
+                    (let prev (strDup (cgResult cgP)))
                     {
                       (let _8
                         (emitLine cgP
@@ -21941,12 +22348,12 @@
                       {
                         (let cgR (emitApplyRegs args regs cgP handler 0 snode))
                         {
-                          (let res (strDup (memGetWordStr cgR 2)))
+                          (let res (strDup (cgResult cgR)))
                           {
                             (emitLine cgR
                               (concat "  store i64 " (concat rec (concat ", ptr @" slot))))
                             (cgSetResult cgR res)
-                            (memSetWord cgR 14 0)
+                            (cgSetResultFloat cgR 0)
                             cgR
                           }
                         }
@@ -21972,7 +22379,7 @@
     {
       (let cgA (emitExpr (vecGet args i) cg))
       {
-        (vecPush out (strDup (memGetWordStr cgA 2)))
+        (vecPush out (strDup (cgResult cgA)))
         (emitArgRegs args cgA out (+ i 1))
       }
     }))
@@ -22005,7 +22412,7 @@
   (if (>= i (vecLen regs))
     {
       (cgSetResult cg rec)
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       cg
     }
     ; 0, and STATED rather than defaulted: the handler here is a
@@ -22041,7 +22448,7 @@
                         (== (nodeResWord snode) 1)))))
               (emitReleaseOf cgD (vecGetStr regs i))
               cgD))
-          (emitApplyRegsOwned args regs cgE (strDup (memGetWordStr cgE 2)) (+ i 1) 1 snode)
+          (emitApplyRegsOwned args regs cgE (strDup (cgResult cgE)) (+ i 1) 1 snode)
         }
       }
     }))
@@ -22057,7 +22464,7 @@
 (pub :: emitEffectGlobals (-> Int Int Int))
 (pub fn (emitEffectGlobals cg i)
   {
-    (let tbl (memGetWordVec cg 32))
+    (let tbl (cgEffDecls cg))
     (if (>= i (vecLen tbl))
       (if (== (vecLen tbl) 0)
         cg
@@ -22148,14 +22555,14 @@
 ;@axiom:effect(io)
 (pub fn (emitStructConExpr node cg)
   {
-    (let types (memGetWordVec cg 3))
+    (let types (cgTypes cg))
     (let args (nodeBChildren node))
     {
       (let entry (lookupType types (nodeAName node)))
       (if (== entry 0)
         {
           (cgSetResult cg (constStr 0))
-          (memSetWord cg 14 0)
+          (cgSetResultFloat cg 0)
           cg
         }
         (zeroFloat (emitConstructor args entry nilNode cg)))
@@ -22197,8 +22604,8 @@
   {
     (let cgB (emitExpr (nodeAChild node) cg))
     {
-      (let base (strDup (memGetWordStr cgB 2)))
-      (let fi (resolveStructField (memGetWordVec cgB 3) node))
+      (let base (strDup (cgResult cgB)))
+      (let fi (resolveStructField (cgTypes cgB) node))
       (if (nodeSame fi nilNode)
         (dieCodegenDiag "unknown struct field: " (nodeBName node))
         ; A generic field's reference bit was fixed at construction.
@@ -22212,7 +22619,7 @@
               cgB))
           (let shape
             (if (== cls 1)
-              (strDup (memGetWordStr cgH 2))
+              (strDup (cgResult cgH))
               ""))
           (let bit (+ 16 (/ (nodeA fi) 8)))
           (let cgL
@@ -22221,10 +22628,10 @@
               cgH))
           (let old
             (if owns
-              (strDup (memGetWordStr cgL 2))
+              (strDup (cgResult cgL))
               ""))
           (let cgV (emitExpr (nodeCChild node) cgL))
-          (let v (strDup (memGetWordStr cgV 2)))
+          (let v (strDup (cgResult cgV)))
           (let cgR
             (if (&& owns (!= (argIsDirectCon cgV (nodeCChild node)) 1))
               (emitStructFieldRc cgV cls shape bit v 1)
@@ -22242,7 +22649,7 @@
               cgD))
           {
             (cgSetResult cgT (constStr 0))
-            (memSetWord cgT 14 0)
+            (cgSetResultFloat cgT 0)
             cgT
           }
         })
@@ -22268,21 +22675,21 @@
   {
     (let cgB (emitExpr (nodeAChild node) cg))
     {
-      (let base (strDup (memGetWordStr cgB 2)))
-      (let fi (resolveStructField (memGetWordVec cgB 3) node))
+      (let base (strDup (cgResult cgB)))
+      (let fi (resolveStructField (cgTypes cgB) node))
       (if (nodeSame fi nilNode)
         ; Not a struct field: it may be a DATA constructor's named
         ; field. Those live PAST THE TAG WORD, so the offset is
         ; index + 1 where a struct's is index - a struct carries no
         ; tag. stage0 searches every data type, first match winning.
         {
-          (let di (resolveDataField (memGetWordVec cgB 3) node))
+          (let di (resolveDataField (cgTypes cgB) node))
           (if (nodeSame di nilNode)
             (dieCodegenDiag "unknown struct field: " (nodeBName node))
             {
               (let cgL (loadWordAt cgB base (+ (nodeA di) 1)))
               {
-                (memSetWord cgL 14 (nodeB di))
+                (cgSetResultFloat cgL (nodeB di))
                 cgL
               }
             })
@@ -22290,7 +22697,7 @@
         {
           (let cgL (loadStructFieldAt cgB base (nodeA fi) (nodeTyChild fi)))
           {
-            (memSetWord cgL 14 (nodeB fi))
+            (cgSetResultFloat cgL (nodeB fi))
             cgL
           }
         })
@@ -22559,7 +22966,7 @@
     (let v (nodeA node))
     {
       (cgSetResult cg (constStr v))
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       cg
     }
   })
@@ -22574,7 +22981,7 @@
     (let bits (nodeA node))
     {
       (cgSetResult cg (constStr bits))
-      (memSetWord cg 14 1)
+      (cgSetResultFloat cg 1)
       cg
     }
   })
@@ -22583,7 +22990,6 @@
 ; Checks symbol table first (let-bound variables), then type registry (constructors).
 (pub :: emitVar (-> ASTNode Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitVar node cg)
   ; A macro used to be expanded HERE, ahead of the symbol table, so a
   ; macro name outranked every binder in the program: `(macro (v) 9)`
@@ -22616,11 +23022,11 @@
       ; two resolvers have to agree or the checker types one binding
       ; while the emitter reads another.
       {
-        (let symReg
+        (let symIdx
           (if (== (nodeDefScope node) 1)
-            0
-            (lookupSym cg name)))
-        (if (!= symReg 0)
+            (- 0 1)
+            (symIndex cg name)))
+        (if (>= symIdx 0)
           (if (if (== (lookupSymKind cg name) 3)
             false
             (>= (lookupSymKind cg name) 1))
@@ -22634,28 +23040,28 @@
                 {
                   (emitLine cg
                     (concat (concat "  " r)
-                      (concat " = load i64, ptr " (concat (strDup (as symReg String)) ""))))
+                      (concat " = load i64, ptr " (concat (strDup (symRegAt cg symIdx)) ""))))
                   (cgSetResult cg r)
-                  (memSetWord cg 14 (lookupSymFloat cg name))
+                  (cgSetResultFloat cg (lookupSymFloat cg name))
                   cg
                 }
               }
             }
             {
-              (cgSetResult cg (strDup (as symReg String)))
-              (memSetWord cg 14 (lookupSymFloat cg name))
+              (cgSetResult cg (strDup (symRegAt cg symIdx)))
+              (cgSetResultFloat cg (lookupSymFloat cg name))
               cg
             })
           (if (strEq name "true")
             {
               (cgSetResult cg (constStr 1))
-              (memSetWord cg 14 0)
+              (cgSetResultFloat cg 0)
               cg
             }
             (if (strEq name "false")
               {
                 (cgSetResult cg (constStr 0))
-                (memSetWord cg 14 0)
+                (cgSetResultFloat cg 0)
                 cg
               }
               ; The constructor table is consulted before the nullary
@@ -22668,7 +23074,7 @@
                 (let entry
                   (if parameter
                     0
-                    (lookupType (memGetWordVec cg 3) name)))
+                    (lookupType (cgTypes cg) name)))
                 (if (!= entry 0)
                   (if (== (eArity entry) 0)
                     ; A bare nullary constructor: an immediate tag for
@@ -22679,7 +23085,7 @@
                       (let z 0)
                       {
                         (cgSetResult cg (constStr z))
-                        (memSetWord cg 14 0)
+                        (cgSetResultFloat cg 0)
                         cg
                       }
                     })
@@ -22719,7 +23125,7 @@
                               (concat (concat "  " r)
                                 (concat " = call i64 @" (concat (llvmSym (strDup full)) "()"))))
                             (cgSetResult cg r)
-                            (memSetWord cg 14 (fnRetIsFloat cg full))
+                            (cgSetResultFloat cg (fnRetIsFloat cg full))
                             cg
                           }
                         }
@@ -22742,7 +23148,7 @@
                           (cgSetResult cg
                             (concat "ptrtoint (ptr getelementptr ([3 x i64], ptr @.fnval."
                               (concat (fmtInt ti) ", i64 0, i64 2) to i64)")))
-                          (memSetWord cg 14 0)
+                          (cgSetResultFloat cg 0)
                           cg
                         }
                         ; A parameter reference: `%name` was emitted in
@@ -22752,7 +23158,7 @@
                           (let x (concat "%" (llvmSym (strDup name))))
                           {
                             (cgSetResult cg x)
-                            (memSetWord cg 14 (paramFloatByName cg name))
+                            (cgSetResultFloat cg (paramFloatByName cg name))
                             cg
                           }
                         }))
@@ -22766,7 +23172,7 @@
 (pub :: paramIndexOf (-> Int String Int))
 (pub fn (paramIndexOf cg name)
   {
-    (let params (memGetWordVec cg 17))
+    (let params (cgParams cg))
     (if (== (as params Int) 0)
       (- 0 1)
       (paramIndexIn params name 0))
@@ -22800,13 +23206,11 @@
 
 (pub :: lookupSymKind (-> Int String Int))
 (pub fn (lookupSymKind cg name)
-  (lookupSymFloatIn (memGetWordVec cg 6) (memGetWordVec cg 20) name
-    (- (vecLen (memGetWordVec cg 6)) 1)))
+  (lookupSymFloatIn (cgSymNames cg) (cgSymKinds cg) name (- (vecLen (cgSymNames cg)) 1)))
 
 (pub :: lookupSymFloat (-> Int String Int))
 (pub fn (lookupSymFloat cg name)
-  (lookupSymFloatIn (memGetWordVec cg 6) (memGetWordVec cg 16) name
-    (- (vecLen (memGetWordVec cg 6)) 1)))
+  (lookupSymFloatIn (cgSymNames cg) (cgSymFloats cg) name (- (vecLen (cgSymNames cg)) 1)))
 
 (pub :: lookupSymFloatIn (-> (Vec a) Ints String Int Int))
 (pub fn (lookupSymFloatIn syms flags name i)
@@ -22818,38 +23222,42 @@
         0)
       (lookupSymFloatIn syms flags name (- i 1)))))
 
-(pub :: lookupSym (-> Int String Int))
-(pub fn (lookupSym cg name)
+; Where `name` is bound in the symbol table, or -1 when it is not.
+(pub :: symIndex (-> Int String Int))
+(pub fn (symIndex cg name)
   {
-    (let syms (memGetWordVec cg 6))
-    (let regs (memGetWordVec cg 7))
-    (lookupSymIn syms regs name (- (vecLen syms) 1))
+    (let syms (cgSymNames cg))
+    (symIndexIn syms name (- (vecLen syms) 1))
   })
 
-(pub :: lookupSymIn (-> Ints Ints String Int Int))
-(pub fn (lookupSymIn syms regs name i)
+; The register of the binding at `i`, an index `symIndex` answered.
+(pub :: symRegAt (-> Int Int String))
+(pub fn (symRegAt cg i)
+  (vecGet (cgSymRegs cg) i))
+
+(pub :: hasSym (-> Int String Bool))
+(pub fn (hasSym cg name)
+  (>= (symIndex cg name) 0))
+
+; The newest binding of `name` in a symbol vector, searching down from
+; `i`, or -1.
+(pub :: symIndexIn (-> Strings String Int Int))
+(pub fn (symIndexIn syms name i)
   (if (< i 0)
-    0
-    (if (strEq (vecGetStr syms i) name)
-      (vecGet regs i)
-      (lookupSymIn syms regs name (- i 1)))))
+    (- 0 1)
+    (if (strEq (vecGet syms i) name)
+      i
+      (symIndexIn syms name (- i 1)))))
 
 ; ------------------------------------------------------------------
 ; E_App: flatten chain, dispatch.
 ; ------------------------------------------------------------------
 (pub :: emitApp (-> ASTNode Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitApp node cg)
+  ; Nested calls need fresh accumulators.
   {
-    (let oldArgs (memGetWord cg 5))
-    (let oldEvs (memGetWord cg 45))
-    ; Nested calls need fresh accumulators. Publish them before retiring
-    ; only the context's old shares; retained getter snapshots stay live.
-    (memSetWord cg 5 nodesNew)
-    (memSetWord cg 45 vecNew)
-    (__release oldArgs)
-    (__release oldEvs)
+    (cgResetAppArgs cg)
     (walkAppChain node cg node)
   })
 
@@ -22867,14 +23275,14 @@
     (let fnNode (nodeAChild node))
     (let argNode (nodeBChild node))
     {
-      (vecPush (readAstNodes cg 5) argNode)
+      (vecPush (cgArgVec cg) argNode)
       ; In LOCKSTEP with the line above, and reversed with it: the
       ; class the checker recorded for THIS application step, which is
       ; the only thing that can tell a closure call whether the word it
       ; passes is a reference. 0 for every node the checker did not
       ; stamp, which is every application that is not through a closure
       ; - and 0 is "not a reference", the direction that leaks.
-      (vecPush (memGetWordVec cg 45) (nodeTy node))
+      (vecPush (cgArgEv cg) (nodeTy node))
       (if (== (nodeTag fnNode) TAG_E_VAR)
         ; the stamp is snapshotted HERE, validated against the
         ; declaration being emitted, and threaded as a parameter - a
@@ -22909,13 +23317,13 @@
           ; term 64 is written in - a closure applied where it stands,
           ; with no name in between.
           {
-            (let args (reverseVec (readAstNodes cg 5)))
+            (let args (reverseVec (cgArgVec cg)))
             (let evs (spineEvs cg))
             {
-              (memSetWord cg 30 0)
+              (cgSetTailOK cg 0)
               {
                 (let cgH (emitExpr fnNode cg))
-                (emitApplyChainOwned args cgH (strDup (memGetWordStr cgH 2)) 0 0 evs snode 1)
+                (emitApplyChainOwned args cgH (strDup (cgResult cgH)) 0 0 evs snode 1)
               }
             }
           }))
@@ -22964,11 +23372,11 @@
   ; passed `vecNew`, which reads as 0 - "not a reference" - at every
   ; step. See `emitOverApplied`.
   {
-    (let revArgs (readAstNodes cg 5))
+    (let revArgs (cgArgVec cg))
     (let args (reverseVec revArgs))
     (let evs (spineEvs cg))
-    (let isTail (memGetWord cg 30))
-    (let _clr (memSetWord cg 30 0))
+    (let isTail (cgTailOK cg))
+    (let _clr (cgSetTailOK cg 0))
     (if (isCastName fnName)
       {
         (let n (vecLen args))
@@ -22985,7 +23393,7 @@
                   (emitIntegerConversion cgValue (nodeIntegerConversion snode))
                   cgValue))
               {
-                (memSetWord cgc 14
+                (cgSetResultFloat cgc
                   (if (>= n 2)
                     {
                       (let tyNode (vecGet args 0))
@@ -22999,7 +23407,7 @@
                   ; the surplus applies one argument at a time from
                   ; position 2 - each application may yield another
                   ; closure, which is exactly the curried case.
-                  (emitApplyChain args cgc (strDup (memGetWordStr cgc 2)) 2 evs snode)
+                  (emitApplyChain args cgc (strDup (cgResult cgc)) 2 evs snode)
                   cgc)
               }
             }
@@ -23013,13 +23421,13 @@
       (if (strEq fnName "sizeof")
         {
           (cgSetResult cg (constStr 8))
-          (memSetWord cg 14 0)
+          (cgSetResultFloat cg 0)
           cg
         }
         (if (strEq fnName "alignof")
           {
             (cgSetResult cg (constStr 8))
-            (memSetWord cg 14 0)
+            (cgSetResultFloat cg 0)
             cg
           }
           ; Primitives have no definition to call: they *are* the instruction.
@@ -23040,10 +23448,10 @@
                 ; operation name binds the local - which is how sema resolves it,
                 ; and a generator that disagreed would dispatch a name the checker
                 ; had already bound to a lambda.
-                (if (!= (lookupEffFor cg (memGetWordVec cg 33) fnName) 0)
-                  (emitEffectOp (lookupEffFor cg (memGetWordVec cg 33) fnName) args cg snode)
+                (if (!= (lookupEffFor cg (cgEffOps cg) fnName) 0)
+                  (emitEffectOp (lookupEffFor cg (cgEffOps cg) fnName) args cg snode)
                   {
-                    (let types (memGetWordVec cg 3))
+                    (let types (cgTypes cg))
                     (let entry (lookupType types fnName))
                     (if (== entry 0)
                       ; The self tail call is recognised HERE, not on the way
@@ -23053,9 +23461,9 @@
                       ; the function would be an infinite loop where the
                       ; correct answer is a value.
                       (if (&& (!= isTail 0)
-                            (&& (!= (memGetWord cg 27) 0)
-                              (&& (strEq fnName (memGetWordStr cg 27))
-                                (== (vecLen args) (vecLen (memGetWordVec cg 28))))))
+                            (&& (cgInTailLoop cg)
+                              (&& (strEq fnName (cgTcoName cg))
+                                (== (vecLen args) (vecLen (cgTcoSlots cg))))))
                         (emitTailJump args stamp cg)
                         (emitOverApplied fnName args stamp (armMustTail cg isTail fnName args) evs
                           snode))
@@ -23065,7 +23473,7 @@
 
 (pub :: isLocalValue (-> Int String Bool))
 (pub fn (isLocalValue cg name)
-  (if (!= (lookupSym cg name) 0)
+  (if (hasSym cg name)
     true
     (>= (paramIndexOf cg name) 0)))
 
@@ -23095,7 +23503,7 @@
     (let evs (spineEvs cg))
     {
       (let cgH (emitVar (mkEVar fnName) cg))
-      (emitApplyChainOwned args cgH (strDup (memGetWordStr cgH 2)) 0 0 evs snode 1)
+      (emitApplyChainOwned args cgH (strDup (cgResult cgH)) 0 0 evs snode 1)
     }
   })
 
@@ -23123,7 +23531,7 @@
 ; exactly as `dispatchCall` reverses `argVec`.
 (pub :: spineEvs (-> Int Ints))
 (pub fn (spineEvs cg)
-  (reverseVec (memGetWordVec cg 45)))
+  (reverseVec (cgArgEv cg)))
 
 ; The operand for step `i`: the class the checker recorded, as an LLVM
 ; literal. Anything the checker did not classify is 0 - "not a
@@ -23159,7 +23567,7 @@
   (if (>= i (vecLen args))
     {
       (cgSetResult cg rec)
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       cg
     }
     ; The argument half of the closure reclaim: an application
@@ -23192,7 +23600,7 @@
       {
         (let cgA (emitExpr (vecGet args i) cg))
         {
-          (let a (strDup (memGetWordStr cgA 2)))
+          (let a (strDup (cgResult cgA)))
           {
             (let cgR
               (applyOneArg cgA rec a ev snode
@@ -23214,8 +23622,7 @@
                                 (== (nodeResWord snode) 1))))))
                     (emitReleaseOf cgD a)
                     cgD))
-                (emitApplyChainOwned args cgE (strDup (memGetWordStr cgE 2)) (+ i 1) 1 evs snode
-                  arel)
+                (emitApplyChainOwned args cgE (strDup (cgResult cgE)) (+ i 1) 1 evs snode arel)
               }
             }
           }
@@ -23237,7 +23644,7 @@
   {
     (let cgE (emitClosureResultWord cg snode final))
     {
-      (let rw (strDup (memGetWordStr cgE 2)))
+      (let rw (strDup (cgResult cgE)))
       (let evn (allocReg cgE))
       {
         (let fullEv (regStr evn))
@@ -23247,7 +23654,7 @@
           {
             (let cgL (loadWordAt cgE rec 0))
             {
-              (let cp (strDup (memGetWordStr cgL 2)))
+              (let cp (strDup (cgResult cgL)))
               (let fpn (allocReg cgL))
               (let rn (allocReg cgL))
               {
@@ -23520,7 +23927,7 @@
 (pub fn (emitPrimContract args cg)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let c (strDup (memGetWordStr cg1 2)))
+    (let c (strDup (cgResult cg1)))
     (let cn (allocReg cg1))
     (let okL (allocReg cg1))
     (let badL (allocReg cg1))
@@ -23534,7 +23941,7 @@
           (concat okB (concat (concat ", label %" badB) "")))))
     (let _3 (emitLabel cg1 badB))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let m (strDup (memGetWordStr cg2 2)))
+    (let m (strDup (cgResult cg2)))
     (let _4 (emitLine cg2 (concat "  call i64 @__axiom_contract_fail(i64 " (concat m ")"))))
     (let _5 (emitLine cg2 "  unreachable"))
     (let _6 (emitLabel cg2 okB))
@@ -23559,9 +23966,9 @@
       (emitExpr (nodeAChild node) cg)
       {
         (let cg0 (emitExpr (nodeAChild node) cg))
-        (let v (strDup (memGetWordStr cg0 2)))
+        (let v (strDup (cgResult cg0)))
         (let cg1 (emitExpr (vecGet bounds 0) cg0))
-        (let lo (strDup (memGetWordStr cg1 2)))
+        (let lo (strDup (cgResult cg1)))
         (let c1 (allocReg cg1))
         (let okL (allocReg cg1))
         (let badL (allocReg cg1))
@@ -23585,7 +23992,7 @@
             (emitLabel cg1 okB)
             {
               (let cg2 (emitExpr (vecGet bounds 1) cg1))
-              (let hi (strDup (memGetWordStr cg2 2)))
+              (let hi (strDup (cgResult cg2)))
               (let c2 (allocReg cg2))
               (let ok2L (allocReg cg2))
               (let c2r (regStr c2))
@@ -23614,7 +24021,7 @@
 (pub fn (emitSubtypeFail node cg v okB badB)
   {
     (let cg2 (emitExpr (nodeCChild node) cg))
-    (let m (strDup (memGetWordStr cg2 2)))
+    (let m (strDup (cgResult cg2)))
     (let _4 (emitLine cg2 (concat "  call i64 @__axiom_contract_fail(i64 " (concat m ")"))))
     (let _5 (emitLine cg2 "  unreachable"))
     (let _6 (emitLabel cg2 okB))
@@ -23710,11 +24117,11 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let fnv (strDup (memGetWordStr cg1 2)))
+      (let fnv (strDup (cgResult cg1)))
       {
         (let cg2 (emitExpr (vecGet args 1) cg1))
         {
-          (let av (strDup (memGetWordStr cg2 2)))
+          (let av (strDup (cgResult cg2)))
           (let pn (allocReg cg2))
           (let rn (allocReg cg2))
           {
@@ -23727,7 +24134,7 @@
                 (concat (concat (concat "  " rr) (concat " = call i64 " pr))
                   (concat "(i64 " (concat av ")"))))
               (cgSetResult cg2 rr)
-              (memSetWord cg2 14 0)
+              (cgSetResultFloat cg2 0)
               cg2
             }
           }
@@ -23747,11 +24154,11 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let h (strDup (memGetWordStr cg1 2)))
+      (let h (strDup (cgResult cg1)))
       {
         (emitLine cg1 (concat "  call void " (concat sym (concat "(i64 " (concat h ")")))))
         (cgSetResult cg1 "0")
-        (memSetWord cg1 14 0)
+        (cgSetResultFloat cg1 0)
         cg1
       }
     }
@@ -23792,7 +24199,7 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let v (strDup (memGetWordStr cg1 2)))
+      (let v (strDup (cgResult cg1)))
       (let wv
         (if (nodeSame stamp nilNode)
           0
@@ -23805,7 +24212,7 @@
           {
             (let cgW (emitEvwRead cg1))
             {
-              (let src (strDup (memGetWordStr cgW 2)))
+              (let src (strDup (cgResult cgW)))
               {
                 (let bit (emitEvBitOf cgW src (- wv 2)))
                 (retainRefAnswer (emitRcIfBitOf cgW v (- wv 2) src 1) bit)
@@ -23818,7 +24225,7 @@
             {
               (let cgW (emitEvwaRead cg1 (- (- 0 2) wv)))
               {
-                (let src (strDup (memGetWordStr cgW 2)))
+                (let src (strDup (cgResult cgW)))
                 (if (strEq src "0")
                   (retainRefAnswer cgW "0")
                   {
@@ -23837,7 +24244,7 @@
 (pub fn (retainRefAnswer cg r)
   {
     (cgSetResult cg r)
-    (memSetWord cg 14 0)
+    (cgSetResultFloat cg 0)
     cg
   })
 
@@ -23872,11 +24279,11 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let a (strDup (memGetWordStr cg1 2)))
+      (let a (strDup (cgResult cg1)))
       {
         (let cg2 (emitExpr (vecGet args 1) cg1))
         {
-          (let b (strDup (memGetWordStr cg2 2)))
+          (let b (strDup (cgResult cg2)))
           (let r (regStr (allocReg cg2)))
           {
             (let cg3
@@ -23972,13 +24379,13 @@
   {
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
-      (let mark (strDup (memGetWordStr cg0 2)))
+      (let mark (strDup (cgResult cg0)))
       ; windows-x86_64 keeps xmm6-xmm15 past the spawn sequence: twenty
       ; words more, at byte `(* 8 words)` (`targetRecoverArmAsm`).
-      (let words (+ (+ 16 (parRegistryOn cg0)) (distinctSlotCount (memGetWordVec cg0 32) 0 0)))
+      (let words (+ (+ 16 (parRegistryOn cg0)) (distinctSlotCount (cgEffDecls cg0) 0 0)))
       (let size
         (fmtInt
-          (if (== (memGetWord cg0 26) 6)
+          (if (== (cgTarget cg0) 6)
             (+ words 20)
             words)))
       (let cell (regStr (allocReg cg0)))
@@ -24021,7 +24428,7 @@
       (let _14
         (emitLine cg0
           (concat "  call void asm sideeffect "
-            (concat (targetRecoverArmAsm (memGetWord cg0 26) (* 8 words))
+            (concat (targetRecoverArmAsm (cgTarget cg0) (* 8 words))
               (concat "(i64 " (concat rec ")"))))))
       (let _15 (emitLine cg0 (concat (concat "  " st) (concat " = load i64, ptr " p5))))
       (let _17
@@ -24038,7 +24445,7 @@
             (emitLambdaAt thunk cg0 true)
             (emitExpr thunk cg0)))
         {
-          (let f (strDup (memGetWordStr cgT 2)))
+          (let f (strDup (cgResult cgT)))
           {
             (let cgO
               (if (== (argIsDirectCon cgT (vecGet args 1)) 1)
@@ -24047,10 +24454,10 @@
             {
               (let cgA (applyOneArg cgO f (constStr 0) (constStr 0) nilNode 0))
               {
-                (let r (strDup (memGetWordStr cgA 2)))
+                (let r (strDup (cgResult cgA)))
                 (let _20 (emitReleaseOf cgA (strDup f)))
                 (let _21 (emitLine cgA (concat "  br label %" doneB)))
-                (let runEnd (strDup (memGetWordStr cgA 11)))
+                (let runEnd (strDup (cgBlock cgA)))
                 (let _22 (emitLabel cgA doneB))
                 (let _23
                   (emitLine cgA
@@ -24062,7 +24469,7 @@
                   (emitLine cgA (concat "  store i64 " (concat pv ", ptr @__axiom_recover_top"))))
                 {
                   (cgSetResult cgA res)
-                  (memSetWord cgA 14 0)
+                  (cgSetResultFloat cgA 0)
                   cgA
                 }
               }
@@ -24114,7 +24521,7 @@
   {
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
-      (let cell (strDup (memGetWordStr cg0 2)))
+      (let cell (strDup (cgResult cg0)))
       {
         (let r (regStr (allocReg cg0)))
         {
@@ -24134,7 +24541,7 @@
   {
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
-      (let cell (strDup (memGetWordStr cg0 2)))
+      (let cell (strDup (cgResult cg0)))
       {
         (let r (regStr (allocReg cg0)))
         {
@@ -24161,7 +24568,7 @@
   {
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
-      (let k (strDup (memGetWordStr cg0 2)))
+      (let k (strDup (cgResult cg0)))
       {
         (let r (regStr (allocReg cg0)))
         {
@@ -24187,7 +24594,7 @@
   {
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
-      (let v (strDup (memGetWordStr cg0 2)))
+      (let v (strDup (cgResult cg0)))
       {
         (let r (regStr (allocReg cg0)))
         {
@@ -24214,11 +24621,11 @@
   {
     (let cgB (emitExpr (vecGet args 0) cg))
     {
-      (let b (strDup (memGetWordStr cgB 2)))
+      (let b (strDup (cgResult cgB)))
       {
         (let cgT (emitExpr (vecGet args 1) cgB))
         {
-          (let f (strDup (memGetWordStr cgT 2)))
+          (let f (strDup (cgResult cgT)))
           {
             (let cgO
               (if (== (argIsDirectCon cgT (vecGet args 1)) 1)
@@ -24227,7 +24634,7 @@
             {
               (let cgA (emitExpr (vecGet args 2) cgO))
               {
-                (let a (strDup (memGetWordStr cgA 2)))
+                (let a (strDup (cgResult cgA)))
                 (let r (regStr (allocReg cgA)))
                 {
                   (emitLine cgA
@@ -24236,7 +24643,7 @@
                         (concat b (concat ", i64 " (concat f (concat ", i64 " (concat a ")"))))))))
                   (emitReleaseOf cgA (strDup f))
                   (cgSetResult cgA r)
-                  (memSetWord cgA 14 0)
+                  (cgSetResultFloat cgA 0)
                   cgA
                 }
               }
@@ -24256,15 +24663,15 @@
   {
     (let cg0 (emitExpr (vecGet args 0) cg))
     {
-      (let cell (strDup (memGetWordStr cg0 2)))
+      (let cell (strDup (cgResult cg0)))
       {
         (let cg1 (emitExpr (vecGet args 1) cg0))
         {
-          (let src (strDup (memGetWordStr cg1 2)))
+          (let src (strDup (cgResult cg1)))
           {
             (let cg2 (emitExpr (vecGet args 2) cg1))
             {
-              (let n (strDup (memGetWordStr cg2 2)))
+              (let n (strDup (cgResult cg2)))
               {
                 (let r (regStr (allocReg cg2)))
                 {
@@ -24333,7 +24740,7 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let i (strDup (memGetWordStr cg1 2)))
+      (let i (strDup (cgResult cg1)))
       (let bn (allocReg cg1))
       (let pn (allocReg cg1))
       (let gn (allocReg cg1))
@@ -24366,7 +24773,7 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let v (strDup (memGetWordStr cg1 2)))
+      (let v (strDup (cgResult cg1)))
       (let dn (allocReg cg1))
       (let rn (allocReg cg1))
       {
@@ -24377,7 +24784,7 @@
           (emitLine cg1
             (concat (concat "  " r) (concat " = bitcast double " (concat dr " to i64"))))
           (cgSetResult cg1 r)
-          (memSetWord cg1 14 1)
+          (cgSetResultFloat cg1 1)
           cg1
         }
       }
@@ -24400,7 +24807,7 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let v (strDup (memGetWordStr cg1 2)))
+      (let v (strDup (cgResult cg1)))
       (let dn (allocReg cg1))
       (let rn (allocReg cg1))
       {
@@ -24435,7 +24842,7 @@
             (concat (concat "  " r)
               (concat (concat " = select i1 " nan) (concat ", i64 0, i64 " sb))))
           (cgSetResult cg1 r)
-          (memSetWord cg1 14 0)
+          (cgSetResultFloat cg1 0)
           cg1
         }
       }
@@ -24556,7 +24963,7 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let pr (emitAtomicCheckedPtr cg1 (strDup (memGetWordStr cg1 2))))
+      (let pr (emitAtomicCheckedPtr cg1 (strDup (cgResult cg1))))
       {
         (let vr (regStr (allocReg cg1)))
         {
@@ -24575,9 +24982,9 @@
 (pub fn (emitPrimAtomicStore args cg)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let addr (strDup (memGetWordStr cg1 2)))
+    (let addr (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let val (strDup (memGetWordStr cg2 2)))
+    (let val (strDup (cgResult cg2)))
     {
       (let pr (emitAtomicCheckedPtr cg2 addr))
       {
@@ -24595,9 +25002,9 @@
 (pub fn (emitPrimAtomicAdd args cg)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let addr (strDup (memGetWordStr cg1 2)))
+    (let addr (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let val (strDup (memGetWordStr cg2 2)))
+    (let val (strDup (cgResult cg2)))
     {
       (let pr (emitAtomicCheckedPtr cg2 addr))
       {
@@ -24622,11 +25029,11 @@
 (pub fn (emitPrimAtomicCas args cg)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let addr (strDup (memGetWordStr cg1 2)))
+    (let addr (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let expected (strDup (memGetWordStr cg2 2)))
+    (let expected (strDup (cgResult cg2)))
     (let cg3 (emitExpr (vecGet args 2) cg2))
-    (let fresh (strDup (memGetWordStr cg3 2)))
+    (let fresh (strDup (cgResult cg3)))
     {
       (let pr (emitAtomicCheckedPtr cg3 addr))
       {
@@ -24832,7 +25239,7 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let pr (emitAtomicPtr cg1 (strDup (memGetWordStr cg1 2))))
+      (let pr (emitAtomicPtr cg1 (strDup (cgResult cg1))))
       {
         (let ty (concat "i" (fmtInt bits)))
         (let vr (regStr (allocReg cg1)))
@@ -24863,9 +25270,9 @@
 (pub fn (emitPrimVStore args cg bits)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let addr (strDup (memGetWordStr cg1 2)))
+    (let addr (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let val (strDup (memGetWordStr cg2 2)))
+    (let val (strDup (cgResult cg2)))
     {
       (let pr (emitAtomicPtr cg2 addr))
       (let ty (concat "i" (fmtInt bits)))
@@ -24900,8 +25307,8 @@
     {
       (let cg1 (emitExpr (vecGet args 0) cg))
       {
-        (let a (strDup (memGetWordStr cg1 2)))
-        (if (== (devicePrimTargetOK fnName (memGetWord cg1 26)) 0)
+        (let a (strDup (cgResult cg1)))
+        (if (== (devicePrimTargetOK fnName (cgTarget cg1)) 0)
           (emitDeviceRefused cg1 fnName)
           {
             (emitLine cg1
@@ -24912,7 +25319,7 @@
           })
       }
     }
-    (if (== (devicePrimTargetOK fnName (memGetWord cg 26)) 0)
+    (if (== (devicePrimTargetOK fnName (cgTarget cg)) 0)
       (emitDeviceRefused cg fnName)
       (if (armPrimReads fnName)
         {
@@ -24946,11 +25353,11 @@
       (concat "  ; axiom-device-refused `"
         (concat nm
           (concat
-            (if (targetIsAArch64 (memGetWord cg 26))
+            (if (targetIsAArch64 (cgTarget cg))
               "` needs EL1, the privilege a kernel runs at, and "
               "` is an AArch64 instruction, and ")
-            (concat (targetSpelling (memGetWord cg 26))
-              (if (targetIsAArch64 (memGetWord cg 26))
+            (concat (targetSpelling (cgTarget cg))
+              (if (targetIsAArch64 (cgTarget cg))
                 " runs programs at EL0 - only baremetal-aarch64 runs one at EL1"
                 " is not an AArch64 target"))))))
     (cgSetResult cg (constStr 0))
@@ -25004,7 +25411,7 @@
 (pub fn (emitPrimAsm args cg)
   {
     (let arch
-      (if (targetIsAArch64 (memGetWord cg 26))
+      (if (targetIsAArch64 (cgTarget cg))
         "aarch64"
         "x86_64"))
     (let d (vecGet args 0))
@@ -25177,7 +25584,7 @@
             }
             {
               (let cgV (emitExpr (vecGet args (+ (asmDigits it (- 0 1) (strLen it)) 1)) cg))
-              (concat "i64 " (strDup (memGetWordStr cgV 2)))
+              (concat "i64 " (strDup (cgResult cgV)))
             })))
       (strJoin parts ", ")
     }
@@ -25450,7 +25857,7 @@
 ;@axiom:effect(io)
 (pub fn (emitAsmArm desc f args cg)
   {
-    (let t (memGetWord cg 26))
+    (let t (cgTarget cg))
     (let flags (asmField desc f 1))
     (let nOut (asmFieldInt desc f 3))
     (let ans (asmFieldInt desc f 4))
@@ -25513,7 +25920,7 @@
                   (emitLabel cg (concat "asmnr" (fmtInt (allocReg cg))))
                 })
               (cgSetResult cg res)
-              (memSetWord cg 14 0)
+              (cgSetResultFloat cg 0)
               cg
             }
           }
@@ -25567,7 +25974,6 @@
 ; frame may assign. The `0` is never evaluated.
 (pub :: asmStoreInto (-> Int String String Int String Nodes Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (asmStoreInto cg r ty nOut pair args)
   {
     (let colon
@@ -25578,14 +25984,14 @@
     (let node (vecGet args (+ (asmDigits pair colon (strLen pair)) 1)))
     {
       (let name (nodeAName node))
-      (let storage (lookupSym cg (nodeAName node)))
+      (let storageIdx (symIndex cg (nodeAName node)))
       (let kind (lookupSymKind cg (nodeAName node)))
-      (if (|| (== storage 0) (&& (!= kind 1) (!= kind 4)))
+      (if (|| (< storageIdx 0) (&& (!= kind 1) (!= kind 4)))
         (dieCodegenDiag "an `asm` output's `into` target is not a mut binding: " name)
         {
           (emitLine cg
             (concat (concat "  store i64 " (asmOutput cg r ty nOut k))
-              (concat ", ptr " (as storage String))))
+              (concat ", ptr " (symRegAt cg storageIdx))))
           0
         })
     }
@@ -25597,7 +26003,7 @@
   {
     (emitLine cg
       (concat (concat "  ; axiom-device-refused an `asm` form has no `" arch)
-        (concat (concat "` arm, and " (targetSpelling (memGetWord cg 26)))
+        (concat (concat "` arm, and " (targetSpelling (cgTarget cg)))
           (concat " is an " (concat arch " target")))))
     (cgSetResult cg (constStr 0))
     cg
@@ -25610,7 +26016,7 @@
 (pub fn (emitPrimSyscall args cg)
   {
     (let cg1 (emitArgsList args cg 0))
-    (let at (memGetWordStr cg1 9))
+    (let at (cgArgsTyped cg1))
     (let pad (padZeros (- 7 (vecLen args))))
     (let rn (allocReg cg1))
     {
@@ -25625,13 +26031,13 @@
         ; unreached; a program that calls `__syscallN` itself reaches
         ; it and dies saying why, rather than executing a `syscall`
         ; instruction the OS gives no meaning to.
-        (if (== (targetUsesSyscallAsm (memGetWord cg1 26)) 1)
+        (if (== (targetUsesSyscallAsm (cgTarget cg1)) 1)
           (emitLine cg1
             (concat
               (concat (concat "  " r)
                 (concat
                   (concat " = call i64 asm sideeffect "
-                    (concat (targetSyscallAsm (memGetWord cg1 26)) (concat "(i64 " "")))
+                    (concat (targetSyscallAsm (cgTarget cg1)) (concat "(i64 " "")))
                   at))
               (concat pad (concat ")" ""))))
           (emitLine cg1 (concat (concat "  " r) (concat " = call i64 @__axiom_no_syscall()" ""))))
@@ -25657,7 +26063,7 @@
 (pub fn (emitPrimAlloc args cg)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let n (strDup (memGetWordStr cg1 2)))
+    (let n (strDup (cgResult cg1)))
     (let rn (allocReg cg1))
     {
       (let r (regStr rn))
@@ -25684,9 +26090,9 @@
 (pub fn (emitPrimLoad args cg width)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let base (strDup (memGetWordStr cg1 2)))
+    (let base (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let idx (strDup (memGetWordStr cg2 2)))
+    (let idx (strDup (cgResult cg2)))
     (let ty (elemTy width))
     (let pn (allocReg cg2))
     {
@@ -25751,11 +26157,11 @@
   ; 0 for the ordinary stores, which must stay foldable.
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let base (strDup (memGetWordStr cg1 2)))
+    (let base (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let idx (strDup (memGetWordStr cg2 2)))
+    (let idx (strDup (cgResult cg2)))
     (let cg3 (emitExpr (vecGet args 2) cg2))
-    (let val (strDup (memGetWordStr cg3 2)))
+    (let val (strDup (cgResult cg3)))
     (let ty (elemTy width))
     (let pn (allocReg cg3))
     {
@@ -25894,8 +26300,7 @@
         ; reversal of the same spine and must stay aligned.
         {
           (let cgD (emitCall fnName (takeVec args ar) stamp cg snode))
-          (emitApplyChain (dropVec args ar) cgD (strDup (memGetWordStr cgD 2)) 0 (dropVec evs ar)
-            snode)
+          (emitApplyChain (dropVec args ar) cgD (strDup (cgResult cgD)) 0 (dropVec evs ar) snode)
         })
     }
     (emitCall fnName args stamp cg snode)))
@@ -25951,13 +26356,13 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let a (strDup (memGetWordStr cg1 2)))
-      (let af (memGetWord cg1 14))
+      (let a (strDup (cgResult cg1)))
+      (let af (cgResultFloat cg1))
       {
         (let cg2 (emitExpr (vecGet args 1) cg1))
         {
-          (let b (strDup (memGetWordStr cg2 2)))
-          (let bf (memGetWord cg2 14))
+          (let b (strDup (cgResult cg2)))
+          (let bf (cgResultFloat cg2))
           (if (!= af bf)
             (dieCodegenDiag "mixed Int/Float operands reached code generation: " fnName)
             (if (== af 1)
@@ -25998,7 +26403,7 @@
   {
     (let bits (integerBits code))
     {
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       (if (== bits 64)
         (cgSetResult cg value)
         {
@@ -26024,7 +26429,7 @@
   {
     (let from (/ conversion 256))
     (let to (% conversion 256))
-    (let value (strDup (memGetWordStr cg 2)))
+    (let value (strDup (cgResult cg)))
     (if (== to 129)
       {
         (let d (regStr (allocReg cg)))
@@ -26040,7 +26445,7 @@
                   (concat value " to double")))))
           (emitLine cg (concat "  " (concat r (concat " = bitcast double " (concat d " to i64")))))
           (cgSetResult cg r)
-          (memSetWord cg 14 1)
+          (cgSetResultFloat cg 1)
           cg
         }
       }
@@ -26106,9 +26511,9 @@
 (pub fn (emitIntegerOperation op args cg snode code)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let a (strDup (memGetWordStr cg1 2)))
+    (let a (strDup (cgResult cg1)))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let b (strDup (memGetWordStr cg2 2)))
+    (let b (strDup (cgResult cg2)))
     (let bits (integerBits code))
     (let ty (concat "i" (fmtInt bits)))
     (let cg3
@@ -26147,7 +26552,7 @@
           {
             (emitLine cg3 (concat "  " (concat word (concat " = zext i1 " (concat r " to i64")))))
             (cgSetResult cg3 word)
-            (memSetWord cg3 14 0)
+            (cgSetResultFloat cg3 0)
             cg3
           }
         }
@@ -26203,7 +26608,7 @@
               (concat (concat (concat "  " r) (concat " = " (binopToLLVM fnName)))
                 (concat " i64 " (concat (concat a (concat ", " bSafe)) ""))))
             (cgSetResult cgG r)
-            (memSetWord cgG 14 0)
+            (cgSetResultFloat cgG 0)
             cgG
           }
         }
@@ -26229,7 +26634,7 @@
           (emitLabel cg db)
           (emitLine cg (concat (concat "  " r) " = add i64 0, 0"))
           (cgSetResult cg r)
-          (memSetWord cg 14 floatFlag)
+          (cgSetResultFloat cg floatFlag)
           cg
         }
       }
@@ -26365,7 +26770,7 @@
               (concat " double " (concat (concat ar (concat ", " br)) ""))))
           (emitLine cg (concat (concat "  " r) (concat " = bitcast double " (concat fr " to i64"))))
           (cgSetResult cg r)
-          (memSetWord cg 14 1)
+          (cgSetResultFloat cg 1)
           cg
         }
       }
@@ -26378,13 +26783,13 @@
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
     {
-      (let a (strDup (memGetWordStr cg1 2)))
-      (let af (memGetWord cg1 14))
+      (let a (strDup (cgResult cg1)))
+      (let af (cgResultFloat cg1))
       {
         (let cg2 (emitExpr (vecGet args 1) cg1))
         {
-          (let b (strDup (memGetWordStr cg2 2)))
-          (let bf (memGetWord cg2 14))
+          (let b (strDup (cgResult cg2)))
+          (let bf (cgResultFloat cg2))
           (if (!= af bf)
             (dieCodegenDiag "mixed Int/Float operands reached code generation: " fnName)
             (if (== af 1)
@@ -26409,7 +26814,7 @@
             (concat " i64 " (concat (concat a (concat ", " b)) ""))))
         (emitLine cg (concat (concat "  " r) (concat " = zext i1 " (concat cr " to i64"))))
         (cgSetResult cg r)
-        (memSetWord cg 14 0)
+        (cgSetResultFloat cg 0)
         cg
       }
     }
@@ -26437,7 +26842,7 @@
             (concat " double " (concat (concat ar (concat ", " br)) ""))))
         (emitLine cg (concat (concat "  " r) (concat " = zext i1 " (concat cr " to i64"))))
         (cgSetResult cg r)
-        (memSetWord cg 14 0)
+        (cgSetResultFloat cg 0)
         cg
       }
     }
@@ -26471,15 +26876,15 @@
     (let argRegs vecNew)
     {
       (let armed (pairSlot cg 1))
-      (let mt0 (memGetWord cg 30))
+      (let mt0 (cgTailOK cg))
       {
         (let _dis (pairSetSlot cg 1 0))
-        (let _mtc (memSetWord cg 30 0))
+        (let _mtc (cgSetTailOK cg 0))
         {
           (let bc0 (borrowedFromOwnedClass cg snode))
           (let argStrCg (emitArgsRegs args cg argRegs 0 fnName bc0))
           {
-            (let argStrT (strDup (memGetWordStr argStrCg 9)))
+            (let argStrT (strDup (cgArgsTyped argStrCg)))
             (let full (mangledForCg argStrCg fnName))
             {
               (let takesEv (fnTakesEvw argStrCg full))
@@ -26491,14 +26896,14 @@
                 {
                   (let evStr
                     (if (== takesEv 1)
-                      (concat ", i64 " (strDup (memGetWordStr cgE 2)))
+                      (concat ", i64 " (strDup (cgResult cgE)))
                       ""))
                   {
                     (let rn (allocReg cgE))
                     {
                       (let r (regStr rn))
                       {
-                        (let isPair (pairNamesHas (vecGetVec (memGetWordVec cgE 46) 2) full))
+                        (let isPair (pairNamesHas (pairNames cgE) full))
                         (if (&& (== isPair 1) (== armed 1))
                           ; The register-pair form. `releaseOwnedArgs` still
                           ; runs, so the temporaries an argument built are
@@ -26524,7 +26929,7 @@
                                   (concat " = extractvalue { i64, i64 } " (concat r ", 1"))))
                               (releaseOwnedArgs cgE fnName args argRegs 0)
                               (cgSetResult cgE pr)
-                              (memSetWord cgE 14 0)
+                              (cgSetResultFloat cgE 0)
                               (pairSetSlot cgE 3 (as tr Int))
                               (pairSetSlot cgE 1 2)
                               cgE
@@ -26571,8 +26976,8 @@
                                     (concat "(i64 " (concat argStrT (concat evStr ")")))))
                                 (emitLine cgE (concat "  ret i64 " r))
                                 (cgSetResult cgE r)
-                                (memSetWord cgE 14 (fnRetIsFloat cgE full))
-                                (memSetWord cgE 31 1)
+                                (cgSetResultFloat cgE (fnRetIsFloat cgE full))
+                                (cgSetTerminated cgE 1)
                                 cgE
                               }
                               {
@@ -26597,7 +27002,7 @@
                                     (if (== bc 0)
                                       {
                                         (cgSetResult cgE r)
-                                        (memSetWord cgE 14 (fnRetIsFloat cgE full))
+                                        (cgSetResultFloat cgE (fnRetIsFloat cgE full))
                                         cgE
                                       }
                                       {
@@ -26609,7 +27014,7 @@
                                           (let cgF (releaseBorrowedFrom cgR fnName args argRegs 0))
                                           {
                                             (cgSetResult cgF r)
-                                            (memSetWord cgF 14 (fnRetIsFloat cgF full))
+                                            (cgSetResultFloat cgF (fnRetIsFloat cgF full))
                                             cgF
                                           }
                                         }
@@ -26661,7 +27066,7 @@
       {
         (let cg1 (emitExpr node cg))
         {
-          (let reg (strDup (memGetWordStr cg1 2)))
+          (let reg (strDup (cgResult cg1)))
           {
             (vecPush regs reg)
             {
@@ -26683,8 +27088,8 @@
             {
               (let restCg (emitArgsRegs args cg1 regs (+ i 1) fnName bc))
               {
-                (let rest (memGetWordStr restCg 2))
-                (let restT (memGetWordStr restCg 9))
+                (let rest (cgResult restCg))
+                (let restT (cgArgsTyped restCg))
                 (if (== (strLen rest) 0)
                   {
                     (cgSetResult restCg reg)
@@ -26775,7 +27180,7 @@
               (if (>= lent 2)
                 {
                   (let cgR (emitEvwRead cg))
-                  (emitRcIfBitOf cgR reg (- lent 2) (strDup (memGetWordStr cgR 2)) 0)
+                  (emitRcIfBitOf cgR reg (- lent 2) (strDup (cgResult cgR)) 0)
                 }
                 (emitReleaseOf cg reg))
               fnName args regs (+ i 1))
@@ -26812,7 +27217,7 @@
             (if (>= lent 2)
               {
                 (let cgR (emitEvwRead cg))
-                (emitRcIfBitOf cgR reg (- lent 2) (strDup (memGetWordStr cgR 2)) 0)
+                (emitRcIfBitOf cgR reg (- lent 2) (strDup (cgResult cgR)) 0)
               }
               (emitReleaseOf cg reg))
             fnName args regs (+ i 1))
@@ -26924,7 +27329,7 @@
     0
     (if (!= (pairSlot cg 0) 0)
       0
-      (if (!= (memGetWord cg 27) 0)
+      (if (cgInTailLoop cg)
         0
         (if (== (pairSlot cg 6) 0)
           0
@@ -26955,7 +27360,7 @@
     (let ar (fnDefArityCg cg fnName))
     (if (&& (== isTail 3) (&& (>= ar 0) (== (vecLen args) ar)))
       {
-        (memSetWord cg 30 2)
+        (cgSetTailOK cg 2)
         cg
       }
       cg)
@@ -26978,14 +27383,11 @@
 ; level and answered at the other.
 (pub :: fnDefArityCg (-> Int String Int))
 (pub fn (fnDefArityCg cg name)
-  {
-    (let rest (memGetWordVec cg 40))
-    (if (< (vecLen rest) 5)
-      (- 0 1)
-      (match (internFind (vecGet rest 1) (declSpellingOf (mangledForCg cg name)))
-        ((Some id) (vecGet (vecGetVec rest 4) id))
-        ((None) (- 0 1))))
-  })
+  (if (cgDeclIndexBuilt cg)
+    (match (internFind (cgDeclIntern cg) (declSpellingOf (mangledForCg cg name)))
+      ((Some id) (vecGet (cgDeclArity cg) id))
+      ((None) (- 0 1)))
+    (- 0 1)))
 
 ; ------------------------------------------------------------------
 ; A STATIC SENTINEL: a value whose count word is `-1`, so releasing it
@@ -27029,7 +27431,7 @@
           (let name (nodeAName e))
           (if (|| (isNullaryPrimName name)
                 (|| (&& (!= (nodeDefScope e) 1) (isLocalValue cg name))
-                  (!= (lookupType (memGetWordVec cg 3) name) 0)))
+                  (!= (lookupType (cgTypes cg) name) 0)))
             0
             (if (isDefinedFnCg cg (mangledForCg cg name))
               1
@@ -27048,7 +27450,7 @@
   (if (nodeSame e nilNode)
     0
     (if (== (nodeTag e) TAG_E_VAR)
-      (if (!= (lookupType (memGetWordVec cg 3) (nodeAName e)) 0)
+      (if (!= (lookupType (cgTypes cg) (nodeAName e)) 0)
         1
         0)
       (if (&& (== (nodeTag e) TAG_E_APP) (== (spineArity e) 0))
@@ -27128,7 +27530,7 @@
       0
       (if (== (nodeTag e) TAG_E_STRUCTCON)
         {
-          (let entry (lookupType (memGetWordVec cg 3) (nodeAName e)))
+          (let entry (lookupType (cgTypes cg) (nodeAName e)))
           (if (== entry 0)
             0
             (if (&& (== (eKind entry) (TF_STRUCT))
@@ -27148,10 +27550,10 @@
               {
                 (let n (nodeAName hd))
                 (if (|| (isCastName n)
-                      (|| (isLocalValue cg n) (!= (lookupEffFor cg (memGetWordVec cg 33) n) 0)))
+                      (|| (isLocalValue cg n) (!= (lookupEffFor cg (cgEffOps cg) n) 0)))
                   0
                   {
-                    (let entry (lookupType (memGetWordVec cg 3) n))
+                    (let entry (lookupType (cgTypes cg) n))
                     (if (== entry 0)
                       0
                       ; Data and struct alike: `dispatchCall` answers
@@ -27196,7 +27598,7 @@
   {
     (let isAnd (strEq op "&&"))
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let ra (strDup (memGetWordStr cg1 2)))
+    (let ra (strDup (cgResult cg1)))
     (let cn (allocReg cg1))
     (let rhsL (allocReg cg1))
     (let shortL (allocReg cg1))
@@ -27220,14 +27622,14 @@
           (concat tgtT (concat (concat ", label %" tgtF) "")))))
     (let _3 (emitLabel cg1 rhsB))
     (let cg2 (emitExpr (vecGet args 1) cg1))
-    (let rb (strDup (memGetWordStr cg2 2)))
+    (let rb (strDup (cgResult cg2)))
     (let bn (allocReg cg2))
     (let bcr (regStr bn))
     (let _4 (emitLine cg2 (concat (concat "  " bcr) (concat " = icmp ne i64 " (concat rb ", 0")))))
     (let zn (allocReg cg2))
     (let zr (regStr zn))
     (let _5 (emitLine cg2 (concat (concat "  " zr) (concat " = zext i1 " (concat bcr " to i64")))))
-    (let rhsPred (strDup (memGetWordStr cg2 11)))
+    (let rhsPred (strDup (cgBlock cg2)))
     (let _6 (emitLine cg2 (concat "  br label %" mergeB)))
     (let _7 (emitLabel cg2 shortB))
     (let _8 (emitLine cg2 (concat "  br label %" mergeB)))
@@ -27377,12 +27779,12 @@
       {
         (let cg1 (emitExpr node cg))
         {
-          (let reg (strDup (memGetWordStr cg1 2)))
+          (let reg (strDup (cgResult cg1)))
           {
             (let restCg (emitArgsList args cg1 (+ i 1)))
             {
-              (let rest (memGetWordStr restCg 2))
-              (let restT (memGetWordStr restCg 9))
+              (let rest (cgResult restCg))
+              (let restT (cgArgsTyped restCg))
               (if (== (strLen rest) 0)
                 {
                   (cgSetResult restCg reg)
@@ -27466,10 +27868,10 @@
                   ; the builtin `Option` is seeded by the checker and
                   ; never enters the module's data list
                   2
-                  (if (== (dataTyKnown (memGetWordVec cg 35) n 0) 1)
+                  (if (== (dataTyKnown (cgDataTyNames cg) n 0) 1)
                     2
                     {
-                      (let e (lookupType (memGetWordVec cg 3) n))
+                      (let e (lookupType (cgTypes cg) n))
                       (if (if (== e 0)
                         false
                         (== (eKind e) TF_STRUCT))
@@ -27661,20 +28063,19 @@
 ; innermost lambda's own parameter placeholder, but the constant 0 is
 ; the answer if it ever does - the leaking direction.
 (pub :: emitRetainIfLamArg (-> Int String Int Int))
-;@axiom:effect(unsafe)
 (pub fn (emitRetainIfLamArg cg v d)
   {
-    (let symReg (lookupSym cg (evwaSym d)))
-    (if (== symReg 0)
+    (let symIdx (symIndex cg (evwaSym d)))
+    (if (< symIdx 0)
       cg
-      (emitRcIfBitOf cg v 0 (strDup (as symReg String)) 1))
+      (emitRcIfBitOf cg v 0 (strDup (symRegAt cg symIdx)) 1))
   })
 
 (pub :: emitRetainIfEvBit (-> Int String Int Int))
 (pub fn (emitRetainIfEvBit cg v k)
   {
     (let cgR (emitEvwRead cg))
-    (emitRcIfBitOf cgR v k (strDup (memGetWordStr cgR 2)) 1)
+    (emitRcIfBitOf cgR v k (strDup (cgResult cgR)) 1)
   })
 
 ; `v` retained (op 1) or released (op 0) when bit k of the evidence
@@ -27776,7 +28177,6 @@
       (/ (structFieldOffset (eStructFields entry) i) 8))))
 
 (pub :: ctorShapeEmit (-> Int String Int ASTNode Int))
-;@axiom:effect(unsafe)
 (pub fn (ctorShapeEmit cg ptr entry stamp)
   {
     (let kind (eKind entry))
@@ -27891,7 +28291,7 @@
                           (let src
                             (if (== (vecLen symPos) 0)
                               (constStr 0)
-                              (strDup (memGetWordStr cgR 2))))
+                              (strDup (cgResult cgR))))
                           (let mut acc (constStr (+ (* cnt 2) stat)))
                           (let mut cgX cgR)
                           (let mut q 0)
@@ -27976,8 +28376,8 @@
                             (while (< q (vecLen lamPos))
                               {
                                 {
-                                  (let symReg (lookupSym cgX (evwaSym (as (vecGet lamD q) Int))))
-                                  (if (! (== symReg 0))
+                                  (let symIdx (symIndex cgX (evwaSym (as (vecGet lamD q) Int))))
+                                  (if (>= symIdx 0)
                                     {
                                       (let bn (allocReg cgX))
                                       {
@@ -27987,7 +28387,7 @@
                                             (emitLine cgX
                                               (concat (concat "  " br)
                                                 (concat " = and i64 "
-                                                  (concat (strDup (as symReg String)) ", 1")))))
+                                                  (concat (strDup (symRegAt cgX symIdx)) ", 1")))))
                                           {
                                             (let sn2 (allocReg cgB))
                                             {
@@ -28238,7 +28638,7 @@
             0
             {
               (let full (mangledForCg cg n))
-              (if (== (pairNamesHas (vecGetVec (memGetWordVec cg 46) 2) full) 0)
+              (if (== (pairNamesHas (pairNames cg) full) 0)
                 0
                 {
                   (let sig (findFSigCg cg full))
@@ -28273,7 +28673,7 @@
 (pub :: pairEntryOfArity (-> Int String Int Int))
 (pub fn (pairEntryOfArity cg name want)
   {
-    (let en (lookupType (memGetWordVec cg 3) name))
+    (let en (lookupType (cgTypes cg) name))
     (if (== en 0)
       0
       (if (!= (eKind en) TF_DATA)
@@ -28435,11 +28835,11 @@
 (pub :: pairBoundNames (-> Int ASTNode Names))
 (pub fn (pairBoundNames cg e)
   {
-    (let v (strVecCopy (memGetWordVec cg 17)))
+    (let v (strVecCopy (cgParams cg)))
     (let h (spineHead e))
     (if (!= (nodeTag h) TAG_E_VAR)
       v
-      (if (!= (lookupSym cg (nodeAName h)) 0)
+      (if (hasSym cg (nodeAName h))
         (vecPush v (nodeAName h))
         v))
   })
@@ -28459,7 +28859,7 @@
     {
       (let cgA (emitArgsRegs args cg argRegs 0 name 0))
       {
-        (let argStrT (strDup (memGetWordStr cgA 9)))
+        (let argStrT (strDup (cgArgsTyped cgA)))
         (let full (mangledForCg cgA name))
         (let r (regStr (allocReg cgA)))
         {
@@ -28473,9 +28873,9 @@
           ; `emitPairRet` pays them: the callee has returned, and its
           ; pair holds its own share of anything it answers
           (releasePending cgA (cgPendingStrings cgA) 0)
-          (releasePendingSlots cgA (vecGetVec (memGetWordVec cgA 46) 17) 0)
+          (releasePendingSlots cgA (pairOwningSlots cgA) 0)
           (emitLine cgA (concat "  ret { i64, i64 } " r))
-          (memSetWord cgA 31 1)
+          (cgSetTerminated cgA 1)
           cgA
         }
       }
@@ -28494,7 +28894,7 @@
     (let name (nodeAName node))
     (let paramStr (emitParams (nodeBNames node) cg 0))
     (let rt (pairRetTyOf cg node))
-    (let _r (memSetWord cg 1 0))
+    (let _r (cgSetTmp cg 0))
     {
       (let sym (llvmSym (strDup name)))
       {
@@ -28511,7 +28911,7 @@
                   (concat "(" (concat paramStr ")")))))
             {
               (let cgB (emitPairBox cgC rt r))
-              (emitLine (emitLine cgB (concat "  ret i64 " (strDup (memGetWordStr cgB 2)))) "}")
+              (emitLine (emitLine cgB (concat "  ret i64 " (strDup (cgResult cgB)))) "}")
             }
           }
         }
@@ -28578,7 +28978,7 @@
             (concat (concat (constStr (eTag noneE)) (concat ", %" lNone)) " ]")))))
     {
       (cgSetResult cg res)
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       cg
     }
   })
@@ -28617,7 +29017,7 @@
             (concat (concat b2 (concat ", %" lErr)) " ]")))))
     {
       (cgSetResult cg res)
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       cg
     }
   })
@@ -28682,10 +29082,10 @@
   (if (== (eArity entry) 0)
     {
       (releasePending cg (cgPendingStrings cg) 0)
-      (releasePendingSlots cg (vecGetVec (memGetWordVec cg 46) 17) 0)
+      (releasePendingSlots cg (pairOwningSlots cg) 0)
       (emitLine cg
         (concat (concat "  ret { i64, i64 } { i64 " (constStr (eTag entry))) ", i64 0 }"))
-      (memSetWord cg 31 1)
+      (cgSetTerminated cg 1)
       cg
     }
     ; A REFERENCE payload takes a share, because the block this
@@ -28708,7 +29108,7 @@
     {
       (let cgA (emitExpr (nodeBChild e) cg))
       {
-        (let v (strDup (memGetWordStr cgA 2)))
+        (let v (strDup (cgResult cgA)))
         (let _rt
           (if (== (pairPayloadClass cg (pairNode cg 0) (pairCtorNameOf e)) 2)
             (if (== (valueOwnedRef cgA (nodeBChild e)) 1)
@@ -28728,9 +29128,9 @@
             (concat (concat "  " (concat r1 (concat " = insertvalue { i64, i64 } " r0)))
               (concat ", i64 " (concat v ", 1"))))
           (releasePending cgA (cgPendingStrings cgA) 0)
-          (releasePendingSlots cgA (vecGetVec (memGetWordVec cgA 46) 17) 0)
+          (releasePendingSlots cgA (pairOwningSlots cgA) 0)
           (emitLine cgA (concat "  ret { i64, i64 } " r1))
-          (memSetWord cgA 31 1)
+          (cgSetTerminated cgA 1)
           cgA
         }
       }
@@ -28873,7 +29273,7 @@
               0
               (if (||
                     (&& (|| (== (nodeDefScope h) 1) (! (isLocalValue cg (nodeAName h))))
-                      (!= (lookupType (memGetWordVec cg 3) (nodeAName h)) 0))
+                      (!= (lookupType (cgTypes cg) (nodeAName h)) 0))
                     (&& (strEq (nodeAName h) "__resource_new") (== (spineArity an) 2)))
                 1
                 0))
@@ -28970,7 +29370,7 @@
       {
         (let cg1 (emitExpr argNode cg))
         {
-          (let reg (strDup (memGetWordStr cg1 2)))
+          (let reg (strDup (cgResult cg1)))
           {
             (let rc
               (if (== (argIsDirectCon cg1 argNode) 1)
@@ -29003,7 +29403,7 @@
                       (if (&& (>= rc 2) (closureOwnedCall cgS argNode))
                         {
                           (let cgW (emitEvwRead cgS))
-                          (emitRcIfBitOf cgW reg (- rc 2) (strDup (memGetWordStr cgW 2)) 0)
+                          (emitRcIfBitOf cgW reg (- rc 2) (strDup (cgResult cgW)) 0)
                         }
                         cgS)))
                   (emitFieldStores cgT ptr args (+ i 1) base entry stamp)
@@ -29043,8 +29443,8 @@
     {
       (let cg1 (emitExpr valExpr cg))
       {
-        (let valReg (strDup (memGetWordStr cg1 2)))
-        (let valFlag (memGetWord cg1 14))
+        (let valReg (strDup (cgResult cg1)))
+        (let valFlag (cgResultFloat cg1))
         (let mark (symMark cg1))
         ; Resolve ownership before this binding can shadow its initialiser.
         (let owned (letOwned cg1 valExpr))
@@ -29211,7 +29611,7 @@
                         ; releases, scope end and jump alike, with the
                         ; other sites'.
                         (if (&& (== releasable 1)
-                              (&& (!= (memGetWord cgB 31) 1)
+                              (&& (!= (cgTerminated cgB) 1)
                                 (== (isStaticSentinelNode cgB valExpr) 0)))
                           (if (&& (!= (pairSlot cgB 9) 0)
                                 (&&
@@ -29221,7 +29621,7 @@
                                   (&& (== (nodeResWord valExpr) 2) (dropFreeExpr cgB valExpr))))
                             cgB
                             {
-                              (let res (strDup (memGetWordStr cgB 2)))
+                              (let res (strDup (cgResult cgB)))
                               (let cgR (emitReleaseOf cgB valReg))
                               {
                                 (cgSetResult cgR res)
@@ -29231,9 +29631,9 @@
                           ; a share taken under an evidence bit goes back
                           ; under the same bit; a jump out of the body
                           ; skips it, which leaks
-                          (if (&& (|| (>= borrowCls 2) (>= ownCls 2)) (!= (memGetWord cgB 31) 1))
+                          (if (&& (|| (>= borrowCls 2) (>= ownCls 2)) (!= (cgTerminated cgB) 1))
                             {
-                              (let res (strDup (memGetWordStr cgB 2)))
+                              (let res (strDup (cgResult cgB)))
                               (let cgW (emitEvwRead cgB))
                               (let bitCls
                                 (if (>= borrowCls 2)
@@ -29241,8 +29641,7 @@
                                   ownCls))
                               {
                                 (let cgR
-                                  (emitRcIfBitOf cgW valReg (- bitCls 2)
-                                    (strDup (memGetWordStr cgW 2)) 0))
+                                  (emitRcIfBitOf cgW valReg (- bitCls 2) (strDup (cgResult cgW)) 0))
                                 {
                                   (cgSetResult cgR res)
                                   cgR
@@ -29463,7 +29862,7 @@
                   (if (if (nodeSame st nilNode)
                     true
                     (|| (!= (nodeTag st) TAG_EVSTAMP)
-                      (! (nodeSame (nodeCChild st) (readAstNode cg 36)))))
+                      (! (nodeSame (nodeCChild st) (cgCurDecl cg)))))
                     0
                     ; A class the stamp could not give when the call was
                     ; checked may have been decided by a pin later in the
@@ -29512,7 +29911,7 @@
                       (if (if (nodeSame st nilNode)
                         true
                         (|| (!= (nodeTag st) TAG_EVSTAMP)
-                          (! (nodeSame (nodeCChild st) (readAstNode cg 36)))))
+                          (! (nodeSame (nodeCChild st) (cgCurDecl cg)))))
                         0
                         (if (== (fldClass cg (pinnedTy (nodeAChild st) 64)) 0)
                           1
@@ -29549,7 +29948,7 @@
   (if (== (pairSlot cg 7) 1)
     (- 0 1)
     {
-      (let d (readAstNode cg 36))
+      (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
         (- 0 1)
         {
@@ -30014,7 +30413,7 @@
                         0))
                     0)
                   {
-                    (let entry (lookupType (memGetWordVec cg 3) n))
+                    (let entry (lookupType (cgTypes cg) n))
                     (if (!= entry 0)
                       ; a constructor: a reference field retains what it
                       ; is given (event 6) and is walked in argument
@@ -30214,8 +30613,7 @@
       ((None)
         {
           (let a
-            (if (|| (!= (lookupSym cg n) 0)
-                  (|| (>= (paramIndexOf cg n) 0) (== (boundIn n bound) 1)))
+            (if (|| (hasSym cg n) (|| (>= (paramIndexOf cg n) 0) (== (boundIn n bound) 1)))
               1
               0))
           {
@@ -30391,7 +30789,7 @@
 (pub :: fieldReadIsScalar (-> Int ASTNode Int))
 (pub fn (fieldReadIsScalar cg e)
   {
-    (let fi (resolveStructField (memGetWordVec cg 3) e))
+    (let fi (resolveStructField (cgTypes cg) e))
     (if (nodeSame fi nilNode)
       0
       (if (== (nodeC fi) 0)
@@ -30413,7 +30811,7 @@
 (pub fn (fieldArgClass cg node)
   (if (== (nodeTag node) TAG_E_FIELD)
     {
-      (let fi (resolveStructField (memGetWordVec cg 3) node))
+      (let fi (resolveStructField (cgTypes cg) node))
       (if (nodeSame fi nilNode)
         0
         {
@@ -30547,7 +30945,7 @@
       (if (== t 0)
         0
         {
-          (let e (lookupType (memGetWordVec cg 3) (as t String)))
+          (let e (lookupType (cgTypes cg) (as t String)))
           (if (== e 0)
             0
             (if (== (eKind e) TF_WORD)
@@ -30685,7 +31083,7 @@
   {
     (let cgM (emitLine cg ""))
     {
-      (memSetWord cgM 43 (- (vecLen (memGetWordVec cgM 0)) 1))
+      (cgSetAllocaMark cgM (- (vecLen (cgLines cgM)) 1))
       (cgSetHoisted cgM vecNew)
       cgM
     }
@@ -30693,7 +31091,7 @@
 
 (pub :: emitAlloca (-> Int String Int))
 (pub fn (emitAlloca cg ar)
-  (if (< (memGetWord cg 43) 0)
+  (if (< (cgAllocaMark cg) 0)
     (emitLine cg (concat (concat "  " ar) " = alloca i64"))
     {
       (vecPush (cgHoisted cg) (concat (concat "  " ar) " = alloca i64"))
@@ -30704,16 +31102,16 @@
 ;@axiom:effect(unsafe)
 (pub fn (closeAllocaMark cg)
   {
-    (let mark (memGetWord cg 43))
+    (let mark (cgAllocaMark cg))
     (if (< mark 0)
       cg
       {
         (let hoisted (cgHoisted cg))
         {
           (if (> (vecLen hoisted) 0)
-            (vecSet (memGetWordVec cg 0) mark (joinAllocas hoisted))
+            (vecSet (cgLines cg) mark (joinAllocas hoisted))
             (as 0 (Vec String)))
-          (memSetWord cg 43 (- 0 1))
+          (cgSetAllocaMark cg (- 0 1))
           (cgSetHoisted cg vecNew)
           cg
         }
@@ -30787,8 +31185,8 @@
     {
       (let cg1 (emitExpr valExpr cg))
       {
-        (let valReg (strDup (memGetWordStr cg1 2)))
-        (let valFlag (memGetWord cg1 14))
+        (let valReg (strDup (cgResult cg1)))
+        (let valFlag (cgResultFloat cg1))
         (let mark (symMark cg1))
         (let an (allocReg cg1))
         (let initOwned (valueOwnedRef cg1 valExpr))
@@ -30818,9 +31216,9 @@
                   (if (&& (== cls 2) (== own 0))
                     {
                       (truncateNodeRegistry (pairNodes cg1 18) regMark)
-                      (vecSet (memGetWordVec cg1 20) (- (vecLen (memGetWordVec cg1 20)) 1) 1)
+                      (vecSet (cgSymKinds cg1) (- (vecLen (cgSymKinds cg1)) 1) 1)
                     }
-                    (memGetWordVec cg1 20))
+                    (cgSymKinds cg1))
                   {
                     (let cgI
                       (if (&& (== own 1) (!= initOwned 1))
@@ -30865,14 +31263,14 @@
                               ; the body left current - not when the body ended
                               ; in a jump or a `ret`, which paid or cannot be
                               ; followed.
-                              (if (&& (== relEnd 1) (!= (memGetWord cgB 31) 1))
+                              (if (&& (== relEnd 1) (!= (cgTerminated cgB) 1))
                                 {
-                                  (let res (strDup (memGetWordStr cgB 2)))
-                                  (let fl (memGetWord cgB 14))
+                                  (let res (strDup (cgResult cgB)))
+                                  (let fl (cgResultFloat cgB))
                                   (let cgR (releaseSlotValue cgB ar))
                                   {
                                     (cgSetResult cgR res)
-                                    (memSetWord cgR 14 fl)
+                                    (cgSetResultFloat cgR fl)
                                     cgR
                                   }
                                 }
@@ -30906,23 +31304,22 @@
 ; share in a slot that only stores, and keeps it.
 (pub :: emitSet (-> ASTNode Int Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitSet node cg)
   {
     (let name (nodeAName node))
     (let valExpr (nodeBChild node))
     {
-      (let storage (lookupSym cg name))
+      (let storageIdx (symIndex cg name))
       (let kind (lookupSymKind cg name))
-      (if (== storage 0)
+      (if (< storageIdx 0)
         (dieCodegenDiag "set target is not a mut binding: " name)
         (if (&& (!= kind 1) (!= kind 4))
           (dieCodegenDiag "set target is not a mut binding: " name)
           {
             (let cg1 (emitExpr valExpr cg))
             {
-              (let v (strDup (memGetWordStr cg1 2)))
-              (let ptr (strDup (as storage String)))
+              (let v (strDup (cgResult cg1)))
+              (let ptr (strDup (symRegAt cg storageIdx)))
               {
                 (if (== kind 4)
                   {
@@ -31133,7 +31530,7 @@
                     ok
                   }
                 })
-              (if (== (nodeInVec (readAstNodes cg 41) e 0) 1)
+              (if (== (nodeInVec (cgTailRetain cg) e 0) 1)
                 1
                 (if (|| (== tg TAG_E_INT)
                       (|| (== tg TAG_E_FLT) (|| (== tg TAG_E_STR) (== tg TAG_E_CHAR))))
@@ -31432,7 +31829,7 @@
         1
         (if (if (== (nodeTag v) TAG_E_VAR)
           (&& (!= (nodeDefScope v) 1)
-            (&& (== (lookupSym cg (nodeAName v)) 0) (>= (curParamIndex cg (nodeAName v)) 0)))
+            (&& (! (hasSym cg (nodeAName v))) (>= (curParamIndex cg (nodeAName v)) 0)))
           false)
           1
           0)))
@@ -31582,7 +31979,7 @@
         (let _1 (emitLine cg (concat "  br label %" hdrB)))
         (let _2 (emitLabel cg hdrB))
         (let cgC (emitExpr cnd cg))
-        (let cr (strDup (memGetWordStr cgC 2)))
+        (let cr (strDup (cgResult cgC)))
         (let tn (allocReg cgC))
         {
           (let tr (regStr tn))
@@ -31599,7 +31996,7 @@
             (let _7 (emitLabel cgB exitB))
             {
               (cgSetResult cgB (constStr 0))
-              (memSetWord cgB 14 0)
+              (cgSetResultFloat cgB 0)
               cgB
             }
           }
@@ -31664,7 +32061,7 @@
   {
     (let line
       (concat "  " (concat cell (concat " = alloca i64, i64 " (concat words ", align 16")))))
-    (if (< (memGetWord cg 43) 0)
+    (if (< (cgAllocaMark cg) 0)
       (emitLine cg line)
       {
         (vecPush (cgHoisted cg) line)
@@ -31680,7 +32077,7 @@
         (if (== (resRegistryOn cg) 1)
           " = alloca i64, i64 4, align 16 ; axiom region mark"
           " = alloca i64, i64 3, align 16 ; axiom region mark")))
-    (if (< (memGetWord cg 43) 0)
+    (if (< (cgAllocaMark cg) 0)
       (emitLine cg line)
       {
         (vecPush (cgHoisted cg) line)
@@ -31740,11 +32137,11 @@
       (let _rgn (pairSetSlot cg 9 (+ rgnSaved 1)))
       (let cgB (emitExpr (nodeBChild node) cg))
       (let _rgnBack (pairSetSlot cgB 9 rgnSaved))
-      (if (== (memGetWord cgB 31) 1)
+      (if (== (cgTerminated cgB) 1)
         cgB
         {
-          (let val (strDup (memGetWordStr cgB 2)))
-          (let flag (memGetWord cgB 14))
+          (let val (strDup (cgResult cgB)))
+          (let flag (cgResultFloat cgB))
           (let ci (regStr (allocReg cgB)))
           (let rr (regStr (allocReg cgB)))
           {
@@ -31757,7 +32154,7 @@
                   (concat " = call i64 @__axiom_arena_reset_fn(i64 " (concat ci ")")))))
             {
               (cgSetResult cgB val)
-              (memSetWord cgB 14 flag)
+              (cgSetResultFloat cgB flag)
               cgB
             }
           }
@@ -31780,7 +32177,7 @@
     (let thenExpr (nodeBChild node))
     (let elseExpr (nodeCChild node))
     (let cg1 (emitExpr testExpr cg))
-    (let testReg (strDup (memGetWordStr cg1 2)))
+    (let testReg (strDup (cgResult cg1)))
     (let cmpN (allocReg cg1))
     (let thenLbl (allocReg cg1))
     (let elseLbl (allocReg cg1))
@@ -31797,14 +32194,14 @@
           (concat thenB (concat (concat ", label %" elseB) "")))))
     (let _3 (emitLabel cg1 thenB))
     (let cg2 (emitExpr thenExpr cg1))
-    (let thenVal (strDup (memGetWordStr cg2 2)))
-    (let thenFlag (memGetWord cg2 14))
-    (let thenPred (strDup (memGetWordStr cg2 11)))
+    (let thenVal (strDup (cgResult cg2)))
+    (let thenFlag (cgResultFloat cg2))
+    (let thenPred (strDup (cgBlock cg2)))
     (let _4 (emitLine cg2 (concat "  br label %" mergeB)))
     (let _5 (emitLabel cg2 elseB))
     (let cg3 (emitExpr elseExpr cg2))
-    (let elseVal (strDup (memGetWordStr cg3 2)))
-    (let elsePred (strDup (memGetWordStr cg3 11)))
+    (let elseVal (strDup (cgResult cg3)))
+    (let elsePred (strDup (cgBlock cg3)))
     (let _6 (emitLine cg3 (concat "  br label %" mergeB)))
     (let _7 (emitLabel cg3 mergeB))
     (let phiN (allocReg cg3))
@@ -31815,7 +32212,7 @@
           (concat (concat ", %" (concat thenPred " ], [ "))
             (concat (concat elseVal (concat ", %" elsePred)) " ]")))))
     (let _9 (cgSetResult cg3 phiR))
-    (let _10 (memSetWord cg3 14 thenFlag))
+    (let _10 (cgSetResultFloat cg3 thenFlag))
     cg3
   })
 
@@ -31935,21 +32332,20 @@
             (if (if (>= (+ i 1) (vecLen exprs))
               false
               (&& (== (valueOwnedRef cg1 e) 1) (== (isStaticSentinelNode cg1 e) 0)))
-              (emitReleaseOf cg1 (strDup (memGetWordStr cg1 2)))
+              (emitReleaseOf cg1 (strDup (cgResult cg1)))
               {
                 (let tcls
                   (if (>= (+ i 1) (vecLen exprs))
                     0
                     (transferClass cg1 e)))
                 (if (== tcls 1)
-                  (emitReleaseOf cg1 (strDup (memGetWordStr cg1 2)))
+                  (emitReleaseOf cg1 (strDup (cgResult cg1)))
                   (if (>= tcls 2)
                     {
-                      (let res (strDup (memGetWordStr cg1 2)))
+                      (let res (strDup (cgResult cg1)))
                       (let cgW (emitEvwRead cg1))
                       {
-                        (let cgR
-                          (emitRcIfBitOf cgW res (- tcls 2) (strDup (memGetWordStr cgW 2)) 0))
+                        (let cgR (emitRcIfBitOf cgW res (- tcls 2) (strDup (cgResult cgW)) 0))
                         {
                           (cgSetResult cgR res)
                           cgR
@@ -31987,7 +32383,7 @@
               " = ptrtoint ptr getelementptr inbounds ({ i64, i64, i64, ptr, i64 }, ptr @strhdr_"
               (concat (fmtInt id) ", i64 0, i32 2) to i64"))))
         (cgSetResult cg r)
-        (memSetWord cg 14 0)
+        (cgSetResultFloat cg 0)
         cg
       }
     }
@@ -31997,7 +32393,7 @@
 (pub fn (emitDefault cg)
   {
     (cgSetResult cg "0")
-    (memSetWord cg 14 0)
+    (cgSetResultFloat cg 0)
     cg
   })
 
@@ -32273,7 +32669,7 @@
   (if (== (resRegistryOn cg) 0)
     {
       (cgSetResult cg "0")
-      (memSetWord cg 14 0)
+      (cgSetResultFloat cg 0)
       cg
     }
     {
@@ -32281,7 +32677,7 @@
       {
         (emitLine cg (concat (concat "  " r) " = load i64, ptr @__axiom_res_unwinding"))
         (cgSetResult cg r)
-        (memSetWord cg 14 0)
+        (cgSetResultFloat cg 0)
         cg
       }
     }))
@@ -32291,12 +32687,12 @@
 (pub fn (emitPrimResource name args cg)
   {
     (let cg1 (emitExpr (vecGet args 0) cg))
-    (let first (strDup (memGetWordStr cg1 2)))
+    (let first (strDup (cgResult cg1)))
     (let tail
       (if (strEq name "__resource_new")
         {
           (let cg2 (emitExpr (vecGet args 1) cg1))
-          (concat ", i64 " (memGetWordStr cg2 2))
+          (concat ", i64 " (cgResult cg2))
         }
         ""))
     (let r (regStr (allocReg cg1)))
@@ -32317,7 +32713,7 @@
           cg1)
       }
       (cgSetResult cg1 r)
-      (memSetWord cg1 14 0)
+      (cgSetResultFloat cg1 0)
       cg1
     }
   })
@@ -32352,13 +32748,13 @@
                 true
                 {
                   (let inner (dropFreeSeenWith seen n))
-                  (let entry (lookupType (memGetWordVec cg 3) n))
+                  (let entry (lookupType (cgTypes cg) n))
                   (if (|| (== entry 0) (== (eKind entry) TF_DATA))
                     ; Data type names have no complete registry entry.
                     ; Every constructor must be free of drops;
                     ; an unknown field or recursive depth limit abstains.
                     {
-                      (let decls (readAstNodes cg 8))
+                      (let decls (cgDecls cg))
                       (let mut i 0)
                       (let mut found false)
                       (let mut safe true)
@@ -32450,7 +32846,7 @@
           (if (|| (== (nodeTag hd) TAG_E_VAR) (== tag TAG_E_STRUCTCON))
             {
               (let n (nodeAName hd))
-              (let entry (lookupType (memGetWordVec cg 3) n))
+              (let entry (lookupType (cgTypes cg) n))
               (if (!= entry 0)
                 (dropFreeFields cg entry 16 0 (vecPush vecNew n))
                 {
@@ -32477,7 +32873,7 @@
   (if (== (scrutineeReleasable node scrutExpr cg) 1)
     1
     {
-      (let d (readAstNode cg 36))
+      (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
         0
         (if (&& (== (fnResultClass cg (nodeAName d)) 2)
@@ -32499,7 +32895,7 @@
 ; capture is counted for is the share the record holds.
 (pub :: captureCounted (-> Int String Bool))
 (pub fn (captureCounted cg name)
-  (if (if (== (lookupSym cg name) 0)
+  (if (if (! (hasSym cg name))
     true
     (== (lookupSymKind cg name) 2))
     {
@@ -32569,7 +32965,7 @@
         (let w
           (if (if (nodeSame t nilNode)
             false
-            (&& (== (nodeTag t) TAG_EVSTAMP) (nodeSame (nodeCChild t) (readAstNode cg 36))))
+            (&& (== (nodeTag t) TAG_EVSTAMP) (nodeSame (nodeCChild t) (cgCurDecl cg))))
             (nodeB t)
             0))
         {
@@ -32577,13 +32973,12 @@
           {
             (vecPush vs w)
             {
-              (let cgW (emitEvWordVal cg (nodeBuildEvstampCallPlain (readAstNode cg 36) vs vecNew)))
+              (let cgW (emitEvWordVal cg (nodeBuildEvstampCallPlain (cgCurDecl cg) vs vecNew)))
               {
                 (let r (regStr (allocReg cgW)))
                 {
                   (emitLine cgW
-                    (concat (concat "  " r)
-                      (concat " = shl i64 " (concat (memGetWordStr cgW 2) ", 1"))))
+                    (concat (concat "  " r) (concat " = shl i64 " (concat (cgResult cgW) ", 1"))))
                   (cgSetResult cgW r)
                   cgW
                 }
@@ -32642,7 +33037,7 @@
     (if (== base 0)
       0
       {
-        (let d (callFlowDecl (readAstNodes cg 8) (mangledForCg cg name) 0))
+        (let d (callFlowDecl (cgDecls cg) (mangledForCg cg name) 0))
         (if (nodeSame d nilNode)
           base
           {
@@ -32661,20 +33056,20 @@
                 base
                 {
                   (let saved (pairSlot cg 15))
-                  (let savedDecl (readAstNode cg 36))
-                  (let savedMod (memGetWord cg 34))
+                  (let savedDecl (cgCurDecl cg))
+                  (let savedMod (cgModuleWord cg))
                   (let cell regionNew)
                   {
                     (pairSetSlot cg 15 (as ids Int))
-                    (memSetWord cg 36 d)
-                    (memSetWord cg 34 (nodeModule d))
+                    (cgSetCurDecl cg d)
+                    (cgSetModule cg (nodeModule d))
                     (flowStashes cg (nodeCChild d) ps vecNew cell)
                     {
                       (let mask (regionNet cell))
                       {
                         (pairSetSlot cg 15 saved)
-                        (memSetWord cg 36 savedDecl)
-                        (memSetWord cg 34 savedMod)
+                        (cgSetCurDecl cg savedDecl)
+                        (cgSetModule cg savedMod)
                         mask
                       }
                     }
@@ -32820,7 +33215,7 @@
     (emitLine cg "  %limits = alloca [2 x i64], align 16")
     (emitLine cg "  store i64 8388608, ptr %limits")
     (emitLine cg "  %limitaddr = ptrtoint ptr %limits to i64")
-    (emitStackSys cg "%rl" (targetGetrlimitNum (memGetWord cg 26))
+    (emitStackSys cg "%rl" (targetGetrlimitNum (cgTarget cg))
       "i64 3, i64 %limitaddr, i64 0, i64 0, i64 0, i64 0")
     (emitLine cg "  %soft = load i64, ptr %limits")
     (emitLine cg "  %rlok = icmp eq i64 %rl, 0")

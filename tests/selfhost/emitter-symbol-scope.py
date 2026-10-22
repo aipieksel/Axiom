@@ -38,14 +38,15 @@ def check(axiom, repo, work):
 
     original = (repo / "core/codegen.ax").read_text()
     binding = original
-    for slot, value in [(6, "name"), (7, "reg"), (16, "isFloat"), (20, "kind")]:
+    for slot, reader, value in [(6, "cgSymNames", "name"), (7, "cgSymRegs", "reg"),
+                                (16, "cgSymFloats", "isFloat"), (20, "cgSymKinds", "kind")]:
         binding = replace_once(
-            binding, f"    (vecPush (memGetWordVec cg {slot}) {value})\n",
-            f"    (memSetWord cg {slot} (vecPush (memGetWordVec cg {slot}) {value}))\n",
+            binding, f"    (vecPush ({reader} cg) {value})\n",
+            f"    (memSetWord cg {slot} (vecPush ({reader} cg) {value}))\n",
             f"symbol slot {slot} same-header ablation")
     entry = original
-    for slot in [6, 7, 16, 20]:
-        before = f"(vecClear (memGetWordVec cg {slot}))"
+    for slot, reader in [(6, "cgSymNames"), (7, "cgSymRegs"), (16, "cgSymFloats"), (20, "cgSymKinds")]:
+        before = f"(vecClear ({reader} cg))"
         if entry.count(before) != 2:
             raise RuntimeError(f"expected two function/lambda reset anchors for slot {slot}")
         entry = entry.replace(before, f"(memSetWord cg {slot} vecNew)")
@@ -57,8 +58,8 @@ def check(axiom, repo, work):
     # The removed primitives are the sole basis of this newly added tag.
     # Keep the private negative module truthful and require execution failures.
     app = replace_once(
-        app, "(pub :: emitApp (-> ASTNode Int Int))\n;@axiom:effect(io)\n;@axiom:effect(unsafe)\n",
-        "(pub :: emitApp (-> ASTNode Int Int))\n;@axiom:effect(io)\n", "application primitive effect")
+        app, "(:: cgResetAppArgs (-> Int Int))\n;@axiom:effect(unsafe)\n",
+        "(:: cgResetAppArgs (-> Int Int))\n", "application primitive effect")
     variants = [
         ("binding-shares", binding, (2, 4)),
         ("entry-replacement", entry, (23, 26, 31, 34)),

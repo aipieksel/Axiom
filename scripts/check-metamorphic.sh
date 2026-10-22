@@ -242,7 +242,7 @@ ablate "nid-fn-wins" symbols.ax \
 # view. The old indexed bare-only helper has no production callers.
 ablate "module-view" codegen.ax \
   "((None) (mangledForModCg cg bi name m))" \
-  "((None) (mangledForIn (memGetWordVec cg 12) (memGetWordVec cg 13) name 0))" \
+  "((None) (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) name 0))" \
   shadow
 ablate "entry-out-of-scope" typecheck.ax \
   "(pub fn (fnEntOutOfModuleScope tc m name e)
