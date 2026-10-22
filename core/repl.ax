@@ -451,9 +451,9 @@
 (:: replComplDrop (-> Strings (Option ComplSt) (Option ComplSt)))
 (fn (replComplDrop out cst)
   {
-    (match cst
-      ((Some s) (vecPush out (replComplErase (stRows s))))
-      ((None) ()))
+    (if (let (Some s) cst)
+      (vecPush out (replComplErase (stRows s)))
+      ())
     None
   })
 
@@ -579,9 +579,9 @@
                         (termFlush out)
                       }
                       (if (&& (replIsEscKey ev)
-                            (match cst
-                              ((Some _) true)
-                              ((None) false)))
+                            (if (let (Some _) cst)
+                              true
+                              false))
                         {
                           (set sActive 0)
                           (termReadSize kin)
@@ -1289,9 +1289,9 @@
     {
       (let d (vecGet ds 0))
       (if (strEq (diagCode d) "AX3042")
-        (match (strFind (diagMsg d) "__repl_result" 0)
-          ((None) false)
-          ((Some _) true))
+        (if (let (Some _) (strFind (diagMsg d) "__repl_result" 0))
+          true
+          false)
         false)
     }))
 
@@ -1368,9 +1368,9 @@
   {
     (let t (sysEnv "TMPDIR"))
     (if (&& (pathIsAbsolute t)
-          (match (strFindByte t 39 0)
-            ((None) true)
-            ((Some _) false)))
+          (if (let (Some _) (strFindByte t 39 0))
+            false
+            true))
       t
       "/tmp")
   })
@@ -2460,126 +2460,121 @@
                       replPromptCont
                       replPromptMain)
                     pending hist cenv))
-                (match lineOpt
-                  ((None)
-                    {
-                      (set running 0)
-                      ; The file is compacted, if it needs it, on every
-                      ; exit path - including this one. `:quit` below
-                      ; closes before it exits for the same reason.
-                      (histClose hist)
-                      ; End of input with an entry still open discards it,
-                      ; and says so: otherwise a piped session whose last
-                      ; form never balanced ends with the same farewell as
-                      ; a clean one, and nothing names the missing lines.
-                      (if (> (strLen pending) 0)
-                        {
-                          (set pending "")
-                          (replStyled REPL_AMBER "Aborted: unbalanced input discarded.\n")
-                        })
-                      (replOut "\nGoodbye!\n")
-                    }
-                  )
-                  ((Some raw)
-                    (if (> (strLen pending) 0)
-                      ; Continuing an entry the completeness check has not
-                      ; closed. Anything typed joins and re-measures the
-                      ; WHOLE buffer, because a closer - or a closing quote
-                      ; - on THIS line can only be judged against everything
-                      ; opened before it. A blank line joins as an empty
-                      ; line (formatting and pastes survive); the SECOND
-                      ; blank in a row aborts - `pending` ends in `\n`
-                      ; exactly when its last line was blank, because only
-                      ; blanks join as empty tails - and so does the Ctrl-C
-                      ; sentinel (`replIsAbort`), which is why a cancel
-                      ; must not look like a blank.
-                      (if (replIsAbort raw)
-                        {
-                          (set pending "")
-                          (replStyled REPL_AMBER "Aborted: unbalanced input discarded.\n")
-                        }
-                        {
-                          (let next (replTrim raw))
-                          (if (== (strLen next) 0)
-                            (if (== (strByte pending (- (strLen pending) 1)) 10)
+                (if (let (Some raw) lineOpt)
+                  (if (> (strLen pending) 0)
+                    ; Continuing an entry the completeness check has not
+                    ; closed. Anything typed joins and re-measures the
+                    ; WHOLE buffer, because a closer - or a closing quote
+                    ; - on THIS line can only be judged against everything
+                    ; opened before it. A blank line joins as an empty
+                    ; line (formatting and pastes survive); the SECOND
+                    ; blank in a row aborts - `pending` ends in `\n`
+                    ; exactly when its last line was blank, because only
+                    ; blanks join as empty tails - and so does the Ctrl-C
+                    ; sentinel (`replIsAbort`), which is why a cancel
+                    ; must not look like a blank.
+                    (if (replIsAbort raw)
+                      {
+                        (set pending "")
+                        (replStyled REPL_AMBER "Aborted: unbalanced input discarded.\n")
+                      }
+                      {
+                        (let next (replTrim raw))
+                        (if (== (strLen next) 0)
+                          (if (== (strByte pending (- (strLen pending) 1)) 10)
+                            {
+                              (set pending "")
+                              (replStyled REPL_AMBER "Aborted: unbalanced input discarded.\n")
+                            }
+                            (set pending (concat pending "\n")))
+                          {
+                            (let joined (concat (concat pending "\n") next))
+                            (if (replEntryIncomplete joined)
+                              (set pending joined)
                               {
                                 (set pending "")
-                                (replStyled REPL_AMBER "Aborted: unbalanced input discarded.\n")
-                              }
-                              (set pending (concat pending "\n")))
-                            {
-                              (let joined (concat (concat pending "\n") next))
-                              (if (replEntryIncomplete joined)
-                                (set pending joined)
-                                {
-                                  (set pending "")
-                                  (if (replDepthNegative joined)
+                                (if (replDepthNegative joined)
+                                  {
+                                    (replStyled REPL_ERROR "Parse error: too many closing parens\n")
+                                    (histRecord hist joined)
+                                  }
+                                  (if (== (strByte joined 0) 58)
+                                    ; A buffered `:type`/`:llvm`/`:time`
+                                    ; whose argument now balances: the
+                                    ; fresh path only ever buffers those,
+                                    ; so this is one of them.
                                     {
-                                      (replStyled REPL_ERROR
-                                        "Parse error: too many closing parens\n")
-                                      (histRecord hist joined)
-                                    }
-                                    (if (== (strByte joined 0) 58)
-                                      ; A buffered `:type`/`:llvm`/`:time`
-                                      ; whose argument now balances: the
-                                      ; fresh path only ever buffers those,
-                                      ; so this is one of them.
+                                      (let w (cmdWord joined))
+                                      (let rest (cmdRest joined))
                                       {
-                                        (let w (cmdWord joined))
-                                        (let rest (cmdRest joined))
-                                        {
-                                          (set declsSrc (replDispatchColonMulti declsSrc w rest))
-                                          (histRecord hist joined)
-                                        }
-                                      }
-                                      {
-                                        (set declsSrc (replDispatch declsSrc joined))
+                                        (set declsSrc (replDispatchColonMulti declsSrc w rest))
                                         (histRecord hist joined)
-                                      }))
-                                })
-                            })
-                        })
-                      ; A blank line is a no-op - and so is the Ctrl-C
-                      ; sentinel, whose `^C` echo is the whole answer on
-                      ; a fresh line; it aborts a pending entry and never
-                      ; an empty one.
-                      {
-                        (let line (replTrim raw))
-                        (if (! (|| (== (strLen line) 0) (replIsAbort raw)))
-                          (if (== (strByte line 0) 59)
-                            ; A comment is discarded; an AXTAG looks like a
-                            ; comment and is a CLAIM, so it is kept and
-                            ; attaches to the declaration typed next. See
-                            ; `replIsAxtagAt` for what that costs and why
-                            ; the two edges - redefinition and a trailing
-                            ; tag - are handled where they are.
-                            (if (== (replIsAxtagLine line) 1)
-                              (set declsSrc (concat (concat declsSrc line) "\n")))
-                            ; A `:` line is a colon command; a bare `?`
-                            ; is `:help` by its own advertisement (58 is
-                            ; `:`, 63 is `?`). Anything else starting
-                            ; with `?` cannot be an expression - `?` is
-                            ; no identifier byte - so routing the whole
-                            ; line to `replColon` mistakes nothing.
-                            (if (|| (== (strByte line 0) 58) (== (strByte line 0) 63))
-                              (if (replColonBuffers (cmdWord line) (cmdRest line))
-                                ; An expression command whose argument does
-                                ; not yet balance (`:type (fn ...`): later
-                                ; lines join `pending` until it does, and
-                                ; the whole entry is recorded then.
-                                (set pending line)
-                                (set declsSrc (replColon declsSrc line hist)))
-                              ; A decl-or-expr candidate: dispatch now if it is
-                              ; already complete (every existing single-line
-                              ; entry is), otherwise start buffering.
-                              (if (replEntryIncomplete line)
-                                (set pending line)
-                                {
-                                  (set declsSrc (replDispatch declsSrc line))
-                                  (histRecord hist line)
-                                }))))
+                                      }
+                                    }
+                                    {
+                                      (set declsSrc (replDispatch declsSrc joined))
+                                      (histRecord hist joined)
+                                    }))
+                              })
+                          })
                       })
-                  ))
+                    ; A blank line is a no-op - and so is the Ctrl-C
+                    ; sentinel, whose `^C` echo is the whole answer on
+                    ; a fresh line; it aborts a pending entry and never
+                    ; an empty one.
+                    {
+                      (let line (replTrim raw))
+                      (if (! (|| (== (strLen line) 0) (replIsAbort raw)))
+                        (if (== (strByte line 0) 59)
+                          ; A comment is discarded; an AXTAG looks like a
+                          ; comment and is a CLAIM, so it is kept and
+                          ; attaches to the declaration typed next. See
+                          ; `replIsAxtagAt` for what that costs and why
+                          ; the two edges - redefinition and a trailing
+                          ; tag - are handled where they are.
+                          (if (== (replIsAxtagLine line) 1)
+                            (set declsSrc (concat (concat declsSrc line) "\n")))
+                          ; A `:` line is a colon command; a bare `?`
+                          ; is `:help` by its own advertisement (58 is
+                          ; `:`, 63 is `?`). Anything else starting
+                          ; with `?` cannot be an expression - `?` is
+                          ; no identifier byte - so routing the whole
+                          ; line to `replColon` mistakes nothing.
+                          (if (|| (== (strByte line 0) 58) (== (strByte line 0) 63))
+                            (if (replColonBuffers (cmdWord line) (cmdRest line))
+                              ; An expression command whose argument does
+                              ; not yet balance (`:type (fn ...`): later
+                              ; lines join `pending` until it does, and
+                              ; the whole entry is recorded then.
+                              (set pending line)
+                              (set declsSrc (replColon declsSrc line hist)))
+                            ; A decl-or-expr candidate: dispatch now if it is
+                            ; already complete (every existing single-line
+                            ; entry is), otherwise start buffering.
+                            (if (replEntryIncomplete line)
+                              (set pending line)
+                              {
+                                (set declsSrc (replDispatch declsSrc line))
+                                (histRecord hist line)
+                              }))))
+                    })
+                  {
+                    (set running 0)
+                    ; The file is compacted, if it needs it, on every
+                    ; exit path - including this one. `:quit` below
+                    ; closes before it exits for the same reason.
+                    (histClose hist)
+                    ; End of input with an entry still open discards it,
+                    ; and says so: otherwise a piped session whose last
+                    ; form never balanced ends with the same farewell as
+                    ; a clean one, and nothing names the missing lines.
+                    (if (> (strLen pending) 0)
+                      {
+                        (set pending "")
+                        (replStyled REPL_AMBER "Aborted: unbalanced input discarded.\n")
+                      })
+                    (replOut "\nGoodbye!\n")
+                  })
               }
             })
           0

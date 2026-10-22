@@ -148,22 +148,18 @@
     (let mut acc 0)
     {
       (while (< i off)
-        (match (utf8DecodeAt src i)
-          ((None)
-            {
-              (set acc (+ acc 1))
-              (set i (+ i 1))
-            }
-          )
-          ((Some cp)
-            {
-              (set acc (+ acc
-                         (if (>= cp 65536)
-                           2
-                           1)))
-              (set i (+ i (utf8SeqLen (strByte src i))))
-            }
-          )))
+        (if (let (Some cp) (utf8DecodeAt src i))
+          {
+            (set acc (+ acc
+                       (if (>= cp 65536)
+                         2
+                         1)))
+            (set i (+ i (utf8SeqLen (strByte src i))))
+          }
+          {
+            (set acc (+ acc 1))
+            (set i (+ i 1))
+          }))
       acc
     }
   })
@@ -490,22 +486,13 @@
                     (vecPush seen name)
                     {
                       (let srcOpt (readModuleSrc name tcode entryDir))
-                      (match srcOpt
-                        ((None)
-                          (set missing name)
-                        )
-                        ; The module reads. Its own imports are
-                        ; the same question one level down; a
-                        ; module that does not parse is not a
-                        ; missing-import failure and is left for
-                        ; the checker to report.
-                        ((Some src)
-                          {
-                            (let pr (parseModuleWith (lex src) (scanAxtags src)))
-                            (if (! (== (memGetWord pr 0) 0))
-                              (set missing (lspPreflight (readAstNodes pr 1) tcode entryDir seen)))
-                          }
-                        ))
+                      (if (let (Some src) srcOpt)
+                        {
+                          (let pr (parseModuleWith (lex src) (scanAxtags src)))
+                          (if (! (== (memGetWord pr 0) 0))
+                            (set missing (lspPreflight (readAstNodes pr 1) tcode entryDir seen)))
+                        }
+                        (set missing name))
                     }
                   })
               })
@@ -588,18 +575,16 @@
           }
           (set i (+ i 1))
         })
-      (match found
-        ((Some hit) (unitSrc hit))
-        ((None)
+      (if (let (Some hit) found)
+        (unitSrc hit)
+        {
+          (let text (unwrapOr (readFile key) ""))
           {
-            (let text (unwrapOr (readFile key) ""))
-            {
-              (vecPush workspace.files
-                (CUnit2 :file key :src text :name "" :imports vecNew :library false))
-              text
-            }
+            (vecPush workspace.files
+              (CUnit2 :file key :src text :name "" :imports vecNew :library false))
+            text
           }
-        ))
+        })
     }
   })
 
@@ -706,9 +691,9 @@
                         (let overlay (lspWorkspacePath workspace path))
                         {
                           (let src
-                            (match overlay
-                              ((Some o) (unitSrc o))
-                              ((None) (lspWorkspaceFile workspace path))))
+                            (if (let (Some o) overlay)
+                              (unitSrc o)
+                              (lspWorkspaceFile workspace path)))
                           (let unit (vecLen units))
                           {
                             (vecPush units
@@ -730,9 +715,9 @@
                                   (if (|| (isSome lexD) (== (memGetWord pr 0) 0))
                                     {
                                       (let d
-                                        (match lexD
-                                          ((Some ld) ld)
-                                          ((None) (parseErrDiag toks pr src))))
+                                        (if (let (Some ld) lexD)
+                                          ld
+                                          (parseErrDiag toks pr src)))
                                       {
                                         (diagSetUnit d unit)
                                         (set failure (Some d))
@@ -791,9 +776,9 @@
           ; reported identically, at line 1.
           (jsonArrPush jsonArr
             (lspDiagJson
-              (match lexD
-                ((Some ld) ld)
-                ((None) (parseErrDiag toks pr src)))
+              (if (let (Some ld) lexD)
+                ld
+                (parseErrDiag toks pr src))
               src (lspLineIndex src) (lspPathToUri path)))
           {
             (let decls (readAstNodes pr 1))
@@ -816,14 +801,12 @@
             {
               (let failure (lspWorkspacePreflight workspace decls tcode entryDir units 0))
               (if (isSome failure)
-                (match failure
-                  ((Some fd)
-                    (if (== (diagUnit fd) 0)
-                      (jsonArrPush jsonArr
-                        (lspDiagJson fd src (lspLineIndex src) (lspPathToUri path)))
-                      jsonArr)
-                  )
-                  ((None) jsonArr))
+                (if (let (Some fd) failure)
+                  (if (== (diagUnit fd) 0)
+                    (jsonArrPush jsonArr
+                      (lspDiagJson fd src (lspLineIndex src) (lspPathToUri path)))
+                    jsonArr)
+                  jsonArr)
                 ; Same order as `compileFile`: expansion, then the
                 ; checker. An editor that reported a different set
                 ; of diagnostics from `axiom check` on the same file
@@ -1101,9 +1084,9 @@
 (pub fn (lspLintPlainName name)
   (if (strEq name "_")
     false
-    (match (strFindByte name 36 0)
-      ((None) true)
-      ((Some _) false))))
+    (if (let (Some _) (strFindByte name 36 0))
+      false
+      true)))
 
 ; A `let`/`mut` binding worth reporting when it goes unread: it needs
 ; a span to point at, besides a plain name.
@@ -1520,9 +1503,9 @@
             ; after `;@axiom:`.
             {
               (let at
-                (match (strFind content (vecGet codes i) 0)
-                  ((None) 0)
-                  ((Some k) k)))
+                (if (let (Some k) (strFind content (vecGet codes i) 0))
+                  k
+                  0))
               {
                 (set lx.owner owner)
                 (lspLintRecord lx
@@ -1834,32 +1817,30 @@
     (- 0 1)
     {
       (let line (lspAxqlDigitsAt msg 5))
-      (match (strFind msg "column " 0)
-        ((None) (- 0 1))
-        ((Some c)
-          {
-            (let col (lspAxqlDigitsAt msg (+ c 7)))
-            (if (|| (< line 1) (< col 1))
-              (- 0 1)
+      (if (let (Some c) (strFind msg "column " 0))
+        {
+          (let col (lspAxqlDigitsAt msg (+ c 7)))
+          (if (|| (< line 1) (< col 1))
+            (- 0 1)
+            {
+              ; to the start of line `line`, then `col - 1` bytes on
+              (let mut i 0)
+              (let mut l 1)
+              (let n (strLen text))
               {
-                ; to the start of line `line`, then `col - 1` bytes on
-                (let mut i 0)
-                (let mut l 1)
-                (let n (strLen text))
-                {
-                  (while (&& (< l line) (< i n))
-                    {
-                      (if (== (strByte text i) 10)
-                        (set l (+ l 1)))
-                      (set i (+ i 1))
-                    })
-                  (if (> (+ i (- col 1)) n)
-                    n
-                    (+ i (- col 1)))
-                }
-              })
-          }
-        ))
+                (while (&& (< l line) (< i n))
+                  {
+                    (if (== (strByte text i) 10)
+                      (set l (+ l 1)))
+                    (set i (+ i 1))
+                  })
+                (if (> (+ i (- col 1)) n)
+                  n
+                  (+ i (- col 1)))
+              }
+            })
+        }
+        (- 0 1))
     }))
 
 ; The decimal number at `at` in `s`, or -1 when no digit is there.
@@ -1995,11 +1976,9 @@
           (let t (vecGet toks i))
           (let k (kindInt (tokenKind t)))
           (if (== k (kindInt TK_STRING))
-            (match (lspAxqlLitOf toks i)
-              ((Some q)
-                (lspAxqlSchemaFromText tables columns (lspAxqlLitValue src q.start q.end) q.script)
-              )
-              ((None) 0))
+            (if (let (Some q) (lspAxqlLitOf toks i))
+              (lspAxqlSchemaFromText tables columns (lspAxqlLitValue src q.start q.end) q.script)
+              0)
             (if (&& (== k (kindInt TK_IDENT)) (> i 0))
               (if (== (kindInt (tokenKind (vecGet toks (- i 1)))) (kindInt TK_LPAREN))
                 (lspAxqlSchemaFromForm tables columns toks i))))
@@ -2138,12 +2117,10 @@
       (for t in schema.tables
         (lspComplOffer out seen t 7 "table" prefix))
       (for c in schema.columns
-        (match (strFind c "." 0)
-          ((Some dot)
-            (lspComplOffer out seen (strSlice c (+ dot 1) (- (strLen c) (+ dot 1))) 5
-              (concat "column of " (strSlice c 0 dot)) prefix)
-          )
-          ((None) 0)))
+        (if (let (Some dot) (strFind c "." 0))
+          (lspComplOffer out seen (strSlice c (+ dot 1) (- (strLen c) (+ dot 1))) 5
+            (concat "column of " (strSlice c 0 dot)) prefix)
+          0))
       0
     }
   })
@@ -2249,13 +2226,11 @@
         out
         {
           (for c in columns
-            (match (strFind c "." 0)
-              ((Some dot)
-                (if (strEq (strLower (strSlice c (+ dot 1) (- (strLen c) (+ dot 1)))) lw)
-                  (set out (concat (concat "**`" (strSlice c (+ dot 1) (- (strLen c) (+ dot 1))))
-                             (concat "`** a column of `" (concat (strSlice c 0 dot) "`")))))
-              )
-              ((None) 0)))
+            (if (let (Some dot) (strFind c "." 0))
+              (if (strEq (strLower (strSlice c (+ dot 1) (- (strLen c) (+ dot 1)))) lw)
+                (set out (concat (concat "**`" (strSlice c (+ dot 1) (- (strLen c) (+ dot 1))))
+                           (concat "`** a column of `" (concat (strSlice c 0 dot) "`")))))
+              0))
           out
         })
     }
@@ -3153,22 +3128,18 @@
                 (&& (!= (strByte src i) 10) (!= (strByte src i) 13))
                 false)
               false)
-              (match (utf8DecodeAt src i)
-                ((None)
-                  {
-                    (set u (+ u 1))
-                    (set i (+ i 1))
-                  }
-                )
-                ((Some cp)
-                  {
-                    (set u (+ u
-                             (if (>= cp 65536)
-                               2
-                               1)))
-                    (set i (+ i (utf8SeqLen (strByte src i))))
-                  }
-                )))
+              (if (let (Some cp) (utf8DecodeAt src i))
+                {
+                  (set u (+ u
+                           (if (>= cp 65536)
+                             2
+                             1)))
+                  (set i (+ i (utf8SeqLen (strByte src i))))
+                }
+                {
+                  (set u (+ u 1))
+                  (set i (+ i 1))
+                }))
             i
           }
         }
@@ -3490,29 +3461,27 @@
 (pub :: lspDefinitionImported (-> LspWorkspace String String (Vec ASTNode) String Int))
 ;@axiom:effect(io)
 (pub fn (lspDefinitionImported workspace path src decls w)
-  (match (lspResolveFor workspace path src decls)
-    ((None) jsonNull)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        {
-          (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-          (if (nodeSame d nilNode)
-            (lspCtorDefinitionImported allDecls units w)
-            {
-              (let u (lspUnitOf units (nodeModule d)))
-              (if (< u 0)
-                jsonNull
-                {
-                  (let unit (vecGet units u))
-                  (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (unitFile unit))))
-                    "range" (lspRange (unitSrc unit) (nodeSpan d)))
-                })
-            })
-        }
+        (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
+        (if (nodeSame d nilNode)
+          (lspCtorDefinitionImported allDecls units w)
+          {
+            (let u (lspUnitOf units (nodeModule d)))
+            (if (< u 0)
+              jsonNull
+              {
+                (let unit (vecGet units u))
+                (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (unitFile unit))))
+                  "range" (lspRange (unitSrc unit) (nodeSpan d)))
+              })
+          })
       }
-    )))
+    }
+    jsonNull))
 
 ; `textDocument/hover`: what the declaration under the cursor says
 ; about itself, in the words the document uses.
@@ -3677,31 +3646,27 @@
 (pub fn (lspFieldBaseStruct src decls base baseOff)
   {
     (let occs (lspNavOccurrences src decls))
-    (match (lspNavAt occs baseOff)
-      ((None)
-        (as 0 String)
-      )
-      ((Some o)
-        {
-          (let key o.key)
-          (if (lspNavIsLocal key)
-            (match (lspNavBinderOf occs key)
-              ((None)
-                (as 0 String)
-              )
-              ((Some b)
-                {
-                  (let bkind b.bkind)
-                  (if (== bkind NAV_B_PARAM)
-                    (lspFieldParamStruct decls b.owner b.name b.param)
-                    (if (== bkind NAV_B_LET)
-                      (lspFieldValueStruct b.value)
-                      (as 0 String)))
-                }
-              ))
-            (as 0 String))
-        }
-      ))
+    (if (let (Some o) (lspNavAt occs baseOff))
+      {
+        (let key o.key)
+        (if (lspNavIsLocal key)
+          (match (lspNavBinderOf occs key)
+            ((None)
+              (as 0 String)
+            )
+            ((Some b)
+              {
+                (let bkind b.bkind)
+                (if (== bkind NAV_B_PARAM)
+                  (lspFieldParamStruct decls b.owner b.name b.param)
+                  (if (== bkind NAV_B_LET)
+                    (lspFieldValueStruct b.value)
+                    (as 0 String)))
+              }
+            ))
+          (as 0 String))
+      }
+      (as 0 String))
   })
 
 ; A field use: `base.` ends where the word begins.
@@ -3980,31 +3945,29 @@
 (pub fn (lspModuleHover workspace path src decls w range)
   (if (nodeSame (lspFixFindImport decls w (- (vecLen decls) 1)) nilNode)
     jsonNull
-    (match (lspResolveFor workspace path src decls)
-      ((None) jsonNull)
-      ((Some r)
+    (if (let (Some r) (lspResolveFor workspace path src decls))
+      {
+        (let units r.units)
         {
-          (let units r.units)
-          {
-            (let u (lspUnitNamed units w))
-            (if (< u 0)
-              jsonNull
+          (let u (lspUnitNamed units w))
+          (if (< u 0)
+            jsonNull
+            {
+              (let unit (vecGet units u))
               {
-                (let unit (vecGet units u))
-                {
-                  (let doc (docModuleDoc (unitSrc unit)))
-                  (lspMarkdownHover
-                    (concat (concat (concat "```axiom\n(import " w) ")\n```\n\n*module* `")
-                      (concat (concat (unitFile unit) "`\n")
-                        (if (== (strLen doc) 0)
-                          ""
-                          (concat "\n" doc))))
-                    range)
-                }
-              })
-          }
+                (let doc (docModuleDoc (unitSrc unit)))
+                (lspMarkdownHover
+                  (concat (concat (concat "```axiom\n(import " w) ")\n```\n\n*module* `")
+                    (concat (concat (unitFile unit) "`\n")
+                      (if (== (strLen doc) 0)
+                        ""
+                        (concat "\n" doc))))
+                  range)
+              }
+            })
         }
-      ))))
+      }
+      jsonNull)))
 
 (pub :: lspHover (-> LspWorkspace String String Int String Int))
 ; A field path is resolved as a path first: the word under the
@@ -4197,28 +4160,26 @@
 (pub :: lspHoverImported (-> LspWorkspace String String (Vec ASTNode) String Int Int))
 ;@axiom:effect(io)
 (pub fn (lspHoverImported workspace path src decls w range)
-  (match (lspResolveFor workspace path src decls)
-    ((None) jsonNull)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        {
-          (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-          (if (nodeSame d nilNode)
-            (lspHoverCtorImported allDecls units w range)
-            {
-              (let u (lspUnitOf units (nodeModule d)))
-              (if (< u 0)
-                jsonNull
-                {
-                  (let unit (vecGet units u))
-                  (lspHoverAt (unitSrc unit) allDecls d range (unitName unit))
-                })
-            })
-        }
+        (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
+        (if (nodeSame d nilNode)
+          (lspHoverCtorImported allDecls units w range)
+          {
+            (let u (lspUnitOf units (nodeModule d)))
+            (if (< u 0)
+              jsonNull
+              {
+                (let unit (vecGet units u))
+                (lspHoverAt (unitSrc unit) allDecls d range (unitName unit))
+              })
+          })
       }
-    )))
+    }
+    jsonNull))
 
 ; ------------------------------------------------------------------
 ; Reading a declaration back out of the document
@@ -4489,9 +4450,9 @@
 
 (pub :: lspFirstLine (-> String String))
 (pub fn (lspFirstLine s)
-  (match (strFindByte s 10 0)
-    ((None) s)
-    ((Some nl) (strSlice s 0 nl))))
+  (if (let (Some nl) (strFindByte s 10 0))
+    (strSlice s 0 nl)
+    s))
 
 ; The last `(:: name T)` this declaration list carries for `name`.
 ;
@@ -5101,31 +5062,29 @@
 (pub :: lspComplImported (-> LspWorkspace Int Strings String String (Vec ASTNode) String Int))
 ;@axiom:effect(io)
 (pub fn (lspComplImported workspace out seen path src decls prefix)
-  (match (lspResolveFor workspace path src decls)
-    ((None) 0)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
+        (let n (vecLen allDecls))
         {
-          (let n (vecLen allDecls))
-          {
-            (for i in 0..n
-              {
-                (let d (vecGet allDecls i))
-                (if (&& (lspWantsSymbol (nodeTag d)) (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
-                  {
-                    (lspComplOffer out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
-                      (lspModOf (nodeAName d)) prefix)
-                    (if (== (nodeTag d) TAG_D_DATA)
-                      (lspComplCtors out seen (nodeBChildren d) prefix))
-                  })
-              })
-            0
-          }
+          (for i in 0..n
+            {
+              (let d (vecGet allDecls i))
+              (if (&& (lspWantsSymbol (nodeTag d)) (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
+                {
+                  (lspComplOffer out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
+                    (lspModOf (nodeAName d)) prefix)
+                  (if (== (nodeTag d) TAG_D_DATA)
+                    (lspComplCtors out seen (nodeBChildren d) prefix))
+                })
+            })
+          0
         }
       }
-    )))
+    }
+    0))
 
 ; The module half of a mangled name: `Vec$vecPush` answers `Vec`. The
 ; other half of `bareOf`, and "" for a name nothing mangled - a type
@@ -5148,13 +5107,11 @@
 ;; the percent-decoder below stores.
 (:: lspHexPair (-> String Int (Option Int)))
 (fn (lspHexPair s i)
-  (match (strHexVal (strByte s i))
-    ((None) None)
-    ((Some h)
-      (match (strHexVal (strByte s (+ i 1)))
-        ((None) None)
-        ((Some l) (Some (+ (* h 16) l))))
-    )))
+  (if (let (Some h) (strHexVal (strByte s i)))
+    (match (strHexVal (strByte s (+ i 1)))
+      ((None) None)
+      ((Some l) (Some (+ (* h 16) l))))
+    None))
 
 ; ------------------------------------------------------------------
 ; URIs
@@ -5179,21 +5136,17 @@
       {
         (while (< i (strLen body))
           (if (&& (== (strByte body i) 37) (<= (+ i 3) (strLen body)))
-            (match (lspHexPair body (+ i 1))
-              ((None)
-                {
-                  (__store8 (strData out) o (strByte body i))
-                  (set o (+ o 1))
-                  (set i (+ i 1))
-                }
-              )
-              ((Some hl)
-                {
-                  (__store8 (strData out) o hl)
-                  (set o (+ o 1))
-                  (set i (+ i 3))
-                }
-              ))
+            (if (let (Some hl) (lspHexPair body (+ i 1)))
+              {
+                (__store8 (strData out) o hl)
+                (set o (+ o 1))
+                (set i (+ i 3))
+              }
+              {
+                (__store8 (strData out) o (strByte body i))
+                (set o (+ o 1))
+                (set i (+ i 1))
+              })
             {
               (__store8 (strData out) o (strByte body i))
               (set o (+ o 1))
@@ -5871,9 +5824,9 @@
                                     {
                                       (let overlay (lspWorkspacePath workspace dependency))
                                       (vecPush todo
-                                        (match overlay
-                                          ((Some o) (unitSrc o))
-                                          ((None) (lspWorkspaceFile workspace dependency))))
+                                        (if (let (Some o) overlay)
+                                          (unitSrc o)
+                                          (lspWorkspaceFile workspace dependency)))
                                     }))
                               }
                             })
@@ -5903,9 +5856,9 @@
 ; JSON numbers with a fractional or exponent spelling are not LSP integers.
 (pub :: lspSyncInteger (-> Int Bool))
 (pub fn (lspSyncInteger value)
-  (match (strParseInt (jsonNumText value))
-    ((None) false)
-    ((Some n) (&& (>= n (- 0 2147483648)) (<= n 2147483647)))))
+  (if (let (Some n) (strParseInt (jsonNumText value)))
+    (&& (>= n (- 0 2147483648)) (<= n 2147483647))
+    false))
 
 ; The raw JSON API represents non-strings as empty text. Inspecting its
 ; serialised opening byte distinguishes a valid empty string from null.
@@ -5964,27 +5917,23 @@
           (while (&& valid
                    (&& (< units ch)
                      (&& (< i n) (&& (!= (strByte src i) 10) (!= (strByte src i) 13)))))
-            (match (utf8DecodeAt src i)
-              ((None)
-                {
-                  (set units (+ units 1))
-                  (set i (+ i 1))
-                }
-              )
-              ((Some cp)
-                {
-                  (let width
-                    (if (>= cp 65536)
-                      2
-                      1))
-                  (if (> (+ units width) ch)
-                    (set valid false)
-                    {
-                      (set units (+ units width))
-                      (set i (+ i (utf8SeqLen (strByte src i))))
-                    })
-                }
-              )))
+            (if (let (Some cp) (utf8DecodeAt src i))
+              {
+                (let width
+                  (if (>= cp 65536)
+                    2
+                    1))
+                (if (> (+ units width) ch)
+                  (set valid false)
+                  {
+                    (set units (+ units width))
+                    (set i (+ i (utf8SeqLen (strByte src i))))
+                  })
+              }
+              {
+                (set units (+ units 1))
+                (set i (+ i 1))
+              }))
           (if valid
             i
             (- 0 1))
@@ -6034,13 +5983,9 @@
     {
       (while (&& valid (< i (jsonArrLen changes)))
         {
-          (match (lspSyncEdit text (jsonArrGet changes i))
-            ((None)
-              (set valid false)
-            )
-            ((Some next)
-              (set text next)
-            ))
+          (if (let (Some next) (lspSyncEdit text (jsonArrGet changes i)))
+            (set text next)
+            (set valid false))
           (set i (+ i 1))
         })
       (if valid
@@ -6064,15 +6009,13 @@
         ; Other JSON kinds cannot stand in for that array.
         (if (! (strStartsWith (jsonWrite changes) "["))
           false
-          (match (lspSyncChanges (docText uris texts uri) changes)
-            ((None) false)
-            ((Some text)
-              {
-                (docPut uris texts uri text)
-                (vecSet meta (* 2 i) (jsonInt version))
-                true
-              }
-            )))))
+          (if (let (Some text) (lspSyncChanges (docText uris texts uri) changes))
+            {
+              (docPut uris texts uri text)
+              (vecSet meta (* 2 i) (jsonInt version))
+              true
+            }
+            false))))
   })
 
 (pub :: lspDocClose (-> Strings Strings Strings Ints String Bool))
@@ -6713,21 +6656,19 @@
 
 (pub :: lspNavProbeAt (-> LspNav String String ()))
 (pub fn (lspNavProbeAt nv name key)
-  (match nv.probe
-    ((None) ())
-    ((Some p)
-      {
-        (let newName p.newName)
-        (let k p.key)
-        (let scope nv.scope)
-        (if (strEq key k)
-          (if (|| (!= (strLen (lspNavScopeFind scope newName)) 0)
-                (!= (strLen (lspNavTopGet nv.top newName)) 0))
-            (set p.hit 1))
-          (if (&& (strEq name newName) (lspNavScopeHasKey scope k))
-            (set p.hit 1)))
-      }
-    )))
+  (if (let (Some p) nv.probe)
+    {
+      (let newName p.newName)
+      (let k p.key)
+      (let scope nv.scope)
+      (if (strEq key k)
+        (if (|| (!= (strLen (lspNavScopeFind scope newName)) 0)
+              (!= (strLen (lspNavTopGet nv.top newName)) 0))
+          (set p.hit 1))
+        (if (&& (strEq name newName) (lspNavScopeHasKey scope k))
+          (set p.hit 1)))
+    }
+    ()))
 
 ; ------------------------------------------------------------------
 ; Binders.
@@ -7413,9 +7354,9 @@
 (pub fn (lspNavRef nv name span role)
   (if (strEq name "_")
     0
-    (if (match (strFindByte name 36 0)
-      ((None) true)
-      ((Some _) false))
+    (if (if (let (Some _) (strFindByte name 36 0))
+      false
+      true)
       ; The bytes decide here too. `parseForExpr` builds `(< for$i
       ; for$n)` and `(+ for$i 1)` with the KEYWORD's span on `<` and
       ; `+`, so that a type error in a bound reports at the loop;
@@ -7761,9 +7702,9 @@
 ; the constructor alone.
 (pub :: lspNavBareOfKey (-> String String))
 (pub fn (lspNavBareOfKey key)
-  (match (strFindByte key 35 0)
-    ((None) key)
-    ((Some h) (strSlice key (+ h 1) (- (strLen key) (+ h 1))))))
+  (if (let (Some h) (strFindByte key 35 0))
+    (strSlice key (+ h 1) (- (strLen key) (+ h 1)))
+    key))
 
 ; Renamable: a local with an anchor, or a name this document declares.
 ; NOT renamable, and null is the answer: a name declared in another
@@ -7969,30 +7910,28 @@
 (pub :: lspNavHomeUri (-> LspWorkspace String String (Vec ASTNode) String Strings String))
 ;@axiom:effect(io)
 (pub fn (lspNavHomeUri workspace path src decls w uris)
-  (match (lspResolveFor workspace path src decls)
-    ((None) "")
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        {
-          (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-          (if (nodeSame d nilNode)
-            ""
-            {
-              (let u (lspUnitOf units (nodeModule d)))
-              (if (< u 0)
-                ""
-                {
-                  (let huri (lspPathToUri (unitFile (vecGet units u))))
-                  (if (< (docFind uris huri) 0)
-                    ""
-                    huri)
-                })
-            })
-        }
+        (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
+        (if (nodeSame d nilNode)
+          ""
+          {
+            (let u (lspUnitOf units (nodeModule d)))
+            (if (< u 0)
+              ""
+              {
+                (let huri (lspPathToUri (unitFile (vecGet units u))))
+                (if (< (docFind uris huri) 0)
+                  ""
+                  huri)
+              })
+          })
       }
-    )))
+    }
+    ""))
 
 ; ------------------------------------------------------------------
 ; `textDocument/references`: every occurrence of the name under the
@@ -8011,34 +7950,32 @@
         (let ix (lspLineIndex src))
         (let occs (lspNavOccurrences src decls))
         (let incl (lspNavInclDecl params))
-        (match (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position")))
-          ((None) jsonNull)
-          ((Some o)
+        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+          {
+            (let key o.key)
+            (let out jsonArr)
             {
-              (let key o.key)
-              (let out jsonArr)
-              {
-                ; A GENERATED NAME's invocation, first when the
-                ; declaration is included: it precedes every use in
-                ; the document, so prepending keeps document order.
-                (if (== incl 1)
-                  {
-                    (let e (lspGenLookup gen o.name))
-                    (if (!= e 0)
-                      (jsonArrPush out
-                        (lspNavLocOf uri src
-                          (mkSpan (jsonGetInt e "invStart") (jsonGetInt e "invEnd")))))
-                  })
-                (lspNavLocations out uri src ix (lspNavSameKey occs key incl))
-                (if (lspNavIsTop key)
-                  (lspNavForeignLocations workspace out uri (lspNavBareOfKey key) uris texts)
-                  (if (== (strByte key 0) 63)
-                    (lspNavHomeLocations workspace out (lspUriToPath uri) src decls o.name incl
-                      uris texts)))
-                out
-              }
+              ; A GENERATED NAME's invocation, first when the
+              ; declaration is included: it precedes every use in
+              ; the document, so prepending keeps document order.
+              (if (== incl 1)
+                {
+                  (let e (lspGenLookup gen o.name))
+                  (if (!= e 0)
+                    (jsonArrPush out
+                      (lspNavLocOf uri src
+                        (mkSpan (jsonGetInt e "invStart") (jsonGetInt e "invEnd")))))
+                })
+              (lspNavLocations out uri src ix (lspNavSameKey occs key incl))
+              (if (lspNavIsTop key)
+                (lspNavForeignLocations workspace out uri (lspNavBareOfKey key) uris texts)
+                (if (== (strByte key 0) 63)
+                  (lspNavHomeLocations workspace out (lspUriToPath uri) src decls o.name incl uris
+                    texts)))
+              out
             }
-          ))
+          }
+          jsonNull)
       })
   })
 
@@ -8105,21 +8042,19 @@
       {
         (let ix (lspLineIndex src))
         (let occs (lspNavOccurrences src decls))
-        (match (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position")))
-          ((None) jsonNull)
-          ((Some o)
+        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+          {
+            (let sel (lspNavSameKey occs o.key 1))
+            (let out jsonArr)
             {
-              (let sel (lspNavSameKey occs o.key 1))
-              (let out jsonArr)
-              {
-                (for s in sel
-                  (jsonArrPush out
-                    (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix s.span)) "kind"
-                      (jsonNum (lspNavHighlightKind s.role)))))
-                out
-              }
+              (for s in sel
+                (jsonArrPush out
+                  (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix s.span)) "kind"
+                    (jsonNum (lspNavHighlightKind s.role)))))
+              out
             }
-          ))
+          }
+          jsonNull)
       })
   })
 
@@ -8137,14 +8072,12 @@
       {
         (let ix (lspLineIndex src))
         (let occs (lspNavOccurrences src decls))
-        (match (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position")))
-          ((None) jsonNull)
-          ((Some o)
-            (if (lspNavRenamable o)
-              (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix o.span)) "placeholder"
-                (jsonStr o.name))
-              jsonNull)
-          ))
+        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+          (if (lspNavRenamable o)
+            (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix o.span)) "placeholder"
+              (jsonStr o.name))
+            jsonNull)
+          jsonNull)
       })
   })
 
@@ -8174,19 +8107,17 @@
         (let ix (lspLineIndex src))
         (let occs (lspNavOccurrences src decls))
         (let newName (jsonGetStr params "newName"))
-        (match (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position")))
-          ((None) jsonNull)
-          ((Some o)
-            (if (|| (lspNavNot (lspNavRenamable o))
-                  (|| (lspNavNot (lspNavValidName newName)) (strEq newName o.name)))
-              jsonNull
-              {
-                (let key o.key)
-                (if (lspNavIsTop key)
-                  (lspRenameTop workspace src uri ix occs key newName uris texts)
-                  (lspRenameLocal src uri ix decls occs key newName))
-              })
-          ))
+        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+          (if (|| (lspNavNot (lspNavRenamable o))
+                (|| (lspNavNot (lspNavValidName newName)) (strEq newName o.name)))
+            jsonNull
+            {
+              (let key o.key)
+              (if (lspNavIsTop key)
+                (lspRenameTop workspace src uri ix occs key newName uris texts)
+                (lspRenameLocal src uri ix decls occs key newName))
+            })
+          jsonNull)
       })
   })
 
@@ -8264,21 +8195,19 @@
 (pub fn (lspNavLocalDefinition src uri ix decls off)
   {
     (let occs (lspNavOccurrences src decls))
-    (match (lspNavAt occs off)
-      ((None) 0)
-      ((Some o)
-        {
-          (let key o.key)
-          (if (lspNavIsLocal key)
-            (match (lspNavBinderOf occs key)
-              ((None) jsonNull)
-              ((Some b)
-                (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
-                  (lspRangeIx src ix b.span))
-              ))
-            0)
-        }
-      ))
+    (if (let (Some o) (lspNavAt occs off))
+      {
+        (let key o.key)
+        (if (lspNavIsLocal key)
+          (match (lspNavBinderOf occs key)
+            ((None) jsonNull)
+            ((Some b)
+              (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
+                (lspRangeIx src ix b.span))
+            ))
+          0)
+      }
+      0)
   })
 
 ; ------------------------------------------------------------------
@@ -8691,51 +8620,49 @@
         mkBoolTy
         (if (== (nodeSpan e) 0)
           nilNode
-          (match (lspNavAt occs (spanStart (nodeSpan e)))
-            ((None) nilNode)
-            ((Some o)
-              {
-                (let key o.key)
-                (if (lspNavIsLocal key)
-                  (match (lspNavBinderOf occs key)
-                    ((None) nilNode)
-                    ((Some b)
-                      {
-                        (let bkind b.bkind)
-                        (if (== bkind NAV_B_PARAM)
-                          {
-                            (let t (lspShapeParamTy decls b.owner b.param))
-                            (if (lspShapeIsBad t)
-                              nilNode
-                              t)
-                          }
-                          (if (== bkind NAV_B_LET)
-                            (if (<= fuel 0)
-                              nilNode
-                              {
-                                (let v b.value)
-                                (if (nodeSame v nilNode)
-                                  nilNode
-                                  (lspShapeOf decls occs v (- fuel 1)))
-                              })
-                            nilNode))
-                      }
-                    ))
-                  {
-                    (let sig (lspFindSig decls name (- (vecLen decls) 1)))
-                    (if (! (nodeSame sig nilNode))
-                      {
-                        (let t (nodeTyChild sig))
-                        (if (lspShapeIsBad t)
-                          nilNode
-                          (if (>= (lspShapeArrowArity t) 2)
+          (if (let (Some o) (lspNavAt occs (spanStart (nodeSpan e))))
+            {
+              (let key o.key)
+              (if (lspNavIsLocal key)
+                (match (lspNavBinderOf occs key)
+                  ((None) nilNode)
+                  ((Some b)
+                    {
+                      (let bkind b.bkind)
+                      (if (== bkind NAV_B_PARAM)
+                        {
+                          (let t (lspShapeParamTy decls b.owner b.param))
+                          (if (lspShapeIsBad t)
                             nilNode
-                            t))
-                      }
-                      (lspShapeCtorVar decls name))
-                  })
-              }
-            )))))
+                            t)
+                        }
+                        (if (== bkind NAV_B_LET)
+                          (if (<= fuel 0)
+                            nilNode
+                            {
+                              (let v b.value)
+                              (if (nodeSame v nilNode)
+                                nilNode
+                                (lspShapeOf decls occs v (- fuel 1)))
+                            })
+                          nilNode))
+                    }
+                  ))
+                {
+                  (let sig (lspFindSig decls name (- (vecLen decls) 1)))
+                  (if (! (nodeSame sig nilNode))
+                    {
+                      (let t (nodeTyChild sig))
+                      (if (lspShapeIsBad t)
+                        nilNode
+                        (if (>= (lspShapeArrowArity t) 2)
+                          nilNode
+                          t))
+                    }
+                    (lspShapeCtorVar decls name))
+                })
+            }
+            nilNode))))
   })
 
 ; Two branches' join: the shape when both agree, unknown when they
@@ -8994,51 +8921,49 @@
 (pub fn (lspNavLocalHover src decls ix wsp)
   {
     (let occs (lspNavOccurrences src decls))
-    (match (lspNavAt occs (spanStart wsp))
-      ((None) 0)
-      ((Some o)
-        {
-          (let key o.key)
-          (if (lspNavIsLocal key)
-            (match (lspNavBinderOf occs key)
-              ((None) 0)
-              ((Some b)
+    (if (let (Some o) (lspNavAt occs (spanStart wsp)))
+      {
+        (let key o.key)
+        (if (lspNavIsLocal key)
+          (match (lspNavBinderOf occs key)
+            ((None) 0)
+            ((Some b)
+              {
+                (let bkind b.bkind)
+                (let owner b.owner)
+                (let name b.name)
+                (let at (spanStart b.span))
                 {
-                  (let bkind b.bkind)
-                  (let owner b.owner)
-                  (let name b.name)
-                  (let at (spanStart b.span))
+                  (let code
+                    (if (== bkind NAV_B_LET)
+                      (lspShapeLetCode src decls occs b at name)
+                      (if (== bkind NAV_B_PARAM)
+                        (lspNavParamCode decls owner name b.param)
+                        (concat name (concat "\n" (lspNavLineText src at))))))
+                  (let prose
+                    (if (== bkind NAV_B_LET)
+                      "bound by `let` in `"
+                      (if (== bkind NAV_B_PARAM)
+                        "parameter of `"
+                        (if (== bkind NAV_B_LAMBDA)
+                          "parameter of a `lambda` in `"
+                          "bound by a pattern in `"))))
                   {
-                    (let code
-                      (if (== bkind NAV_B_LET)
-                        (lspShapeLetCode src decls occs b at name)
-                        (if (== bkind NAV_B_PARAM)
-                          (lspNavParamCode decls owner name b.param)
-                          (concat name (concat "\n" (lspNavLineText src at))))))
-                    (let prose
-                      (if (== bkind NAV_B_LET)
-                        "bound by `let` in `"
-                        (if (== bkind NAV_B_PARAM)
-                          "parameter of `"
-                          (if (== bkind NAV_B_LAMBDA)
-                            "parameter of a `lambda` in `"
-                            "bound by a pattern in `"))))
-                    {
-                      (let value
-                        (concat "```axiom\n"
-                          (concat code (concat "\n```\n\n" (concat prose (concat owner "`\n"))))))
-                      (jsonObjPut
-                        (jsonObjPut jsonObj "contents"
-                          (jsonObjPut (jsonObjPut jsonObj "kind" (jsonStr "markdown")) "value"
-                            (jsonStr value)))
-                        "range" (lspRangeIx src ix wsp))
-                    }
+                    (let value
+                      (concat "```axiom\n"
+                        (concat code (concat "\n```\n\n" (concat prose (concat owner "`\n"))))))
+                    (jsonObjPut
+                      (jsonObjPut jsonObj "contents"
+                        (jsonObjPut (jsonObjPut jsonObj "kind" (jsonStr "markdown")) "value"
+                          (jsonStr value)))
+                      "range" (lspRangeIx src ix wsp))
                   }
                 }
-              ))
-            0)
-        }
-      ))
+              }
+            ))
+          0)
+      }
+      0)
   })
 
 ; `name : T` from the owning function's signature, when it has one and
@@ -9177,25 +9102,23 @@
 (pub :: lspDeclarationImported (-> LspWorkspace String String (Vec ASTNode) String Int))
 ;@axiom:effect(io)
 (pub fn (lspDeclarationImported workspace path src decls w)
-  (match (lspResolveFor workspace path src decls)
-    ((None) jsonNull)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        {
-          (let s (lspFindImportedSig allDecls w (- (vecLen allDecls) 1)))
-          (if (! (nodeSame s nilNode))
-            (lspUnitLocation units s)
-            {
-              (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-              (if (! (nodeSame d nilNode))
-                (lspUnitLocation units d)
-                (lspCtorDefinitionImported allDecls units w))
-            })
-        }
+        (let s (lspFindImportedSig allDecls w (- (vecLen allDecls) 1)))
+        (if (! (nodeSame s nilNode))
+          (lspUnitLocation units s)
+          {
+            (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
+            (if (! (nodeSame d nilNode))
+              (lspUnitLocation units d)
+              (lspCtorDefinitionImported allDecls units w))
+          })
       }
-    )))
+    }
+    jsonNull))
 
 ; The Location of an imported declaration, in the file that declares
 ; it: the unit table says which file, and the span indexes that file's
@@ -9394,9 +9317,9 @@
     (if (== (strByte key 0) 63)
       true
       (if (lspNavIsTop key)
-        (match (strFindByte key 35 0)
-          ((None) true)
-          ((Some _) false))
+        (if (let (Some _) (strFindByte key 35 0))
+          false
+          true)
         false))))
 
 ; Every call site in one document, as the occurrence records
@@ -9514,20 +9437,18 @@
 (pub :: lspIncomingCalls (-> LspWorkspace Int Strings Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspIncomingCalls workspace params uris texts)
-  (match (lspChSubject params uris texts)
-    ((None) jsonNull)
-    ((Some s)
+  (if (let (Some s) (lspChSubject params uris texts))
+    {
+      (let uri s.uri)
+      (let name s.name)
+      (let out jsonArr)
       {
-        (let uri s.uri)
-        (let name s.name)
-        (let out jsonArr)
-        {
-          (lspChIncomingIn out uri s.src s.decls name 0)
-          (lspChIncomingImporters workspace out uri name uris texts)
-          out
-        }
+        (lspChIncomingIn out uri s.src s.decls name 0)
+        (lspChIncomingImporters workspace out uri name uris texts)
+        out
       }
-    )))
+    }
+    jsonNull))
 
 ; The callers inside ONE document. `foreign` is 0 for the item's own
 ; document, where a call to it resolves to the key `name`, and 1 for a
@@ -9640,56 +9561,54 @@
 (pub :: lspOutgoingCalls (-> LspWorkspace Int Strings Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspOutgoingCalls workspace params uris texts)
-  (match (lspChSubject params uris texts)
-    ((None) jsonNull)
-    ((Some s)
+  (if (let (Some s) (lspChSubject params uris texts))
+    {
+      (let uri s.uri)
+      (let name s.name)
+      (let src s.src)
+      (let decls s.decls)
       {
-        (let uri s.uri)
-        (let name s.name)
-        (let src s.src)
-        (let decls s.decls)
+        (let ix (lspLineIndex src))
+        (let sites (lspChSites src decls))
+        (let groups lspChGroupsNew)
+        (let out jsonArr)
+        (let mut r None)
+        (let mut resolved false)
         {
-          (let ix (lspLineIndex src))
-          (let sites (lspChSites src decls))
-          (let groups lspChGroupsNew)
-          (let out jsonArr)
-          (let mut r None)
-          (let mut resolved false)
-          {
-            (for o in sites
-              (if (strEq o.owner name)
-                (lspChGroupPush groups o.name o.span)))
-            (for g in groups
-              {
-                (let d (lspFindFn decls g.key (- (vecLen decls) 1)))
-                (if (! (nodeSame d nilNode))
-                  (jsonArrPush out
-                    (jsonObjPut (jsonObjPut jsonObj "to" (lspChItem src ix uri d)) "fromRanges"
-                      (lspChRanges src ix g.spans)))
-                  {
-                    (if (! resolved)
+          (for o in sites
+            (if (strEq o.owner name)
+              (lspChGroupPush groups o.name o.span)))
+          (for g in groups
+            {
+              (let d (lspFindFn decls g.key (- (vecLen decls) 1)))
+              (if (! (nodeSame d nilNode))
+                (jsonArrPush out
+                  (jsonObjPut (jsonObjPut jsonObj "to" (lspChItem src ix uri d)) "fromRanges"
+                    (lspChRanges src ix g.spans)))
+                {
+                  (if (! resolved)
+                    {
+                      (set r (lspResolveFor workspace (lspUriToPath uri) src decls))
+                      (set resolved true)
+                    })
+                  (match r
+                    ((Some rr)
                       {
-                        (set r (lspResolveFor workspace (lspUriToPath uri) src decls))
-                        (set resolved true)
-                      })
-                    (match r
-                      ((Some rr)
-                        {
-                          (let item (lspChImportedItem rr g.key))
-                          (if (! (== item 0))
-                            (jsonArrPush out
-                              (jsonObjPut (jsonObjPut jsonObj "to" item) "fromRanges"
-                                (lspChRanges src ix g.spans))))
-                        }
-                      )
-                      ((None) ()))
-                  })
-              })
-            out
-          }
+                        (let item (lspChImportedItem rr g.key))
+                        (if (! (== item 0))
+                          (jsonArrPush out
+                            (jsonObjPut (jsonObjPut jsonObj "to" item) "fromRanges"
+                              (lspChRanges src ix g.spans))))
+                      }
+                    )
+                    ((None) ()))
+                })
+            })
+          out
         }
       }
-    )))
+    }
+    jsonNull))
 
 ; The item for a callee an imported module declares, out of a resolved
 ; `lspResolveFor` result: 0 when no module declares it as a `fn`, or
@@ -9966,43 +9885,41 @@
       {
         (let ix (lspLineIndex src))
         (let occs (lspNavOccurrences src decls))
-        (match (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position")))
-          ((None) jsonNull)
-          ((Some o)
-            {
-              (let w o.name)
-              (let key o.key)
-              (if (lspNavIsLocal key)
-                jsonNull
-                (match (strFindByte key 35 0)
-                  ((Some _) jsonNull)
-                  ((None)
-                    (if (&& (> (strLen key) 0) (== (strByte key 0) 33))
-                      jsonNull
-                      {
-                        (let d (lspThFindType decls w (- (vecLen decls) 1)))
-                        (if (! (nodeSame d nilNode))
-                          (jsonArrPush jsonArr (lspThItem src ix uri d))
-                          {
-                            (let item
-                              (match (lspResolveFor workspace (lspUriToPath uri) src decls)
-                                ((None) 0)
-                                ((Some r) (lspThImportedItem r w))))
-                            (if (!= item 0)
-                              (jsonArrPush jsonArr item)
-                              (if (lspThBuiltin w)
-                                {
-                                  (let wsp o.span)
-                                  (if (== wsp 0)
-                                    jsonNull
-                                    (jsonArrPush jsonArr (lspThBuiltinItem src ix uri w wsp)))
-                                }
-                                jsonNull))
-                          })
-                      })
-                  )))
-            }
-          ))
+        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+          {
+            (let w o.name)
+            (let key o.key)
+            (if (lspNavIsLocal key)
+              jsonNull
+              (match (strFindByte key 35 0)
+                ((Some _) jsonNull)
+                ((None)
+                  (if (&& (> (strLen key) 0) (== (strByte key 0) 33))
+                    jsonNull
+                    {
+                      (let d (lspThFindType decls w (- (vecLen decls) 1)))
+                      (if (! (nodeSame d nilNode))
+                        (jsonArrPush jsonArr (lspThItem src ix uri d))
+                        {
+                          (let item
+                            (match (lspResolveFor workspace (lspUriToPath uri) src decls)
+                              ((None) 0)
+                              ((Some r) (lspThImportedItem r w))))
+                          (if (!= item 0)
+                            (jsonArrPush jsonArr item)
+                            (if (lspThBuiltin w)
+                              {
+                                (let wsp o.span)
+                                (if (== wsp 0)
+                                  jsonNull
+                                  (jsonArrPush jsonArr (lspThBuiltinItem src ix uri w wsp)))
+                              }
+                              jsonNull))
+                        })
+                    })
+                )))
+          }
+          jsonNull)
       })
   })
 
@@ -10044,47 +9961,45 @@
 (pub :: lspSupertypes (-> LspWorkspace Int Strings Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspSupertypes workspace params uris texts)
-  (match (lspThSubject params uris texts)
-    ((None) jsonNull)
-    ((Some s)
-      {
-        (let d s.decl)
-        (if (|| (nodeSame d nilNode) (!= (nodeTag d) TAG_D_SUBTYPE))
-          jsonArr
-          {
-            (let h (lspThBaseHead d))
-            (if (== (strLen h) 0)
-              jsonArr
+  (if (let (Some s) (lspThSubject params uris texts))
+    {
+      (let d s.decl)
+      (if (|| (nodeSame d nilNode) (!= (nodeTag d) TAG_D_SUBTYPE))
+        jsonArr
+        {
+          (let h (lspThBaseHead d))
+          (if (== (strLen h) 0)
+            jsonArr
+            {
+              (let uri s.uri)
+              (let src s.src)
+              (let decls s.decls)
               {
-                (let uri s.uri)
-                (let src s.src)
-                (let decls s.decls)
-                {
-                  (let dd (lspThFindType decls h (- (vecLen decls) 1)))
-                  (if (! (nodeSame dd nilNode))
-                    (jsonArrPush jsonArr (lspThItem src (lspLineIndex src) uri dd))
-                    {
-                      (let item
-                        (match (lspResolveFor workspace (lspUriToPath uri) src decls)
-                          ((None) 0)
-                          ((Some r) (lspThImportedItem r h))))
-                      (if (!= item 0)
-                        (jsonArrPush jsonArr item)
-                        (if (lspThBuiltin h)
-                          {
-                            (let bsp (lspThBaseSpan src d h))
-                            (if (== bsp 0)
-                              jsonArr
-                              (jsonArrPush jsonArr
-                                (lspThBuiltinItem src (lspLineIndex src) uri h bsp)))
-                          }
-                          jsonArr))
-                    })
-                }
-              })
-          })
-      }
-    )))
+                (let dd (lspThFindType decls h (- (vecLen decls) 1)))
+                (if (! (nodeSame dd nilNode))
+                  (jsonArrPush jsonArr (lspThItem src (lspLineIndex src) uri dd))
+                  {
+                    (let item
+                      (match (lspResolveFor workspace (lspUriToPath uri) src decls)
+                        ((None) 0)
+                        ((Some r) (lspThImportedItem r h))))
+                    (if (!= item 0)
+                      (jsonArrPush jsonArr item)
+                      (if (lspThBuiltin h)
+                        {
+                          (let bsp (lspThBaseSpan src d h))
+                          (if (== bsp 0)
+                            jsonArr
+                            (jsonArrPush jsonArr
+                              (lspThBuiltinItem src (lspLineIndex src) uri h bsp)))
+                        }
+                        jsonArr))
+                  })
+              }
+            })
+        })
+    }
+    jsonNull))
 
 ; `typeHierarchy/subtypes`: the `subtype` declarations constraining
 ; this type - over the item's own document first, then every other
@@ -10092,29 +10007,27 @@
 ; and found nothing; null when the subject did not resolve.
 (pub :: lspSubtypes (-> Int Strings Strings Int))
 (pub fn (lspSubtypes params uris texts)
-  (match (lspThSubject params uris texts)
-    ((None) jsonNull)
-    ((Some s)
+  (if (let (Some s) (lspThSubject params uris texts))
+    {
+      (let uri s.uri)
+      (let name s.name)
+      (let out jsonArr)
       {
-        (let uri s.uri)
-        (let name s.name)
-        (let out jsonArr)
-        {
-          (lspThSubtypesIn out uri s.src s.decls name)
-          (for i in 0..(vecLen uris)
-            (if (! (strEq (vecGet uris i) uri))
+        (lspThSubtypesIn out uri s.src s.decls name)
+        (for i in 0..(vecLen uris)
+          (if (! (strEq (vecGet uris i) uri))
+            {
+              (let osrc (vecGet texts i))
               {
-                (let osrc (vecGet texts i))
-                {
-                  (let odecls (lspNavParse osrc))
-                  (if (! (== (as odecls Int) 0))
-                    (lspThSubtypesIn out (vecGet uris i) osrc odecls name))
-                }
-              }))
-          out
-        }
+                (let odecls (lspNavParse osrc))
+                (if (! (== (as odecls Int) 0))
+                  (lspThSubtypesIn out (vecGet uris i) osrc odecls name))
+              }
+            }))
+        out
       }
-    )))
+    }
+    jsonNull))
 
 ; Every `subtype` of `osrc` whose base head is `name`, as items at
 ; `ouri`, in declaration order.
@@ -10667,35 +10580,33 @@
 (pub :: lspViewSigImported (-> LspWorkspace String String (Vec ASTNode) String Int))
 ;@axiom:effect(io)
 (pub fn (lspViewSigImported workspace path src decls head)
-  (match (lspResolveFor workspace path src decls)
-    ((None) 0)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        {
-          (let d (lspFindImported allDecls head (- (vecLen allDecls) 1)))
-          (if (if (! (nodeSame d nilNode))
-            (== (nodeTag d) TAG_D_FN)
-            false)
-            {
-              (let u (lspUnitOf units (nodeModule d)))
-              (if (< u 0)
-                0
-                {
-                  (let unit (vecGet units u))
-                  (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
-                })
-            }
-            {
-              (let c (lspViewFindCtor allDecls head 1))
-              (if (nodeSame c nilNode)
-                0
-                (lspViewSigCtor c))
-            })
-        }
+        (let d (lspFindImported allDecls head (- (vecLen allDecls) 1)))
+        (if (if (! (nodeSame d nilNode))
+          (== (nodeTag d) TAG_D_FN)
+          false)
+          {
+            (let u (lspUnitOf units (nodeModule d)))
+            (if (< u 0)
+              0
+              {
+                (let unit (vecGet units u))
+                (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
+              })
+          }
+          {
+            (let c (lspViewFindCtor allDecls head 1))
+            (if (nodeSame c nilNode)
+              0
+              (lspViewSigCtor c))
+          })
       }
-    )))
+    }
+    0))
 
 ; The constructor named `name` among the `data` declarations of
 ; `decls`: this document's own when `imported` is 0, the imported
@@ -10964,9 +10875,9 @@
 ;@axiom:effect(io)
 (pub fn (lspViewFnIndexFor workspace path src decls)
   (lspViewFnIndex
-    (match (lspResolveFor workspace path src decls)
-      ((None) decls)
-      ((Some r) r.decls))))
+    (if (let (Some r) (lspResolveFor workspace path src decls))
+      r.decls
+      decls)))
 
 (pub :: lspViewFnIndex (-> (Vec ASTNode) LspNodeBuckets))
 (pub fn (lspViewFnIndex list)
@@ -11239,9 +11150,9 @@
 (pub fn (lspSkipHintName name)
   (if (strEq name "_")
     1
-    (match (strFindByte name 36 0)
-      ((None) 0)
-      ((Some _) 1))))
+    (if (let (Some _) (strFindByte name 36 0))
+      1
+      0)))
 
 (pub :: lspViewHintsExpr
   (-> Int String Ints LspNodeBuckets LspBuckets (Vec ASTNode) (Vec LspOcc) ASTNode Int Int Int))
@@ -11919,58 +11830,56 @@
 (pub :: lspViewSymsImported (-> LspWorkspace Int Strings String String String (Vec ASTNode) Int))
 ;@axiom:effect(io)
 (pub fn (lspViewSymsImported workspace out seen query path src decls)
-  (match (lspResolveFor workspace path src decls)
-    ((None) 0)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
+      (let n (vecLen allDecls))
+      (let uuris vecNew)
+      (let uixs vecNew)
+      (let mut i 0)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        (let n (vecLen allDecls))
-        (let uuris vecNew)
-        (let uixs vecNew)
-        (let mut i 0)
-        {
-          (while (< i (vecLen units))
+        (while (< i (vecLen units))
+          {
+            (vecPush uuris "")
+            (vecPush uixs 0)
+            (set i (+ i 1))
+          })
+        (set i 0)
+        (while (if (< i n)
+          (< (jsonArrLen out) LSP_COMPL_MAX)
+          false)
+          {
+            (let d (vecGet allDecls i))
             {
-              (vecPush uuris "")
-              (vecPush uixs 0)
-              (set i (+ i 1))
-            })
-          (set i 0)
-          (while (if (< i n)
-            (< (jsonArrLen out) LSP_COMPL_MAX)
-            false)
-            {
-              (let d (vecGet allDecls i))
-              {
-                (if (&& (lspWantsSymbol (nodeTag d)) (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
-                  {
-                    (let bare (bareOf (nodeAName d)))
-                    (if (lspViewDeclWants d bare query)
-                      {
-                        (let u (lspUnitOf units (nodeModule d)))
-                        (if (! (< u 0))
+              (if (&& (lspWantsSymbol (nodeTag d)) (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
+                {
+                  (let bare (bareOf (nodeAName d)))
+                  (if (lspViewDeclWants d bare query)
+                    {
+                      (let u (lspUnitOf units (nodeModule d)))
+                      (if (! (< u 0))
+                        {
+                          (let unit (vecGet units u))
                           {
-                            (let unit (vecGet units u))
-                            {
-                              (lspViewUnitPrep uuris uixs unit u)
-                              (lspViewSymOffer out seen query (vecGet uuris u) (unitSrc unit)
-                                (vecGetVec uixs u) bare (lspSymKind (nodeTag d)) (nodeSpan d)
-                                (unitName unit))
-                              (if (== (nodeTag d) TAG_D_DATA)
-                                (lspViewSymCtors out seen query (vecGet uuris u) (unitSrc unit)
-                                  (vecGetVec uixs u) (nodeBChildren d) (unitName unit)))
-                            }
-                          })
-                      })
-                  })
-                (set i (+ i 1))
-              }
-            })
-          0
-        }
+                            (lspViewUnitPrep uuris uixs unit u)
+                            (lspViewSymOffer out seen query (vecGet uuris u) (unitSrc unit)
+                              (vecGetVec uixs u) bare (lspSymKind (nodeTag d)) (nodeSpan d)
+                              (unitName unit))
+                            (if (== (nodeTag d) TAG_D_DATA)
+                              (lspViewSymCtors out seen query (vecGet uuris u) (unitSrc unit)
+                                (vecGetVec uixs u) (nodeBChildren d) (unitName unit)))
+                          }
+                        })
+                    })
+                })
+              (set i (+ i 1))
+            }
+          })
+        0
       }
-    )))
+    }
+    0))
 
 ; Whether a declaration has anything to list for `query`: its own
 ; name, or - for a `data` - one of its constructors' names.
@@ -12252,20 +12161,18 @@
 (pub :: lspFixExpand (-> LspWorkspace String String (Vec ASTNode) (Option LspExpanded)))
 ;@axiom:effect(io)
 (pub fn (lspFixExpand workspace path src decls)
-  (match (lspResolveFor workspace path src decls)
-    ((None) None)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
+      (let ftbl vecNew)
+      (let eds vecNew)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        (let ftbl vecNew)
-        (let eds vecNew)
-        {
-          (let gens (expandProgram decls allDecls eds ftbl units r.bares r.fulls r.mods))
-          (Some (LspExpanded :decls allDecls :units units :diags eds :gens gens :frames ftbl))
-        }
+        (let gens (expandProgram decls allDecls eds ftbl units r.bares r.fulls r.mods))
+        (Some (LspExpanded :decls allDecls :units units :diags eds :gens gens :frames ftbl))
       }
-    )))
+    }
+    None))
 
 ; ------------------------------------------------------------------
 ; `textDocument/codeAction`: the fixes the compiler already knows how
@@ -12383,16 +12290,14 @@
         (let edit (lspOrganizeEdit src uri decls tokens tags))
         (if (== edit 0)
           0
-          (match (lspFixExpand workspace (lspUriToPath uri) src decls)
-            ((None) 0)
-            ((Some expanded)
-              (if (|| (> (countErrorDiags expanded.diags) 0) (lspOrganizeConflict expanded.decls))
-                0
-                (jsonObjPut
-                  (jsonObjPut (jsonObjPut jsonObj "title" (jsonStr "Organise imports")) "kind"
-                    (jsonStr "source.organizeImports"))
-                  "edit" edit))
-            )))
+          (if (let (Some expanded) (lspFixExpand workspace (lspUriToPath uri) src decls))
+            (if (|| (> (countErrorDiags expanded.diags) 0) (lspOrganizeConflict expanded.decls))
+              0
+              (jsonObjPut
+                (jsonObjPut (jsonObjPut jsonObj "title" (jsonStr "Organise imports")) "kind"
+                  (jsonStr "source.organizeImports"))
+                "edit" edit))
+            0))
       })
   })
 
@@ -12622,42 +12527,40 @@
             {
               (let ex (lspFixExpand workspace path src decls))
               {
-                (match ex
-                  ((None) ())
-                  ((Some ex)
+                (if (let (Some ex) ex)
+                  {
+                    (let eds ex.diags)
                     {
-                      (let eds ex.diags)
+                      (let tc
+                        (if (> (countErrorDiags eds) 0)
+                          0
+                          (checkModuleTc decls ex.decls ex.units)))
                       {
-                        (let tc
-                          (if (> (countErrorDiags eds) 0)
-                            0
-                            (checkModuleTc decls ex.decls ex.units)))
-                        {
-                          (let ds
-                            (if (== tc 0)
-                              (orderDiags eds)
-                              (orderDiags
-                                (expMergeInto eds
+                        (let ds
+                          (if (== tc 0)
+                            (orderDiags eds)
+                            (orderDiags
+                              (expMergeInto eds
+                                {
+                                  (let cds (tcOutVec tc))
                                   {
-                                    (let cds (tcOutVec tc))
-                                    {
-                                      (expAttachFrames cds ex.frames ex.units)
-                                      cds
-                                    }
-                                  }))))
-                          {
-                            (lspQuickfixes out ds src uri ix want)
-                            (if (! (== tc 0))
-                              (lspSigAssists out decls rawVis (lspViewSigIndex decls)
-                                (lspFixEntryIndex (tcFnsVec tc)) src uri ix want))
-                            (lspNameAssists out ds src uri ix want decls path ex.decls ex.units)
-                            (lspLintAssists out src uri ix decls lintRecs want)
-                            (lspUnhandledAssists out ds src uri ix want decls)
-                          }
+                                    (expAttachFrames cds ex.frames ex.units)
+                                    cds
+                                  }
+                                }))))
+                        {
+                          (lspQuickfixes out ds src uri ix want)
+                          (if (! (== tc 0))
+                            (lspSigAssists out decls rawVis (lspViewSigIndex decls)
+                              (lspFixEntryIndex (tcFnsVec tc)) src uri ix want))
+                          (lspNameAssists out ds src uri ix want decls path ex.decls ex.units)
+                          (lspLintAssists out src uri ix decls lintRecs want)
+                          (lspUnhandledAssists out ds src uri ix want decls)
                         }
                       }
                     }
-                  ))
+                  }
+                  ())
                 (if (! (== extract 0))
                   (jsonArrPush out extract))
                 out
@@ -13394,13 +13297,11 @@
           (let o (lspFormStart src (spanStart (nodeSpan imp))))
           {
             (let e (lspFormEnd src o))
-            (match (strFindByte src 40 (+ o 1))
-              ((None) 0)
-              ((Some lo)
-                (if (>= lo e)
-                  0
-                  (lspFixInsert uri src ix (- (lspFormEnd src lo) 1) (concat " " name)))
-              ))
+            (if (let (Some lo) (strFindByte src 40 (+ o 1)))
+              (if (>= lo e)
+                0
+                (lspFixInsert uri src ix (- (lspFormEnd src lo) 1) (concat " " name)))
+              0)
           }
         })
       {
@@ -13585,19 +13486,15 @@
       (while (if found
         false
         (&& (> k 0) (<= (+ i k) n)))
-        (match (strFindByte text (strByte name 0) i)
-          ((None)
+        (if (let (Some j) (strFindByte text (strByte name 0) i))
+          (if (> (+ j k) n)
             (set i n)
-          )
-          ((Some j)
-            (if (> (+ j k) n)
-              (set i n)
-              {
-                (if (&& (lspFixBytesEq text j name k) (lspFixWordEdges text j k))
-                  (set found true))
-                (set i (+ j 1))
-              })
-          )))
+            {
+              (if (&& (lspFixBytesEq text j name k) (lspFixWordEdges text j k))
+                (set found true))
+              (set i (+ j 1))
+            })
+          (set i n)))
       found
     }
   })
@@ -13711,27 +13608,23 @@
       (while (if (== go 1)
         (< i n)
         false)
-        (match (strFindByte msg 96 i)
-          ((None)
-            (set go 0)
-          )
-          ((Some a)
-            (match (strFindByte msg 96 (+ a 1))
-              ((None)
-                (set go 0)
-              )
-              ((Some b)
-                {
-                  (if (== count k)
-                    {
-                      (set out (strSlice msg (+ a 1) (- b (+ a 1))))
-                      (set go 0)
-                    })
-                  (set count (+ count 1))
-                  (set i (+ b 1))
-                }
-              ))
-          )))
+        (if (let (Some a) (strFindByte msg 96 i))
+          (match (strFindByte msg 96 (+ a 1))
+            ((None)
+              (set go 0)
+            )
+            ((Some b)
+              {
+                (if (== count k)
+                  {
+                    (set out (strSlice msg (+ a 1) (- b (+ a 1))))
+                    (set go 0)
+                  })
+                (set count (+ count 1))
+                (set i (+ b 1))
+              }
+            ))
+          (set go 0)))
       out
     }
   })
@@ -14659,61 +14552,59 @@
   (-> LspWorkspace String String String (Vec ASTNode) String ASTNode Int))
 ;@axiom:effect(io)
 (pub fn (lspTypeLocationImported workspace path src uri decls w given)
-  (match (lspResolveFor workspace path src decls)
-    ((None) jsonNull)
-    ((Some r)
+  (if (let (Some r) (lspResolveFor workspace path src decls))
+    {
+      (let allDecls r.decls)
+      (let units r.units)
       {
-        (let allDecls r.decls)
-        (let units r.units)
-        {
-          (let t
-            (if (! (nodeSame given nilNode))
-              given
-              {
-                (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-                (if (&& (! (nodeSame d nilNode)) (== (nodeTag d) TAG_D_FN))
-                  {
-                    (let sig (lspFindSig allDecls (nodeAName d) (- (vecLen allDecls) 1)))
-                    (if (nodeSame sig nilNode)
-                      nilNode
-                      (lspArrowResult (nodeTyChild sig)))
-                  }
-                  nilNode)
-              }))
-          (if (nodeSame t nilNode)
-            ; The last thing `w` can be: a constructor an import
-            ; brought in, whose TYPE is the `data` that declares it.
-            ; `lspTypeDefinition` asks the same question of this
-            ; document before any import is resolved; this is the half
-            ; that was missing, and it is why `signatureHelp` could
-            ; render `(Circle Int)` at a position where this request
-            ; answered null.
-            (lspTypeCtorImported allDecls units w)
-            (if (!= (nodeTag t) TAG_T_CON)
-              jsonNull
-              {
-                (let local (lspTypeLocalOf src uri decls t))
-                (if (!= local 0)
-                  local
-                  {
-                    (let d (lspFindTypeImported allDecls (nodeAName t) (- (vecLen allDecls) 1)))
-                    (if (nodeSame d nilNode)
-                      jsonNull
-                      {
-                        (let u (lspUnitOf units (nodeModule d)))
-                        (if (< u 0)
-                          jsonNull
-                          {
-                            (let unit (vecGet units u))
-                            (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
-                              (nodeSpan d))
-                          })
-                      })
-                  })
-              }))
-        }
+        (let t
+          (if (! (nodeSame given nilNode))
+            given
+            {
+              (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
+              (if (&& (! (nodeSame d nilNode)) (== (nodeTag d) TAG_D_FN))
+                {
+                  (let sig (lspFindSig allDecls (nodeAName d) (- (vecLen allDecls) 1)))
+                  (if (nodeSame sig nilNode)
+                    nilNode
+                    (lspArrowResult (nodeTyChild sig)))
+                }
+                nilNode)
+            }))
+        (if (nodeSame t nilNode)
+          ; The last thing `w` can be: a constructor an import
+          ; brought in, whose TYPE is the `data` that declares it.
+          ; `lspTypeDefinition` asks the same question of this
+          ; document before any import is resolved; this is the half
+          ; that was missing, and it is why `signatureHelp` could
+          ; render `(Circle Int)` at a position where this request
+          ; answered null.
+          (lspTypeCtorImported allDecls units w)
+          (if (!= (nodeTag t) TAG_T_CON)
+            jsonNull
+            {
+              (let local (lspTypeLocalOf src uri decls t))
+              (if (!= local 0)
+                local
+                {
+                  (let d (lspFindTypeImported allDecls (nodeAName t) (- (vecLen allDecls) 1)))
+                  (if (nodeSame d nilNode)
+                    jsonNull
+                    {
+                      (let u (lspUnitOf units (nodeModule d)))
+                      (if (< u 0)
+                        jsonNull
+                        {
+                          (let unit (vecGet units u))
+                          (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
+                            (nodeSpan d))
+                        })
+                    })
+                })
+            }))
       }
-    )))
+    }
+    jsonNull))
 
 ; ------------------------------------------------------------------
 ; `textDocument/codeLens`: a `▶ Run` over `main`, and `Expand macro`
@@ -14891,13 +14782,11 @@
         {
           (let before (lspDeclHandles decls2))
           (let wasCall (lspDeclIsCall decls2))
-          (match (lspFixExpand workspace path src decls2)
-            ((None) 0)
-            ((Some ex)
-              (if (> (countErrorDiags ex.diags) 0)
-                0
-                (lspGenCollect src decls idx decls2 before wasCall ex.gens out))
-            ))
+          (if (let (Some ex) (lspFixExpand workspace path src decls2))
+            (if (> (countErrorDiags ex.diags) 0)
+              0
+              (lspGenCollect src decls idx decls2 before wasCall ex.gens out))
+            0)
         }
       })
   })
@@ -15264,31 +15153,29 @@
           {
             (let before (lspDeclHandles decls2))
             (let wasCall (lspDeclIsCall decls2))
-            (match (lspFixExpand workspace path src decls2)
-              ((None) jsonNull)
-              ((Some ex)
-                (if (> (countErrorDiags ex.diags) 0)
-                  jsonNull
+            (if (let (Some ex) (lspFixExpand workspace path src decls2))
+              (if (> (countErrorDiags ex.diags) 0)
+                jsonNull
+                {
+                  (let gens ex.gens)
+                  (let parts vecNew)
+                  (let n (vecLen decls2))
                   {
-                    (let gens ex.gens)
-                    (let parts vecNew)
-                    (let n (vecLen decls2))
-                    {
-                      (for i in 0..n
-                        {
-                          (let g (vecGet decls2 i))
-                          (if (lspIsProductOf g i before wasCall gens macName byCall)
-                            {
-                              (if (> (vecLen parts) 0)
-                                (vecPush parts "\n\n"))
-                              (vecPush parts (lspRenderDecl g 0))
-                            })
-                        })
-                      (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr macName)) "expansion"
-                        (jsonStr (catStrs parts)))
-                    }
-                  })
-              ))
+                    (for i in 0..n
+                      {
+                        (let g (vecGet decls2 i))
+                        (if (lspIsProductOf g i before wasCall gens macName byCall)
+                          {
+                            (if (> (vecLen parts) 0)
+                              (vecPush parts "\n\n"))
+                            (vecPush parts (lspRenderDecl g 0))
+                          })
+                      })
+                    (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr macName)) "expansion"
+                      (jsonStr (catStrs parts)))
+                  }
+                })
+              jsonNull)
           }
         })
     }
@@ -15418,9 +15305,9 @@
 
 (pub :: lspHasNl (-> String Bool))
 (pub fn (lspHasNl s)
-  (match (strFindByte s 10 0)
-    ((None) false)
-    ((Some _) true)))
+  (if (let (Some _) (strFindByte s 10 0))
+    true
+    false))
 
 ; `(head a b)` inline, or one child per line at `ind + 2` when any
 ; child already spans lines. `parts` holds the head first. Children
@@ -17292,9 +17179,9 @@
       {
         (let serial
           (if (== (vecLen parts) 2)
-            (match (strParseInt (vecGet parts 1))
-              ((None) 0)
-              ((Some n) n))
+            (if (let (Some n) (strParseInt (vecGet parts 1)))
+              n
+              0)
             0))
         (concat (fmtInt i) (concat ":" (fmtInt (+ serial 1))))
       }
@@ -17483,31 +17370,29 @@
 
 (pub :: lspHlOccAt (-> LspHl Int (Option LspOcc)))
 (pub fn (lspHlOccAt st off)
-  (match st.occIndex
-    ((None) None)
-    ((Some bs)
-      {
-        (let slot (vecGet bs (% off (vecLen bs))))
-        (if (lspBucketMissing slot)
-          None
+  (if (let (Some bs) st.occIndex)
+    {
+      (let slot (vecGet bs (% off (vecLen bs))))
+      (if (lspBucketMissing slot)
+        None
+        {
+          (let mut i 0)
+          (let mut found None)
           {
-            (let mut i 0)
-            (let mut found None)
-            {
-              (while (if (< i (vecLen slot))
-                (isNone found)
-                false)
-                {
-                  (let o (vecGet slot i))
-                  (if (== (spanStart o.span) off)
-                    (set found (Some o)))
-                  (set i (+ i 1))
-                })
-              found
-            }
-          })
-      }
-    )))
+            (while (if (< i (vecLen slot))
+              (isNone found)
+              false)
+              {
+                (let o (vecGet slot i))
+                (if (== (spanStart o.span) off)
+                  (set found (Some o)))
+                (set i (+ i 1))
+              })
+            found
+          }
+        })
+    }
+    None))
 
 ; Binder occurrences by their key, so a READ of a local learns what
 ; kind of binder it refers to - the walk records the kind on the
@@ -17529,31 +17414,29 @@
 
 (pub :: lspHlBinderOf (-> LspHl String (Option LspOcc)))
 (pub fn (lspHlBinderOf st key)
-  (match st.binders
-    ((None) None)
-    ((Some bs)
-      {
-        (let slot (vecGet bs (% (fnIdxHash key) (vecLen bs))))
-        (if (lspBucketMissing slot)
-          None
+  (if (let (Some bs) st.binders)
+    {
+      (let slot (vecGet bs (% (fnIdxHash key) (vecLen bs))))
+      (if (lspBucketMissing slot)
+        None
+        {
+          (let mut i 0)
+          (let mut found None)
           {
-            (let mut i 0)
-            (let mut found None)
-            {
-              (while (if (< i (vecLen slot))
-                (isNone found)
-                false)
-                {
-                  (let o (vecGet slot i))
-                  (if (strEq o.key key)
-                    (set found (Some o)))
-                  (set i (+ i 1))
-                })
-              found
-            }
-          })
-      }
-    )))
+            (while (if (< i (vecLen slot))
+              (isNone found)
+              false)
+              {
+                (let o (vecGet slot i))
+                (if (strEq o.key key)
+                  (set found (Some o)))
+                (set i (+ i 1))
+              })
+            found
+          }
+        })
+    }
+    None))
 
 ; This document's declarations by name - the outline's kinds plus
 ; `type` aliases and `subtype`s, LAST WINS as `lspViewIdxFind`
@@ -18116,9 +17999,9 @@
                   (if (&& (== state 1) (== hc SEM_H_PARALLEL))
                     (lspHlEmit st s e SEM_REGION 0)
                     (lspHlEmitPacked st s e
-                      (match (lspHlOccAt st s)
-                        ((Some o) (lspHlOccClass st o word head ctx))
-                        ((None) (lspHlFormClass st s e word head hc state ctx))))))))))))))
+                      (if (let (Some o) (lspHlOccAt st s))
+                        (lspHlOccClass st o word head ctx)
+                        (lspHlFormClass st s e word head hc state ctx)))))))))))))
 
 ; Can a keyword stand at the head of a bracket in context `ctx`? Not
 ; where the head is a binder or a field: `(let ((for 5)) ...)` binds a
@@ -18170,9 +18053,9 @@
                 0)))
           (if (== b0 33)
             (lspHlEffectClass word 0)
-            (if (match (strFindByte key 35 0)
-              ((None) false)
-              ((Some _) true))
+            (if (if (let (Some _) (strFindByte key 35 0))
+              true
+              false)
               (lspHlPack SEM_ENUM
                 (if (== role NAV_DECL)
                   SEM_M_DECL
@@ -18190,9 +18073,9 @@
         (lspHlBinderOf st key)))
     {
       (let bkind
-        (match b
-          ((None) 0)
-          ((Some bo) bo.bkind)))
+        (if (let (Some bo) b)
+          bo.bkind
+          0))
       (lspHlPack
         (if (|| (== bkind NAV_B_PARAM) (== bkind NAV_B_LAMBDA))
           SEM_PARAMETER
@@ -18211,9 +18094,9 @@
 ; Where binder `b` starts; 0 when there is none.
 (:: lspHlBinderStart (-> (Option LspOcc) Int))
 (fn (lspHlBinderStart b)
-  (match b
-    ((None) 0)
-    ((Some bo) (spanStart bo.span))))
+  (if (let (Some bo) b)
+    (spanStart bo.span)
+    0))
 
 ; Whether the binder at `s` is written `(mut name ...)`: the word
 ; before it, past blanks, is `mut` and nothing identifier-shaped
@@ -18251,9 +18134,9 @@
 (pub fn (lspHlDeclClass st key role head ctx)
   {
     (let d
-      (match st.kinds
-        ((None) nilNode)
-        ((Some kinds) (lspViewIdxFind kinds key))))
+      (if (let (Some kinds) st.kinds)
+        (lspViewIdxFind kinds key)
+        nilNode))
     (let declm
       (if (|| (== role NAV_DECL) (== role NAV_DECL_SIG))
         SEM_M_DECL
@@ -18659,23 +18542,23 @@
 (pub fn (lspRestoreWorkState h state)
   {
     (let c
-      (match (strParseInt (vecGet state 0))
-        ((None) 0)
-        ((Some n) n)))
+      (if (let (Some n) (strParseInt (vecGet state 0)))
+        n
+        0))
     {
       (let qi (+ c 1))
       {
         (let q
-          (match (strParseInt (vecGet state qi))
-            ((None) 0)
-            ((Some n) n)))
+          (if (let (Some n) (strParseInt (vecGet state qi)))
+            n
+            0))
         {
           (let ji (+ (+ qi 1) q))
           {
             (let j
-              (match (strParseInt (vecGet state ji))
-                ((None) 0)
-                ((Some n) n)))
+              (if (let (Some n) (strParseInt (vecGet state ji)))
+                n
+                0))
             {
               (set h.cache (lspWorkPart state 1 c))
               (set h.queue (lspWorkPart state (+ qi 1) q))
@@ -19300,9 +19183,9 @@
 (pub fn (lspInputReady polling r store)
   (if (> (- (rdFilled r) (rdConsumed r)) 0)
     true
-    (match polling
-      ((None) true)
-      ((Some poller) (lspPollInput poller store)))))
+    (if (let (Some poller) polling)
+      (lspPollInput poller store)
+      true)))
 
 ; Backpressure keeps queued frames bounded. Remove stdin while waiting
 ; for the worker so a full pipe cannot turn this wait into a busy loop.
@@ -19310,27 +19193,25 @@
 ;@axiom:effect(io)
 ;@axiom:effect(block)
 (pub fn (lspWaitWorker polling store)
-  (match polling
-    ((None) (unwrapOr (sysSleepNanos 25000000) 0))
-    ((Some poller)
-      {
-        (match (pollerRemove poller stdin)
-          ((Err e)
-            (set store.running 0)
-          )
-          ((Ok ignored)
-            {
-              (lspPollInput poller store)
-              (match (pollerAdd poller stdin 1)
-                ((Err e)
-                  (set store.running 0)
-                )
-                ((Ok added) 0))
-            }
-          ))
-        0
-      }
-    )))
+  (if (let (Some poller) polling)
+    {
+      (match (pollerRemove poller stdin)
+        ((Err e)
+          (set store.running 0)
+        )
+        ((Ok ignored)
+          {
+            (lspPollInput poller store)
+            (match (pollerAdd poller stdin 1)
+              ((Err e)
+                (set store.running 0)
+              )
+              ((Ok added) 0))
+          }
+        ))
+      0
+    }
+    (unwrapOr (sysSleepNanos 25000000) 0)))
 
 (pub :: lspServe (-> (Option Poller) Int))
 ;@axiom:effect(io)
@@ -19359,13 +19240,11 @@
                   (set store.running 0))
                 (if (lspQueueRoom queue)
                   (if (lspInputReady polling r store)
-                    (match (rpcRead r)
-                      ((None)
-                        (if (> (vecLen queue) 0)
-                          (set store.draining 1)
-                          (set store.running 0))
-                      )
-                      ((Some body) (lspAcceptMessage worker store body))))
+                    (if (let (Some body) (rpcRead r))
+                      (lspAcceptMessage worker store body)
+                      (if (> (vecLen queue) 0)
+                        (set store.draining 1)
+                        (set store.running 0))))
                   (lspWaitWorker polling store))))
           }
           (lspWorkPoll store)

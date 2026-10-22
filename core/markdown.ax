@@ -473,9 +473,9 @@
 ; target is the part before the first space.
 (pub :: mdTargetOf (-> String String))
 (pub fn (mdTargetOf t)
-  (match (strFindByte t 32 0)
-    ((None) t)
-    ((Some k) (strSlice t 0 k))))
+  (if (let (Some k) (strFindByte t 32 0))
+    (strSlice t 0 k)
+    t))
 
 ; Where a bare `http://` or `https://` run ends: at whitespace, `<`,
 ; `>` or `"`, with trailing sentence punctuation and an unmatched `)`
@@ -851,51 +851,39 @@
   {
     (let n (strLen s))
     (if (mdStartsAt s i "<!--")
-      (match (strFind s "-->" (+ i 4))
-        ((None)
-          {
-            (vecPush frags (strSlice s i (- n i)))
-            n
-          }
-        )
-        ((Some e)
-          {
-            (vecPush frags (strSlice s i (- (+ e 3) i)))
-            (+ e 3)
-          }
-        ))
+      (if (let (Some e) (strFind s "-->" (+ i 4)))
+        {
+          (vecPush frags (strSlice s i (- (+ e 3) i)))
+          (+ e 3)
+        }
+        {
+          (vecPush frags (strSlice s i (- n i)))
+          n
+        })
       (if (|| (mdStartsAt s i "<http://") (mdStartsAt s i "<https://"))
-        (match (strFindByte s 62 i)
-          ((None)
-            {
-              (vecPush frags "&lt;")
-              (+ i 1)
-            }
-          )
-          ((Some e)
-            {
-              (vecPush frags
-                (concat (concat "<a href=\"" (mdEscapeRange s (+ i 1) e))
-                  (concat "\">" (concat (mdEscapeRange s (+ i 1) e) "</a>"))))
-              (+ e 1)
-            }
-          ))
+        (if (let (Some e) (strFindByte s 62 i))
+          {
+            (vecPush frags
+              (concat (concat "<a href=\"" (mdEscapeRange s (+ i 1) e))
+                (concat "\">" (concat (mdEscapeRange s (+ i 1) e) "</a>"))))
+            (+ e 1)
+          }
+          {
+            (vecPush frags "&lt;")
+            (+ i 1)
+          })
         {
           (let name (mdTagNameAt s i))
           (if (mdRawTag (strLower name))
-            (match (strFindByte s 62 i)
-              ((None)
-                {
-                  (vecPush frags "&lt;")
-                  (+ i 1)
-                }
-              )
-              ((Some e)
-                {
-                  (vecPush frags (strSlice s i (- (+ e 1) i)))
-                  (+ e 1)
-                }
-              ))
+            (if (let (Some e) (strFindByte s 62 i))
+              {
+                (vecPush frags (strSlice s i (- (+ e 1) i)))
+                (+ e 1)
+              }
+              {
+                (vecPush frags "&lt;")
+                (+ i 1)
+              })
             {
               (vecPush frags "&lt;")
               (+ i 1)
@@ -1221,17 +1209,15 @@
 (pub :: mdUnwrapP (-> String Bool String))
 (pub fn (mdUnwrapP html tight)
   (if (&& tight (strStartsWith html "<p>"))
-    (match (strFind html "</p>\n" 3)
-      ((None) html)
-      ((Some e)
-        {
-          (let rest (strSlice html (+ e 5) (- (strLen html) (+ e 5))))
-          (concat (strSlice html 3 (- e 3))
-            (if (== (strLen rest) 0)
-              ""
-              (concat "\n" rest)))
-        }
-      ))
+    (if (let (Some e) (strFind html "</p>\n" 3))
+      {
+        (let rest (strSlice html (+ e 5) (- (strLen html) (+ e 5))))
+        (concat (strSlice html 3 (- e 3))
+          (if (== (strLen rest) 0)
+            ""
+            (concat "\n" rest)))
+      }
+      html)
     html))
 
 (pub :: mdList (-> MdEnv Strings Int Int Int String))
@@ -1455,14 +1441,14 @@
     {
       (let ind (mdIndent line))
       (if (&& (mdStartsAt line ind "<!--")
-            (match (strFind line "-->" 0)
-              ((None) true)
-              ((Some _) false)))
+            (if (let (Some _) (strFind line "-->" 0))
+              false
+              true))
         {
           (while (&& (< j to)
-                   (match (strFind (vecGet lines j) "-->" 0)
-                     ((None) true)
-                     ((Some _) false)))
+                   (if (let (Some _) (strFind (vecGet lines j) "-->" 0))
+                     false
+                     true))
             {
               (vecPush frags (vecGet lines j))
               (vecPush frags "\n")

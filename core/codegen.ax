@@ -2247,9 +2247,9 @@
     (let si (cgSigIntern cg))
     (if (== si 0)
       (findFSig (cgFloatSigs cg) name)
-      (match (internFind si (declSpellingOf name))
-        ((Some id) (vecGet (cgSigById cg) id))
-        ((None) 0)))
+      (if (let (Some id) (internFind si (declSpellingOf name)))
+        (vecGet (cgSigById cg) id)
+        0))
   })
 
 ; `mangledFor` through the index: the same answer, the module-local
@@ -2281,9 +2281,9 @@
               (if (== (as m Int) 0)
                 None
                 (internFind bi (concat m (concat "$" name)))))
-            (match hit
-              ((Some h) (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) h)))
-              ((None) (mangledForModCg cg bi name m)))
+            (if (let (Some h) hit)
+              (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) h))
+              (mangledForModCg cg bi name m))
           }
         }))
   })
@@ -2297,23 +2297,21 @@
 ; shadows cost what they did.
 (:: mangledForModCg (-> Int Int String String String))
 (fn (mangledForModCg cg bi name m)
-  (match (internFind bi name)
-    ((Some id)
-      {
-        (let full (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) id)))
-        (if (== (as m Int) 0)
-          full
-          (if (|| (strEq full name)
-                (match (internFind bi (concat "$entry$" name))
-                  ((Some _) true)
-                  ((None) false)))
-            (match (internFind bi (concat "$" name))
-              ((Some v) (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) v)))
-              ((None) full))
-            full))
-      }
-    )
-    ((None) name)))
+  (if (let (Some id) (internFind bi name))
+    {
+      (let full (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) id)))
+      (if (== (as m Int) 0)
+        full
+        (if (|| (strEq full name)
+              (match (internFind bi (concat "$entry$" name))
+                ((Some _) true)
+                ((None) false)))
+          (match (internFind bi (concat "$" name))
+            ((Some v) (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) v)))
+            ((None) full))
+          full))
+    }
+    name))
 
 ; The three declaration-list scans, through the index; the linear scan
 ; when no index has been built (the REPL's and LSP's partial paths,
@@ -2325,17 +2323,17 @@
 (pub :: isNullaryFnCg (-> Int String Bool))
 (pub fn (isNullaryFnCg cg name)
   (if (cgDeclIndexBuilt cg)
-    (match (internFind (cgDeclIntern cg) (declSpellingOf name))
-      ((Some id) (== (vecGet (cgDeclNullary cg) id) 1))
-      ((None) false))
+    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf name)))
+      (== (vecGet (cgDeclNullary cg) id) 1)
+      false)
     (isNullaryFn (cgDecls cg) name)))
 
 (pub :: isDefinedFnCg (-> Int String Bool))
 (pub fn (isDefinedFnCg cg name)
   (if (cgDeclIndexBuilt cg)
-    (match (internFind (cgDeclIntern cg) (declSpellingOf name))
-      ((Some id) (== (vecGet (cgDeclDefined cg) id) 1))
-      ((None) false))
+    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf name)))
+      (== (vecGet (cgDeclDefined cg) id) 1)
+      false)
     (isDefinedFn (cgDecls cg) name)))
 
 ; `fnArityIn` answers 0 for a name it never finds, and so does this:
@@ -2344,16 +2342,14 @@
 (pub :: fnArityOfCg (-> Int String Int))
 (pub fn (fnArityOfCg cg name)
   (if (cgDeclIndexBuilt cg)
-    (match (internFind (cgDeclIntern cg) (declSpellingOf name))
-      ((Some id)
-        {
-          (let ar (vecGet (cgDeclArity cg) id))
-          (if (< ar 0)
-            0
-            ar)
-        }
-      )
-      ((None) 0))
+    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf name)))
+      {
+        (let ar (vecGet (cgDeclArity cg) id))
+        (if (< ar 0)
+          0
+          ar)
+      }
+      0)
     (fnArityOf (cgDecls cg) name)))
 
 ; A signed function's parameter count, recorded by `inferOwnership`
@@ -2548,9 +2544,9 @@
 ; the id.
 (pub :: fsigIdCg (-> Int String Int))
 (pub fn (fsigIdCg cg name)
-  (match (internFind (cgSigIntern cg) (declSpellingOf name))
-    ((Some id) id)
-    ((None) (- 0 1))))
+  (if (let (Some id) (internFind (cgSigIntern cg) (declSpellingOf name)))
+    id
+    (- 0 1)))
 
 ; One edge: declaration `who` names `name`, which the module word
 ; (set by the caller, as the passes set it) resolves to a signature.
@@ -5422,25 +5418,23 @@
     None
     {
       (let index (as (pairSlot cg 25) FunctionFloatIndex))
-      (match (internFind index.names (declSpellingOf name))
-        ((Some id) (Some (vecGet index.flags id)))
-        ((None) None))
+      (if (let (Some id) (internFind index.names (declSpellingOf name)))
+        (Some (vecGet index.flags id))
+        None)
     }))
 
 ; Partial compiler clients can still consult the written signature table.
 (:: functionFlags (-> Int String Ints))
 ;@axiom:effect(unsafe)
 (fn (functionFlags cg name)
-  (match (checkedFloatFlags cg name)
-    ((Some flags) flags)
-    ((None)
-      {
-        (let entry (findFSigCg cg name))
-        (if (== entry 0)
-          (as 0 Ints)
-          (fsigFlags entry))
-      }
-    )))
+  (if (let (Some flags) (checkedFloatFlags cg name))
+    flags
+    {
+      (let entry (findFSigCg cg name))
+      (if (== entry 0)
+        (as 0 Ints)
+        (fsigFlags entry))
+    }))
 
 ; Whether function `name` (already mangled) returns a bare float.
 (pub :: fnRetIsFloat (-> Int String Int))
@@ -6281,9 +6275,9 @@
 (pub fn (readModuleSrcOr name tcode entryDir dflt)
   {
     (let srcOpt (readModuleSrc name tcode entryDir))
-    (match srcOpt
-      ((None) dflt)
-      ((Some s) s))
+    (if (let (Some s) srcOpt)
+      s
+      dflt)
   })
 
 ; The path the suffix ladder resolved, or "". A diagnostic about a
@@ -9808,9 +9802,9 @@
     (match (readFile path)
       ((Err e) "")
       ((Ok source)
-        (match (frontParse source)
-          ((None) "")
-          ((Some parsed) (frontEncode parsed)))
+        (if (let (Some parsed) (frontParse source))
+          (frontEncode parsed)
+          "")
       ))
   })
 
@@ -9856,18 +9850,16 @@
             (set i 0)
             (while (< i (vecLen results))
               {
-                (match (vecGet results i)
-                  ((None) 0)
-                  ((Some parsed)
-                    {
-                      (vecPush cache.modules
-                        (FrontModule
-                          :name (vecGetStr names i)
-                          :path (vecGetStr paths i)
-                          :parsed parsed))
-                      0
-                    }
-                  ))
+                (if (let (Some parsed) (vecGet results i))
+                  {
+                    (vecPush cache.modules
+                      (FrontModule
+                        :name (vecGetStr names i)
+                        :path (vecGetStr paths i)
+                        :parsed parsed))
+                    0
+                  }
+                  0)
                 (set i (+ i 1))
               })
           })
@@ -9883,24 +9875,22 @@
 (pub :: parseModuleOrDieUnit (-> String Int String Units String ASTNode FrontCache (Vec ASTNode)))
 ;@axiom:effect(io)
 (pub fn (parseModuleOrDieUnit name tcode entryDir units parentName site cache)
-  (match (frontCached cache name)
-    ((None) (parseModuleOrDieUnitSerial name tcode entryDir units parentName site))
-    ((Some module)
-      (if (|| (>= (unitIndexOf units name 0) 0)
-            (cachedModuleWrongOrigin module units parentName tcode))
-        (parseModuleOrDieUnitSerial name tcode entryDir units parentName site)
-        {
-          (let parsed module.parsed)
-          (vecPush units
-            (CUnit2
-              :file module.path
-              :src parsed.source
-              :name name
-              :imports vecNew
-              :library (pathInStdlib module.path)))
-          parsed.decls
-        })
-    )))
+  (if (let (Some module) (frontCached cache name))
+    (if (|| (>= (unitIndexOf units name 0) 0)
+          (cachedModuleWrongOrigin module units parentName tcode))
+      (parseModuleOrDieUnitSerial name tcode entryDir units parentName site)
+      {
+        (let parsed module.parsed)
+        (vecPush units
+          (CUnit2
+            :file module.path
+            :src parsed.source
+            :name name
+            :imports vecNew
+            :library (pathInStdlib module.path)))
+        parsed.decls
+      })
+    (parseModuleOrDieUnitSerial name tcode entryDir units parentName site)))
 
 ; Prefetching has no parent context. A cached local module cannot
 ; satisfy a library import that resolves to the library's own file.
@@ -10171,9 +10161,9 @@
     (let units vecNew)
     {
       (vecPush ds
-        (match lexD
-          ((Some ld) ld)
-          ((None) (parseErrDiag toks pr src))))
+        (if (let (Some ld) lexD)
+          ld
+          (parseErrDiag toks pr src)))
       ; The unit carries the RESOLVED path, not the module name, so the
       ; `-->` line names a file the reader can open.
       (vecPush units
@@ -13582,9 +13572,9 @@
 ; `Mod$name` -> `name`, for a sentence.
 (pub :: bareOfSym (-> String String))
 (pub fn (bareOfSym s)
-  (match (strFindByte s 36 0)
-    ((None) s)
-    ((Some k) (strSlice s (+ k 1) (- (strLen s) (+ k 1))))))
+  (if (let (Some k) (strFindByte s 36 0))
+    (strSlice s (+ k 1) (- (strLen s) (+ k 1)))
+    s))
 
 (pub :: emitAsmLine (-> Int String Int))
 (pub fn (emitAsmLine cg text)
@@ -16708,26 +16698,24 @@
 ; safe to apply to every line without knowing what is on it.
 (pub :: pruneMark (-> Ints String Int))
 (pub fn (pruneMark ctx sym)
-  (match (internFind (vecGet ctx 0) sym)
-    ((Some id)
-      {
-        (let idToDef (vecGetVec ctx 1))
-        (if (>= id (vecLen idToDef))
-          0
-          {
-            (let d (vecGet idToDef id))
-            (let live (vecGetVec ctx 2))
-            (if (== (vecGet live d) 1)
+  (if (let (Some id) (internFind (vecGet ctx 0) sym))
+    {
+      (let idToDef (vecGetVec ctx 1))
+      (if (>= id (vecLen idToDef))
+        0
+        {
+          (let d (vecGet idToDef id))
+          (let live (vecGetVec ctx 2))
+          (if (== (vecGet live d) 1)
+            0
+            {
+              (vecSet live d 1)
+              (vecPush (vecGetVec ctx 3) d)
               0
-              {
-                (vecSet live d 1)
-                (vecPush (vecGetVec ctx 3) d)
-                0
-              })
-          })
-      }
-    )
-    ((None) 0)))
+            })
+        })
+    }
+    0))
 
 ; One byte past the end of the `@`-spelling starting at `i`. A QUOTED
 ; name is delimited by its closing quote and may hold anything;
@@ -17318,16 +17306,14 @@
 ; quote of a quoted one, and is reused - the two emitters have to agree.
 (pub :: defineFnSpell (-> String String))
 (pub fn (defineFnSpell ln)
-  (match (strFindByte ln 64 0)
-    ((None) "")
-    ((Some at)
-      {
-        (let end (symtabEndOf ln (+ at 1) (strLen ln)))
-        (if (< end 0)
-          ""
-          (strSlice ln at (- end at)))
-      }
-    )))
+  (if (let (Some at) (strFindByte ln 64 0))
+    {
+      (let end (symtabEndOf ln (+ at 1) (strLen ln)))
+      (if (< end 0)
+        ""
+        (strSlice ln at (- end at)))
+    }
+    ""))
 
 ; One marker row: label, function, module ("" for entry), span start.
 (pub :: pushLineMark (-> LineMarks String String String LineMarks))
@@ -17335,15 +17321,13 @@
   {
     (let rest (strSlice ln 9 (- (strLen ln) 9)))
     (let marker
-      (match (strFindByte rest 32 0)
-        ((None) (LineMark :label label :function func :module "" :offset (strToInt rest)))
-        ((Some e)
-          (LineMark
-            :label label
-            :function func
-            :module (strSlice rest 0 e)
-            :offset (strToInt (strSlice rest (+ e 1) (- (strLen rest) (+ e 1)))))
-        )))
+      (if (let (Some e) (strFindByte rest 32 0))
+        (LineMark
+          :label label
+          :function func
+          :module (strSlice rest 0 e)
+          :offset (strToInt (strSlice rest (+ e 1) (- (strLen rest) (+ e 1)))))
+        (LineMark :label label :function func :module "" :offset (strToInt rest))))
     (vecPush marks marker)
     marks
   })
@@ -26188,9 +26172,9 @@
 ; Does the arm's FLAGS field hold `letter`?
 (pub :: asmHasFlag (-> String Int Bool))
 (pub fn (asmHasFlag flags letter)
-  (match (strFindByte flags letter 0)
-    ((Some _) true)
-    ((None) false)))
+  (if (let (Some _) (strFindByte flags letter 0))
+    true
+    false))
 
 ; The comma-separated items of a field, as a Vec of String.
 (pub :: asmSplit (-> String Strings))
@@ -26626,9 +26610,9 @@
 (pub fn (asmStoreInto cg r ty nOut pair args)
   {
     (let colon
-      (match (strFindByte pair 58 0)
-        ((Some c) c)
-        ((None) 0)))
+      (if (let (Some c) (strFindByte pair 58 0))
+        c
+        0))
     (let k (asmDigits pair (- 0 1) colon))
     (let node (vecGet args (+ (asmDigits pair colon (strLen pair)) 1)))
     {
@@ -28298,9 +28282,9 @@
 (pub :: fnDefArityCg (-> Int String Int))
 (pub fn (fnDefArityCg cg name)
   (if (cgDeclIndexBuilt cg)
-    (match (internFind (cgDeclIntern cg) (declSpellingOf (mangledForCg cg name)))
-      ((Some id) (vecGet (cgDeclArity cg) id))
-      ((None) (- 0 1)))
+    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf (mangledForCg cg name))))
+      (vecGet (cgDeclArity cg) id)
+      (- 0 1))
     (- 0 1)))
 
 ; ------------------------------------------------------------------
@@ -31542,30 +31526,28 @@
   {
     (let memo (internWordOf bound.heads))
     (let answers bound.answers)
-    (match (internFind memo n)
-      ((Some id) (vecGet answers id))
-      ((None)
+    (if (let (Some id) (internFind memo n))
+      (vecGet answers id)
+      {
+        (let a
+          (if (|| (hasSym cg n) (|| (>= (paramIndexOf cg n) 0) (== (boundIn n bound) 1)))
+            1
+            0))
         {
-          (let a
-            (if (|| (hasSym cg n) (|| (>= (paramIndexOf cg n) 0) (== (boundIn n bound) 1)))
-              1
-              0))
-          {
-            (internIntern memo n)
-            (vecPush answers a)
-            a
-          }
+          (internIntern memo n)
+          (vecPush answers a)
+          a
         }
-      ))
+      })
   })
 
 (pub :: boundIn (-> String BinderSummary Int))
 (pub fn (boundIn name sum)
   (if (== sum.unknown 1)
     1
-    (match (internFind (internWordOf sum.binders) name)
-      ((Some _) 1)
-      ((None) 0))))
+    (if (let (Some _) (internFind (internWordOf sum.binders) name))
+      1
+      0)))
 
 ; Intern every binder under `e`, and answer 1 on a tag this walk
 ; does not know. An arm binds its pattern's names; a pattern whose

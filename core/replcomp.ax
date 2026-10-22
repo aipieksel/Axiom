@@ -452,20 +452,18 @@
 ; mid-word is a REPL that looks broken exactly when it is not.
 (pub :: replComplEnvDecls (-> ReplComplEnv (Option Nodes)))
 (pub fn (replComplEnvDecls e)
-  (match e.parsed
-    ((Some decls) (Some decls))
-    ((None)
-      {
-        (let dr (parseDecls (lex e.declsSrc) 0 vecNew))
-        (if (== (memGetWord dr 0) 0)
-          None
-          {
-            (let decls (readAstNodes dr 1))
-            (set e.parsed (Some decls))
-            (Some decls)
-          })
-      }
-    )))
+  (if (let (Some decls) e.parsed)
+    (Some decls)
+    {
+      (let dr (parseDecls (lex e.declsSrc) 0 vecNew))
+      (if (== (memGetWord dr 0) 0)
+        None
+        {
+          (let decls (readAstNodes dr 1))
+          (set e.parsed (Some decls))
+          (Some decls)
+        })
+    }))
 
 ; The merged declaration list `resolveImports` answers for this
 ; session, memoised on the import key.
@@ -484,13 +482,11 @@
 (pub fn (replComplResolved e decls)
   {
     (let key (replComplImportKey decls))
-    (match e.resolved
-      ((Some allDecls)
-        (if (strEq key e.key)
-          (Some allDecls)
-          (replComplResolve e decls key))
-      )
-      ((None) (replComplResolve e decls key)))
+    (if (let (Some allDecls) e.resolved)
+      (if (strEq key e.key)
+        (Some allDecls)
+        (replComplResolve e decls key))
+      (replComplResolve e decls key))
   })
 
 ; Resolve the session's imports afresh and cache a success under `key`.
@@ -543,16 +539,14 @@
       (if atCmd
         (replComplCommands out seen prefix)
         {
-          (match (replComplEnvDecls e)
-            ((Some decls)
-              {
-                (replComplDecls out seen e.declsSrc decls prefix)
-                (match (replComplResolved e decls)
-                  ((Some allDecls) (replComplImported out seen allDecls prefix))
-                  ((None) ()))
-              }
-            )
-            ((None) ()))
+          (if (let (Some decls) (replComplEnvDecls e))
+            {
+              (replComplDecls out seen e.declsSrc decls prefix)
+              (match (replComplResolved e decls)
+                ((Some allDecls) (replComplImported out seen allDecls prefix))
+                ((None) ()))
+            }
+            ())
           (replComplKeywords out seen prefix)
           (replComplWords out seen e.pending prefix)
         })
@@ -1181,9 +1175,9 @@
 (pub :: replComplTab (-> (Option ComplSt) String Int Int Int ReplComplEnv TabAnswer))
 ;@axiom:effect(io)
 (pub fn (replComplTab st buf cur dir width e)
-  (match st
-    ((None) (replComplTabFresh buf cur width e))
-    ((Some s) (replComplTabMore s buf cur dir width))))
+  (if (let (Some s) st)
+    (replComplTabMore s buf cur dir width)
+    (replComplTabFresh buf cur width e)))
 
 (pub :: replComplTabFresh (-> String Int Int ReplComplEnv TabAnswer))
 ;@axiom:effect(io)
@@ -1303,19 +1297,17 @@
 ; what the user typed in between.
 (pub :: replComplClear (-> (Option ComplSt) String))
 (pub fn (replComplClear st)
-  (match st
-    ((None) "")
-    ((Some s) (replComplErase (stRows s)))))
+  (if (let (Some s) st)
+    (replComplErase (stRows s))
+    ""))
 
 ; Escape: the erase, plus the buffer with the typed prefix put back.
 (pub :: replComplCancel (-> (Option ComplSt) String Int TabAnswer))
 (pub fn (replComplCancel st buf cur)
-  (match st
-    ((None) (replComplAnswer buf cur "" 0 None))
-    ((Some s)
-      {
-        (let typed (stTyped s))
-        (replComplAnswer (replComplSplice buf (stStart s) cur typed) (+ (stStart s) (strLen typed))
-          (replComplErase (stRows s)) 0 None)
-      }
-    )))
+  (if (let (Some s) st)
+    {
+      (let typed (stTyped s))
+      (replComplAnswer (replComplSplice buf (stStart s) cur typed) (+ (stStart s) (strLen typed))
+        (replComplErase (stRows s)) 0 None)
+    }
+    (replComplAnswer buf cur "" 0 None)))

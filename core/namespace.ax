@@ -114,9 +114,9 @@
   {
     (let m (as idx MangleIdx))
     (mangleIdxSync idx bares)
-    (match (internFind m.names name)
-      ((Some _) true)
-      ((None) false))
+    (if (let (Some _) (internFind m.names name))
+      true
+      false)
   })
 
 ; The first index in `bares` holding `name`, or `None`.
@@ -130,9 +130,9 @@
   {
     (let m (as idx MangleIdx))
     (mangleIdxSync idx bares)
-    (match (internFind m.names name)
-      ((Some id) (Some (vecGet m.pos id)))
-      ((None) None))
+    (if (let (Some id) (internFind m.names name))
+      (Some (vecGet m.pos id))
+      None)
   })
 
 ; Record how a bare reference reaches `full`, unless the bare name is
@@ -180,22 +180,20 @@
 ; Two public imported definitions still require qualification (AX3014).
 (pub :: mangleRecordModuleView (-> Int Strings Strings String String Int))
 (pub fn (mangleRecordModuleView idx bares fulls bare full)
-  (match (mangleIdxIndexOf idx bares bare)
-    ((Some i)
-      (if (|| (strEq (vecGet fulls i) bare) (mangleIdxHas idx bares (concat "$entry$" bare)))
-        {
-          (let key (concat "$" bare))
-          (if (mangleIdxHas idx bares key)
+  (if (let (Some i) (mangleIdxIndexOf idx bares bare))
+    (if (|| (strEq (vecGet fulls i) bare) (mangleIdxHas idx bares (concat "$entry$" bare)))
+      {
+        (let key (concat "$" bare))
+        (if (mangleIdxHas idx bares key)
+          0
+          {
+            (vecPush bares key)
+            (vecPush fulls full)
             0
-            {
-              (vecPush bares key)
-              (vecPush fulls full)
-              0
-            })
-        }
-        0)
-    )
-    ((None) 0)))
+          })
+      }
+      0)
+    0))
 
 ; The entry file's claim on a bare name, which OVERRIDES whatever an
 ; import recorded. `mangleRecord` gives the entry file the bare slot by
@@ -212,35 +210,31 @@
 ; would check clean and answer 7.
 (pub :: mangleRecordEntry (-> Int Strings Strings String Int))
 (pub fn (mangleRecordEntry idx bares fulls name)
-  (match (mangleIdxIndexOf idx bares name)
-    ((None)
+  (if (let (Some i) (mangleIdxIndexOf idx bares name))
+    {
+      ; The module that held the slot keeps its view (see
+      ; `mangleRecordModuleView`): a generated entry declaration
+      ; must no more capture a module's calls than a written one.
       {
-        (vecPush bares name)
-        (vecPush fulls name)
-        0
+        (let held (vecGet fulls i))
+        (if (! (strEq held name))
+          {
+            (let key (concat "$" name))
+            (if (! (mangleIdxHas idx bares key))
+              {
+                (vecPush bares key)
+                (vecPush fulls (strDup held))
+              })
+          })
       }
-    )
-    ((Some i)
-      {
-        ; The module that held the slot keeps its view (see
-        ; `mangleRecordModuleView`): a generated entry declaration
-        ; must no more capture a module's calls than a written one.
-        {
-          (let held (vecGet fulls i))
-          (if (! (strEq held name))
-            {
-              (let key (concat "$" name))
-              (if (! (mangleIdxHas idx bares key))
-                {
-                  (vecPush bares key)
-                  (vecPush fulls (strDup held))
-                })
-            })
-        }
-        (vecSet fulls i name)
-        0
-      }
-    )))
+      (vecSet fulls i name)
+      0
+    }
+    {
+      (vecPush bares name)
+      (vecPush fulls name)
+      0
+    }))
 
 ; Is `bare` in `bares`, by scanning it. The UN-INDEXED form, kept for
 ; the one caller that holds no index: `mangledFor` in codegen.ax, the

@@ -323,34 +323,30 @@
       {
         (while (&& (&& (>= i 0) (<= (+ i 60) len)) (! bad))
           (if (&& (== (strByte bytes (+ i 58)) 96) (== (strByte bytes (+ i 59)) 10))
-            (match (strParseInt (strTrim (strSlice bytes (+ i 48) 10)))
-              ((None)
-                (set i (- 0 1))
-              )
-              ((Some n)
-                (if (&& (>= n 0) (<= n (- len (+ i 60))))
+            (if (let (Some n) (strParseInt (strTrim (strSlice bytes (+ i 48) 10))))
+              (if (&& (>= n 0) (<= n (- len (+ i 60))))
+                {
+                  (let p (+ i 60))
+                  (let table
+                    (&& (== (strByte bytes i) 47)
+                      (|| (== (strByte bytes (+ i 1)) 32) (== (strByte bytes (+ i 1)) 47))))
                   {
-                    (let p (+ i 60))
-                    (let table
-                      (&& (== (strByte bytes i) 47)
-                        (|| (== (strByte bytes (+ i 1)) 32) (== (strByte bytes (+ i 1)) 47))))
-                    {
-                      (if (&& (! table)
-                            (&& (>= n 20)
-                              (&& (== (strByte bytes p) 0)
-                                (&& (== (strByte bytes (+ p 1)) 0)
-                                  (&& (== (strByte bytes (+ p 2)) 255)
-                                    (&& (== (strByte bytes (+ p 3)) 255)
-                                      (&& (== (strByte bytes (+ p 4)) 0)
-                                        (== (strByte bytes (+ p 5)) 0))))))))
-                        (if (!= (+ (strByte bytes (+ p 6)) (* 256 (strByte bytes (+ p 7))))
-                              (+ 100 (* 256 wantHigh)))
-                          (set bad true)))
-                      (set i (+ (+ p n) (% n 2)))
-                    }
+                    (if (&& (! table)
+                          (&& (>= n 20)
+                            (&& (== (strByte bytes p) 0)
+                              (&& (== (strByte bytes (+ p 1)) 0)
+                                (&& (== (strByte bytes (+ p 2)) 255)
+                                  (&& (== (strByte bytes (+ p 3)) 255)
+                                    (&& (== (strByte bytes (+ p 4)) 0)
+                                      (== (strByte bytes (+ p 5)) 0))))))))
+                      (if (!= (+ (strByte bytes (+ p 6)) (* 256 (strByte bytes (+ p 7))))
+                            (+ 100 (* 256 wantHigh)))
+                        (set bad true)))
+                    (set i (+ (+ p n) (% n 2)))
                   }
-                  (set i (- 0 1)))
-              ))
+                }
+                (set i (- 0 1)))
+              (set i (- 0 1)))
             (set i (- 0 1))))
         bad
       }
@@ -626,9 +622,9 @@
             (set from (- 0 1))
             {
               (let eol
-                (match (strFindByte ir 10 k)
-                  ((Some e) e)
-                  ((None) (strLen ir))))
+                (if (let (Some e) (strFindByte ir 10 k))
+                  e
+                  (strLen ir)))
               {
                 (asmSiteLine ir (strSlice ir (+ k 17) (- eol (+ k 17))) n out)
                 (set from eol)
@@ -656,9 +652,9 @@
           {
             (let r (vecGet parts (+ k 2)))
             (let dash
-              (match (strFindByte (vecGet parts (+ k 2)) 45 0)
-                ((Some d) d)
-                ((None) (- 0 1))))
+              (if (let (Some d) (strFindByte (vecGet parts (+ k 2)) 45 0))
+                d
+                (- 0 1)))
             (if (< dash 0)
               0
               {
@@ -681,9 +677,9 @@
       {
         (let s (+ (+ at 19) (strLen k)))
         (let e
-          (match (strFindByte ir 34 (+ (+ at 19) (strLen k)))
-            ((Some q) q)
-            ((None) (- 0 1))))
+          (if (let (Some q) (strFindByte ir 34 (+ (+ at 19) (strLen k))))
+            q
+            (- 0 1)))
         (if (< e 0)
           ""
           (asmUnquoteName (strSlice ir s (- e s))))
@@ -1321,13 +1317,11 @@
             (let nm (strFindSub text "name" at))
             (if (< nm 0)
               ""
-              (match (strFindByte text 34 nm)
-                ((None) "")
-                ((Some q1)
-                  (match (strFindByte text 34 (+ q1 1))
-                    ((None) "")
-                    ((Some q2) (strSlice text (+ q1 1) (- q2 (+ q1 1)))))
-                )))
+              (if (let (Some q1) (strFindByte text 34 nm))
+                (match (strFindByte text 34 (+ q1 1))
+                  ((None) "")
+                  ((Some q2) (strSlice text (+ q1 1) (- q2 (+ q1 1)))))
+                ""))
           })
       }
     }
@@ -1368,9 +1362,9 @@
           (let e (vecGet entries i))
           (if (&& (> (strLen e) 3)
                 (&& (strEq (strSlice e (- (strLen e) 3) 3) ".ax")
-                  (match (strFindByte e 46 0)
-                    ((None) false)
-                    ((Some d) (== d (- (strLen e) 3))))))
+                  (if (let (Some d) (strFindByte e 46 0))
+                    (== d (- (strLen e) 3))
+                    false)))
             {
               (if (== (strLen found) 0)
                 ; The guard above has just established that the ONLY
@@ -1480,13 +1474,11 @@
 (pub fn (strFindSub hay needle from)
   (if (== (strLen needle) 0)
     from
-    (match (strFindByte hay (strByte needle 0) from)
-      ((None) (- 0 1))
-      ((Some i)
-        (if (subMatchesAt hay needle i 0)
-          i
-          (strFindSub hay needle (+ i 1)))
-      ))))
+    (if (let (Some i) (strFindByte hay (strByte needle 0) from))
+      (if (subMatchesAt hay needle i 0)
+        i
+        (strFindSub hay needle (+ i 1)))
+      (- 0 1))))
 
 (pub :: subMatchesAt (-> String String Int Int Bool))
 (pub fn (subMatchesAt hay needle at k)
@@ -1537,20 +1529,16 @@
             (set at (- 0 1))
             {
               (let start (+ d 20))
-              (match (strFindByte ir 10 start)
-                ((None)
-                  (set at (- 0 1))
-                )
-                ((Some end)
+              (if (let (Some end) (strFindByte ir 10 start))
+                {
                   {
-                    {
-                      (let nm (strSlice ir start (- end start)))
-                      (if (== (strIndexIn out nm) (- 0 1))
-                        (vecPush out nm))
-                    }
-                    (set at end)
+                    (let nm (strSlice ir start (- end start)))
+                    (if (== (strIndexIn out nm) (- 0 1))
+                      (vecPush out nm))
                   }
-                ))
+                  (set at end)
+                }
+                (set at (- 0 1)))
             })
         })
       out
@@ -1819,18 +1807,16 @@
     (let at (strFindSub blob "axffi_" from))
     (if (< at 0)
       0
-      (match (strFindByte blob 0 at)
-        ((None) 0)
-        ((Some end)
+      (if (let (Some end) (strFindByte blob 0 at))
+        {
           {
-            {
-              (let nm (strSlice blob at (- end at)))
-              (if (&& (< (strLen nm) 200) (== (strIndexIn out nm) (- 0 1)))
-                (vecPush out nm))
-            }
-            (collectFfiNames blob out end)
+            (let nm (strSlice blob at (- end at)))
+            (if (&& (< (strLen nm) 200) (== (strIndexIn out nm) (- 0 1)))
+              (vecPush out nm))
           }
-        )))
+          (collectFfiNames blob out end)
+        }
+        0))
   })
 
 ; The candidate sharing the longest prefix with `name`, when that
@@ -1924,27 +1910,23 @@
       0
       {
         (let start (+ m (strLen marker)))
-        (match (strFindByte ir 10 start)
-          ((None) 0)
-          ((Some nl)
-            {
-              (pushNameOnce out (strDup (strSlice ir start (- nl start))))
-              (windowsExternLibsFrom ir nl out)
-            }
-          ))
+        (if (let (Some nl) (strFindByte ir 10 start))
+          {
+            (pushNameOnce out (strDup (strSlice ir start (- nl start))))
+            (windowsExternLibsFrom ir nl out)
+          }
+          0)
       })
   })
 
 ; The name in the `declare` line starting at `d`, or "".
 (pub :: declareNameAt (-> String Int String))
 (pub fn (declareNameAt ir d)
-  (match (strFindByte ir 64 d)
-    ((None) "")
-    ((Some sym)
-      (match (strFindByte ir 40 sym)
-        ((None) "")
-        ((Some open) (strDup (strSlice ir (+ sym 1) (- open (+ sym 1))))))
-    )))
+  (if (let (Some sym) (strFindByte ir 64 d))
+    (match (strFindByte ir 40 sym)
+      ((None) "")
+      ((Some open) (strDup (strSlice ir (+ sym 1) (- open (+ sym 1))))))
+    ""))
 
 (pub :: pushNameOnce (-> Strings String Int))
 (pub fn (pushNameOnce out n)
@@ -1988,9 +1970,9 @@
   (if (strStartsWith (strSlice ir at (- (strLen ir) at)) "declare ")
     {
       (pushNameOnce out (declareNameAt ir at))
-      (match (strFindByte ir 10 at)
-        ((None) (strLen ir))
-        ((Some nl) (windowsDeclareRun ir (+ nl 1) out)))
+      (if (let (Some nl) (strFindByte ir 10 at))
+        (windowsDeclareRun ir (+ nl 1) out)
+        (strLen ir))
     }
     at))
 
@@ -2142,27 +2124,22 @@
           (let d (strFindSub ir "\ndeclare " at))
           (if (< d 0)
             (set at (- 0 1))
-            (match (strFindByte ir 64 d)
-              ((None)
-                (set at (- 0 1))
-              )
-              ((Some sym)
-                (match (strFindByte ir 40 sym)
-                  ((None)
-                    (set at (- 0 1))
-                  )
-                  ((Some open)
-                    {
-                      (if (!
-                            (|| (platformGroundedSym (strSlice ir (+ sym 1) (- open (+ sym 1))))
-                              (|| (backendGroundedSym (strSlice ir (+ sym 1) (- open (+ sym 1))))
-                                (>= (strIndexIn k32 (strSlice ir (+ sym 1) (- open (+ sym 1))))
-                                  0))))
-                        (vecPush out (strSlice ir (+ sym 1) (- open (+ sym 1)))))
-                      (set at open)
-                    }
-                  ))
-              )))
+            (if (let (Some sym) (strFindByte ir 64 d))
+              (match (strFindByte ir 40 sym)
+                ((None)
+                  (set at (- 0 1))
+                )
+                ((Some open)
+                  {
+                    (if (!
+                          (|| (platformGroundedSym (strSlice ir (+ sym 1) (- open (+ sym 1))))
+                            (|| (backendGroundedSym (strSlice ir (+ sym 1) (- open (+ sym 1))))
+                              (>= (strIndexIn k32 (strSlice ir (+ sym 1) (- open (+ sym 1)))) 0))))
+                      (vecPush out (strSlice ir (+ sym 1) (- open (+ sym 1)))))
+                    (set at open)
+                  }
+                ))
+              (set at (- 0 1))))
         })
       out
     }
@@ -2248,9 +2225,9 @@
                     "the Rust shim and the `extern` item must agree on every parameter and the result (docs/ffi.md, the type table); regenerate the binding module with `axiom-bindgen`, or fix the hand-written item"))
                 (let ds vecNew)
                 {
-                  (match (findExternUnit decls n units)
-                    ((Some u) (diagSetUnit d u))
-                    ((None) ()))
+                  (if (let (Some u) (findExternUnit decls n units))
+                    (diagSetUnit d u)
+                    ())
                   (vecPush ds d)
                   {
                     (let out
@@ -2311,9 +2288,9 @@
                   msg 0 0 help))
               (let ds vecNew)
               {
-                (match (findExternUnit decls n units)
-                  ((Some u) (diagSetUnit d u))
-                  ((None) ()))
+                (if (let (Some u) (findExternUnit decls n units))
+                  (diagSetUnit d u)
+                  ())
                 (vecPush ds d)
                 {
                   (let out
@@ -2432,34 +2409,30 @@
     (let at (strFindSub blob prefix from))
     (if (< at 0)
       0
-      (match (strFindByte blob 0 at)
-        ((None) 0)
-        ((Some end)
+      (if (let (Some end) (strFindByte blob 0 at))
+        {
           {
-            {
-              (let tail (strSlice blob (+ at (strLen prefix)) (- end (+ at (strLen prefix)))))
-              (if (&& (< (strLen tail) 80) (== (strIndexIn out tail) (- 0 1)))
-                (vecPush out tail))
-            }
-            (collectPrefixed blob prefix out end)
+            (let tail (strSlice blob (+ at (strLen prefix)) (- end (+ at (strLen prefix)))))
+            (if (&& (< (strLen tail) 80) (== (strIndexIn out tail) (- 0 1)))
+              (vecPush out tail))
           }
-        )))
+          (collectPrefixed blob prefix out end)
+        }
+        0))
   })
 
 ; `ii_i` spelled as a developer reads it: `(-> Int Int Int)`.
 (pub :: sigTagSpelled (-> String String))
 (pub fn (sigTagSpelled tag)
-  (match (strFindByte tag 95 0)
-    ((None) (concat "`" (concat tag "`")))
-    ((Some us)
-      {
-        (let ps (strSlice tag 0 us))
-        (let r (strSlice tag (+ us 1) (- (strLen tag) (+ us 1))))
-        (if (== (strLen ps) 0)
-          (concat "`" (concat (tagWord r) "` (nullary)"))
-          (concat "`(-> " (concat (concat (tagWords ps 0) (tagWord r)) ")`")))
-      }
-    )))
+  (if (let (Some us) (strFindByte tag 95 0))
+    {
+      (let ps (strSlice tag 0 us))
+      (let r (strSlice tag (+ us 1) (- (strLen tag) (+ us 1))))
+      (if (== (strLen ps) 0)
+        (concat "`" (concat (tagWord r) "` (nullary)"))
+        (concat "`(-> " (concat (concat (tagWords ps 0) (tagWord r)) ")`")))
+    }
+    (concat "`" (concat tag "`"))))
 
 (pub :: tagWords (-> String Int String))
 (pub fn (tagWords ps i)
@@ -2615,9 +2588,9 @@
     {
       (let colon (strFind path ":" from))
       (let end
-        (match colon
-          ((None) (strLen path))
-          ((Some c) c)))
+        (if (let (Some c) colon)
+          c
+          (strLen path)))
       {
         (let dir (strSlice path from (- end from)))
         (let cand
@@ -3182,9 +3155,9 @@
 ; `--name=value` split into its two halves.
 (pub :: flagNamePart (-> String String))
 (pub fn (flagNamePart a)
-  (match (strFindByte a 61 0)
-    ((None) a)
-    ((Some e) (strSlice a 0 e))))
+  (if (let (Some e) (strFindByte a 61 0))
+    (strSlice a 0 e)
+    a))
 
 (pub :: flagHasValuePart (-> String Bool))
 (pub fn (flagHasValuePart a)
@@ -3192,9 +3165,9 @@
 
 (pub :: flagValuePart (-> String String))
 (pub fn (flagValuePart a)
-  (match (strFindByte a 61 0)
-    ((None) "")
-    ((Some e) (strSlice a (+ e 1) (- (strLen a) (+ e 1))))))
+  (if (let (Some e) (strFindByte a 61 0))
+    (strSlice a (+ e 1) (- (strLen a) (+ e 1)))
+    ""))
 
 ; Is this argument written as a flag at all? A bare `-` is not: it names
 ; standard input by convention, and refusing it here would be a worse

@@ -11138,9 +11138,9 @@
 (pub :: rgRootIdx (-> Int ASTNode Int))
 (pub fn (rgRootIdx tc e)
   (if (== (nodeTag e) TAG_E_VAR)
-    (match (scopeFindIdx (tcScopeVec tc) (nodeAName e))
-      ((Some i) i)
-      ((None) (- 0 1)))
+    (if (let (Some i) (scopeFindIdx (tcScopeVec tc) (nodeAName e)))
+      i
+      (- 0 1))
     (if (== (nodeTag e) TAG_E_FIELD)
       (rgRootIdx tc (nodeAChild e))
       (- 0 1))))
@@ -11435,14 +11435,14 @@
   ; no new top-level function moves the effect-distribution pins.
   {
     (let noDot
-      (match (strFindByte name 46 0)
-        ((Some d) (strSlice name 0 d))
-        ((None) name)))
+      (if (let (Some d) (strFindByte name 46 0))
+        (strSlice name 0 d)
+        name))
     {
       (let disp
-        (match (strFindByte noDot 35 0)
-          ((Some h) (strSlice noDot 0 h))
-          ((None) noDot)))
+        (if (let (Some h) (strFindByte noDot 35 0))
+          (strSlice noDot 0 h)
+          noDot))
       {
         (emitDiag tc
           (diagSetLabel
@@ -11471,14 +11471,14 @@
   ; MAC-HYG-3a, binding-name half: see `emitAX3012`.
   {
     (let noDot
-      (match (strFindByte name 46 0)
-        ((Some d) (strSlice name 0 d))
-        ((None) name)))
+      (if (let (Some d) (strFindByte name 46 0))
+        (strSlice name 0 d)
+        name))
     {
       (let disp
-        (match (strFindByte noDot 35 0)
-          ((Some h) (strSlice noDot 0 h))
-          ((None) noDot)))
+        (if (let (Some h) (strFindByte noDot 35 0))
+          (strSlice noDot 0 h)
+          noDot))
       {
         (emitDiag tc
           (diagSetLabel
@@ -11530,14 +11530,14 @@
   ; MAC-HYG-3a, binding-name half: see `emitAX3012`.
   {
     (let noDot
-      (match (strFindByte name 46 0)
-        ((Some d) (strSlice name 0 d))
-        ((None) name)))
+      (if (let (Some d) (strFindByte name 46 0))
+        (strSlice name 0 d)
+        name))
     {
       (let disp
-        (match (strFindByte noDot 35 0)
-          ((Some h) (strSlice noDot 0 h))
-          ((None) noDot)))
+        (if (let (Some h) (strFindByte noDot 35 0))
+          (strSlice noDot 0 h)
+          noDot))
       {
         (vecPush out
           (diagSetLabel
@@ -17235,40 +17235,38 @@
 (pub :: checkRestrictedArgument (-> Int Int Int ASTNode Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (checkRestrictedArgument tc raw index arg bound)
-  (match (epUseFor raw index)
-    ((None) 0)
-    ((Some use)
-      (if (== use.def 0)
-        0
-        {
-          (let entry (as raw FnEnt))
-          (let required (effCopy entry.restrictions))
-          (effUnion required use.restrictions 0)
-          (if (== (vecLen required) 0)
-            0
-            {
-              (let row vecNew)
-              (match (walkEffectsVal tc arg bound vecNew)
-                ((None)
-                  {
-                    (if (== (nodeTag arg) TAG_E_VAR)
-                      (noteParamRestrictions bound (bsParamAlias bound (nodeAName arg)) required))
-                    (effAdd row effIncomplete)
-                  }
-                )
-                ((Some values)
-                  {
-                    (fnValsCall tc values vecNew bound row 0)
-                    (noteValueRestrictions bound values.members required 0)
-                  }
-                ))
-              (let state (tcCheckState tc))
-              (if state.validatingEffects
-                (checkArgumentRestrictions tc entry arg row required 0)
-                0)
-            })
-        })
-    )))
+  (if (let (Some use) (epUseFor raw index))
+    (if (== use.def 0)
+      0
+      {
+        (let entry (as raw FnEnt))
+        (let required (effCopy entry.restrictions))
+        (effUnion required use.restrictions 0)
+        (if (== (vecLen required) 0)
+          0
+          {
+            (let row vecNew)
+            (match (walkEffectsVal tc arg bound vecNew)
+              ((None)
+                {
+                  (if (== (nodeTag arg) TAG_E_VAR)
+                    (noteParamRestrictions bound (bsParamAlias bound (nodeAName arg)) required))
+                  (effAdd row effIncomplete)
+                }
+              )
+              ((Some values)
+                {
+                  (fnValsCall tc values vecNew bound row 0)
+                  (noteValueRestrictions bound values.members required 0)
+                }
+              ))
+            (let state (tcCheckState tc))
+            (if state.validatingEffects
+              (checkArgumentRestrictions tc entry arg row required 0)
+              0)
+          })
+      })
+    0))
 
 (pub :: noteParamRestrictions (-> Int Int Strings Int))
 (pub fn (noteParamRestrictions bound index required)
@@ -17276,9 +17274,9 @@
     0
     {
       (markEparamUse bound index vecNew 0)
-      (match (epUseFind (bsUsesVec bound) index 0)
-        ((None) 0)
-        ((Some use) (effUnion use.restrictions required 0)))
+      (if (let (Some use) (epUseFind (bsUsesVec bound) index 0))
+        (effUnion use.restrictions required 0)
+        0)
     }))
 
 (pub :: noteValueRestrictions (-> Int (Vec FnVal) Strings Int Int))
@@ -18414,32 +18412,28 @@
 ; incomplete.
 (pub :: fnValsJoin (-> (Option FnVals) (Option FnVals) (Option FnVals)))
 (pub fn (fnValsJoin a b)
-  (match a
-    ((None)
-      (match b
-        ((None) None)
-        ((Some bv) (Some (FnVals :complete 0 :members bv.members))))
-    )
-    ((Some av)
-      (match b
-        ((None) (Some (FnVals :complete 0 :members av.members)))
-        ((Some bv)
+  (if (let (Some av) a)
+    (match b
+      ((None) (Some (FnVals :complete 0 :members av.members)))
+      ((Some bv)
+        {
+          (let v vecNew)
           {
-            (let v vecNew)
-            {
-              (fnValCopyInto v av.members 0)
-              (fnValCopyInto v bv.members 0)
-              (Some
-                (FnVals
-                  :complete
-                    (if (&& (== av.complete 1) (== bv.complete 1))
-                      1
-                      0)
-                  :members v))
-            }
+            (fnValCopyInto v av.members 0)
+            (fnValCopyInto v bv.members 0)
+            (Some
+              (FnVals
+                :complete
+                  (if (&& (== av.complete 1) (== bv.complete 1))
+                    1
+                    0)
+                :members v))
           }
-        ))
-    )))
+        }
+      ))
+    (match b
+      ((None) None)
+      ((Some bv) (Some (FnVals :complete 0 :members bv.members))))))
 
 (pub :: fnValCopyInto (-> (Vec FnVal) (Vec FnVal) Int Int))
 (pub fn (fnValCopyInto dst src i)
@@ -18529,17 +18523,15 @@
 ; ... handed to a callee position whose record is `u`.
 (pub :: latentApplyU (-> Int (Vec EpUse) (Option EpUse) Int))
 (pub fn (latentApplyU b uses o)
-  (match o
-    ((None) (latentApply b uses vecNew 1 0))
-    ((Some u)
-      {
-        (if (== u.def 1)
-          (latentApply b uses (effJoined (bsHandledVec b) u.mask) 0 0))
-        (if (== u.esc 1)
-          (latentApply b uses vecNew 1 0)
-          0)
-      }
-    )))
+  (if (let (Some u) o)
+    {
+      (if (== u.def 1)
+        (latentApply b uses (effJoined (bsHandledVec b) u.mask) 0 0))
+      (if (== u.esc 1)
+        (latentApply b uses vecNew 1 0)
+        0)
+    }
+    (latentApply b uses vecNew 1 0)))
 
 ; A row a value contributes by being handed to a callee position whose
 ; record is `u`. Built-in effects arrive as they are. A custom effect
@@ -18548,9 +18540,9 @@
 ; absent when every call discharges it.
 (pub :: addGated (-> Strings Strings (Option EpUse) Int Int))
 (pub fn (addGated acc row o i)
-  (match o
-    ((None) (addGatedWith acc row 0 row 1 i))
-    ((Some u) (addGatedWith acc row u.def u.mask u.esc i))))
+  (if (let (Some u) o)
+    (addGatedWith acc row u.def u.mask u.esc i)
+    (addGatedWith acc row 0 row 1 i)))
 
 ; `def`, `mask` and `esc` are the position's record; a position nothing
 ; calls has `def` 0 and `esc` 1, and its mask is never read.
@@ -18833,9 +18825,9 @@
           (if (== tag TAG_E_FIELD)
             {
               (walkEffects tc (nodeAChild e) bound acc)
-              (match (fieldDeclRowAt tc e bound)
-                ((Some row) (fieldDeclaredVals row))
-                ((None) (fieldValsOf tc (nodeBName e))))
+              (if (let (Some row) (fieldDeclRowAt tc e bound))
+                (fieldDeclaredVals row)
+                (fieldValsOf tc (nodeBName e)))
             }
             (if (== tag TAG_E_IF)
               {
@@ -18939,21 +18931,17 @@
 ; name, which is stage0's `param_alias_of` through `lookup_shadow`.
 (pub :: letScopeFor (-> Int ASTNode Int Strings (Option FnVals) Int))
 (pub fn (letScopeFor tc e bound acc fv)
-  (match fv
-    ((Some v)
-      (if (== (nodeTag e) TAG_E_LET)
-        (bsWithVals bound (nodeAName e) v)
-        {
-          (fnValsEscape tc v bound acc)
-          (bsWith bound (nodeAName e) bsOpaque)
-        })
-    )
-    ((None)
-      (bsWith bound (nodeAName e)
-        (if (&& (== (nodeTag e) TAG_E_LET) (== (nodeTag (nodeBChild e)) TAG_E_VAR))
-          (bsParamAlias bound (nodeAName (nodeBChild e)))
-          bsOpaque))
-    )))
+  (if (let (Some v) fv)
+    (if (== (nodeTag e) TAG_E_LET)
+      (bsWithVals bound (nodeAName e) v)
+      {
+        (fnValsEscape tc v bound acc)
+        (bsWith bound (nodeAName e) bsOpaque)
+      })
+    (bsWith bound (nodeAName e)
+      (if (&& (== (nodeTag e) TAG_E_LET) (== (nodeTag (nodeBChild e)) TAG_E_VAR))
+        (bsParamAlias bound (nodeAName (nodeBChild e)))
+        bsOpaque))))
 
 ; A `handle`: its body walked with the handled effects in scope, so a
 ; parameter called inside records them; the body's own effects less the
@@ -18989,18 +18977,14 @@
     (if (! (nodeSame h nilNode))
       (if (== (nodeTag h) TAG_E_LAM)
         (walkCalledLambda tc h bound acc)
-        (match (walkEffectsVal tc h bound acc)
-          ((None)
-            (if (== (nodeTag h) TAG_E_VAR)
-              (walkCallHead tc (nodeAName h) vecNew bound acc 0)
-              (effAdd acc effIncomplete))
-          )
-          ((Some fv)
-            {
-              (fnValsCall tc fv vecNew bound acc 0)
-              (handlerOpaqueArgs acc fv.members)
-            }
-          ))))
+        (if (let (Some fv) (walkEffectsVal tc h bound acc))
+          {
+            (fnValsCall tc fv vecNew bound acc 0)
+            (handlerOpaqueArgs acc fv.members)
+          }
+          (if (== (nodeTag h) TAG_E_VAR)
+            (walkCallHead tc (nodeAName h) vecNew bound acc 0)
+            (effAdd acc effIncomplete)))))
     ()
   })
 
@@ -19065,9 +19049,9 @@
             (unsafeSinkNote tc a bound)
             (if (! (== pend 1))
               (if (== (bsIsLocal bound (nodeAName a)) 1)
-                (match (bsValsOf bound (nodeAName a))
-                  ((None) ())
-                  ((Some fv) (fnValsHanded tc fv bound acc u)))
+                (if (let (Some fv) (bsValsOf bound (nodeAName a)))
+                  (fnValsHanded tc fv bound acc u)
+                  ())
                 {
                   (let fe (findFnEnt tc (nodeAName a)))
                   (if (&& (!= fe 0)
@@ -19191,9 +19175,9 @@
           (if (nodeSame binding.initialiser nilNode)
             None
             (walkEffectsVal tc binding.initialiser bound vecNew)))
-        (set bound (match value
-          ((Some functions) (bsWithVals bound binding.name functions))
-          ((None) (bsWith bound binding.name bsOpaque))))
+        (set bound (if (let (Some functions) value)
+          (bsWithVals bound binding.name functions)
+          (bsWith bound binding.name bsOpaque)))
       })
     bound
   })
@@ -19675,35 +19659,29 @@
         (if (!= (nodeAxtags f) 0)
           {
             (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (memGetWord s 2)))
-            (match (fieldDeclRead tc f)
-              ((None) ())
-              ((Some decl)
-                {
-                  (vecPush u.fieldDecls
-                    (FieldDecl :owner s :name (nodeAName f) :row decl.row :said decl.said))
-                  ()
-                }
-              ))
+            (if (let (Some decl) (fieldDeclRead tc f))
+              {
+                (vecPush u.fieldDecls
+                  (FieldDecl :owner s :name (nodeAName f) :row decl.row :said decl.said))
+                ()
+              }
+              ())
           })))
     (tcSetCurUnit tc was)
     (for d in u.fieldDecls
-      (match (fieldDeclNameAt u.fieldDeclNames d.name)
-        ((Some entry)
-          {
-            (effUnion entry.row d.row 0)
-            ()
-          }
-        )
-        ((None)
-          {
-            (vecPush u.fieldDeclNames
-              (FieldDeclName
-                :name d.name
-                :all (fieldNameAllDeclared tc u d.name)
-                :row (effCopy d.row)))
-            ()
-          }
-        )))
+      (if (let (Some entry) (fieldDeclNameAt u.fieldDeclNames d.name))
+        {
+          (effUnion entry.row d.row 0)
+          ()
+        }
+        {
+          (vecPush u.fieldDeclNames
+            (FieldDeclName
+              :name d.name
+              :all (fieldNameAllDeclared tc u d.name)
+              :row (effCopy d.row)))
+          ()
+        }))
   })
 
 ; One field's tags: its declaration, or `None` when it declares nothing
@@ -19880,11 +19858,9 @@
       {
         (let ty (structFieldTy s name))
         (if (&& (! (nodeSame ty nilNode)) (== (tyIsCallable ty) 1))
-          (match (fieldDeclFor u s name)
-            ((None)
-              (set all false)
-            )
-            ((Some _) ())))
+          (if (let (Some _) (fieldDeclFor u s name))
+            ()
+            (set all false)))
       })
     all
   })
@@ -19897,21 +19873,19 @@
     (let u (tcUState tc))
     (if (== (vecLen u.fieldDeclNames) 0)
       None
-      (match (fieldDeclNameAt u.fieldDeclNames (nodeBName e))
-        ((None) None)
-        ((Some entry)
-          (match (fieldParamStruct tc (nodeAChild e) bound)
-            ((Some sent)
-              (match (fieldDeclFor u sent (nodeBName e))
-                ((None) None)
-                ((Some d) (Some d.row)))
-            )
-            ((None)
-              (if entry.all
-                (Some entry.row)
-                None)
-            ))
-        )))
+      (if (let (Some entry) (fieldDeclNameAt u.fieldDeclNames (nodeBName e)))
+        (match (fieldParamStruct tc (nodeAChild e) bound)
+          ((Some sent)
+            (match (fieldDeclFor u sent (nodeBName e))
+              ((None) None)
+              ((Some d) (Some d.row)))
+          )
+          ((None)
+            (if entry.all
+              (Some entry.row)
+              None)
+          ))
+        None))
   })
 
 ; The struct a field read's base names, when the base is a parameter
@@ -19943,14 +19917,12 @@
   {
     (let scratch vecNew)
     (let listed
-      (match (fieldValsOf tc fname)
-        ((None) false)
-        ((Some fv)
-          {
-            (fnValsCall tc fv vecNew bound scratch unboxed)
-            (&& (== fv.complete 1) (== (effPartial scratch) 0))
-          }
-        )))
+      (if (let (Some fv) (fieldValsOf tc fname))
+        {
+          (fnValsCall tc fv vecNew bound scratch unboxed)
+          (&& (== fv.complete 1) (== (effPartial scratch) 0))
+        }
+        false))
     (effUnionRow acc row 0)
     (if (|| (! listed) (== (effIn scratch effGraphOpen) 1))
       {
@@ -20012,9 +19984,9 @@
                 (let mut i 0)
                 (while (< i (vecLen fields))
                   {
-                    (match (fieldDeclFor u sent (nodeAName (vecGet fields i)))
-                      ((None) ())
-                      ((Some d) (fieldStoreCheck tc sent d (vecGet args i) bound)))
+                    (if (let (Some d) (fieldDeclFor u sent (nodeAName (vecGet fields i))))
+                      (fieldStoreCheck tc sent d (vecGet args i) bound)
+                      ())
                     (set i (+ i 1))
                   })
               })
@@ -20032,9 +20004,9 @@
       {
         (let sent (fieldStructNamed tc (nodeTyText e)))
         (if (!= sent 0)
-          (match (fieldDeclFor u sent (nodeBName e))
-            ((None) ())
-            ((Some d) (fieldStoreCheck tc sent d (nodeCChild e) bound))))
+          (if (let (Some d) (fieldDeclFor u sent (nodeBName e)))
+            (fieldStoreCheck tc sent d (nodeCChild e) bound)
+            ()))
       })
   })
 
@@ -20070,35 +20042,31 @@
 ; checker stamped is resolved exactly, through the struct it names.
 (pub :: fieldStoreVerdict (-> Int ASTNode Strings Int FieldStoreVerdict))
 (pub fn (fieldStoreVerdict tc v row bound)
-  (match (fieldStoreSourceDecl tc v)
-    ((Some d)
-      (fieldRowVerdict d.row row
-        (concat (concat (concat "the field `" (bareOf (memGetWordStr d.owner 0))) ".")
-          (concat (nodeBName v) "`")))
-    )
-    ((None)
-      {
-        (let state (tcCheckState tc))
-        (let checking state.validatingEffects)
-        (let sink (tcUnsafeSink tc))
-        (set state.validatingEffects false)
-        (tcClearUnsafeSink tc)
-        (let vals (walkEffectsVal tc v bound vecNew))
-        (tcSetUnsafeSink tc sink)
-        (set state.validatingEffects checking)
-        (match vals
-          ((None) (FieldStoreUnknown (fieldValueShape tc v bound)))
-          ((Some fv)
-            (if (!= fv.complete 1)
-              (FieldStoreUnknown
-                (if (== (nodeTag v) TAG_E_FIELD)
-                  (concat (concat "the field `" (fieldReadName tc v))
-                    "`, which declares no effects and may hold a value the compiler can't follow")
-                  "a value that may be one the compiler can't follow"))
-              (fieldMembersVerdict tc fv.members row bound 0))
-          ))
-      }
-    )))
+  (if (let (Some d) (fieldStoreSourceDecl tc v))
+    (fieldRowVerdict d.row row
+      (concat (concat (concat "the field `" (bareOf (memGetWordStr d.owner 0))) ".")
+        (concat (nodeBName v) "`")))
+    {
+      (let state (tcCheckState tc))
+      (let checking state.validatingEffects)
+      (let sink (tcUnsafeSink tc))
+      (set state.validatingEffects false)
+      (tcClearUnsafeSink tc)
+      (let vals (walkEffectsVal tc v bound vecNew))
+      (tcSetUnsafeSink tc sink)
+      (set state.validatingEffects checking)
+      (match vals
+        ((None) (FieldStoreUnknown (fieldValueShape tc v bound)))
+        ((Some fv)
+          (if (!= fv.complete 1)
+            (FieldStoreUnknown
+              (if (== (nodeTag v) TAG_E_FIELD)
+                (concat (concat "the field `" (fieldReadName tc v))
+                  "`, which declares no effects and may hold a value the compiler can't follow")
+                "a value that may be one the compiler can't follow"))
+            (fieldMembersVerdict tc fv.members row bound 0))
+        ))
+    }))
 
 ; A field read as `S.f` when the checker stamped its struct, else `f`.
 (pub :: fieldReadName (-> Int ASTNode String))
@@ -20300,18 +20268,16 @@
     (let u (tcUState tc))
     (let parts vecNew)
     (for f in (readAstNodes s 1)
-      (match (fieldDeclFor u s (nodeAName f))
-        ((None) ())
-        ((Some d)
-          {
-            (vecPushStr parts
-              (concat (concat (nodeAName f) ":")
-                (if (== (vecLen d.row) 0)
-                  "pure"
-                  (fieldRowPlus (effSorted d.row) 0 ""))))
-            ()
-          }
-        )))
+      (if (let (Some d) (fieldDeclFor u s (nodeAName f)))
+        {
+          (vecPushStr parts
+            (concat (concat (nodeAName f) ":")
+              (if (== (vecLen d.row) 0)
+                "pure"
+                (fieldRowPlus (effSorted d.row) 0 ""))))
+          ()
+        }
+        ()))
     (if (== (vecLen parts) 0)
       ""
       (concat "field-effects=" (fieldJoinComma parts 0 "")))
@@ -20355,11 +20321,11 @@
           ; function the walk follows, which escapes here.
           {
             (unsafeSinkNote tc e bound)
-            (match (if (== (bsIsLocal bound (nodeAName e)) 1)
+            (if (let (Some fv) (if (== (bsIsLocal bound (nodeAName e)) 1)
               (bsValsOf bound (nodeAName e))
-              None)
-              ((None) (effRefSite tc (nodeAName e) bound acc))
-              ((Some fv) (fnValsEscape tc fv bound acc)))
+              None))
+              (fnValsEscape tc fv bound acc)
+              (effRefSite tc (nodeAName e) bound acc))
           }
           (if (== tag TAG_E_SETF)
             {
@@ -20461,9 +20427,9 @@
 ; calls it: it escapes, past the handler (`walkEffectsHandleVal`).
 (pub :: walkEffectsHandle (-> Int ASTNode Int Strings Int))
 (pub fn (walkEffectsHandle tc e bound acc)
-  (match (walkEffectsHandleVal tc e bound acc)
-    ((None) 0)
-    ((Some fv) (fnValsEscape tc fv bound acc))))
+  (if (let (Some fv) (walkEffectsHandleVal tc e bound acc))
+    (fnValsEscape tc fv bound acc)
+    0))
 
 (pub :: effUnionUnhandled (-> Int Strings Strings (Vec ASTNode) Int Int))
 (pub fn (effUnionUnhandled tc acc inner effs i)
@@ -20626,18 +20592,14 @@
           (if (== (nodeTag head) TAG_E_FIELD)
             {
               (walkEffects tc (nodeAChild head) bound acc)
-              (match (fieldDeclRowAt tc head bound)
-                ((Some row)
-                  {
-                    (fieldDeclaredCall tc (nodeBName head) row bound acc (tcSiteIn tc e))
-                    0
-                  }
-                )
-                ((None)
-                  (match (fieldValsOf tc (nodeBName head))
-                    ((None) (effAdd acc effIncomplete))
-                    ((Some fv) (fnValsCall tc fv args bound acc (tcSiteIn tc e))))
-                ))
+              (if (let (Some row) (fieldDeclRowAt tc head bound))
+                {
+                  (fieldDeclaredCall tc (nodeBName head) row bound acc (tcSiteIn tc e))
+                  0
+                }
+                (match (fieldValsOf tc (nodeBName head))
+                  ((None) (effAdd acc effIncomplete))
+                  ((Some fv) (fnValsCall tc fv args bound acc (tcSiteIn tc e)))))
             }
             {
               (walkEffects tc head bound acc)
@@ -20658,25 +20620,23 @@
         (fnValsSoleEnt (bsValsOf bound (nodeAName head)))
         (findFnEnt tc (nodeAName head)))
       (if (== tag TAG_E_FIELD)
-        (match (fieldDeclRowAt tc head bound)
-          ((Some _) 0)
-          ((None) (fnValsSoleEnt (fieldValsOf tc (nodeBName head)))))
+        (if (let (Some _) (fieldDeclRowAt tc head bound))
+          0
+          (fnValsSoleEnt (fieldValsOf tc (nodeBName head))))
         0))
   })
 
 (pub :: fnValsSoleEnt (-> (Option FnVals) Int))
 (pub fn (fnValsSoleEnt value)
-  (match value
-    ((None) 0)
-    ((Some functions)
-      (if (&& (== functions.complete 1) (== (vecLen functions.members) 1))
-        (match (vecGet functions.members 0)
-          ((NamedFn ent)
-            (as ent Int)
-          )
-          ((LambdaFn _) 0))
-        0)
-    )))
+  (if (let (Some functions) value)
+    (if (&& (== functions.complete 1) (== (vecLen functions.members) 1))
+      (match (vecGet functions.members 0)
+        ((NamedFn ent)
+          (as ent Int)
+        )
+        ((LambdaFn _) 0))
+      0)
+    0))
 
 ; Mark every parameter alias among `args` as escaping, for a call whose
 ; callee's own uses the walk cannot read.
@@ -20736,38 +20696,29 @@
 ; the charge lands.
 (pub fn (walkCallHead tc n args bound acc unboxed)
   (if (== (bsIsLocal bound n) 1)
-    (match (bsValsOf bound n)
-      ; A local known to hold functions: the call is a call to them.
-      ((Some fv)
-        {
-          (if (== (fnValsSoleEnt (Some fv)) 0)
-            (escapeArgsMark bound args 0))
-          (fnValsCall tc fv args bound acc unboxed)
-        }
-      )
-      ; Calling a local or a parameter. If it aliases a parameter,
-      ; THAT parameter is effect-transparent - this is the case the
-      ; whole pass exists for - and whatever is handed to it may be
-      ; called too.
-      ((None)
-        {
-          (markEparam bound (bsParamAlias bound n))
-          ; The callee is a parameter, or a local aliasing one, so the
-          ; enclosing signature names its type and `escapeArgs` can ask
-          ; which of its argument positions could hold a function at all.
-          ; An opaque local answers 0 here and every position stays
-          ; conservative, which is the right answer for a value whose
-          ; identity the walk lost.
-          (escapeArgs bound args 0 acc (bsParamTy bound (bsParamAlias bound n)))
-          ; An OPAQUE local: the value came out of memory, so no call edge
-          ; carries what it performs and `markEparam` had no parameter to
-          ; mark. This is the `let`-shaped spelling of the same hole the
-          ; spine walk records for a non-name head.
-          (if (== (bsParamAlias bound n) bsOpaque)
-            (effAdd acc effIncomplete)
-            0)
-        }
-      ))
+    (if (let (Some fv) (bsValsOf bound n))
+      {
+        (if (== (fnValsSoleEnt (Some fv)) 0)
+          (escapeArgsMark bound args 0))
+        (fnValsCall tc fv args bound acc unboxed)
+      }
+      {
+        (markEparam bound (bsParamAlias bound n))
+        ; The callee is a parameter, or a local aliasing one, so the
+        ; enclosing signature names its type and `escapeArgs` can ask
+        ; which of its argument positions could hold a function at all.
+        ; An opaque local answers 0 here and every position stays
+        ; conservative, which is the right answer for a value whose
+        ; identity the walk lost.
+        (escapeArgs bound args 0 acc (bsParamTy bound (bsParamAlias bound n)))
+        ; An OPAQUE local: the value came out of memory, so no call edge
+        ; carries what it performs and `markEparam` had no parameter to
+        ; mark. This is the `let`-shaped spelling of the same hole the
+        ; spine walk records for a non-name head.
+        (if (== (bsParamAlias bound n) bsOpaque)
+          (effAdd acc effIncomplete)
+          0)
+      })
     (if (== (isSyscallPrim n) 1)
       ; The syscall is an EDGE as well as an effect. It short-circuits
       ; above `findFnEnt` - deliberately, `isSyscallPrim` is a literal
@@ -22096,41 +22047,37 @@
 ; discharged for the parameter only when it is discharged at both.
 (pub :: epUseNote (-> (Vec EpUse) Int Strings Int Int))
 (pub fn (epUseNote uses i mask esc)
-  (match (epUseFind uses i 0)
-    ((None)
-      {
-        (vecPush uses
-          (EpUse
-            :pidx i
-            :mask
-              (if (== esc 1)
-                vecNew
-                (effCopy mask))
-            :def
-              (if (== esc 1)
-                0
-                1)
-            :esc esc
-            :restrictions vecNew))
-        1
-      }
-    )
-    ((Some r)
-      (if (== esc 1)
-        (if (== r.esc 1)
-          0
-          {
-            (set r.esc 1)
-            1
-          })
-        (if (== r.def 0)
-          {
-            (set r.mask (effCopy mask))
-            (set r.def 1)
-            1
-          }
-          (effIntersectInto r mask)))
-    )))
+  (if (let (Some r) (epUseFind uses i 0))
+    (if (== esc 1)
+      (if (== r.esc 1)
+        0
+        {
+          (set r.esc 1)
+          1
+        })
+      (if (== r.def 0)
+        {
+          (set r.mask (effCopy mask))
+          (set r.def 1)
+          1
+        }
+        (effIntersectInto r mask)))
+    {
+      (vecPush uses
+        (EpUse
+          :pidx i
+          :mask
+            (if (== esc 1)
+              vecNew
+              (effCopy mask))
+          :def
+            (if (== esc 1)
+              0
+              1)
+          :esc esc
+          :restrictions vecNew))
+      1
+    }))
 
 (pub :: effCopy (-> Strings Strings))
 (pub fn (effCopy v)
@@ -22198,9 +22145,9 @@
           (epUseNote into r.pidx vecNew 1)
           0))
       (let contracts
-        (match (epUseFind into r.pidx 0)
-          ((None) 0)
-          ((Some prior) (effUnion prior.restrictions r.restrictions 0))))
+        (if (let (Some prior) (epUseFind into r.pidx 0))
+          (effUnion prior.restrictions r.restrictions 0)
+          0))
       (let rest (epUsesMerge into from (+ i 1)))
       (if (|| (|| (== a 1) (== b 1)) (== (| rest contracts) 1))
         1
@@ -22211,15 +22158,15 @@
 ; calls it.
 (pub :: epUseCalled (-> (Option EpUse) Bool))
 (pub fn (epUseCalled use)
-  (match use
-    ((None) false)
-    ((Some record) (== record.def 1))))
+  (if (let (Some record) use)
+    (== record.def 1)
+    false))
 
 (pub :: epUseAbsent (-> (Option EpUse) Int))
 (pub fn (epUseAbsent o)
-  (match o
-    ((None) 1)
-    ((Some u) 0)))
+  (if (let (Some u) o)
+    0
+    1))
 
 ; 1 while the fixpoint has yet to walk the function `ent` names, so it
 ; has no record of where it calls its parameters (`walkEffectsArgVecAt`).
@@ -22238,17 +22185,15 @@
 ; walk cannot see called, which is an escape).
 (pub :: epUseApply (-> Int Int (Option EpUse) Int))
 (pub fn (epUseApply b pidx o)
-  (match o
-    ((None) (markEparamUse b pidx vecNew 1))
-    ((Some u)
-      {
-        (if (== u.def 1)
-          (markEparamUse b pidx (effJoined (bsHandledVec b) u.mask) 0))
-        (if (== u.esc 1)
-          (markEparamUse b pidx vecNew 1)
-          0)
-      }
-    )))
+  (if (let (Some u) o)
+    {
+      (if (== u.def 1)
+        (markEparamUse b pidx (effJoined (bsHandledVec b) u.mask) 0))
+      (if (== u.esc 1)
+        (markEparamUse b pidx vecNew 1)
+        0)
+    }
+    (markEparamUse b pidx vecNew 1)))
 
 (pub :: paramIsCallable (-> Ints Int Int))
 (pub fn (paramIsCallable callable i)
@@ -22296,9 +22241,9 @@
         (epUseApply b alias u)
         (if (== alias bsOpaque)
           0
-          (match (bsValsOf b (nodeAName inner))
-            ((None) 1)
-            ((Some values) values.complete)))
+          (if (let (Some values) (bsValsOf b (nodeAName inner)))
+            values.complete
+            1))
       }
       (if (== (nodeTag inner) TAG_E_LAM)
         1
@@ -24136,148 +24081,118 @@
     (let mut valTy (checkExprH tc (nodeBChild e) 0))
     {
       (let name (nodeAName e))
-      (match (scopeFindIdx (tcScopeVec tc) name)
-        ; Mutable - but only assignable from the frame
-        ; that owns the cell. Below the innermost
-        ; lambda's boundary (tc word 22) the binding
-        ; was CAPTURED, capture is by value
-        ; (MM-VAL-16), so the assignment could never
-        ; be observed - and codegen refused exactly
-        ; this as AX4002 after `check` said OK, its
-        ; own note calling it a compiler bug
-        ; (MM-MUT-1a). The check runs here now.
-        ; A span-less entry is a PARAMETER -
-        ; bindFnParams and bindLamParams are the
-        ; only pushers that record none. This used
-        ; to SUPPRESS instead of report, which is
-        ; how `set` on a parameter passed `check`
-        ; and died in codegen as AX4002
-        ; (MM-MUT-1a).
-        ((Some idx)
+      (if (let (Some idx) (scopeFindIdx (tcScopeVec tc) name))
+        {
+          (let ent (vecGet (tcScopeVec tc) idx))
           {
-            (let ent (vecGet (tcScopeVec tc) idx))
+            (let suppressed
+              (if (== (sEntMutable ent) 1)
+                (if (&& (!= (tcLamBase tc) 0) (< idx (tcLamBase tc)))
+                  {
+                    (emitSetCaptured name (nodeSpan e) (sEntBsp ent) (tcOutVec tc))
+                    1
+                  }
+                  0)
+                (if (== (sEntBsp ent) 0)
+                  {
+                    (emitSetOnParam name (nodeSpan e) tc)
+                    1
+                  }
+                  {
+                    (emitAX3012 name (nodeSpan e) (sEntBsp ent) tc)
+                    0
+                  })))
             {
-              (let suppressed
-                (if (== (sEntMutable ent) 1)
-                  (if (&& (!= (tcLamBase tc) 0) (< idx (tcLamBase tc)))
-                    {
-                      (emitSetCaptured name (nodeSpan e) (sEntBsp ent) (tcOutVec tc))
-                      1
-                    }
-                    0)
-                  (if (== (sEntBsp ent) 0)
-                    {
-                      (emitSetOnParam name (nodeSpan e) tc)
-                      1
-                    }
-                    {
-                      (emitAX3012 name (nodeSpan e) (sEntBsp ent) tc)
-                      0
-                    })))
-              {
-                ; The slot's type, for codegen, as the `mut` binder
-                ; carries it: a store into a slot of a reference type
-                ; may take a share of what it stores (`emitSet`,
-                ; `slotStoreCounts`, MM-LIFE-2c event 3).
-                (if (== (sEntMutable ent) 1)
-                  (setNodeBinderTyChild e (sEntTy ent))
-                  e)
-                ; A pending lambda stored into a cell escapes the
-                ; bindings: flush it (verify standalone, drop only
-                ; the `{unknown}` refusals) and skip the comparison,
-                ; which has no arrow to compare against. Loads flow
-                ; the node and ground at their own uses.
-                ; A pending value grounds against the binding's
-                ; declared arrow, is inferred standalone into an
-                ; untyped or variable binding, or is refused into
-                ; any other ground binding - rebound, so the
-                ; region check below judges the TYPE, never the
-                ; node.
-                (if (== (isPendingNode valTy) 1)
-                  (set valTy (if (== (isPendingNode (sEntTy ent)) 1)
-                    ; The BINDING is itself unresolved (a `let`
-                    ; holding a lambda): infer it standalone,
-                    ; then ground the value by the inferred
-                    ; arrow - or accept leniently when the
-                    ; binding is no arrow.
-                    {
-                      (let ety (groundStandalone tc (sEntTy ent) (spanOf e)))
-                      (if (== (nodeTag ety) TAG_T_ARR)
-                        (groundArgByDecl tc valTy ety (spanOf (nodeBChild e)))
-                        {
-                          (flushPending tc valTy (spanOf (nodeBChild e)))
-                          valTy
-                        })
-                    }
-                    (if (nodeSame (sEntTy ent) nilNode)
+              ; The slot's type, for codegen, as the `mut` binder
+              ; carries it: a store into a slot of a reference type
+              ; may take a share of what it stores (`emitSet`,
+              ; `slotStoreCounts`, MM-LIFE-2c event 3).
+              (if (== (sEntMutable ent) 1)
+                (setNodeBinderTyChild e (sEntTy ent))
+                e)
+              ; A pending lambda stored into a cell escapes the
+              ; bindings: flush it (verify standalone, drop only
+              ; the `{unknown}` refusals) and skip the comparison,
+              ; which has no arrow to compare against. Loads flow
+              ; the node and ground at their own uses.
+              ; A pending value grounds against the binding's
+              ; declared arrow, is inferred standalone into an
+              ; untyped or variable binding, or is refused into
+              ; any other ground binding - rebound, so the
+              ; region check below judges the TYPE, never the
+              ; node.
+              (if (== (isPendingNode valTy) 1)
+                (set valTy (if (== (isPendingNode (sEntTy ent)) 1)
+                  ; The BINDING is itself unresolved (a `let`
+                  ; holding a lambda): infer it standalone,
+                  ; then ground the value by the inferred
+                  ; arrow - or accept leniently when the
+                  ; binding is no arrow.
+                  {
+                    (let ety (groundStandalone tc (sEntTy ent) (spanOf e)))
+                    (if (== (nodeTag ety) TAG_T_ARR)
+                      (groundArgByDecl tc valTy ety (spanOf (nodeBChild e)))
                       {
                         (flushPending tc valTy (spanOf (nodeBChild e)))
                         valTy
-                      }
-                      (if (== (nodeTag (sEntTy ent)) TAG_T_ARR)
-                        (groundArgByDecl tc valTy (sEntTy ent) (spanOf (nodeBChild e)))
-                        (if (== (tyIsGround (sEntTy ent)) 1)
-                          {
-                            (refusePendingOperand tc valTy (tyRender (sEntTy ent))
-                              (spanOf (nodeBChild e)))
-                            valTy
-                          }
-                          (groundStandalone tc valTy (spanOf (nodeBChild e))))))))
+                      })
+                  }
+                  (if (nodeSame (sEntTy ent) nilNode)
+                    {
+                      (flushPending tc valTy (spanOf (nodeBChild e)))
+                      valTy
+                    }
+                    (if (== (nodeTag (sEntTy ent)) TAG_T_ARR)
+                      (groundArgByDecl tc valTy (sEntTy ent) (spanOf (nodeBChild e)))
+                      (if (== (tyIsGround (sEntTy ent)) 1)
+                        {
+                          (refusePendingOperand tc valTy (tyRender (sEntTy ent))
+                            (spanOf (nodeBChild e)))
+                          valTy
+                        }
+                        (groundStandalone tc valTy (spanOf (nodeBChild e))))))))
+                (if (&& (== suppressed 0)
+                      (&& (== (tyIsErr valTy) 0)
+                        (&& (== (tyIsErr (sEntTy ent)) 0) (== (tyCompat tc valTy (sEntTy ent)) 0))))
+                  (emitMismatchTy tc (sEntTy ent) valTy (spanOf (nodeBChild e)))
                   (if (&& (== suppressed 0)
                         (&& (== (tyIsErr valTy) 0)
                           (&& (== (tyIsErr (sEntTy ent)) 0)
-                            (== (tyCompat tc valTy (sEntTy ent)) 0))))
-                    (emitMismatchTy tc (sEntTy ent) valTy (spanOf (nodeBChild e)))
-                    (if (&& (== suppressed 0)
-                          (&& (== (tyIsErr valTy) 0)
-                            (&& (== (tyIsErr (sEntTy ent)) 0)
-                              (&& (== (tyIsUnknown valTy) 1) (== (tyIsGround (sEntTy ent)) 1)))))
-                      (refuseUnknownOperand tc (tyRender (sEntTy ent)) valTy
-                        (spanOf (nodeBChild e))))))
-                ; Inside a `region`, a store to a binding bound before
-                ; it opened may not carry a reference out (AX3059).
-                (rgCheckStore tc idx valTy (nodeSpan e) name suppressed)
-                (sEntTy ent)
-              }
+                            (&& (== (tyIsUnknown valTy) 1) (== (tyIsGround (sEntTy ent)) 1)))))
+                    (refuseUnknownOperand tc (tyRender (sEntTy ent)) valTy
+                      (spanOf (nodeBChild e))))))
+              ; Inside a `region`, a store to a binding bound before
+              ; it opened may not carry a reference out (AX3059).
+              (rgCheckStore tc idx valTy (nodeSpan e) name suppressed)
+              (sEntTy ent)
             }
           }
-        )
-        ; A built-in (`+`, `true`, `cast`) or an IMPORTED function as
-        ; the target was silent here - the first by the same wildcard
-        ; `checkVar` answers, the second because stage0's AX3012 for
-        ; it was anchored in the other file, which this renderer once
-        ; could not quote. Silence meant `check` said OK and
-        ; `emit-llvm` refused as AX4002 "set target is not a mut
-        ; binding", whose own help calls it a compiler bug. Both are
-        ; AX3012 now, anchored at the target in THIS file, which
-        ; needs nothing from the other one.
-        ((None)
-          (if (== (isBuiltinName name) 1)
-            (emitSetNotBinding tc name (nodeSpan e) "a built-in")
-            (if (== (setTargetCovered tc name) 1)
-              (emitSetNotBinding tc name (nodeSpan e) "an imported function")
+        }
+        (if (== (isBuiltinName name) 1)
+          (emitSetNotBinding tc name (nodeSpan e) "a built-in")
+          (if (== (setTargetCovered tc name) 1)
+            (emitSetNotBinding tc name (nodeSpan e) "an imported function")
+            {
+              (let best newBest)
               {
-                (let best newBest)
-                {
-                  (offerScope best name (tcScopeVec tc) 0)
-                  (if (!= (nodeSpan e) 0)
-                    (emitDiag tc
-                      {
-                        (let msg (concat (concat "undefined variable `" (srcSpelling name)) "`"))
-                        (diagSetLabel
-                          (if (== (memGetWord best 0) 0)
-                            (mkDiag SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
-                              "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")
-                            (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
-                              (concat (concat "a similarly named binding `" (memGetWordStr best 0))
-                                "` is in scope; did you mean this?")
-                              (nodeSpan e) (memGetWord best 0)))
-                          (concat (concat "no binding named `" (srcSpelling name)) "` in scope"))
-                      }))
-                  (nodeBuildTErrPlain 0 0 0)
-                }
-              }))
-        ))
+                (offerScope best name (tcScopeVec tc) 0)
+                (if (!= (nodeSpan e) 0)
+                  (emitDiag tc
+                    {
+                      (let msg (concat (concat "undefined variable `" (srcSpelling name)) "`"))
+                      (diagSetLabel
+                        (if (== (memGetWord best 0) 0)
+                          (mkDiag SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
+                            "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")
+                          (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
+                            (concat (concat "a similarly named binding `" (memGetWordStr best 0))
+                              "` is in scope; did you mean this?")
+                            (nodeSpan e) (memGetWord best 0)))
+                        (concat (concat "no binding named `" (srcSpelling name)) "` in scope"))
+                    }))
+                (nodeBuildTErrPlain 0 0 0)
+              }
+            })))
     }
   })
 
@@ -26716,14 +26631,14 @@
       (let raw (memGetWordStr (vecGet scope i) 0))
       {
         (let noDot
-          (match (strFindByte raw 46 0)
-            ((Some d) (strSlice raw 0 d))
-            ((None) raw)))
+          (if (let (Some d) (strFindByte raw 46 0))
+            (strSlice raw 0 d)
+            raw))
         {
           (let disp
-            (match (strFindByte noDot 35 0)
-              ((Some h) (strSlice noDot 0 h))
-              ((None) noDot)))
+            (if (let (Some h) (strFindByte noDot 35 0))
+              (strSlice noDot 0 h)
+              noDot))
           {
             (offerCandidate best name disp)
             (offerScope best name scope (+ i 1))
@@ -27293,9 +27208,9 @@
         (let content (memGetWordStr (vecGet tags i) 1))
         {
           (let op
-            (match (strFindByte content 40 0)
-              ((None) (- 0 1))
-              ((Some k) k)))
+            (if (let (Some k) (strFindByte content 40 0))
+              k
+              (- 0 1)))
           (if (strEq
                 (if (< op 0)
                   content
@@ -27505,9 +27420,9 @@
         (let content (memGetWordStr (vecGet tags i) 1))
         {
           (let op
-            (match (strFindByte content 40 0)
-              ((None) (- 0 1))
-              ((Some k) k)))
+            (if (let (Some k) (strFindByte content 40 0))
+              k
+              (- 0 1)))
           {
             (if (strEq
                   (if (< op 0)
@@ -27987,26 +27902,22 @@
     0
     {
       (let name (vecGetStr calls i))
-      (match (graphStackIndex stack name)
-        ((Some on)
-          (as (graphCyclePath stack on (vecGet stack on) vecNew) Int)
-        )
-        ((None)
-          (if (== (strInVec done name 0) 1)
-            (graphCycleEdges tc calls (+ i 1) stack done withMay)
+      (if (let (Some on) (graphStackIndex stack name))
+        (as (graphCyclePath stack on (vecGet stack on) vecNew) Int)
+        (if (== (strInVec done name 0) 1)
+          (graphCycleEdges tc calls (+ i 1) stack done withMay)
+          {
+            (let e (fnEntExact tc name))
             {
-              (let e (fnEntExact tc name))
-              {
-                (let found
-                  (if (== e 0)
-                    0
-                    (graphCycleFrom tc e stack done withMay)))
-                (if (!= found 0)
-                  found
-                  (graphCycleEdges tc calls (+ i 1) stack done withMay))
-              }
-            })
-        ))
+              (let found
+                (if (== e 0)
+                  0
+                  (graphCycleFrom tc e stack done withMay)))
+              (if (!= found 0)
+                found
+                (graphCycleEdges tc calls (+ i 1) stack done withMay))
+            }
+          }))
     }))
 
 ; The slot of `name` on the stack, or -1.
@@ -30417,9 +30328,9 @@
   ; refused by `axtagKeyTypo` (AX3078) rather than checked here.
   {
     (let op
-      (match (strFindByte content 40 0)
-        ((None) (- 0 1))
-        ((Some k) k)))
+      (if (let (Some k) (strFindByte content 40 0))
+        k
+        (- 0 1)))
     {
       (let key
         (if (< op 0)
@@ -30605,9 +30516,9 @@
 (pub :: axtagKeyTypo (-> Int ASTNode String Int))
 (pub fn (axtagKeyTypo tc d key)
   (if (|| (== (strLen key) 0)
-        (match (strFindByte key 58 0)
-          ((None) false)
-          ((Some _) true)))
+        (if (let (Some _) (strFindByte key 58 0))
+          true
+          false))
     0
     ; PURITY FIRST: `pure` and every slip of it (`pur`, `Pure`) are
     ; refused, because purity is written one way, `effect(pure)`.
@@ -32477,50 +32388,46 @@
 (pub fn (rgnCtxNew tc d ent report)
   {
     (let rc
-      (match (tcRegionWalkCtx tc)
-        ((Some old)
-          {
-            (vecClear old.names)
-            (vecClear old.origs)
-            (vecClear old.binds)
-            (vecClear old.formParents)
-            (vecClear old.formNames)
-            (vecClear old.capNames)
-            (vecClear old.extents)
-            (vecClear old.capOrigins)
-            (vecClear old.extentSpans)
-            old
-          }
-        )
-        ((None)
-          {
-            (let fresh
-              (RgnCtx
-                :tc 0
-                :decl nilNode
-                :ent 0
-                :nparams 0
-                :names (rgnStrVec)
-                :origs (rgnIntVec)
-                :binds (rgnIntVec)
-                :curBit 1
-                :curRid 0
-                :formParents (rgnIntVec)
-                :formNames (rgnStrVec)
-                :report 0
-                :facts 0
-                :changed 0
-                :lamBase -1
-                :capMask 0
-                :capNames (rgnStrVec)
-                :extents nodesNew
-                :capOrigins (rgnIntVec)
-                :extentSpans (rgnIntVec)
-                :reclaim 0))
-            (tcSetRegionWalkCtx tc (Some fresh))
-            fresh
-          }
-        )))
+      (if (let (Some old) (tcRegionWalkCtx tc))
+        {
+          (vecClear old.names)
+          (vecClear old.origs)
+          (vecClear old.binds)
+          (vecClear old.formParents)
+          (vecClear old.formNames)
+          (vecClear old.capNames)
+          (vecClear old.extents)
+          (vecClear old.capOrigins)
+          (vecClear old.extentSpans)
+          old
+        }
+        {
+          (let fresh
+            (RgnCtx
+              :tc 0
+              :decl nilNode
+              :ent 0
+              :nparams 0
+              :names (rgnStrVec)
+              :origs (rgnIntVec)
+              :binds (rgnIntVec)
+              :curBit 1
+              :curRid 0
+              :formParents (rgnIntVec)
+              :formNames (rgnStrVec)
+              :report 0
+              :facts 0
+              :changed 0
+              :lamBase -1
+              :capMask 0
+              :capNames (rgnStrVec)
+              :extents nodesNew
+              :capOrigins (rgnIntVec)
+              :extentSpans (rgnIntVec)
+              :reclaim 0))
+          (tcSetRegionWalkCtx tc (Some fresh))
+          fresh
+        }))
     (set rc.tc tc)
     (set rc.decl d)
     (set rc.ent ent)
@@ -34290,9 +34197,9 @@
         (let content (memGetWordStr (vecGet tags i) 1))
         {
           (let op
-            (match (strFindByte content 40 0)
-              ((None) (- 0 1))
-              ((Some k) k)))
+            (if (let (Some k) (strFindByte content 40 0))
+              k
+              (- 0 1)))
           {
             (if (strEq
                   (if (< op 0)

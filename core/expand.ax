@@ -587,13 +587,11 @@
 ; catching a per-allocation constant rather than a shape change.
 (pub :: expMangledIs (-> String String Int))
 (pub fn (expMangledIs s name)
-  (match (strFindByte s 36 0)
-    ((None) 0)
-    ((Some i)
-      (if (!= (- (strLen s) (+ i 1)) (strLen name))
-        0
-        (expTailEq s (+ i 1) name 0 (strLen name)))
-    )))
+  (if (let (Some i) (strFindByte s 36 0))
+    (if (!= (- (strLen s) (+ i 1)) (strLen name))
+      0
+      (expTailEq s (+ i 1) name 0 (strLen name)))
+    0))
 
 (pub :: expTailEq (-> String Int String Int Int Int))
 (pub fn (expTailEq s off name i n)
@@ -1938,31 +1936,27 @@
 (pub :: expBindersOf (-> MEnv String String Int Ints))
 ;@axiom:effect(unsafe)
 (pub fn (expBindersOf env c p isp)
-  (match (expCtorArity env c isp)
-    ((None)
-      (as 0 (Vec Int))
-    )
-    ((Some n)
+  (if (let (Some n) (expCtorArity env c isp))
+    {
+      (let names vecNew)
+      (let mut i 0)
       {
-        (let names vecNew)
-        (let mut i 0)
-        {
-          (while (< i n)
-            {
-              (vecPush names (concat (concat p "#") (fmtInt i)))
-              (set i (+ i 1))
-            })
+        (while (< i n)
           {
-            (let r vecNew)
-            {
-              (vecPushStr r (concat (concat (concat "binders " c) " ") p))
-              (vecPushVec r names)
-              r
-            }
+            (vecPush names (concat (concat p "#") (fmtInt i)))
+            (set i (+ i 1))
+          })
+        {
+          (let r vecNew)
+          {
+            (vecPushStr r (concat (concat (concat "binders " c) " ") p))
+            (vecPushVec r names)
+            r
           }
         }
       }
-    )))
+    }
+    (as 0 (Vec Int))))
 
 ; Evaluate an iteration SEQUENCE expression: `(syntax/constructors
 ; T)`, `(syntax/fields S)`, or `(syntax/binders C p)`. The answer is
@@ -11466,14 +11460,12 @@
   {
     (let name (nodeAName head))
     (let bare (bareOf name))
-    (match (internFind env.structNames bare)
-      ((None) (ExpStructMissing))
-      ((Some index)
-        (expChooseStructDecl (vecGet (expStructBuckets env) index) name bare
-          (if (== (nodeDefScope head) 1)
-            (nodeModule head)
-            env.declmod))
-      ))
+    (if (let (Some index) (internFind env.structNames bare))
+      (expChooseStructDecl (vecGet (expStructBuckets env) index) name bare
+        (if (== (nodeDefScope head) 1)
+          (nodeModule head)
+          env.declmod))
+      (ExpStructMissing))
   })
 
 (pub :: expChooseStructDecl (-> Nodes String String Int ExpStructResolution))

@@ -1208,15 +1208,13 @@
       (if (isPrefixTok k)
         {
           (let read (readForm src toks (+ pos 1)))
-          (match read
-            ((Some inner)
-              {
-                (let node
-                  (mkFNode FN_PREFIX t (vecPush vecNew inner.node) (ftStart t) (fnEnd inner.node)))
-                (Some (FRead :node node :pos inner.pos))
-              }
-            )
-            (_ None))
+          (if (let (Some inner) read)
+            {
+              (let node
+                (mkFNode FN_PREFIX t (vecPush vecNew inner.node) (ftStart t) (fnEnd inner.node)))
+              (Some (FRead :node node :pos inner.pos))
+            }
+            None)
         }
         (if (|| (== k FT_LPAREN) (|| (== k FT_LBRACK) (== k FT_LBRACE)))
           (readPostfix toks (readGroup src toks pos))
@@ -1227,56 +1225,54 @@
 ; Absorb any `.name` and `::name` that TOUCH what was just read.
 (:: readPostfix (-> (Vec FTok) (Option FRead) (Option FRead)))
 (fn (readPostfix toks r)
-  (match r
-    ((Some first)
+  (if (let (Some first) r)
+    {
+      (let mut cur first)
+      (let mut go 1)
       {
-        (let mut cur first)
-        (let mut go 1)
-        {
-          (while (== go 1)
+        (while (== go 1)
+          {
+            (let p cur.pos)
+            (let node cur.node)
             {
-              (let p cur.pos)
-              (let node cur.node)
-              {
-                (let k (ftKind (vecGet toks p)))
-                (if (&& (== k FT_QUESTION) (== (ftStart (vecGet toks p)) (fnEnd node)))
-                  (set cur (FRead
-                             :node
-                               (mkFNode FN_TRY (vecGet toks p) (vecPush vecNew node) (fnStart node)
-                                 (ftEnd (vecGet toks p)))
-                             :pos (+ p 1)))
-                  (if (&& (|| (== k FT_DOT) (== k FT_DCOLON))
-                        (&& (== (ftStart (vecGet toks p)) (fnEnd node))
-                          (== (ftEnd (vecGet toks p)) (ftStart (vecGet toks (+ p 1))))))
-                    {
-                      (let nameTok (vecGet toks (+ p 1)))
-                      (if (!= (ftKind nameTok) FT_IDENT)
-                        (set go 0)
+              (let k (ftKind (vecGet toks p)))
+              (if (&& (== k FT_QUESTION) (== (ftStart (vecGet toks p)) (fnEnd node)))
+                (set cur (FRead
+                           :node
+                             (mkFNode FN_TRY (vecGet toks p) (vecPush vecNew node) (fnStart node)
+                               (ftEnd (vecGet toks p)))
+                           :pos (+ p 1)))
+                (if (&& (|| (== k FT_DOT) (== k FT_DCOLON))
+                      (&& (== (ftStart (vecGet toks p)) (fnEnd node))
+                        (== (ftEnd (vecGet toks p)) (ftStart (vecGet toks (+ p 1))))))
+                  {
+                    (let nameTok (vecGet toks (+ p 1)))
+                    (if (!= (ftKind nameTok) FT_IDENT)
+                      (set go 0)
+                      {
+                        (let name
+                          (mkFNode FN_ATOM nameTok vecNew (ftStart nameTok) (ftEnd nameTok)))
+                        (let kids (vecPush vecNew node))
                         {
-                          (let name
-                            (mkFNode FN_ATOM nameTok vecNew (ftStart nameTok) (ftEnd nameTok)))
-                          (let kids (vecPush vecNew node))
-                          {
-                            (vecPush kids name)
-                            (set cur (FRead
-                                       :node
-                                         (mkFNode
-                                           (if (== k FT_DOT)
-                                             FN_FIELD
-                                             FN_QUAL)
-                                           (vecGet toks p) kids (fnStart node) (ftEnd nameTok))
-                                       :pos (+ p 2)))
-                          }
-                        })
-                    }
-                    (set go 0)))
-              }
-            })
-          (Some cur)
-        }
+                          (vecPush kids name)
+                          (set cur (FRead
+                                     :node
+                                       (mkFNode
+                                         (if (== k FT_DOT)
+                                           FN_FIELD
+                                           FN_QUAL)
+                                         (vecGet toks p) kids (fnStart node) (ftEnd nameTok))
+                                     :pos (+ p 2)))
+                        }
+                      })
+                  }
+                  (set go 0)))
+            }
+          })
+        (Some cur)
       }
-    )
-    (_ None)))
+    }
+    None))
 
 (:: readGroup (-> String (Vec FTok) Int (Option FRead)))
 (fn (readGroup src toks pos)
@@ -1308,19 +1304,15 @@
                   (set ok 0)
                   (set done 1)
                 }
-                (match (readForm src toks p)
-                  ((Some r)
-                    {
-                      (vecPush kids r.node)
-                      (set p r.pos)
-                    }
-                  )
-                  (_
-                    {
-                      (set ok 0)
-                      (set done 1)
-                    }
-                  )))))
+                (if (let (Some r) (readForm src toks p))
+                  {
+                    (vecPush kids r.node)
+                    (set p r.pos)
+                  }
+                  {
+                    (set ok 0)
+                    (set done 1)
+                  }))))
         })
       (if (== ok 0)
         None
@@ -1342,16 +1334,12 @@
     (let mut ok 1)
     {
       (while (&& (== ok 1) (!= (ftKind (vecGet toks p)) FT_EOF))
-        (match (readForm src toks p)
-          ((Some r)
-            {
-              (vecPush forms r.node)
-              (set p r.pos)
-            }
-          )
-          (_
-            (set ok 0)
-          )))
+        (if (let (Some r) (readForm src toks p))
+          {
+            (vecPush forms r.node)
+            (set p r.pos)
+          }
+          (set ok 0)))
       (if (== ok 1)
         (Some forms)
         None)
@@ -6152,165 +6140,161 @@
         ; says so with the code rather than a bare refusal.
         (if (>= (fNestOverflow sc.toks parseMaxDepth) 0)
           (FRes :ok 0 :text "AX2005")
-          (match (readForms src sc.toks)
-            ((Some forms)
-              {
-                (let out (fmtPrint src forms sc.coms (lineStarts src)))
-                (if (== out.bad 1)
-                  (FRes :ok 0 :text "")
-                  (FRes :ok 1 :text (foFinish out)))
-              }
-            )
-            (_
-              (if (== allowComplete 0)
-                ; The completed text, failing again: completion had its
-                ; round and the file is broken another way. Refuse.
+          (if (let (Some forms) (readForms src sc.toks))
+            {
+              (let out (fmtPrint src forms sc.coms (lineStarts src)))
+              (if (== out.bad 1)
                 (FRes :ok 0 :text "")
-                ; Unclosed groups are completed, everything else is
-                ; refused. A file whose only defect is missing closers -
-                ; the shape an editor holds mid-function - is finished
-                ; with exactly the closers its open groups need, in LIFO
-                ; order, and formatted from there; the completed text
-                ; goes through the same rescan, comments and fixed-point
-                ; verification below as any other input. The closers go
-                ; before a line comment that runs to end-of-file, never
-                ; inside it - appending past one would leave the groups
-                ; open again, recursing without end. A stray closer, a
-                ; mismatched one, or a prefix with nothing after it
-                ; completes to nothing, so those still refuse - and a
-                ; refusal still writes nothing. Inlined loop over the
-                ; token vector (which `fscan` already built), nothing
-                ; allocated but the stack and the completed string: no
-                ; new top-level function moves the effect-distribution
-                ; pins. Terminates by construction, not by balance: the
-                ; completed text is formatted with completion disallowed
-                ; (`allowComplete` above), so a second failure refuses
-                ; rather than completing again. Balance alone does not
-                ; terminate it - an unterminated string swallows every
-                ; appended closer and the stack never empties.
+                (FRes :ok 1 :text (foFinish out)))
+            }
+            (if (== allowComplete 0)
+              ; The completed text, failing again: completion had its
+              ; round and the file is broken another way. Refuse.
+              (FRes :ok 0 :text "")
+              ; Unclosed groups are completed, everything else is
+              ; refused. A file whose only defect is missing closers -
+              ; the shape an editor holds mid-function - is finished
+              ; with exactly the closers its open groups need, in LIFO
+              ; order, and formatted from there; the completed text
+              ; goes through the same rescan, comments and fixed-point
+              ; verification below as any other input. The closers go
+              ; before a line comment that runs to end-of-file, never
+              ; inside it - appending past one would leave the groups
+              ; open again, recursing without end. A stray closer, a
+              ; mismatched one, or a prefix with nothing after it
+              ; completes to nothing, so those still refuse - and a
+              ; refusal still writes nothing. Inlined loop over the
+              ; token vector (which `fscan` already built), nothing
+              ; allocated but the stack and the completed string: no
+              ; new top-level function moves the effect-distribution
+              ; pins. Terminates by construction, not by balance: the
+              ; completed text is formatted with completion disallowed
+              ; (`allowComplete` above), so a second failure refuses
+              ; rather than completing again. Balance alone does not
+              ; terminate it - an unterminated string swallows every
+              ; appended closer and the stack never empties.
+              {
+                (let toks sc.toks)
                 {
-                  (let toks sc.toks)
+                  (let st vecNew)
                   {
-                    (let st vecNew)
+                    (let mut i 0)
                     {
-                      (let mut i 0)
+                      (let mut bad 0)
                       {
-                        (let mut bad 0)
-                        {
-                          (while (&& (== bad 0) (< i (vecLen toks)))
+                        (while (&& (== bad 0) (< i (vecLen toks)))
+                          {
                             {
-                              {
-                                (let k (ftKind (vecGet toks i)))
-                                (if (|| (== k FT_LPAREN) (|| (== k FT_LBRACK) (== k FT_LBRACE)))
-                                  (vecPush st (closerFor k))
-                                  (if (isCloser k)
-                                    (if (== (vecLen st) 0)
+                              (let k (ftKind (vecGet toks i)))
+                              (if (|| (== k FT_LPAREN) (|| (== k FT_LBRACK) (== k FT_LBRACE)))
+                                (vecPush st (closerFor k))
+                                (if (isCloser k)
+                                  (if (== (vecLen st) 0)
+                                    (set bad 1)
+                                    (if (!= (vecGet st (- (vecLen st) 1)) k)
                                       (set bad 1)
-                                      (if (!= (vecGet st (- (vecLen st) 1)) k)
-                                        (set bad 1)
-                                        (vecPop st)))
-                                    ; A string literal with no closing quote
-                                    ; swallows every closer the completion
-                                    ; appends: the `)` scans as string content,
-                                    ; the groups are still open, and `fmtOnce`
-                                    ; recurses without end (measured: the
-                                    ; process never answers, exit 137 under the
-                                    ; gate, on `(fn (main) "abc`). The trailing
-                                    ; line comment below gets its `ins` for the
-                                    ; same reason - its closers would land
-                                    ; inside it - but a string has no outside
-                                    ; to put them in, so an open one refuses.
-                                    (if (== k FT_STR)
-                                      {
-                                        (let ts (ftStart (vecGet toks i)))
-                                        (let te (ftEnd (vecGet toks i)))
-                                        (let sl (strLen src))
-                                        (if (< te sl)
-                                          ()
-                                          ; Stopped at a closing quote before
-                                          ; end of input: closed.
-                                          (if (|| (> te sl) (<= te (+ ts 1)))
-                                            ; Past end of input (a backslash ate
-                                            ; it), or the quote alone: no
-                                            ; closing quote at all.
-                                            (set bad 1)
-                                            (if (!= (strByte src (- te 1)) 34)
-                                              (set bad 1)
-                                              ; Ends in a quote that may itself
-                                              ; be escaped: `"a\"` is still
-                                              ; open. An odd run of backslashes
-                                              ; quotes the quote.
-                                              {
-                                                (let mut j (- te 2))
-                                                (let mut bs 0)
-                                                {
-                                                  (while (&& (> j ts) (== (strByte src j) 92))
-                                                    {
-                                                      (set bs (+ bs 1))
-                                                      (set j (- j 1))
-                                                    })
-                                                  (if (== (% bs 2) 1)
-                                                    (set bad 1))
-                                                }
-                                              })))
-                                      })))
-                              }
-                              (set i (+ i 1))
-                            })
-                          (if (|| (== bad 1) (== (vecLen st) 0))
-                            (FRes :ok 0 :text "")
-                            {
-                              (let mut ins (strLen src))
-                              {
-                                (let coms sc.coms)
-                                {
-                                  (let mut ci 0)
-                                  {
-                                    (while (< ci (vecLen coms))
-                                      {
-                                        {
-                                          (let c (vecGet coms ci))
-                                          (if (&& (== (fcEnd c) (strLen src))
-                                                (&& (== (strByte src (fcStart c)) 59)
-                                                  (< (fcStart c) ins)))
-                                            (set ins (fcStart c)))
-                                        }
-                                        (set ci (+ ci 1))
-                                      })
+                                      (vecPop st)))
+                                  ; A string literal with no closing quote
+                                  ; swallows every closer the completion
+                                  ; appends: the `)` scans as string content,
+                                  ; the groups are still open, and `fmtOnce`
+                                  ; recurses without end (measured: the
+                                  ; process never answers, exit 137 under the
+                                  ; gate, on `(fn (main) "abc`). The trailing
+                                  ; line comment below gets its `ins` for the
+                                  ; same reason - its closers would land
+                                  ; inside it - but a string has no outside
+                                  ; to put them in, so an open one refuses.
+                                  (if (== k FT_STR)
                                     {
-                                      (let mut out (strSlice src 0 ins))
-                                      {
-                                        (let mut j (- (vecLen st) 1))
-                                        {
-                                          (while (>= j 0)
+                                      (let ts (ftStart (vecGet toks i)))
+                                      (let te (ftEnd (vecGet toks i)))
+                                      (let sl (strLen src))
+                                      (if (< te sl)
+                                        ()
+                                        ; Stopped at a closing quote before
+                                        ; end of input: closed.
+                                        (if (|| (> te sl) (<= te (+ ts 1)))
+                                          ; Past end of input (a backslash ate
+                                          ; it), or the quote alone: no
+                                          ; closing quote at all.
+                                          (set bad 1)
+                                          (if (!= (strByte src (- te 1)) 34)
+                                            (set bad 1)
+                                            ; Ends in a quote that may itself
+                                            ; be escaped: `"a\"` is still
+                                            ; open. An odd run of backslashes
+                                            ; quotes the quote.
                                             {
+                                              (let mut j (- te 2))
+                                              (let mut bs 0)
                                               {
-                                                (let ck (vecGet st j))
-                                                (set out (concat out
-                                                           (if (== ck FT_RPAREN)
-                                                             ")"
-                                                             (if (== ck FT_RBRACK)
-                                                               "]"
-                                                               "}"))))
+                                                (while (&& (> j ts) (== (strByte src j) 92))
+                                                  {
+                                                    (set bs (+ bs 1))
+                                                    (set j (- j 1))
+                                                  })
+                                                (if (== (% bs 2) 1)
+                                                  (set bad 1))
                                               }
-                                              (set j (- j 1))
-                                            })
-                                          (set out (concat out
-                                                     (strSlice src ins (- (strLen src) ins))))
-                                          (fmtOnce out 0)
-                                        }
+                                            })))
+                                    })))
+                            }
+                            (set i (+ i 1))
+                          })
+                        (if (|| (== bad 1) (== (vecLen st) 0))
+                          (FRes :ok 0 :text "")
+                          {
+                            (let mut ins (strLen src))
+                            {
+                              (let coms sc.coms)
+                              {
+                                (let mut ci 0)
+                                {
+                                  (while (< ci (vecLen coms))
+                                    {
+                                      {
+                                        (let c (vecGet coms ci))
+                                        (if (&& (== (fcEnd c) (strLen src))
+                                              (&& (== (strByte src (fcStart c)) 59)
+                                                (< (fcStart c) ins)))
+                                          (set ins (fcStart c)))
+                                      }
+                                      (set ci (+ ci 1))
+                                    })
+                                  {
+                                    (let mut out (strSlice src 0 ins))
+                                    {
+                                      (let mut j (- (vecLen st) 1))
+                                      {
+                                        (while (>= j 0)
+                                          {
+                                            {
+                                              (let ck (vecGet st j))
+                                              (set out (concat out
+                                                         (if (== ck FT_RPAREN)
+                                                           ")"
+                                                           (if (== ck FT_RBRACK)
+                                                             "]"
+                                                             "}"))))
+                                            }
+                                            (set j (- j 1))
+                                          })
+                                        (set out (concat out
+                                                   (strSlice src ins (- (strLen src) ins))))
+                                        (fmtOnce out 0)
                                       }
                                     }
                                   }
                                 }
                               }
-                            })
-                        }
+                            }
+                          })
                       }
                     }
                   }
-                })
-            )))))
+                }
+              })))))
   })
 
 ; The comment texts of `src`, for the count-and-content check.
