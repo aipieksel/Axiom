@@ -351,15 +351,19 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # and Unsafe buckets; no existing function gains or loses IO, and no
 # IO-bearing function arrives or leaves. Packed Link range checks keep
 # wordPackExpr in Alloc,Mut. The full suite still checks every bucket.
+# Typed suggestion and scope results, effect entries and MIR Options add
+# 2 functions and retire 2 helpers. A same-compiler comparison moves
+# existing rows among Alloc, Mut, Unsafe and pure buckets; no existing
+# function gains or loses IO, and no IO-bearing function arrives or leaves.
 have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3532 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 471 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 191 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 181 "exactly Alloc"
+have "$(bucket "$work/main.axsym" 'Alloc')" 191 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 177 "Alloc,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Unsafe')" 368 "exactly Unsafe"
+have "$(bucket "$work/main.axsym" 'Unsafe')" 366 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 47 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 124 "Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 13 "Alloc,Unsafe"
@@ -386,7 +390,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2354 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2346 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 33 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"
