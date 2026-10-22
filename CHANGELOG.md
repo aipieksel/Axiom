@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- `StrList` in `Str` keeps a list of strings as one run of bytes and
+  the end of each: two blocks however many strings it holds, with
+  nothing to walk when it goes. `strListGet` answers a slice that
+  stays valid as the list grows, and `strListByteLen`, `strListByte`
+  and `strListEq` read in place without allocating. Tested by
+  `tests/stdlib/995-str-list.ax`.
+
 - The compiler's source moved from `self_host/` to `core/`: Axiom is
   self-hosting, so the old name described nothing the tree doesn't
   already say. Point `AXIOM_PATH` at `core` where it named `self_host`.

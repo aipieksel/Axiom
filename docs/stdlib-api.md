@@ -1952,7 +1952,7 @@ Rpc.ax — the LSP base protocol's framing, over a file descriptor.
 
 ## `Str`
 
-`stdlib/Str.ax` — 36 public names
+`stdlib/Str.ax` — 44 public names
 
 Str - length-prefixed strings, in Axiom.
 
@@ -1994,6 +1994,14 @@ Str - length-prefixed strings, in Axiom.
 | `strTrim` | value | `(-> String String)` | `Alloc,Mut` |  | `s` without the `strIsSpace` bytes at either end. The result is a slice sharing `s`'s storage, so it is not NUL-terminated unless it ends where `s` does. A string that is all space trims to "". |
 | `strParseInt` | value | `(-> String (Option Int))` |  |  | The decimal integer `s` spells - an optional `-`, then one or more ASCII digits and nothing else - or `None`: for an empty string, a sign alone, any other byte, and any value outside the 64-bit range. |
 | `format` | macro |  |  |  | `format` — a String, built at compile time from a literal's runs and holes, or the hole lowering applied to anything else. |
+| `StrList` | struct |  |  |  | A list of strings packed into one run of bytes. Add with `strListPush`. Read with `strListGet`, or without allocating with `strListByteLen`, `strListByte` and `strListEq`. |
+| `strListNew` | value | `StrList` | `Alloc,Mut` |  | An empty list. |
+| `strListLen` | value | `(-> StrList Int)` |  |  | How many strings the list holds. |
+| `strListPush` | value | `(-> StrList String StrList)` | `Alloc,Mut` |  | Append a copy of the bytes of `s`. Answers the list. |
+| `strListByteLen` | value | `(-> StrList Int Int)` |  |  | The length in bytes of string `i`. An `i` out of range stops the program with status 77, as `vecGet` does. |
+| `strListByte` | value | `(-> StrList Int Int Int)` |  |  | Byte `j` of string `i`. An `i` or a `j` out of range stops the program with status 77. |
+| `strListGet` | value | `(-> StrList Int String)` | `Alloc,Mut` |  | String `i`, sharing the list's bytes the way `strSlice` shares its parent's. Pushing more strings never changes one already read. An `i` out of range stops the program with status 77. |
+| `strListEq` | value | `(-> StrList Int String Bool)` |  |  | Whether string `i` holds exactly the bytes of `s`. Allocates nothing. |
 
 ## `Sync`
 

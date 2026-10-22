@@ -829,3 +829,104 @@
 ; list, not through import edges, so `{x:.2}` and `{n:>8}` resolve
 ; in a program that does not import `Fmt`.
 (pub macro (format e) (syntax/format e))
+
+; ------------------------------------------------------------------
+; String lists.
+;
+; A `(Vec String)` of a million words is a million and one blocks, each
+; with its own header and count, and dropping it visits every one. A
+; `StrList` keeps the bytes of every string in one builder and the end
+; of each in a `(Vec Int)`: two blocks however many strings it holds,
+; and nothing to walk when it goes. Asking about a string in place
+; allocates nothing; `strListGet` answers a slice of the shared bytes.
+;
+; A slice holds a share of the storage it points into (MM-VAL-7), and
+; the builder never writes below its length again (see `StrBuilder`),
+; so a string read from the list never changes, even after the builder
+; moves to bigger storage.
+; ------------------------------------------------------------------
+;; A list of strings packed into one run of bytes. Add with
+;; `strListPush`. Read with `strListGet`, or without allocating with
+;; `strListByteLen`, `strListByte` and `strListEq`.
+(pub struct StrList sealed
+  (bytes : StrBuilder)
+  (ends : (Vec Int)))
+
+;; An empty list.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strListNew StrList)
+(pub fn (strListNew)
+  (StrList :bytes strBuilderNew :ends vecNew))
+
+;; How many strings the list holds.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: strListLen (-> StrList Int))
+(pub fn (strListLen l)
+  (vecLen l.ends))
+
+;; Append a copy of the bytes of `s`. Answers the list.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: strListPush (-> StrList String StrList))
+(pub fn (strListPush l s)
+  {
+    (strBuilderPush l.bytes s)
+    (vecPush l.ends (strBuilderLen l.bytes))
+    l
+  })
+
+; Where string `i` starts in the shared bytes.
+(:: strListStart (-> StrList Int Int))
+(fn (strListStart l i)
+  (if (== i 0)
+    0
+    (vecGet l.ends (- i 1))))
+
+;; The length in bytes of string `i`. An `i` out of range stops the
+;; program with status 77, as `vecGet` does.
+(pub :: strListByteLen (-> StrList Int Int))
+(pub fn (strListByteLen l i)
+  (- (vecGet l.ends i) (strListStart l i)))
+
+;; Byte `j` of string `i`. An `i` or a `j` out of range stops the
+;; program with status 77.
+(pub :: strListByte (-> StrList Int Int Int))
+(pub fn (strListByte l i j)
+  {
+    (let start (strListStart l i))
+    (if (|| (< j 0) (>= j (- (vecGet l.ends i) start)))
+      __indexTrap
+      (strByte l.bytes.bytes (+ start j)))
+  })
+
+;; String `i`, sharing the list's bytes the way `strSlice` shares its
+;; parent's. Pushing more strings never changes one already read. An
+;; `i` out of range stops the program with status 77.
+(pub :: strListGet (-> StrList Int String))
+(pub fn (strListGet l i)
+  {
+    (let start (strListStart l i))
+    (strSlice l.bytes.bytes start (- (vecGet l.ends i) start))
+  })
+
+;; Whether string `i` holds exactly the bytes of `s`. Allocates nothing.
+(pub :: strListEq (-> StrList Int String Bool))
+(pub fn (strListEq l i s)
+  {
+    (let start (strListStart l i))
+    (let n (- (vecGet l.ends i) start))
+    (if (!= n (strLen s))
+      false
+      {
+        (let mut k 0)
+        (let mut same true)
+        {
+          (while (&& same (< k n))
+            {
+              (if (!= (strByte l.bytes.bytes (+ start k)) (strByte s k))
+                (set same false))
+              (set k (+ k 1))
+            })
+          same
+        }
+      })
+  })

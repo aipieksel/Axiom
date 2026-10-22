@@ -27035,7 +27035,13 @@
               1
               0))
         }
-        0))))
+        ; A `set` answers the value it stores, so storing a literal
+        ; answers that literal: dropping it is a static release too.
+        (if (== (nodeTag e) TAG_E_SET)
+          (isStaticSentinelNode cg (nodeBChild e))
+          (if (== (nodeTag e) TAG_E_SETF)
+            (isStaticSentinelNode cg (nodeCChild e))
+            0))))))
 
 (pub :: isNullaryConNode (-> Int ASTNode Int))
 (pub fn (isNullaryConNode cg e)
@@ -31924,9 +31930,11 @@
         (let cg1 (emitExpr e cg))
         {
           (let cg2
+            ; A static value's release is a no-op, so a literal - or a
+            ; `set` that stores one - dropped here gives nothing back.
             (if (if (>= (+ i 1) (vecLen exprs))
               false
-              (== (valueOwnedRef cg1 e) 1))
+              (&& (== (valueOwnedRef cg1 e) 1) (== (isStaticSentinelNode cg1 e) 0)))
               (emitReleaseOf cg1 (strDup (memGetWordStr cg1 2)))
               {
                 (let tcls
