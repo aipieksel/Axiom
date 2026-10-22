@@ -1,0 +1,237 @@
+; Ordinary checker record ownership and optional facts, independent of
+; any new lifetime analysis or held branch changes.
+(import core)
+(import parser)
+(import lexer)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import Mem)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: absent (-> (Option a) Bool))
+(fn (absent value)
+  (if (let (Some _) value)
+    false
+    true))
+
+(:: entry (-> String FnEnt))
+(fn (entry name)
+  (FnEnt
+    :name name
+    :ty mkIntTy
+    :paramCount 1
+    :isBuiltin 0
+    :isEffectOp 0
+    :effects vecNew
+    :eparams vecNew
+    :calls vecNew
+    :rgn None
+    :unsafe 0
+    :uses vecNew
+    :mayCalls vecNew
+    :pending 0
+    :scoped vecNew
+    :compute vecNew
+    :restrictions vecNew
+    :lambdaCast NoLambdaCast))
+
+(:: holdFactsName (-> String Int))
+(fn (holdFactsName name)
+  {
+    (let facts (rgnFactsNew 1))
+    (let culprits (rgnCulprits facts))
+    (vecSet culprits 0 name)
+    (count name)
+  })
+
+(:: factsChecks ())
+;@axiom:effect(io)
+(fn (factsChecks)
+  {
+    (let owner (entry "facts"))
+    (say 1 (absent (fnEntRgn owner)))
+    (say 2 (== (rgnFactsKeep None) 1))
+    (let facts (rgnFactsOf owner 2))
+    (say 3 (== (rgnNparams facts) 2))
+    (say 4 (== (vecLen (rgnFlowsFrom facts)) 2))
+    (say 5 (== (vecLen (rgnCulprits facts)) 2))
+    (say 6 (== (rgnFactsKeep (Some facts)) 0))
+    (say 7
+      (if (let (Some cached) (fnEntRgn owner))
+        (addrEq (addrOf cached) (addrOf facts))
+        false))
+    (say 8 (addrEq (addrOf facts) (addrOf (rgnFactsOf owner 99))))
+    (say 9 (== (rgnNparams (rgnFactsOf owner 99)) 2))
+    (rgnSetResultCUR facts)
+    (say 10 (== (rgnResultCUR facts) 1))
+    (say 11 (== (rgnUnknown facts) 0))
+    (rgnSetUnknown facts)
+    (say 12 (== (rgnUnknown facts) 1))
+    (say 13 (== (rgnFactsKeep (Some facts)) 1))
+    (set facts.unknownCalls 0)
+    (vecSet (rgnFlowsFrom facts) 0 1)
+    (say 14 (== (rgnFactsKeep (Some facts)) 1))
+    (vecSet (rgnFlowsFrom facts) 0 0)
+    (set facts.flowsCUR 2)
+    (say 15 (== (rgnFactsKeep (Some facts)) 1))
+    (let name (strDup "culprit"))
+    (let before (count name))
+    (let during (holdFactsName name))
+    (say 16 (== during (+ before 1)))
+    (say 17 (== (count name) before))
+  })
+
+(:: stackChecks ())
+;@axiom:effect(io)
+(fn (stackChecks)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (let name (strDup "region"))
+    (let before (count name))
+    (say 18 (absent (rgFind checker name)))
+    (say 19 (== (rgInnerMark checker) -1))
+    (rgPush checker name 7 11)
+    (say 20
+      (if (let (Some index) (rgFind checker name))
+        (== index 0)
+        false))
+    (say 21 (&& (strEq (rgInnerName checker) name) (== (rgInnerMark checker) 7)))
+    (rgPush checker name 13 17)
+    (say 22
+      (if (let (Some index) (rgFind checker name))
+        (== index 1)
+        false))
+    (rgPop checker)
+    (say 23 (== (count name) (+ before 1)))
+    (rgPop checker)
+    (say 24 (== (count name) before))
+    (say 25 (absent (rgFind checker name)))
+  })
+
+(:: heldContextCount (-> TC ASTNode FnEnt Int))
+(fn (heldContextCount checker declaration function)
+  {
+    (let context (rgnCtxNew checker declaration function 0))
+    (count checker)
+  })
+
+(:: cachedBuffer (-> TC ASTNode FnEnt Addr))
+(fn (cachedBuffer checker declaration function)
+  {
+    (let context (rgnCtxNew checker declaration function 0))
+    (addrOf context.names)
+  })
+
+(:: holdCachedName (-> String Int))
+(fn (holdCachedName name)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    {
+      (let context (rgnCtxNew checker (mkDFnAt "cached" vecNew (mkEInt 0) 0) (entry "cached") 0))
+      (rgnBind context name 1 0)
+      0
+    }
+    (count name)
+  })
+
+(:: contextChecks ())
+;@axiom:effect(io)
+(fn (contextChecks)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (let function (entry "context"))
+    (let declaration (mkDFnAt "context" (vecPush vecNew "value") (mkEInt 0) 0))
+    (let before (count checker))
+    (say 26 (absent (probeScratch checker)))
+    (let during (heldContextCount checker declaration function))
+    (say 27 (== during (+ before 1)))
+    (say 28 (== (count checker) before))
+    (say 29 (! (absent (probeScratch checker))))
+    (let firstBuffer (cachedBuffer checker declaration function))
+    (say 30 (addrEq firstBuffer (cachedBuffer checker declaration function)))
+    (let name (strDup "cached-child"))
+    (let nameBefore (count name))
+    (let cachedDuring (holdCachedName name))
+    (say 31 (== cachedDuring (+ nameBefore 1)))
+    (say 32 (== (count name) nameBefore))
+    (let context (rgnCtxNew checker declaration function 1))
+    (say 33 (== context.report 1))
+    (say 34 (== context.nparams 1))
+    (say 35 (addrEq (addrOf context.facts) (addrOf (rgnFactsOf function 1))))
+    (say 36 (&& (== context.curBit 1) (&& (== context.curRid 0) (== context.changed 0))))
+  })
+
+(:: checkedDiags (-> String Diags))
+(fn (checkedDiags source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (let declarations (readAstNodes parsed 1))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "records.ax" :src source :name "" :imports vecNew :library false)))
+    (tcOutVec (checkModuleTcTyped declarations declarations units))
+  })
+
+(:: countCode (-> Diags String Int))
+(fn (countCode diagnostics code)
+  {
+    (let mut count 0)
+    (for diagnostic in diagnostics
+      (if (strEq (diagCode diagnostic) code)
+        (set count (+ count 1))))
+    count
+  })
+
+(:: diagnosticChecks ())
+;@axiom:effect(io)
+(fn (diagnosticChecks)
+  {
+    (say 37
+      (==
+        (countErrorDiags
+          (checkedDiags
+            "(:: value (-> Int Int))\n(pub fn (value number) (region r (+ number 1)))\n"))
+        0))
+    (say 38
+      (==
+        (countCode
+          (checkedDiags
+            "(:: bad (-> Int String))\n(pub fn (bad number) (region r \"reference\"))\n")
+          "AX3059")
+        1))
+    (say 39
+      (==
+        (countCode
+          (checkedDiags
+            "(:: bad Int)\n(pub fn (bad) { (let mut out \"\") (region r { (set out \"reference\") 0 }) 0 })\n")
+          "AX3059")
+        1))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (factsChecks)
+    (stackChecks)
+    (contextChecks)
+    (diagnosticChecks)
+    0
+  })

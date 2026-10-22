@@ -3064,7 +3064,7 @@
   (effects : Strings)
   (eparams : (Vec Int))
   (calls : Names)
-  (mut rgn : Int)
+  (mut rgn : (Option RgnFacts))
   (mut unsafe : Int)
   (uses : (Vec EpUse))
   (mayCalls : Names)
@@ -3218,7 +3218,7 @@
 (pub fn (fnEntCalls ent)
   ent.calls)
 
-(pub :: fnEntRgn (-> FnEnt Int))
+(pub :: fnEntRgn (-> FnEnt (Option RgnFacts)))
 (pub fn (fnEntRgn ent)
   ent.rgn)
 
@@ -3256,7 +3256,7 @@
     0
   })
 
-(:: fnEntSetRgn (-> FnEnt Int Int))
+(:: fnEntSetRgn (-> FnEnt (Option RgnFacts) Int))
 (fn (fnEntSetRgn ent v)
   {
     (set ent.rgn v)
@@ -3383,7 +3383,7 @@
   (lamVars : Names)
   (mut rgnGaveUp : Int)
   (mut contractTag : (Option ContractContext))
-  (regions : (Vec Int))
+  (regions : (Vec RgEnt))
   (mut pairSites : (Option Nodes))
   (floatOps : (Vec ASTNode))
   (subtypes : Nodes)
@@ -3476,8 +3476,8 @@
 ;                    definition (AX3015). The effect walk reads a call to
 ;                    one as unresolved (`tcIsUnknownCallee`), so what it
 ;                    performs is unknown rather than nothing.
-;  14 `regionWalkCtx` the reusable region walk frame, allocated on first
-;                    demand and reset between function bodies.
+;  14 `regionScratch` reusable typed buffers, with no checker backedge;
+;                    active region contexts own their checker separately.
 ;  15 `fieldDecls`  every struct field that declares its effects, with
 ;                    the row a call through it is charged
 ;                    (`fieldDeclsBuild`), read before the fixpoint.
@@ -3501,7 +3501,7 @@
   (walkCtx : (Vec BCtx))
   (mut discard : Int)
   (unknownCallees : Names)
-  (mut regionWalkCtx : (Option RgnCtx))
+  (mut regionScratch : (Option RgnScratch))
   (fieldDecls : (Vec FieldDecl))
   (fieldDeclNames : (Vec FieldDeclName))
   (fieldStoreSpans : (Vec Int)))
@@ -4187,14 +4187,14 @@
     tc
   })
 
-(:: tcRegionWalkCtx (-> TC (Option RgnCtx)))
-(fn (tcRegionWalkCtx tc)
-  tc.unsafe.regionWalkCtx)
+(:: tcRegionScratch (-> TC (Option RgnScratch)))
+(fn (tcRegionScratch tc)
+  tc.unsafe.regionScratch)
 
-(:: tcSetRegionWalkCtx (-> TC (Option RgnCtx) TC))
-(fn (tcSetRegionWalkCtx tc v)
+(:: tcSetRegionScratch (-> TC (Option RgnScratch) TC))
+(fn (tcSetRegionScratch tc v)
   {
-    (set tc.unsafe.regionWalkCtx v)
+    (set tc.unsafe.regionScratch v)
     tc
   })
 
@@ -4294,7 +4294,7 @@
       :effects vecNew
       :eparams vecNew
       :calls vecNew
-      :rgn 0
+      :rgn None
       :unsafe 0
       :uses (vecWithCapacity 1)
       :mayCalls (vecWithCapacity 1)
@@ -4391,7 +4391,7 @@
           :effects effs
           :eparams vecNew
           :calls vecNew
-          :rgn 0
+          :rgn None
           :unsafe 0
           :uses (vecWithCapacity 1)
           :mayCalls (vecWithCapacity 1)
@@ -5158,7 +5158,7 @@
                 :walkCtx (bsCtxOf vecNew vecNew 0 vecNew)
                 :discard 0
                 :unknownCallees vecNew
-                :regionWalkCtx None
+                :regionScratch None
                 :fieldDecls vecNew
                 :fieldDeclNames vecNew
                 :fieldStoreSpans vecNew)
@@ -5658,7 +5658,7 @@
           }
         :eparams vecNew
         :calls vecNew
-        :rgn 0
+        :rgn None
         :unsafe 0
         :uses (vecWithCapacity 1)
         :mayCalls (vecWithCapacity 1)
@@ -5722,7 +5722,7 @@
           }
         :eparams vecNew
         :calls vecNew
-        :rgn 0
+        :rgn None
         :unsafe 0
         :uses (vecWithCapacity 1)
         :mayCalls (vecWithCapacity 1)
@@ -5903,7 +5903,7 @@
               :effects vecNew
               :eparams vecNew
               :calls vecNew
-              :rgn 0
+              :rgn None
               :unsafe 0
               :uses (vecWithCapacity 1)
               :mayCalls (vecWithCapacity 1)
@@ -5984,7 +5984,7 @@
                   :effects vecNew
                   :eparams vecNew
                   :calls vecNew
-                  :rgn 0
+                  :rgn None
                   :unsafe 0
                   :uses (vecWithCapacity 1)
                   :mayCalls (vecWithCapacity 1)
@@ -10338,14 +10338,13 @@
 ; and (b) refuse reading freed memory when accepted.
 ; ------------------------------------------------------------------
 (pub struct RgEnt
-  (name : Int)
+  (name : String)
   (mark : Int)
   (span : Int))
 
-(pub :: tcRegionsVec (-> TC (Vec a)))
-;@axiom:effect(unsafe)
+(pub :: tcRegionsVec (-> TC (Vec RgEnt)))
 (pub fn (tcRegionsVec tc)
-  (as tc.regions (Vec a)))
+  tc.regions)
 
 ; The innermost open region's index in the stack, or -1 outside any.
 (pub :: rgInner (-> TC Int))
@@ -10358,36 +10357,50 @@
 (pub fn (rgInnerMark tc)
   (if (< (rgInner tc) 0)
     (- 0 1)
-    (memGetWord (vecGet (tcRegionsVec tc) (rgInner tc)) 1)))
+    {
+      (let entry (vecGet (tcRegionsVec tc) (rgInner tc)))
+      entry.mark
+    }))
 
 (pub :: rgInnerName (-> TC String))
 (pub fn (rgInnerName tc)
-  (memGetWordStr (vecGet (tcRegionsVec tc) (rgInner tc)) 0))
+  {
+    (let regions (tcRegionsVec tc))
+    (let entry (vecGet regions (rgInner tc)))
+    (let name entry.name)
+    name
+  })
 
-; The index of the open region named `name`, or -1.
-(pub :: rgFind (-> TC String Int))
+; The index of the open region named `name`, or None.
+(pub :: rgFind (-> TC String (Option Int)))
 (pub fn (rgFind tc name)
   (rgFindFrom (tcRegionsVec tc) name (rgInner tc)))
 
-(pub :: rgFindFrom (-> Ints String Int Int))
-(pub fn (rgFindFrom rs name i)
-  (if (< i 0)
-    (- 0 1)
-    (if (strEq (memGetWordStr (vecGet rs i) 0) name)
-      i
-      (rgFindFrom rs name (- i 1)))))
+(pub :: rgFindFrom (-> (Vec RgEnt) String Int (Option Int)))
+(pub fn (rgFindFrom entries name index)
+  (if (< index 0)
+    None
+    {
+      (let entry (vecGet entries index))
+      (if (strEq entry.name name)
+        (Some index)
+        (rgFindFrom entries name (- index 1)))
+    }))
 
-(pub :: rgPush (-> TC Int Int Int Int))
+(pub :: rgPush (-> TC String Int Int Int))
 (pub fn (rgPush tc name mark span)
   {
-    (vecPush (tcRegionsVec tc) (as (RgEnt :name name :mark mark :span span) Int))
+    (let regions (tcRegionsVec tc))
+    (let entry (RgEnt :name name :mark mark :span span))
+    (vecPush regions entry)
     0
   })
 
 (pub :: rgPop (-> TC Int))
 (pub fn (rgPop tc)
   {
-    (vecPop (tcRegionsVec tc))
+    (let regions (tcRegionsVec tc))
+    (let retired (vecPop regions))
     0
   })
 
@@ -10484,7 +10497,10 @@
             "`")
           (if (< (rgInner tc) 0)
             0
-            (memGetWord (vecGet (tcRegionsVec tc) (rgInner tc)) 2))
+            {
+              (let entry (vecGet (tcRegionsVec tc) (rgInner tc)))
+              entry.span
+            })
           "this region ends before the outer binding is used"
           "move the reference allocation and this store outside the region, or bind the destination inside it; an outer binding may receive a scalar computed inside the region"
           "a store is the one escape channel a scope check can see; a call that stores the value for you is refused too, where the facts walk sees it")
@@ -10548,9 +10564,9 @@
       ; S4 slice 2b's trigger bit: a region form has been checked. O(1),
       ; set here because this walk already visits every such form.
       (tcSetRgnHasForm tc 1)
-      (if (>= (rgFind tc name) 0)
+      (if (let (Some _) (rgFind tc name))
         (emitRegionShadow tc name (nodeC e)))
-      (rgPush tc (nodeA e) (vecLen (tcScopeVec tc)) (nodeC e))
+      (rgPush tc (nodeAName e) (vecLen (tcScopeVec tc)) (nodeC e))
       {
         (let bodyTy (checkExprH tc (nodeBChild e) 0))
         {
@@ -31181,7 +31197,7 @@
   (nparams : Int)
   (mut mayEnter : Int))
 
-(pub :: rgnFactsNew (-> Int Int))
+(pub :: rgnFactsNew (-> Int RgnFacts))
 (pub fn (rgnFactsNew n)
   {
     (let ff (rgnIntVec))
@@ -31189,100 +31205,64 @@
     {
       (rgnFillInts ff n 0)
       (rgnFillStrs cu n)
-      (as (RgnFacts
-            :state 0
-            :flowsCUR 0
-            :flowsFrom ff
-            :resultFrom 0
-            :resultCUR 0
-            :unknownCalls 0
-            :culprits cu
-            :nparams n
-            :mayEnter 0) Int)
+      (RgnFacts
+        :state 0
+        :flowsCUR 0
+        :flowsFrom ff
+        :resultFrom 0
+        :resultCUR 0
+        :unknownCalls 0
+        :culprits cu
+        :nparams n
+        :mayEnter 0)
     }
   })
 
-(pub :: rgnFlowsCUR (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnFlowsCUR f)
+(pub :: rgnFlowsCUR (-> RgnFacts Int))
+(pub fn (rgnFlowsCUR facts)
+  facts.flowsCUR)
+
+(pub :: rgnFlowsFrom (-> RgnFacts Ints))
+(pub fn (rgnFlowsFrom facts)
+  facts.flowsFrom)
+
+(pub :: rgnResultFrom (-> RgnFacts Int))
+(pub fn (rgnResultFrom facts)
+  facts.resultFrom)
+
+(pub :: rgnResultCUR (-> RgnFacts Int))
+(pub fn (rgnResultCUR facts)
+  facts.resultCUR)
+
+(pub :: rgnSetResultCUR (-> RgnFacts RgnFacts))
+(pub fn (rgnSetResultCUR facts)
   {
-    (let r (as f RgnFacts))
-    r.flowsCUR
+    (set facts.resultCUR 1)
+    facts
   })
 
-(pub :: rgnFlowsFrom (-> Int Ints))
-;@axiom:effect(unsafe)
-(pub fn (rgnFlowsFrom f)
+(pub :: rgnUnknown (-> RgnFacts Int))
+(pub fn (rgnUnknown facts)
+  facts.unknownCalls)
+
+(pub :: rgnSetUnknown (-> RgnFacts RgnFacts))
+(pub fn (rgnSetUnknown facts)
   {
-    (let r (as f RgnFacts))
-    r.flowsFrom
+    (set facts.unknownCalls 1)
+    facts
   })
 
-(pub :: rgnResultFrom (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnResultFrom f)
-  {
-    (let r (as f RgnFacts))
-    r.resultFrom
-  })
+(pub :: rgnCulprits (-> RgnFacts Strings))
+(pub fn (rgnCulprits facts)
+  facts.culprits)
 
-(pub :: rgnResultCUR (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnResultCUR f)
-  {
-    (let r (as f RgnFacts))
-    r.resultCUR
-  })
+(pub :: rgnNparams (-> RgnFacts Int))
+(pub fn (rgnNparams facts)
+  facts.nparams)
 
-(pub :: rgnSetResultCUR (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnSetResultCUR f)
-  {
-    (let r (as f RgnFacts))
-    (set r.resultCUR 1)
-    f
-  })
-
-(pub :: rgnUnknown (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnUnknown f)
-  {
-    (let r (as f RgnFacts))
-    r.unknownCalls
-  })
-
-(pub :: rgnSetUnknown (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnSetUnknown f)
-  {
-    (let r (as f RgnFacts))
-    (set r.unknownCalls 1)
-    f
-  })
-
-(pub :: rgnCulprits (-> Int Strings))
-;@axiom:effect(unsafe)
-(pub fn (rgnCulprits f)
-  {
-    (let r (as f RgnFacts))
-    r.culprits
-  })
-
-(pub :: rgnNparams (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnNparams f)
-  {
-    (let r (as f RgnFacts))
-    r.nparams
-  })
-
-(pub :: rgnMayEnter (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (rgnMayEnter f)
-  {
-    (let r (as f RgnFacts))
-    r.mayEnter
-  })
+(pub :: rgnMayEnter (-> RgnFacts Int))
+(pub fn (rgnMayEnter facts)
+  facts.mayEnter)
 
 (pub :: rgnIntVec Ints)
 (pub fn (rgnIntVec)
@@ -31306,21 +31286,19 @@
   (if (>= (vecLen v) n)
     0
     {
-      (vecPushStr v "")
+      (vecPush v (strDup ""))
       (rgnFillStrs v n)
     }))
 
 ; The facts of an entry, made on first demand.
-(pub :: rgnFactsOf (-> FnEnt Int Int))
-(pub fn (rgnFactsOf ent n)
-  (if (!= (fnEntRgn ent) 0)
-    (fnEntRgn ent)
+(pub :: rgnFactsOf (-> FnEnt Int RgnFacts))
+(pub fn (rgnFactsOf entry n)
+  (if (let (Some facts) (fnEntRgn entry))
+    facts
     {
-      (let f (rgnFactsNew n))
-      {
-        (fnEntSetRgn ent f)
-        f
-      }
+      (let facts (rgnFactsNew n))
+      (fnEntSetRgn entry (Some facts))
+      facts
     }))
 
 ; A scoped callback's reference arguments and fresh allocations stay
@@ -31499,8 +31477,21 @@
             0))))))
 
 ; ---- the per-function walk context ----
-; A checker walks one function at a time. Reuse this frame and its
-; vectors across worklist rounds; per-function facts live in FnEnt.
+; A checker walks one function at a time. Reuse its scratch buffers
+; across worklist rounds; per-function facts live in FnEnt.
+; Reusable buffers carry no checker, entry or active-walk owner. The
+; active RgnCtx can own TC without making the TC cache own itself.
+(pub struct RgnScratch
+  (names : Strings)
+  (origs : Ints)
+  (binds : Ints)
+  (formParents : Ints)
+  (formNames : Strings)
+  (capNames : Strings)
+  (extents : Nodes)
+  (capOrigins : Ints)
+  (extentSpans : Ints))
+
 (pub struct RgnCtx
   (mut tc : TC)
   (mut decl : ASTNode)
@@ -31514,7 +31505,7 @@
   (formParents : Ints)
   (formNames : Strings)
   (mut report : Int)
-  (mut facts : Int)
+  (mut facts : RgnFacts)
   (mut changed : Int)
   (mut lamBase : Int)
   (mut capMask : Int)
@@ -31532,63 +31523,73 @@
 ; the lexical extent bodies, and their boundary spans for diagnostics
 ; and the LSP
 ; whether a reclaimed extent may be entered by the expression walked
+(:: rgnScratchOf (-> TC RgnScratch))
+(fn (rgnScratchOf tc)
+  (if (let (Some old) (tcRegionScratch tc))
+    {
+      (vecClear old.names)
+      (vecClear old.origs)
+      (vecClear old.binds)
+      (vecClear old.formParents)
+      (vecClear old.formNames)
+      (vecClear old.capNames)
+      (vecClear old.extents)
+      (vecClear old.capOrigins)
+      (vecClear old.extentSpans)
+      old
+    }
+    {
+      (let fresh
+        (RgnScratch
+          :names (rgnStrVec)
+          :origs (rgnIntVec)
+          :binds (rgnIntVec)
+          :formParents (rgnIntVec)
+          :formNames (rgnStrVec)
+          :capNames (rgnStrVec)
+          :extents nodesNew
+          :capOrigins (rgnIntVec)
+          :extentSpans (rgnIntVec)))
+      (tcSetRegionScratch tc (Some fresh))
+      fresh
+    }))
+
 (pub :: rgnCtxNew (-> TC ASTNode FnEnt Int RgnCtx))
 (pub fn (rgnCtxNew tc d ent report)
   {
-    (let rc
-      (if (let (Some old) (tcRegionWalkCtx tc))
-        {
-          (vecClear old.names)
-          (vecClear old.origs)
-          (vecClear old.binds)
-          (vecClear old.formParents)
-          (vecClear old.formNames)
-          (vecClear old.capNames)
-          (vecClear old.extents)
-          (vecClear old.capOrigins)
-          (vecClear old.extentSpans)
-          old
-        }
-        {
-          (let fresh
-            (RgnCtx
-              :tc tc
-              :decl nilNode
-              :ent ent
-              :nparams 0
-              :names (rgnStrVec)
-              :origs (rgnIntVec)
-              :binds (rgnIntVec)
-              :curBit 1
-              :curRid 0
-              :formParents (rgnIntVec)
-              :formNames (rgnStrVec)
-              :report 0
-              :facts 0
-              :changed 0
-              :lamBase -1
-              :capMask 0
-              :capNames (rgnStrVec)
-              :extents nodesNew
-              :capOrigins (rgnIntVec)
-              :extentSpans (rgnIntVec)
-              :reclaim 0))
-          (tcSetRegionWalkCtx tc (Some fresh))
-          fresh
-        }))
-    (set rc.tc tc)
-    (set rc.decl d)
-    (set rc.ent ent)
-    (set rc.nparams (vecLen (nodeBNames d)))
-    (set rc.curBit 1)
-    (set rc.curRid 0)
-    (set rc.report report)
-    (set rc.facts (rgnFactsOf ent (vecLen (nodeBNames d))))
-    (set rc.changed 0)
-    (set rc.lamBase -1)
-    (set rc.capMask 0)
-    (set rc.reclaim 0)
-    rc
+    (let facts (rgnFactsOf ent (vecLen (nodeBNames d))))
+    (let scratch (rgnScratchOf tc))
+    (let names scratch.names)
+    (let origs scratch.origs)
+    (let binds scratch.binds)
+    (let formParents scratch.formParents)
+    (let formNames scratch.formNames)
+    (let capNames scratch.capNames)
+    (let extents scratch.extents)
+    (let capOrigins scratch.capOrigins)
+    (let extentSpans scratch.extentSpans)
+    (RgnCtx
+      :tc tc
+      :decl d
+      :ent ent
+      :nparams (vecLen (nodeBNames d))
+      :names names
+      :origs origs
+      :binds binds
+      :curBit 1
+      :curRid 0
+      :formParents formParents
+      :formNames formNames
+      :report report
+      :facts facts
+      :changed 0
+      :lamBase -1
+      :capMask 0
+      :capNames capNames
+      :extents extents
+      :capOrigins capOrigins
+      :extentSpans extentSpans
+      :reclaim 0)
   })
 
 (pub :: rgnTc (-> RgnCtx TC))
@@ -31619,7 +31620,7 @@
 (pub fn (rgnReport rc)
   rc.report)
 
-(pub :: rgnFacts (-> RgnCtx Int))
+(pub :: rgnFacts (-> RgnCtx RgnFacts))
 (pub fn (rgnFacts rc)
   rc.facts)
 
@@ -31684,7 +31685,7 @@
   (if (== rid 0)
     "this function's own region (its caller's current region)"
     {
-      (let nm (vecGetStr (rgnFormNames rc) (- rid 1)))
+      (let nm (vecGet (rgnFormNames rc) (- rid 1)))
       (if (strEq nm "#recover")
           "the recovery point (reclaimed on abort)"
         (strEq nm "#scoped callback")
@@ -31832,7 +31833,8 @@
 (pub :: rgnBind (-> RgnCtx String Int Int Int))
 (pub fn (rgnBind rc name mask rid)
   {
-    (vecPushStr (rgnNames rc) name)
+    (let names (rgnNames rc))
+    (vecPush names name)
     (vecPush (rgnOrigs rc) mask)
     (vecPush (rgnBinds rc) rid)
     0
@@ -31847,7 +31849,8 @@
   (if (<= (vecLen (rgnNames rc)) n)
     0
     {
-      (vecPop (rgnNames rc))
+      (let names (rgnNames rc))
+      (let retired (vecPop names))
       (vecPop (rgnOrigs rc))
       (vecPop (rgnBinds rc))
       (rgnEnvTrunc rc n)
@@ -31862,16 +31865,15 @@
 (pub fn (rgnEnvFindFrom rc name i)
   (if (< i 0)
     (- 0 1)
-    (if (strEq (vecGetStr (rgnNames rc) i) name)
+    (if (strEq (vecGet (rgnNames rc) i) name)
       i
       (rgnEnvFindFrom rc name (- i 1)))))
 
 ; ---- facts recording ----
 (pub :: rgnFactsOr (-> RgnCtx Int Int Int))
-;@axiom:effect(unsafe)
 (pub fn (rgnFactsOr rc word mask)
   {
-    (let r (as (rgnFacts rc) RgnFacts))
+    (let r (rgnFacts rc))
     (let cur
       (if (== word 1)
         r.flowsCUR
@@ -31907,7 +31909,6 @@
 ; `tgtMask`: every parameter among the targets learns what flowed in.
 ; `via` names the callee the flow went through, "" for this body.
 (pub :: rgnNoteFlow (-> RgnCtx Int Int String Int))
-;@axiom:effect(unsafe)
 (pub fn (rgnNoteFlow rc valMask tgtMask via)
   {
     (let f (rgnFacts rc))
@@ -31923,8 +31924,11 @@
               (if fresh
                 {
                   (if (== (& (rgnFlowsCUR f) (<< 1 i)) 0)
-                    (vecSet (rgnCulprits f) i via)
-                    (as 0 (Vec String)))
+                    {
+                      (let culprits (rgnCulprits f))
+                      (vecSet culprits i via)
+                      ()
+                    })
                   (rgnFactsOr rc 1 (<< 1 i))
                 })
               {
@@ -32065,7 +32069,8 @@
               (set rc.capMask (| rc.capMask (vecGet (rgnOrigs rc) idx)))
               (if (< (strVecIdx rc.capNames (nodeAName e)) 0)
                 {
-                  (vecPushStr rc.capNames (nodeAName e))
+                  (let names rc.capNames)
+                  (vecPush names (nodeAName e))
                   (vecPush rc.capOrigins (vecGet (rgnOrigs rc) idx))
                 })
             }))
@@ -32278,7 +32283,7 @@
       (set rc.capOrigins (rgnIntVec))
       (rgnBindTypedParams rc params 0 rc.curBit
         (if (if (> rc.curRid 0)
-          (strEq (vecGetStr (rgnFormNames rc) (- rc.curRid 1)) "#scoped callback")
+          (strEq (vecGet (rgnFormNames rc) (- rc.curRid 1)) "#scoped callback")
           false)
           (rgnCheckedTy e)
           nilNode))
@@ -32314,7 +32319,7 @@
     {
       (if (< (strVecIdx outNames (vecGetStr names i)) 0)
         {
-          (vecPushStr outNames (vecGetStr names i))
+          (vecPush outNames (vecGet names i))
           (vecPush outMasks (vecGet masks i))
         })
       (rgnMergeCaps names masks outNames outMasks (+ i 1))
@@ -32359,7 +32364,7 @@
   (if (>= i (vecLen names))
     ""
     (if (!= (& (vecGet masks i) (<< 1 bit)) 0)
-      (vecGetStr names i)
+      (vecGet names i)
       (rgnCaptureFrom names masks bit (+ i 1)))))
 
 (pub :: rgnCapBelow (-> RgnCtx Int Int Int))
@@ -32429,7 +32434,8 @@
               {
                 (vecPush forms body)
                 (vecPush (rgnFormParents rc) savedRid)
-                (vecPushStr (rgnFormNames rc) name)
+                (let formNames (rgnFormNames rc))
+                (vecPush formNames (strDup name))
                 (vecPush rc.extentSpans boundary)
               })
             (set rc.curBit bit)
@@ -32553,8 +32559,8 @@
             None))
         {
           (if (let (Some ent) entFound)
-            (if (!= (fnEntRgn ent) 0)
-              (rgnNoteReclaim rc (memGetWord (fnEntRgn ent) 8))))
+            (if (let (Some facts) (fnEntRgn ent))
+              (rgnNoteReclaim rc (rgnMayEnter facts))))
           (if (&& (== (rgnReport rc) 1) (!= (spanOf h) 0))
             (if (let (Some ent) entFound)
               (if (== (rgnFactsKeep (fnEntRgn ent)) 1)
@@ -32576,13 +32582,13 @@
 ; Whether a function may store a parameter, or a fresh value, into
 ; one of its parameters. Missing facts and unknown calls prove no
 ; handler lifetime guarantee.
-(pub :: rgnFactsKeep (-> Int Int))
-(pub fn (rgnFactsKeep f)
-  (if (== f 0)
-    1
-    (if (|| (!= (rgnFlowsCUR f) 0) (!= (rgnUnknown f) 0))
+(pub :: rgnFactsKeep (-> (Option RgnFacts) Int))
+(pub fn (rgnFactsKeep found)
+  (if (let (Some facts) found)
+    (if (|| (!= (rgnFlowsCUR facts) 0) (!= (rgnUnknown facts) 0))
       1
-      (rgnAnyFlow (rgnFlowsFrom f) 0))))
+      (rgnAnyFlow (rgnFlowsFrom facts) 0))
+    1))
 
 (pub :: rgnAnyFlow (-> Ints Int Int))
 (pub fn (rgnAnyFlow v i)
@@ -32702,7 +32708,7 @@
               nilNode)
             (rgnNoteFlow rc (| u rc.curBit) (vecGet masks i) "<unresolved call>")
           }))
-      (if (== (memGetWord (rgnFacts rc) 5) 0)
+      (if (== (rgnUnknown (rgnFacts rc)) 0)
         {
           (rgnSetUnknown (rgnFacts rc))
           (set rc.changed 1)
@@ -32767,7 +32773,7 @@
       (let masks (rgnIntVec))
       (let callee (fnEntName ent))
       (let sig (fnEntTy ent))
-      (let f (fnEntRgn ent))
+      (let factsFound (fnEntRgn ent))
       (let tc (rgnTc rc))
       (let mut i 0)
       (let mut res 0)
@@ -32779,7 +32785,7 @@
             (set i (+ i 1))
           })
         ; The facts say what the callee stores through each parameter.
-        (if (! (== f 0))
+        (if (let (Some f) factsFound)
           {
             (rgnNoteReclaim rc (rgnMayEnter f))
             (for i in 0..(vecLen args)
@@ -32839,15 +32845,14 @@
                   }
                 }))
             (if (!= (rgnUnknown f) 0)
-              (if (== (memGetWord (rgnFacts rc) 5) 0)
+              (if (== (rgnUnknown (rgnFacts rc)) 0)
                 {
                   (rgnSetUnknown (rgnFacts rc))
                   (set rc.changed 1)
                 }))
           })
         ; The result derives from fresh allocation and/or parameters.
-        (if (== f 0)
-          rc.curBit
+        (if (let (Some f) factsFound)
           {
             (if (!= (rgnResultCUR f) 0)
               (set res rc.curBit))
@@ -32903,7 +32908,8 @@
                   (setNodeResWord e 2))
               })
             res
-          })
+          }
+          rc.curBit)
       }
     }
   })
@@ -32963,7 +32969,7 @@
           {
             (rgnFactsOr rc 3 (>> (& body (rgnParamMask rc)) 1))
             (if (!= (& body (rgnFreshMask rc)) 0)
-              (if (== (memGetWord (rgnFacts rc) 4) 0)
+              (if (== (rgnResultCUR (rgnFacts rc)) 0)
                 {
                   (rgnSetResultCUR (rgnFacts rc))
                   (set rc.changed 1)
@@ -33180,12 +33186,12 @@
 ; door - this body or a named callee - or -1. A flow recorded by an
 ; unresolved call is the conservative assumption, not a finding, and
 ; the claim over it is unverifiable rather than refuted.
-(pub :: rgnResolvedCulprit (-> Int Int Int))
+(pub :: rgnResolvedCulprit (-> RgnFacts Int Int))
 (pub fn (rgnResolvedCulprit f i)
   (if (>= i (rgnNparams f))
     (- 0 1)
     (if (&& (!= (& (rgnFlowsCUR f) (<< 1 i)) 0)
-          (if (strEq (vecGetStr (rgnCulprits f) i) "<unresolved call>")
+          (if (strEq (vecGet (rgnCulprits f) i) "<unresolved call>")
             false
             true))
       i
@@ -33199,9 +33205,8 @@
       (let entFound (findFnEnt tc (nodeAName d)))
       (if (let (Some ent) entFound)
         {
-          (let f (fnEntRgn ent))
-          (if (== f 0)
-            0
+          (let factsFound (fnEntRgn ent))
+          (if (let (Some f) factsFound)
             {
               (let i (rgnResolvedCulprit f 0))
               (if (>= i 0)
@@ -33211,9 +33216,9 @@
                       (concat "the body stores a value it allocates into its parameter `"
                         (rgnCalleeParamName tc (nodeAName d) i))
                       "`")
-                    (if (== (strLen (vecGetStr (rgnCulprits f) i)) 0)
+                    (if (== (strLen (vecGet (rgnCulprits f) i)) 0)
                       " in its own body"
-                      (concat (concat " through `" (bareOf (vecGetStr (rgnCulprits f) i))) "`")))
+                      (concat (concat " through `" (bareOf (vecGet (rgnCulprits f) i))) "`")))
                   vecNew)
                 (if (!= (rgnUnknown f) 0)
                   (emitRestrictUnverifiable tc d r
@@ -33228,7 +33233,8 @@
                       "the region fixpoint reached its round limit before the facts settled, so this claim is unproven rather than proven - the call chain below this declaration is deeper than the walk resolves. `strict` already means an unproven claim is refused; without it this is a warning"
                       vecNew)
                     0)))
-            })
+            }
+            0)
         }
         0)
     }
