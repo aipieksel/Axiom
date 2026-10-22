@@ -260,29 +260,17 @@
   (slot : String)
   (isEntry : Int))
 
-(pub :: effName (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: effName (-> EffEnt String))
 (pub fn (effName e)
-  {
-    (let t (as e EffEnt))
-    t.name
-  })
+  e.name)
 
-(pub :: effSlot (-> Int String))
-;@axiom:effect(unsafe)
+(pub :: effSlot (-> EffEnt String))
 (pub fn (effSlot e)
-  {
-    (let t (as e EffEnt))
-    t.slot
-  })
+  e.slot)
 
-(pub :: effIsEntry (-> Int Int))
-;@axiom:effect(unsafe)
+(pub :: effIsEntry (-> EffEnt Int))
 (pub fn (effIsEntry e)
-  {
-    (let t (as e EffEnt))
-    t.isEntry
-  })
+  e.isEntry)
 
 ; stage0's `effect_slot_name`: `__axiom_ev_` over the mangled effect
 ; name, so an entry-file `Console` is `__axiom_ev_Console` and an
@@ -297,23 +285,20 @@
 ; Entry file first, then whatever module defines it - the resolution
 ; rule every other bare-name lookup in this compiler uses. A first
 ; match alone would let an import outrank the file being compiled.
-(pub :: lookupEff (-> Ints String Int))
+(pub :: lookupEff (-> (Vec EffEnt) String (Option EffEnt)))
 (pub fn (lookupEff tbl name)
-  {
-    (let e (lookupEffIn tbl name 1 0))
-    (if (!= e 0)
-      e
-      (lookupEffIn tbl name 0 0))
-  })
+  (if (let (Some e) (lookupEffIn tbl name 1 0))
+    (Some e)
+    (lookupEffIn tbl name 0 0)))
 
-(pub :: lookupEffIn (-> Ints String Int Int Int))
+(pub :: lookupEffIn (-> (Vec EffEnt) String Int Int (Option EffEnt)))
 (pub fn (lookupEffIn tbl name entryOnly i)
   (if (>= i (vecLen tbl))
-    0
+    (None)
     {
       (let e (vecGet tbl i))
       (if (&& (strEq (effName e) name) (|| (== entryOnly 0) (== (effIsEntry e) 1)))
-        e
+        (Some e)
         (lookupEffIn tbl name entryOnly (+ i 1)))
     }))
 
@@ -321,22 +306,21 @@
 ; reference sits in - `mangledFor`'s rule, applied to effects. A name
 ; the module does not declare falls through to `lookupEff`, so this
 ; only ever prepends a candidate.
-(pub :: lookupEffFor (-> Int Ints String Int))
+(pub :: lookupEffFor (-> Int (Vec EffEnt) String (Option EffEnt)))
 (pub fn (lookupEffFor cg tbl name)
-  {
-    (let m (cgModuleWord cg))
-    {
-      (let local
-        (if (== m 0)
-          0
-          (lookupEffIn tbl (concat (cgModule cg) (concat "$" name)) 0 0)))
-      (if (!= local 0)
-        local
-        (lookupEff tbl name))
-    }
-  })
+  (if (let (Some local) (if (== (cgModuleWord cg) 0)
+    (None)
+    (lookupEffIn tbl (concat (cgModule cg) (concat "$" name)) 0 0)))
+    (Some local)
+    (lookupEff tbl name)))
 
-(pub :: effSlotRegistered (-> Ints String Int Bool))
+(:: hasEffFor (-> Int (Vec EffEnt) String Bool))
+(fn (hasEffFor cg tbl name)
+  (if (let (Some _) (lookupEffFor cg tbl name))
+    true
+    false))
+
+(pub :: effSlotRegistered (-> (Vec EffEnt) String Int Bool))
 (pub fn (effSlotRegistered tbl slot i)
   (if (>= i (vecLen tbl))
     false
@@ -468,8 +452,8 @@
   (mut tcoLabel : String)
   (mut tailOK : Int)
   (mut terminated : Int)
-  (effDecls : (Vec Int))
-  (effOps : (Vec Int))
+  (effDecls : (Vec EffEnt))
+  (effOps : (Vec EffEnt))
   (mut curModule : Int)
   (dataTyNames : (Vec String))
   (mut curDeclNode : ASTNode)
@@ -1329,21 +1313,21 @@
   })
 
 ; Words 32 and 33: the effect declarations and the effect operations,
-; one `EffEnt` address each.
-(:: cgEffDecls (-> Int Ints))
+; one typed `EffEnt` each.
+(:: cgEffDecls (-> Int (Vec EffEnt)))
 ;@axiom:effect(unsafe)
 (fn (cgEffDecls cg)
   {
     (let c (as cg CG))
-    (as c.effDecls Ints)
+    c.effDecls
   })
 
-(:: cgEffOps (-> Int Ints))
+(:: cgEffOps (-> Int (Vec EffEnt)))
 ;@axiom:effect(unsafe)
 (fn (cgEffOps cg)
   {
     (let c (as cg CG))
-    (as c.effOps Ints)
+    c.effOps
   })
 
 ; Word 34: the module of the declaration being emitted, as `nodeModule`
@@ -6026,7 +6010,7 @@
     (if (effSlotRegistered tbl slot 0)
       cg
       {
-        (vecPush tbl (as (EffEnt :name (nodeAName node) :slot slot :isEntry isEntry) Int))
+        (vecPush tbl (EffEnt :name (nodeAName node) :slot slot :isEntry isEntry))
         ; The effect's own name under its mangled spelling as well,
         ; for the same reason its operations get one: a `handle`
         ; INSIDE the declaring module must install the slot that
@@ -6037,10 +6021,10 @@
         ; on valid source.
         (if (! (== (nodeModule node) 0))
           (vecPush tbl
-            (as (EffEnt
-                  :name (concat (nodeModuleName node) (concat "$" (nodeAName node)))
-                  :slot slot
-                  :isEntry isEntry) Int)))
+            (EffEnt
+              :name (concat (nodeModuleName node) (concat "$" (nodeAName node)))
+              :slot slot
+              :isEntry isEntry)))
         (scanEffectOps (nodeBNames node) slot isEntry (nodeModule node) (cgEffOps cg) 0)
         cg
       })
@@ -6052,19 +6036,19 @@
 ; `EffMod$ask`, and an `effect` declaration is one of the two kinds
 ; `mangleDecl` never rewrites. Both spellings dispatch through the one
 ; slot, which is the only thing that has to be single.
-(pub :: scanEffectOps (-> Names String Int a Ints Int Int))
+(pub :: scanEffectOps (-> Names String Int a (Vec EffEnt) Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (scanEffectOps ops slot isEntry modName tbl i)
   (if (>= i (vecLen ops))
     0
     {
-      (vecPush tbl (as (EffEnt :name (vecGetStr ops i) :slot slot :isEntry isEntry) Int))
+      (vecPush tbl (EffEnt :name (vecGetStr ops i) :slot slot :isEntry isEntry))
       (if (! (== (as modName Int) 0))
         (vecPush tbl
-          (as (EffEnt
-                :name (concat (as modName String) (concat "$" (vecGetStr ops i)))
-                :slot slot
-                :isEntry isEntry) Int)))
+          (EffEnt
+            :name (concat (as modName String) (concat "$" (vecGetStr ops i)))
+            :slot slot
+            :isEntry isEntry)))
       (scanEffectOps ops slot isEntry modName tbl (+ i 1))
     }))
 
@@ -15961,7 +15945,7 @@
 ; `emitEffectGlobals` applies, because an imported effect is registered
 ; twice and both entries name one slot. It is the record's variable
 ; part and the two helpers' loop bound.
-(pub :: distinctSlotCount (-> Ints Int Int Int))
+(pub :: distinctSlotCount (-> (Vec EffEnt) Int Int Int))
 (pub fn (distinctSlotCount tbl i acc)
   (if (>= i (vecLen tbl))
     acc
@@ -22742,39 +22726,30 @@
 ; cannot.
 ; ------------------------------------------------------------------
 ; The first effect in a handle's list that resolves to a DECLARED
-; effect, or 0 when none does. A list naming only built-in effects
+; effect, or `None` when none does. A list naming only built-in effects
 ; (`IO`, `Alloc`, ...) declares no evidence and installs nothing.
-(pub :: handleEffectEnt (-> ASTNode Int Int))
+(pub :: handleEffectEnt (-> ASTNode Int (Option EffEnt)))
 (pub fn (handleEffectEnt node cg)
   (handleEffectEntFrom (nodeBChildren node) cg 0))
 
-(pub :: handleEffectEntFrom (-> (Vec ASTNode) Int Int Int))
+(pub :: handleEffectEntFrom (-> (Vec ASTNode) Int Int (Option EffEnt)))
 (pub fn (handleEffectEntFrom effs cg i)
   (if (>= i (vecLen effs))
-    0
-    {
-      (let e (lookupEffFor cg (cgEffDecls cg) (nodeAName (vecGet effs i))))
-      (if (!= e 0)
-        e
-        (handleEffectEntFrom effs cg (+ i 1)))
-    }))
+    (None)
+    (if (let (Some e) (lookupEffFor cg (cgEffDecls cg) (nodeAName (vecGet effs i))))
+      (Some e)
+      (handleEffectEntFrom effs cg (+ i 1)))))
 
 (pub :: emitHandle (-> ASTNode Int Int))
 ;@axiom:effect(io)
 (pub fn (emitHandle node cg)
-  {
-    (let ent (handleEffectEnt node cg))
-    (if (== ent 0)
-      ; A builtin-only list is a static effect scope, not a dynamic
-      ; handler: it lowers to its body and the handler expression is
-      ; never evaluated at all. stage0's rule, and the reason a
-      ; `(handle e (IO) h)` costs nothing.
-      (emitExpr (nodeAChild node) cg)
-      ; Quoted once, here, rather than at the four `ptr @` sites
-      ; below: `slot` reaches `emitHandleDyn` for emission only, and
-      ; the unquoted spelling stays the registry's key.
-      (emitHandleDyn node (llvmSym (effSlot ent)) cg))
-  })
+  (if (let (Some ent) (handleEffectEnt node cg))
+    ; Quote the slot once before emission; its unquoted spelling stays
+    ; the registry's key.
+    (emitHandleDyn node (llvmSym (effSlot ent)) cg)
+    ; A builtin-only list is a static effect scope. It lowers to the
+    ; body without evaluating the handler, matching stage0.
+    (emitExpr (nodeAChild node) cg)))
 
 (pub :: emitHandleDyn (-> ASTNode String Int Int))
 ;@axiom:effect(io)
@@ -22877,7 +22852,7 @@
 ; Arguments are evaluated BEFORE the slot is read, which is stage0's
 ; order and matters at exactly one observable point: an argument that
 ; prints must print even when the dispatch below traps.
-(pub :: emitEffectOp (-> Int Nodes Int ASTNode Int))
+(pub :: emitEffectOp (-> EffEnt Nodes Int ASTNode Int))
 ;@axiom:effect(io)
 (pub fn (emitEffectOp ent args cg snode)
   ; Emission only, as in `emitHandle`: the registry is keyed on the
@@ -23070,7 +23045,7 @@
 
 ; The index of the first entry carrying `slot`, or -1. Two entries may
 ; share one slot; only the first of them emits its global.
-(pub :: slotFirstIndex (-> Ints String Int Int))
+(pub :: slotFirstIndex (-> (Vec EffEnt) String Int Int))
 (pub fn (slotFirstIndex tbl slot i)
   (if (>= i (vecLen tbl))
     (- 0 1)
@@ -24076,8 +24051,8 @@
                 ; operation name binds the local - which is how sema resolves it,
                 ; and a generator that disagreed would dispatch a name the checker
                 ; had already bound to a lambda.
-                (if (!= (lookupEffFor cg (cgEffOps cg) fnName) 0)
-                  (emitEffectOp (lookupEffFor cg (cgEffOps cg) fnName) args cg snode)
+                (if (let (Some operation) (lookupEffFor cg (cgEffOps cg) fnName))
+                  (emitEffectOp operation args cg snode)
                   {
                     (let types (cgTypes cg))
                     (let entry (lookupType types fnName))
@@ -28462,8 +28437,7 @@
               ; before the constructor table does.
               {
                 (let n (nodeAName hd))
-                (if (|| (isCastName n)
-                      (|| (isLocalValue cg n) (!= (lookupEffFor cg (cgEffOps cg) n) 0)))
+                (if (|| (isCastName n) (|| (isLocalValue cg n) (hasEffFor cg (cgEffOps cg) n)))
                   0
                   {
                     (let entry (lookupType (cgTypes cg) n))

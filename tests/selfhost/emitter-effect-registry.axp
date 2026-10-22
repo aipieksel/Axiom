@@ -1,0 +1,65 @@
+; Typed effect entries survive registry ownership, misses stay absent,
+; and entry-file/module precedence agrees with evidence slot emission.
+(import codegen)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: slotIs (-> (Option EffEnt) String Bool))
+(fn (slotIs found expected)
+  (if (let (Some entry) found)
+    (strEq (effSlot entry) expected)
+    false))
+
+(:: absent (-> (Option EffEnt) Bool))
+(fn (absent found)
+  (if (let (Some _) found)
+    false
+    true))
+
+(:: entries (Vec EffEnt))
+(fn (entries)
+  {
+    (let table vecNew)
+    (vecPush table (EffEnt :name (strDup "ask") :slot (strDup "foreign") :isEntry 0))
+    (vecPush table (EffEnt :name (strDup "ask") :slot (strDup "entry") :isEntry 1))
+    (vecPush table (EffEnt :name (strDup "Local$ask") :slot (strDup "local") :isEntry 0))
+    (vecPush table (EffEnt :name (strDup "Imported$ask") :slot (strDup "foreign") :isEntry 0))
+    table
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let table entries)
+    (say 1 (absent (lookupEff table "missing")))
+    (say 2 (slotIs (lookupEff table "ask") "entry"))
+    (say 3 (slotIs (lookupEffIn table "ask" 0 0) "foreign"))
+    (say 4 (absent (lookupEffIn table "Local$ask" 1 0)))
+    (say 5 (slotIs (lookupEff table "Imported$ask") "foreign"))
+    (say 6 (== (distinctSlotCount table 0 0) 3))
+    (say 7 (== (slotFirstIndex table "foreign" 0) 0))
+    (say 8 (== (slotFirstIndex table "missing" 0) -1))
+    (say 9 (effSlotRegistered table "local" 0))
+    (say 10 (! (effSlotRegistered table "missing" 0)))
+    (let cg newCG)
+    (say 11 (slotIs (lookupEffFor cg table "ask") "entry"))
+    (probeEffectModule cg "Local")
+    (say 12 (slotIs (lookupEffFor cg table "ask") "local"))
+    (say 13 (slotIs (lookupEffFor cg table "Imported$ask") "foreign"))
+    (probeEffectModule cg "Unrelated")
+    (say 14 (slotIs (lookupEffFor cg table "ask") "entry"))
+    (say 15 (absent (lookupEffFor cg table "missing")))
+    0
+  })
