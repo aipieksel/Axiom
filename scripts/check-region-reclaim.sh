@@ -16,7 +16,7 @@
 # answer while `argOwnedRelease` still says 1, so `mustTailOK` stays
 # conservative and `check-tail-calls.sh` does not move.
 #
-# Five checks, each with the reason a lesser gate would be vacuous:
+# Six checks, each with the reason a lesser gate would be vacuous:
 #
 #   1. THE ANSWERS. `tests/stdlib/479-region-reclaim.ax` prints eight
 #      terms under the compiler under test, byte-identical to its
@@ -368,6 +368,82 @@ else
   else
     ok "callee-mediated store reads back '$out_new'/$rc_new both ways - identical, and still wrong (see MM-RGN-3 in docs/memory-model.md)"
   fi
+fi
+
+# --------------------------------------------------------------------
+echo
+echo "== 6. a tree built and dropped in a region is freed by the reset alone =="
+# --------------------------------------------------------------------
+# A recursive type is covered when every field of every constructor is,
+# given that it is: `dropFreeTyIn` answers a greatest fixpoint. A
+# compiler that stops at its depth limit instead keeps the release, and
+# walks every node just before the reset discards them. The closure
+# variant is the boundary: a function field can own a resource, so its
+# tree keeps the release however the type recurses.
+cat > "$work/tree.ax" <<'AX'
+(import IO)
+
+(data Tree
+  (Leaf)
+  (Node Tree Int Tree))
+
+(:: build (-> Int Int Tree))
+(fn (build d k)
+  (if (== d 0)
+    (Leaf)
+    (Node (build (- d 1) (* k 2)) k (build (- d 1) (+ (* k 2) 1)))))
+
+(:: total (-> Tree Int))
+(fn (total t)
+  (match t
+    ((Leaf) 0)
+    ((Node l v r) (+ v (+ (total l) (total r))))))
+
+(:: score (-> Int Int))
+(fn (score depth)
+  (region r
+    {
+      (let t (build depth 1))
+      (total t)
+    }))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let mut sum 0)
+    (for i in 0..200
+      (set sum (+ sum (score 10))))
+    (println sum)
+  })
+AX
+sed -e 's/(Node Tree Int Tree))/(Node Tree (-> Int Int) Tree))/' \
+    -e 's/(\* k 2)) k (build/(* k 2)) (lambda (x) (+ x k)) (build/' \
+    -e 's/((Node l v r) (+ v /((Node l f r) (+ (f 0) /' "$work/tree.ax" > "$work/tree-fn.ax"
+grep -q '(-> Int Int)' "$work/tree-fn.ax" || bad "the closure variant of the tree was not written"
+score_releases() { awk '/^define .*@score\(/,/^}/' "$1" | grep -c 'axiom_release'; }
+if "$axc" emit-llvm "$work/tree.ax" -o "$work/tree.ll" >"$work/tree.log" 2>&1 \
+   && "$axc" emit-llvm "$work/tree-fn.ax" -o "$work/tree-fn.ll" >>"$work/tree.log" 2>&1; then
+  n_tree="$(score_releases "$work/tree.ll")"; n_fn="$(score_releases "$work/tree-fn.ll")"
+  if (( n_tree != 0 )); then
+    bad "the tree's region still releases it ($n_tree call(s)) - the drop-free check stopped at recursion"
+  elif (( n_fn == 0 )); then
+    bad "the closure tree's region dropped its release - a function field can own a resource"
+  else
+    ok "a recursive tree is freed by the reset alone; one with a closure field keeps its release ($n_fn)"
+  fi
+  if "$axc" build --input "$work/tree.ax" --output "$work/tree-prog" >>"$work/tree.log" 2>&1; then
+    out_tree="$("$work/tree-prog")"; rc_tree=$?
+    if [[ "$out_tree" == 104755200 && $rc_tree == 0 ]]; then
+      ok "two hundred regions of a 1,023-node tree answer 104755200"
+    else
+      bad "the tree program answers '$out_tree' (exit $rc_tree), wanted 104755200"
+    fi
+  else
+    bad "could not build the tree program"; sed 's/^/     /' "$work/tree.log" | head -10
+  fi
+else
+  bad "could not emit the tree probes"; sed 's/^/     /' "$work/tree.log" | head -10
 fi
 
 echo

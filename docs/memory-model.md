@@ -2965,7 +2965,10 @@ The call, binding, join and scrutinee paths each have an ablation check:
 **MM-RGN-6 (H, narrowed from the design proposal). Regions and counting
 compose.** A region reset reclaims its extent whatever the reference
 counts say. Inside the region, the emitter omits only the releases that
-the implemented construction or freshness checks prove are covered. All
+the implemented construction or freshness checks prove are covered. A
+covered value's type holds no closure and no resource at any depth. A
+recursive type is checked as a greatest fixpoint, so a tree built in a
+region is freed by the reset alone, with no release walk first. All
 other counting traffic is still emitted, including field-store ownership
 transfers, unknown or borrowed results, and foreign destruction paths.
 Outside a region, those checks never justify dropping a release that

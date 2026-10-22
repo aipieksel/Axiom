@@ -32318,6 +32318,16 @@
 ; Only values proved to contain no callbacks may omit their releases.
 (pub :: dropFreeTy (-> Int ASTNode Int Bool))
 (pub fn (dropFreeTy cg ty depth)
+  (dropFreeTyIn cg ty depth vecNew))
+
+; `seen` names the types whose check is in progress. One named again
+; is assumed free, so the answer is a greatest fixpoint: a recursive
+; type such as a tree is drop-free when every field of every
+; constructor is, given that it is. A closure or a resource can only
+; enter through some field, and every field is still checked; `depth`
+; bounds the walk through type arguments.
+(:: dropFreeTyIn (-> Int ASTNode Int Names Bool))
+(fn (dropFreeTyIn cg ty depth seen)
   (if (|| (nodeSame ty nilNode) (<= depth 0))
     false
     (if (== (fldClass cg ty) 0)
@@ -32329,57 +32339,83 @@
           (if (strEq n "String")
             true
             (if (|| (strEq n "Option") (strEq n "Vec"))
-              (dropFreeTypes cg (nodeBChildren ty) (- depth 1) 0)
-              {
-                (let entry (lookupType (memGetWordVec cg 3) n))
-                (if (|| (== entry 0) (== (eKind entry) TF_DATA))
-                  ; Data type names have no complete registry entry.
-                  ; Every constructor must be free of drops;
-                  ; an unknown field or recursive depth limit abstains.
-                  {
-                    (let decls (readAstNodes cg 8))
-                    (let mut i 0)
-                    (let mut found false)
-                    (let mut safe true)
+              (dropFreeTypes cg (nodeBChildren ty) (- depth 1) 0 seen)
+              (if (dropFreeSeen seen n)
+                true
+                {
+                  (let inner (dropFreeSeenWith seen n))
+                  (let entry (lookupType (memGetWordVec cg 3) n))
+                  (if (|| (== entry 0) (== (eKind entry) TF_DATA))
+                    ; Data type names have no complete registry entry.
+                    ; Every constructor must be free of drops;
+                    ; an unknown field or recursive depth limit abstains.
                     {
-                      (while (< i (vecLen decls))
-                        {
+                      (let decls (readAstNodes cg 8))
+                      (let mut i 0)
+                      (let mut found false)
+                      (let mut safe true)
+                      {
+                        (while (< i (vecLen decls))
                           {
-                            (let d (vecGet decls i))
-                            (if (&& (== (nodeTag d) TAG_D_DATA) (strEq (cgDeclaredTypeName d) n))
-                              {
-                                (let ctors (nodeBChildren d))
-                                (let mut j 0)
+                            {
+                              (let d (vecGet decls i))
+                              (if (&& (== (nodeTag d) TAG_D_DATA) (strEq (cgDeclaredTypeName d) n))
                                 {
-                                  (set found true)
-                                  (while (< j (vecLen ctors))
-                                    {
-                                      (set safe (&& safe
-                                                  (dropFreeTypes cg
-                                                    (nodeTyChildren (vecGet ctors j)) (- depth 1)
-                                                    0)))
-                                      (set j (+ j 1))
-                                    })
-                                }
-                              })
-                          }
-                          (set i (+ i 1))
-                        })
-                      (&& found safe)
+                                  (let ctors (nodeBChildren d))
+                                  (let mut j 0)
+                                  {
+                                    (set found true)
+                                    (while (< j (vecLen ctors))
+                                      {
+                                        (set safe (&& safe
+                                                    (dropFreeTypes cg
+                                                      (nodeTyChildren (vecGet ctors j)) (- depth 1)
+                                                      0 inner)))
+                                        (set j (+ j 1))
+                                      })
+                                  }
+                                })
+                            }
+                            (set i (+ i 1))
+                          })
+                        (&& found safe)
+                      }
                     }
-                  }
-                  (dropFreeFields cg entry (- depth 1) 0))
-              }))
+                    (dropFreeFields cg entry (- depth 1) 0 inner))
+                })))
         }))))
 
-(pub :: dropFreeTypes (-> Int (Vec ASTNode) Int Int Bool))
-(pub fn (dropFreeTypes cg tys depth i)
+(:: dropFreeSeen (-> Names String Bool))
+(fn (dropFreeSeen seen n)
+  {
+    (let mut hit false)
+    {
+      (for s in seen
+        (if (strEq s n)
+          (set hit true)))
+      hit
+    }
+  })
+
+(:: dropFreeSeenWith (-> Names String Names))
+(fn (dropFreeSeenWith seen n)
+  {
+    (let out vecNew)
+    {
+      (for s in seen
+        (vecPush out s))
+      (vecPush out n)
+    }
+  })
+
+(pub :: dropFreeTypes (-> Int (Vec ASTNode) Int Int Names Bool))
+(pub fn (dropFreeTypes cg tys depth i seen)
   (if (>= i (vecLen tys))
     true
-    (&& (dropFreeTy cg (vecGet tys i) depth) (dropFreeTypes cg tys depth (+ i 1)))))
+    (&& (dropFreeTyIn cg (vecGet tys i) depth seen) (dropFreeTypes cg tys depth (+ i 1) seen))))
 
-(pub :: dropFreeFields (-> Int Int Int Int Bool))
-(pub fn (dropFreeFields cg entry depth i)
+(pub :: dropFreeFields (-> Int Int Int Int Names Bool))
+(pub fn (dropFreeFields cg entry depth i seen)
   (if (|| (== (eKind entry) TF_WORD) (>= i (eArity entry)))
     true
     {
@@ -32387,7 +32423,7 @@
         (if (== (eKind entry) TF_STRUCT)
           (nodeTyChild (vecGet (eStructFields entry) i))
           (vecGet (eFieldTysVec entry) i)))
-      (&& (dropFreeTy cg ty depth) (dropFreeFields cg entry depth (+ i 1)))
+      (&& (dropFreeTyIn cg ty depth seen) (dropFreeFields cg entry depth (+ i 1) seen))
     }))
 
 (pub :: dropFreeExpr (-> Int ASTNode Bool))
@@ -32408,7 +32444,7 @@
               (let n (nodeAName hd))
               (let entry (lookupType (memGetWordVec cg 3) n))
               (if (!= entry 0)
-                (dropFreeFields cg entry 16 0)
+                (dropFreeFields cg entry 16 0 (vecPush vecNew n))
                 {
                   (let sig (findFSigCg cg (mangledForCg cg n)))
                   (if (== sig 0)

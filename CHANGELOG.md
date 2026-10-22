@@ -16,6 +16,13 @@ its changelog too.
 
 ## Unreleased
 
+- A recursive data structure built and dropped inside a `region` is
+  freed by the region's reset alone. The emitter used to keep the
+  release, and walked every node of a tree just before the reset
+  discarded them all; on a depth-23 tree that walk was 40 to 54% of
+  building and freeing it. A type that holds a closure at any depth
+  keeps its release. Tested by `scripts/check-region-reclaim.sh`.
+
 - A function-typed struct field can declare what the functions it holds
   may perform, with the `;@axiom:effect(...)` lines a function uses,
   written above the field. A call through the field is charged the
