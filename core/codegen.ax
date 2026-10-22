@@ -436,52 +436,52 @@
 ;            linear scan while they are, which is the REPL's and LSP's
 ;            partial paths.
 (pub struct CG
-  (lines : (Vec Int))
-  (tmp : Int)
-  (result : String)
-  (types : (Vec Int))
-  (tagN : Int)
-  (argVec : Nodes)
+  (mut lines : (Vec Int))
+  (mut tmp : Int)
+  (mut result : String)
+  (mut types : (Vec Int))
+  (mut tagN : Int)
+  (mut argVec : Nodes)
   (symnames : (Vec Int))
   (symregs : (Vec Int))
-  (decls : Nodes)
-  (argsTyped : String)
+  (mut decls : Nodes)
+  (mut argsTyped : String)
   (strings : (Vec Int))
-  (curBlock : String)
-  (mangleBares : (Vec Int))
-  (mangleFulls : (Vec Int))
-  (resultIsFloat : Int)
-  (floatSigs : (Vec Int))
+  (mut curBlock : String)
+  (mut mangleBares : (Vec Int))
+  (mut mangleFulls : (Vec Int))
+  (mut resultIsFloat : Int)
+  (mut floatSigs : (Vec Int))
   (symfloats : (Vec Int))
-  (curParams : Int)
-  (curFlags : Int)
+  (mut curParams : Int)
+  (mut curFlags : Int)
   (macros : (Vec Int))
   (symkinds : (Vec Int))
   (pendingLams : (Vec Int))
-  (lamN : Int)
+  (mut lamN : Int)
   (thunkFulls : (Vec Int))
   (thunkArities : (Vec Int))
-  (thunksEmitted : Int)
-  (target : Int)
-  (tcoName : Int)
-  (tcoSlots : (Vec Int))
-  (tcoLabel : String)
-  (tailOK : Int)
-  (terminated : Int)
+  (mut thunksEmitted : Int)
+  (mut target : Int)
+  (mut tcoName : Int)
+  (mut tcoSlots : (Vec Int))
+  (mut tcoLabel : String)
+  (mut tailOK : Int)
+  (mut terminated : Int)
   (effDecls : (Vec Int))
   (effOps : (Vec Int))
-  (curModule : Int)
+  (mut curModule : Int)
   (dataTyNames : (Vec String))
-  (curDeclNode : ASTNode)
-  (sigIntern : Int)
-  (sigById : (Vec Int))
-  (bareIntern : Int)
-  (bareFirst : (Vec Int))
-  (tailRetain : (Vec Int))
-  (pendingOwned : Strings)
-  (allocaMark : Int)
-  (hoisted : (Vec String))
-  (argEv : (Vec Int))
+  (mut curDeclNode : ASTNode)
+  (mut sigIntern : Int)
+  (mut sigById : (Vec Int))
+  (mut bareIntern : Int)
+  (mut bareFirst : (Vec Int))
+  (mut tailRetain : (Vec Int))
+  (mut pendingOwned : Strings)
+  (mut allocaMark : Int)
+  (mut hoisted : (Vec String))
+  (mut argEv : (Vec Int))
   (pairState : (Vec Int)))
 
 ; The evidence class of each spine argument, pushed in lockstep with
@@ -728,9 +728,8 @@
 ;@axiom:effect(unsafe)
 (fn (cgSetResult cg value)
   {
-    (let old (memGetWord cg 2))
-    (memSetWord cg 2 value)
-    (__release old)
+    (let c (as cg CG))
+    (set c.result value)
     cg
   })
 
@@ -738,9 +737,8 @@
 ;@axiom:effect(unsafe)
 (fn (cgSetArgsTyped cg value)
   {
-    (let old (memGetWord cg 9))
-    (memSetWord cg 9 value)
-    (__release old)
+    (let c (as cg CG))
+    (set c.argsTyped value)
     cg
   })
 
@@ -748,9 +746,8 @@
 ;@axiom:effect(unsafe)
 (fn (cgSetBlock cg value)
   {
-    (let old (memGetWord cg 11))
-    (memSetWord cg 11 value)
-    (__release old)
+    (let c (as cg CG))
+    (set c.curBlock value)
     cg
   })
 
@@ -759,22 +756,29 @@
 ;@axiom:effect(unsafe)
 (fn (cgSetHoisted cg value)
   {
-    (let old (memGetWord cg 44))
-    (memSetWord cg 44 value)
-    (__release old)
+    (let c (as cg CG))
+    (set c.hoisted value)
     cg
   })
 
 ; The queue owns each String until its bytes reach the output buffer.
 (:: cgHoisted (-> Int (Vec String)))
+;@axiom:effect(unsafe)
 (fn (cgHoisted cg)
-  (memGetWordVec cg 44))
+  {
+    (let c (as cg CG))
+    c.hoisted
+  })
 
 ; Pending entries own the compiler's register spellings. Their contents
 ; describe values in emitted code; dropping an entry only retires its text.
 (:: cgPendingStrings (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgPendingStrings cg)
-  (memGetWordVec cg 42))
+  {
+    (let c (as cg CG))
+    c.pendingOwned
+  })
 
 (:: cgPendingPush (-> Int String Int))
 (fn (cgPendingPush cg value)
@@ -799,9 +803,8 @@
 ;@axiom:effect(unsafe)
 (fn (cgPendingReset cg)
   {
-    (let old (memGetWord cg 42))
-    (memSetWord cg 42 vecNew)
-    (__release old)
+    (let c (as cg CG))
+    (set c.pendingOwned vecNew)
     cg
   })
 
@@ -809,387 +812,735 @@
 ; Field access for `CG`.
 ;
 ; The emitter hands its `CG` around as the record's address, an `Int`.
-; The functions below are the only code that reads or writes its words
-; by number, and each one answers or takes the field's own type. A
-; `String` or `Vec` reader answers a share of its own, as
-; `memGetWordStr` and `memGetWordVec` do. A plain setter takes a share
-; of what it stores and keeps none of the value it displaces; the
-; `cgSet*` setters above, and `cgReplaceLines` and `cgResetAppArgs`
-; below, give the displaced share back.
+; Readers cast that address back to `CG` and read the field. A raw
+; word store is not a field store, so a field read of a slot written
+; only that way answers the value the record was built with. A
+; reference field keeps one share of what a setter installs and gives
+; the displaced share back. An `Int` field that holds a reference
+; takes that share with `__retainref` before the bits are stored, and
+; does not give the displaced share back: the field's type is `Int`,
+; so the store itself cannot. `symRestore` still writes the length
+; word of a symbol vector in place.
 ; ------------------------------------------------------------------
 ; Word 0: the emitted lines, in order.
 (:: cgLines (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgLines cg)
-  (memGetWordVec cg 0))
+  {
+    (let c (as cg CG))
+    (as c.lines Strings)
+  })
 
 ; Word 0 again, as the word vector `symtabNames` and `linesCallSym`
 ; take. obfuscate.ax calls `symtabNames` with its own buffer as words.
 (:: cgLineWords (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgLineWords cg)
-  (memGetWordVec cg 0))
+  {
+    (let c (as cg CG))
+    (as c.lines Ints)
+  })
 
 ; Word 1: the next register number.
 (:: cgTmp (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgTmp cg)
-  (memGetWord cg 1))
+  {
+    (let c (as cg CG))
+    c.tmp
+  })
 
 (:: cgSetTmp (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTmp cg n)
-  (memSetWord cg 1 n))
+  {
+    (let c (as cg CG))
+    (set c.tmp n)
+    cg
+  })
 
 ; Word 2: the register or constant that holds the value just emitted.
 (:: cgResult (-> Int String))
+;@axiom:effect(unsafe)
 (fn (cgResult cg)
-  (memGetWordStr cg 2))
+  {
+    (let c (as cg CG))
+    c.result
+  })
 
 ; Word 3: the type registry, one `TypeEntry` address per constructor
 ; and struct (`lookupType`).
 (:: cgTypes (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgTypes cg)
-  (memGetWordVec cg 3))
+  {
+    (let c (as cg CG))
+    (as c.types Ints)
+  })
 
 (:: cgSetTypes (-> Int Ints Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTypes cg types)
-  (memSetWord cg 3 types))
+  {
+    (let c (as cg CG))
+    (set c.types types)
+    cg
+  })
 
 ; Word 4: the next constructor tag.
 (:: cgTagN (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgTagN cg)
-  (memGetWord cg 4))
+  {
+    (let c (as cg CG))
+    c.tagN
+  })
 
 (:: cgSetTagN (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTagN cg n)
-  (memSetWord cg 4 n))
+  {
+    (let c (as cg CG))
+    (set c.tagN n)
+    cg
+  })
 
 ; Word 5: the arguments `walkAppChain` collects, innermost first.
 (:: cgArgVec (-> Int Nodes))
+;@axiom:effect(unsafe)
 (fn (cgArgVec cg)
-  (readAstNodes cg 5))
+  {
+    (let c (as cg CG))
+    c.argVec
+  })
 
 ; Words 6, 7, 16 and 20: the symbol table, four parallel vectors of
 ; names, registers, float flags and binding kinds (`bindSym`,
 ; `symRestore`).
 (:: cgSymNames (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgSymNames cg)
-  (memGetWordVec cg 6))
+  {
+    (let c (as cg CG))
+    (as c.symnames Strings)
+  })
 
 (:: cgSymRegs (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgSymRegs cg)
-  (memGetWordVec cg 7))
+  {
+    (let c (as cg CG))
+    (as c.symregs Strings)
+  })
 
 (:: cgSymFloats (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgSymFloats cg)
-  (memGetWordVec cg 16))
+  {
+    (let c (as cg CG))
+    (as c.symfloats Ints)
+  })
 
 (:: cgSymKinds (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgSymKinds cg)
-  (memGetWordVec cg 20))
+  {
+    (let c (as cg CG))
+    (as c.symkinds Ints)
+  })
 
 ; Word 8: every declaration in the program.
 (:: cgDecls (-> Int Nodes))
+;@axiom:effect(unsafe)
 (fn (cgDecls cg)
-  (readAstNodes cg 8))
+  {
+    (let c (as cg CG))
+    c.decls
+  })
 
 (:: cgSetDecls (-> Int Nodes Int))
+;@axiom:effect(unsafe)
 (fn (cgSetDecls cg decls)
-  (memSetWord cg 8 decls))
+  {
+    (let c (as cg CG))
+    (set c.decls decls)
+    cg
+  })
 
 ; Word 9: the argument list `emitArgsList` spelled with its types.
 (:: cgArgsTyped (-> Int String))
+;@axiom:effect(unsafe)
 (fn (cgArgsTyped cg)
-  (memGetWordStr cg 9))
+  {
+    (let c (as cg CG))
+    c.argsTyped
+  })
 
 ; Word 10: the string literals, in first-use order (`internString`).
 (:: cgStrings (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgStrings cg)
-  (memGetWordVec cg 10))
+  {
+    (let c (as cg CG))
+    (as c.strings Strings)
+  })
 
 ; Word 11: the label of the block being emitted.
 (:: cgBlock (-> Int String))
+;@axiom:effect(unsafe)
 (fn (cgBlock cg)
-  (memGetWordStr cg 11))
+  {
+    (let c (as cg CG))
+    c.curBlock
+  })
 
 ; Words 12 and 13: the mangle map, each bare name beside its full
 ; spelling.
 (:: cgMangleBares (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgMangleBares cg)
-  (memGetWordVec cg 12))
+  {
+    (let c (as cg CG))
+    (as c.mangleBares Strings)
+  })
 
 (:: cgSetMangleBares (-> Int Strings Int))
+;@axiom:effect(unsafe)
 (fn (cgSetMangleBares cg bares)
-  (memSetWord cg 12 bares))
+  {
+    (__retainref bares)
+    (let c (as cg CG))
+    (set c.mangleBares (as bares (Vec Int)))
+    cg
+  })
 
 (:: cgMangleFulls (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgMangleFulls cg)
-  (memGetWordVec cg 13))
+  {
+    (let c (as cg CG))
+    (as c.mangleFulls Strings)
+  })
 
 (:: cgSetMangleFulls (-> Int Strings Int))
+;@axiom:effect(unsafe)
 (fn (cgSetMangleFulls cg fulls)
-  (memSetWord cg 13 fulls))
+  {
+    (__retainref fulls)
+    (let c (as cg CG))
+    (set c.mangleFulls (as fulls (Vec Int)))
+    cg
+  })
 
 ; Word 14: 1 when the value just emitted is a `Float`.
 (:: cgResultFloat (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgResultFloat cg)
-  (memGetWord cg 14))
+  {
+    (let c (as cg CG))
+    c.resultIsFloat
+  })
 
 (:: cgSetResultFloat (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetResultFloat cg flag)
-  (memSetWord cg 14 flag))
+  {
+    (let c (as cg CG))
+    (set c.resultIsFloat flag)
+    cg
+  })
 
 ; Word 15: the `FSig` table, one address per signature.
 (:: cgFloatSigs (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgFloatSigs cg)
-  (memGetWordVec cg 15))
+  {
+    (let c (as cg CG))
+    (as c.floatSigs Ints)
+  })
 
 (:: cgSetFloatSigs (-> Int Ints Int))
+;@axiom:effect(unsafe)
 (fn (cgSetFloatSigs cg sigs)
-  (memSetWord cg 15 sigs))
+  {
+    (let c (as cg CG))
+    (set c.floatSigs sigs)
+    cg
+  })
 
 ; Word 17: the parameter names of the function or lambda being emitted,
 ; or the word 0 before the first one.
 (:: cgHasParams (-> Int Bool))
+;@axiom:effect(unsafe)
 (fn (cgHasParams cg)
-  (!= (memGetWord cg 17) 0))
+  {
+    (let c (as cg CG))
+    (!= c.curParams 0)
+  })
 
 (:: cgParams (-> Int Names))
+;@axiom:effect(unsafe)
 (fn (cgParams cg)
-  (memGetWordVec cg 17))
+  {
+    (let c (as cg CG))
+    (as c.curParams Names)
+  })
 
 (:: cgSetParams (-> Int Names Int))
+;@axiom:effect(unsafe)
 (fn (cgSetParams cg params)
-  (memSetWord cg 17 params))
+  {
+    (__retainref params)
+    (let c (as cg CG))
+    (set c.curParams (as params Int))
+    cg
+  })
 
 ; Word 18: the float flags of the signature being emitted, one per
 ; arrow position, or no vector at all for a lifted lambda.
 (:: cgHasParamFlags (-> Int Bool))
+;@axiom:effect(unsafe)
 (fn (cgHasParamFlags cg)
-  (!= (memGetWord cg 18) 0))
+  {
+    (let c (as cg CG))
+    (!= c.curFlags 0)
+  })
 
 (:: cgParamFlags (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgParamFlags cg)
-  (memGetWordVec cg 18))
+  {
+    (let c (as cg CG))
+    (as c.curFlags Ints)
+  })
 
 (:: cgSetParamFlags (-> Int Ints Int))
+;@axiom:effect(unsafe)
 (fn (cgSetParamFlags cg flags)
-  (memSetWord cg 18 flags))
+  {
+    (__retainref flags)
+    (let c (as cg CG))
+    (set c.curFlags (as flags Int))
+    cg
+  })
 
 (:: cgClearParamFlags (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgClearParamFlags cg)
-  (memSetWord cg 18 0))
+  {
+    (let c (as cg CG))
+    (set c.curFlags 0)
+    cg
+  })
 
 ; Word 21: the lambdas waiting to be lifted, one `mkLamDesc` record
 ; each.
 (:: cgPendingLams (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgPendingLams cg)
-  (memGetWordVec cg 21))
+  {
+    (let c (as cg CG))
+    (as c.pendingLams Ints)
+  })
 
 ; Word 22: the next lambda number.
 (:: cgLamN (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgLamN cg)
-  (memGetWord cg 22))
+  {
+    (let c (as cg CG))
+    c.lamN
+  })
 
 (:: cgSetLamN (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetLamN cg n)
-  (memSetWord cg 22 n))
+  {
+    (let c (as cg CG))
+    (set c.lamN n)
+    cg
+  })
 
 ; Words 23 to 25: the thunks bare function references demanded, their
 ; arities, and how many of them are written out.
 (:: cgThunkFulls (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgThunkFulls cg)
-  (memGetWordVec cg 23))
+  {
+    (let c (as cg CG))
+    (as c.thunkFulls Strings)
+  })
 
 (:: cgThunkArities (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgThunkArities cg)
-  (memGetWordVec cg 24))
+  {
+    (let c (as cg CG))
+    (as c.thunkArities Ints)
+  })
 
 (:: cgThunksEmitted (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgThunksEmitted cg)
-  (memGetWord cg 25))
+  {
+    (let c (as cg CG))
+    c.thunksEmitted
+  })
 
 (:: cgSetThunksEmitted (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetThunksEmitted cg n)
-  (memSetWord cg 25 n))
+  {
+    (let c (as cg CG))
+    (set c.thunksEmitted n)
+    cg
+  })
 
 ; Word 26: the target code (`targetCode`).
 (:: cgTarget (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgTarget cg)
-  (memGetWord cg 26))
+  {
+    (let c (as cg CG))
+    c.target
+  })
 
 (:: cgSetTarget (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTarget cg t)
-  (memSetWord cg 26 t))
+  {
+    (let c (as cg CG))
+    (set c.target t)
+    cg
+  })
 
 ; Word 27: the symbol of the function whose self tail calls are being
 ; turned into jumps, or the word 0 outside one (`openTailLoop`).
 (:: cgInTailLoop (-> Int Bool))
+;@axiom:effect(unsafe)
 (fn (cgInTailLoop cg)
-  (!= (memGetWord cg 27) 0))
+  {
+    (let c (as cg CG))
+    (!= c.tcoName 0)
+  })
 
 (:: cgTcoName (-> Int String))
+;@axiom:effect(unsafe)
 (fn (cgTcoName cg)
-  (memGetWordStr cg 27))
+  {
+    (let c (as cg CG))
+    (as c.tcoName String)
+  })
 
 (:: cgTcoNameWord (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgTcoNameWord cg)
-  (memGetWord cg 27))
+  {
+    (let c (as cg CG))
+    c.tcoName
+  })
 
 (:: cgSetTcoName (-> Int String Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTcoName cg name)
-  (memSetWord cg 27 name))
+  {
+    (__retainref name)
+    (let c (as cg CG))
+    (set c.tcoName (as name Int))
+    cg
+  })
 
 (:: cgSetTcoNameWord (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTcoNameWord cg w)
-  (memSetWord cg 27 w))
+  {
+    (let c (as cg CG))
+    (set c.tcoName w)
+    cg
+  })
 
 ; Words 28 and 29: that loop's parameter slots and its header label.
 (:: cgTcoSlots (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgTcoSlots cg)
-  (memGetWordVec cg 28))
+  {
+    (let c (as cg CG))
+    (as c.tcoSlots Strings)
+  })
 
 (:: cgSetTcoSlots (-> Int Strings Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTcoSlots cg slots)
-  (memSetWord cg 28 slots))
+  {
+    (__retainref slots)
+    (let c (as cg CG))
+    (set c.tcoSlots (as slots (Vec Int)))
+    cg
+  })
 
 (:: cgTcoLabel (-> Int String))
+;@axiom:effect(unsafe)
 (fn (cgTcoLabel cg)
-  (memGetWordStr cg 29))
+  {
+    (let c (as cg CG))
+    c.tcoLabel
+  })
 
 (:: cgSetTcoLabel (-> Int String Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTcoLabel cg label)
-  (memSetWord cg 29 label))
+  {
+    (let c (as cg CG))
+    (set c.tcoLabel label)
+    cg
+  })
 
 ; Word 30: the tail-call token `emitExprTail` arms for `dispatchCall`.
 (:: cgTailOK (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgTailOK cg)
-  (memGetWord cg 30))
+  {
+    (let c (as cg CG))
+    c.tailOK
+  })
 
 (:: cgSetTailOK (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTailOK cg token)
-  (memSetWord cg 30 token))
+  {
+    (let c (as cg CG))
+    (set c.tailOK token)
+    cg
+  })
 
 ; Word 31: 1 when the current block already ended with a terminator.
 (:: cgTerminated (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgTerminated cg)
-  (memGetWord cg 31))
+  {
+    (let c (as cg CG))
+    c.terminated
+  })
 
 (:: cgSetTerminated (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTerminated cg flag)
-  (memSetWord cg 31 flag))
+  {
+    (let c (as cg CG))
+    (set c.terminated flag)
+    cg
+  })
 
 ; Words 32 and 33: the effect declarations and the effect operations,
 ; one `EffEnt` address each.
 (:: cgEffDecls (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgEffDecls cg)
-  (memGetWordVec cg 32))
+  {
+    (let c (as cg CG))
+    (as c.effDecls Ints)
+  })
 
 (:: cgEffOps (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgEffOps cg)
-  (memGetWordVec cg 33))
+  {
+    (let c (as cg CG))
+    (as c.effOps Ints)
+  })
 
 ; Word 34: the module of the declaration being emitted, as `nodeModule`
 ; answers it: its name, or the word 0 for the entry file.
 (:: cgModuleWord (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgModuleWord cg)
-  (memGetWord cg 34))
+  {
+    (let c (as cg CG))
+    c.curModule
+  })
 
 (:: cgModule (-> Int String))
+;@axiom:effect(unsafe)
 (fn (cgModule cg)
-  (memGetWordStr cg 34))
+  {
+    (let c (as cg CG))
+    (as c.curModule String)
+  })
 
 (:: cgSetModule (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetModule cg m)
-  (memSetWord cg 34 m))
+  {
+    (let c (as cg CG))
+    (set c.curModule m)
+    cg
+  })
 
 ; Word 35: the names of the program's `data` types.
 (:: cgDataTyNames (-> Int Strings))
+;@axiom:effect(unsafe)
 (fn (cgDataTyNames cg)
-  (memGetWordVec cg 35))
+  {
+    (let c (as cg CG))
+    c.dataTyNames
+  })
 
 ; Word 36: the declaration being emitted, or `nilNode`.
 (:: cgCurDecl (-> Int ASTNode))
+;@axiom:effect(unsafe)
 (fn (cgCurDecl cg)
-  (readAstNode cg 36))
+  {
+    (let c (as cg CG))
+    c.curDeclNode
+  })
 
 (:: cgSetCurDecl (-> Int ASTNode Int))
+;@axiom:effect(unsafe)
 (fn (cgSetCurDecl cg d)
-  (memSetWord cg 36 d))
+  {
+    (let c (as cg CG))
+    (set c.curDeclNode d)
+    cg
+  })
 
 ; Words 37 and 38: the signature index `buildNameIndexes` writes, an
 ; `Intern` of names and the `FSig` for each id. Word 37 is 0 until it
 ; is built.
 (:: cgSigIntern (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSigIntern cg)
-  (memGetWord cg 37))
+  {
+    (let c (as cg CG))
+    c.sigIntern
+  })
 
 (:: cgSigById (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgSigById cg)
-  (memGetWordVec cg 38))
+  {
+    (let c (as cg CG))
+    (as c.sigById Ints)
+  })
 
 ; Words 39 and 40: the mangle and declaration indexes. Word 39 is the
 ; `Intern` of bare names, 0 until it is built; word 40 is the record
 ; `[first, decls, nullary, defined, arity]`, empty until it is built.
 (:: cgBareIntern (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgBareIntern cg)
-  (memGetWord cg 39))
+  {
+    (let c (as cg CG))
+    c.bareIntern
+  })
 
 (:: cgSetNameIndexes (-> Int Int Ints Int Ints Int))
+;@axiom:effect(unsafe)
 (fn (cgSetNameIndexes cg si byId bi rest)
   {
-    (memSetWord cg 37 si)
-    (memSetWord cg 38 byId)
-    (memSetWord cg 39 bi)
-    (memSetWord cg 40 rest)
+    (let c (as cg CG))
+    (set c.sigIntern si)
+    (set c.sigById byId)
+    (set c.bareIntern bi)
+    (set c.bareFirst rest)
+    cg
   })
 
 (:: cgDeclIndexBuilt (-> Int Bool))
+;@axiom:effect(unsafe)
 (fn (cgDeclIndexBuilt cg)
-  (>= (vecLen (memGetWordVec cg 40)) 5))
+  {
+    (let c (as cg CG))
+    (>= (vecLen c.bareFirst) 5)
+  })
 
 (:: cgBareFirst (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgBareFirst cg)
-  (vecGetVec (memGetWordVec cg 40) 0))
+  {
+    (let c (as cg CG))
+    (vecGetVec c.bareFirst 0)
+  })
 
 (:: cgDeclIntern (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgDeclIntern cg)
-  (vecGet (memGetWordVec cg 40) 1))
+  {
+    (let c (as cg CG))
+    (vecGet c.bareFirst 1)
+  })
 
 (:: cgDeclNullary (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgDeclNullary cg)
-  (vecGetVec (memGetWordVec cg 40) 2))
+  {
+    (let c (as cg CG))
+    (vecGetVec c.bareFirst 2)
+  })
 
 (:: cgDeclDefined (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgDeclDefined cg)
-  (vecGetVec (memGetWordVec cg 40) 3))
+  {
+    (let c (as cg CG))
+    (vecGetVec c.bareFirst 3)
+  })
 
 (:: cgDeclArity (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgDeclArity cg)
-  (vecGetVec (memGetWordVec cg 40) 4))
+  {
+    (let c (as cg CG))
+    (vecGetVec c.bareFirst 4)
+  })
 
 ; Word 41: the borrowed tail leaves of the function being emitted
 ; (`borrowedTailLeaves`).
 (:: cgTailRetain (-> Int Nodes))
+;@axiom:effect(unsafe)
 (fn (cgTailRetain cg)
-  (readAstNodes cg 41))
+  {
+    (let c (as cg CG))
+    (as c.tailRetain Nodes)
+  })
 
 (:: cgSetTailRetain (-> Int Nodes Int))
+;@axiom:effect(unsafe)
 (fn (cgSetTailRetain cg leaves)
-  (memSetWord cg 41 leaves))
+  {
+    (__retainref leaves)
+    (let c (as cg CG))
+    (set c.tailRetain (as leaves (Vec Int)))
+    cg
+  })
 
 ; Word 43: the line the function's hoisted allocas go in front of, or
 ; -1 outside a function body.
 (:: cgAllocaMark (-> Int Int))
+;@axiom:effect(unsafe)
 (fn (cgAllocaMark cg)
-  (memGetWord cg 43))
+  {
+    (let c (as cg CG))
+    c.allocaMark
+  })
 
 (:: cgSetAllocaMark (-> Int Int Int))
+;@axiom:effect(unsafe)
 (fn (cgSetAllocaMark cg mark)
-  (memSetWord cg 43 mark))
+  {
+    (let c (as cg CG))
+    (set c.allocaMark mark)
+    cg
+  })
 
 ; Word 45: the evidence class of each argument in word 5, pushed in
 ; lockstep with it.
 (:: cgArgEv (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (cgArgEv cg)
-  (memGetWordVec cg 45))
+  {
+    (let c (as cg CG))
+    (as c.argEv Ints)
+  })
 
 ; Swap in a rebuilt line buffer. The displaced buffer's share is given
 ; back only after the new one is in place.
@@ -1197,9 +1548,9 @@
 ;@axiom:effect(unsafe)
 (fn (cgReplaceLines cg lines)
   {
-    (let old (memGetWord cg 0))
-    (memSetWord cg 0 lines)
-    (__release old)
+    (__retainref lines)
+    (let c (as cg CG))
+    (set c.lines (as lines (Vec Int)))
     cg
   })
 
@@ -1210,12 +1561,9 @@
 ;@axiom:effect(unsafe)
 (fn (cgResetAppArgs cg)
   {
-    (let oldArgs (memGetWord cg 5))
-    (let oldEvs (memGetWord cg 45))
-    (memSetWord cg 5 nodesNew)
-    (memSetWord cg 45 vecNew)
-    (__release oldArgs)
-    (__release oldEvs)
+    (let c (as cg CG))
+    (set c.argVec nodesNew)
+    (set c.argEv vecNew)
     cg
   })
 
@@ -1231,31 +1579,59 @@
 ; `mustTailOK` compares it against the callee's, because LLVM's
 ; `musttail` demands identical prototypes under the C convention.
 (pub :: pairSlot (-> Int Int Int))
+;@axiom:effect(unsafe)
 (pub fn (pairSlot cg i)
-  (vecGet (memGetWordVec cg 46) i))
+  {
+    (let c (as cg CG))
+    (vecGet c.pairState i)
+  })
+
+; The cast is the result of this function, so a caller that stores an
+; element still sees that element's evidence. A cast written in the
+; argument of `vecSet` would drop the retain (MM-VAL-22) and the
+; record would die with the call.
+(:: pairStateAs (-> Int (Vec a)))
+;@axiom:effect(unsafe)
+(fn (pairStateAs cg)
+  {
+    (let c (as cg CG))
+    (as c.pairState (Vec a))
+  })
 
 (pub :: pairSetSlot (-> Int Int a Int))
 (pub fn (pairSetSlot cg i v)
   {
-    (vecSet (memGetWordVec cg 46) i v)
+    (vecSet (pairStateAs cg) i v)
     cg
   })
 
 ; Pair slot 2: the names of the functions eligible for the register-pair
 ; return (`buildNameIndexes`).
 (:: pairNames (-> Int Names))
+;@axiom:effect(unsafe)
 (fn (pairNames cg)
-  (vecGetVec (memGetWordVec cg 46) 2))
+  {
+    (let c (as cg CG))
+    (vecGetVec c.pairState 2)
+  })
 
 ; Pair slot 3: the register holding the tag of the pair being returned.
 (:: pairTagReg (-> Int String))
+;@axiom:effect(unsafe)
 (fn (pairTagReg cg)
-  (vecGetStr (memGetWordVec cg 46) 3))
+  {
+    (let c (as cg CG))
+    (vecGetStr c.pairState 3)
+  })
 
 ; Pair slot 17: the owning `mut` slots in scope (`emitLetMAt`).
 (:: pairOwningSlots (-> Int Ints))
+;@axiom:effect(unsafe)
 (fn (pairOwningSlots cg)
-  (vecGetVec (memGetWordVec cg 46) 17))
+  {
+    (let c (as cg CG))
+    (vecGetVec c.pairState 17)
+  })
 
 (:: cgNullVec (Vec a))
 ;@axiom:effect(unsafe)
