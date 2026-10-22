@@ -308,9 +308,9 @@ alias_old = '''        (let alias (bsParamAlias b (nodeAName inner)))
         (epUseApply b alias u)
         (if (== alias bsOpaque)
           0
-          (match (bsValsOf b (nodeAName inner))
-            ((None) 1)
-            ((Some values) values.complete)))'''
+          (if (let (Some values) (bsValsOf b (nodeAName inner)))
+            values.complete
+            1))'''
 alias_new = '''        (epUseApply b (bsParamAlias b (nodeAName inner)) u)
         1'''
 assert s.count(alias_old) == 1, 'missing callback alias enforcement seam'
