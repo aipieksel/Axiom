@@ -3390,7 +3390,13 @@ segfault at a thousand iterations (issue #35; `tests/stdlib/489-map-free.ax` and
 arm of `scripts/check-container-reclaim.sh`).
 
 A conforming implementation **MAY** cancel a retain against a release it
-can pair statically. The licence costs nothing observable. A conforming
+can pair statically. The compiler does so for a lent value, a counted
+field read or a vector element: passed to a callee that may write
+nothing, or bound by a `let` whose scope may write nothing and that it
+does not escape, the value takes no share. "May write" is a fixed point
+over the call graph: a field `set`, a raw store, a release, a call
+through a function value or an `extern`, or a call to a function that
+may. Nothing else can release the value while it is borrowed. The licence costs nothing observable. A conforming
 program observes no address (`MM-EXEC-12`), so reclamation timing shows
 only as peak RSS. Determinism (`MM-EXEC-11`) holds, because counts are a
 function of program text and input, never of layout.

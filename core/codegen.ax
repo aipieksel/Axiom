@@ -1266,7 +1266,8 @@
   (ret : Int)
   (consume : Int)
   (transfer : Int)
-  (callers : Int))
+  (callers : Int)
+  (writes : Int))
 
 ; Word 10 of an FSig: 1 when the declaration carries
 ; `;@axiom:result(owned)` (MM-LIFE-2n), so a call's type-variable
@@ -1328,7 +1329,8 @@
                   :ret 0
                   :consume 0
                   :transfer 0
-                  :callers 0) Int))
+                  :callers 0
+                  :writes 0) Int))
           ; an `extern` item is a signed global under its LINKER
           ; SYMBOL (what `mangledForCg` answers for its name), with
           ; the masks the boundary contract gives it: a Rust shim
@@ -1368,7 +1370,8 @@
                     :ret 0
                     :consume 0
                     :transfer 0
-                    :callers 0) Int)))
+                    :callers 0
+                    :writes 1) Int)))
           (scanExternSigs items sigs (+ i 1))
         }
       })))
@@ -18579,6 +18582,7 @@
               (let emitTO (emitPhaseTick "emit/scan+index+ownership" emitT0))
               {
                 (let _flow (inferFlows cg0b allDecls))
+                (let _writes (inferWrites cg0b allDecls))
                 (let emitT1 (emitPhaseTick "emit/flows" emitTO))
                 {
                   (let ttHeader (concat "target triple = \"" (concat (targetTriple tcode) "\"")))
@@ -27113,6 +27117,262 @@
       }
     }))
 
+; Whether a call to `name` may write memory that a caller holds a
+; reference into: a field `set`, a raw store, a release, a syscall or
+; another primitive that is not a pure read, a call through a function
+; value or an `extern`, or a call to a function that may. A name with no
+; signature may. `inferWrites` fills the answer in before emission.
+(pub :: fnMayWrite (-> Int String Int))
+(pub fn (fnMayWrite cg name)
+  {
+    (let e (findFSigCg cg (mangledForCg cg name)))
+    (if (== e 0)
+      1
+      (memGetWord e 12))
+  })
+
+; The least fixed point of "may write" over the call graph: each
+; function's own body first, then any function that calls one that may
+; write, until nothing changes. A function starts at 0, so recursion
+; without a write stays 0. An `extern` starts at 1.
+(pub :: inferWrites (-> Int (Vec ASTNode) Int))
+(pub fn (inferWrites cg decls)
+  {
+    (let sigs vecNew)
+    (let callees vecNew)
+    {
+      (for d in decls
+        (if (== (nodeTag d) TAG_D_FN)
+          {
+            (let _m (cgSetModule cg (nodeModule d)))
+            (let _d (cgSetCurDecl cg d))
+            (let e (findFSigCg cg (nodeAName d)))
+            (if (!= e 0)
+              {
+                (let bound (writesBound (nodeCChild d) (nodeBNames d)))
+                (let names vecNew)
+                (if (writesIn cg (nodeCChild d) bound names 0)
+                  (memSetWord e 12 1))
+                (vecPush sigs e)
+                (vecPush callees names)
+              })
+          }))
+      (let mut changed true)
+      (while changed
+        {
+          (set changed false)
+          (for (e k) in sigs
+            (if (&& (== (memGetWord e 12) 0) (writesAnyCallee cg (vecGet callees k)))
+              {
+                (memSetWord e 12 1)
+                (set changed true)
+              }))
+        })
+      0
+    }
+  })
+
+; Whether anything in a `let`'s scope may write: its own forms, or a
+; function it calls. Asked during emission, after `inferWrites`.
+(pub :: scopeMayWrite (-> Int ASTNode Bool))
+(pub fn (scopeMayWrite cg body)
+  {
+    (let names vecNew)
+    (|| (writesIn cg body (writesBound body vecNew) names 1) (writesAnyCallee cg names))
+  })
+
+(:: writesAnyCallee (-> Int Names Bool))
+(fn (writesAnyCallee cg names)
+  {
+    (let mut hit false)
+    {
+      (for n in names
+        (if (! hit)
+          {
+            (let e (findFSigCg cg n))
+            (if (|| (== e 0) (== (memGetWord e 12) 1))
+              (set hit true))
+          }))
+      hit
+    }
+  })
+
+; Every name the body binds - parameters, `let` names, lambda
+; parameters and pattern binders. A call whose head is one of them
+; calls a function value, which may do anything.
+(:: writesBound (-> ASTNode Names Names))
+(fn (writesBound body params)
+  {
+    (let out vecNew)
+    {
+      (for p in params
+        (vecPush out p))
+      (writesBoundIn body out)
+      out
+    }
+  })
+
+(:: writesBoundIn (-> ASTNode Names ()))
+(fn (writesBoundIn e out)
+  (if (! (nodeSame e nilNode))
+    {
+      (let tg (nodeTag e))
+      (if (|| (== tg TAG_E_LET) (== tg TAG_E_LETM))
+        (vecPush out (nodeAName e)))
+      (if (== tg TAG_E_LAM)
+        (for p in (nodeANames e)
+          (vecPush out p)))
+      (if (== tg TAG_E_MATCH)
+        (for arm in (nodeBChildren e)
+          {
+            (let names (patBindersCg (nodeAChild arm) vecNew))
+            (if (!= (as names Int) 0)
+              (for n in names
+                (vecPush out n)))
+          }))
+      (let n (slotPartCount e))
+      (for k in 0..(if (< n 0)
+        0
+        n)
+        (writesBoundIn (slotPart e k) out))
+    }))
+
+; Whether `e` writes by itself, adding to `names` the mangled name of
+; every function it calls. An unknown shape answers true. `mode` 0 asks
+; about a function's body for its summary, where a `set` of a local
+; touches only the callee's own slot. `mode` 1 asks about a scope inside
+; the function being emitted, where a `set` of a local that holds a
+; reference may release the very container a binding borrows from, and
+; a call through a local is a call through a function value.
+(:: writesIn (-> Int ASTNode Names Names Int Bool))
+(fn (writesIn cg e bound names mode)
+  (if (nodeSame e nilNode)
+    false
+    {
+      (let tg (nodeTag e))
+      (if (|| (== tg TAG_E_SETF) (== tg TAG_E_HANDLE))
+        true
+        ; a lambda's body runs only where it is called, and a call
+        ; through a function value already answers true
+        (if (== tg TAG_E_LAM)
+          false
+          (if (== tg TAG_E_VAR)
+            {
+              (let n (nodeAName e))
+              (if (|| (writesNameIn n bound) (isPrimName n))
+                false
+                {
+                  (let full (mangledForCg cg n))
+                  (if (isNullaryFnCg cg full)
+                    (vecPush names full))
+                  false
+                })
+            }
+            (if (== tg TAG_E_APP)
+              (writesApp cg e bound names mode)
+              (if (&& (== mode 1) (&& (== tg TAG_E_SET) (writesSetsReference cg e)))
+                true
+                (writesParts cg e bound names mode))))))
+    }))
+
+; Does this `set` of a local store a reference? A slot holding one
+; releases it when overwritten; a scalar's slot holds nothing to release.
+(:: writesSetsReference (-> Int ASTNode Bool))
+(fn (writesSetsReference cg e)
+  {
+    (let ty (checkedValueTy (nodeBChild e)))
+    (|| (nodeSame ty nilNode) (!= (fldClass cg ty) 0))
+  })
+
+(:: writesParts (-> Int ASTNode Names Names Int Bool))
+(fn (writesParts cg e bound names mode)
+  {
+    (let n (slotPartCount e))
+    (if (< n 0)
+      true
+      {
+        (let mut hit false)
+        {
+          (for k in 0..n
+            (if (writesIn cg (slotPart e k) bound names mode)
+              (set hit true)))
+          hit
+        }
+      })
+  })
+
+(:: writesApp (-> Int ASTNode Names Names Int Bool))
+(fn (writesApp cg e bound names mode)
+  {
+    (let head (spineHead e))
+    (let argsWrite
+      {
+        (let mut hit false)
+        {
+          (for k in 1..(slotPartCount e)
+            (if (writesIn cg (slotPart e k) bound names mode)
+              (set hit true)))
+          hit
+        }
+      })
+    (if (!= (nodeTag head) TAG_E_VAR)
+      true
+      {
+        (let n (nodeAName head))
+        (if (|| (writesNameIn n bound) (&& (== mode 1) (isLocalValue cg n)))
+          true
+          (if (|| (isBinop n) (|| (isAndOr n) (isCastName n)))
+            argsWrite
+            (if (isPrimName n)
+              (|| argsWrite (! (writesReadOnlyPrim n)))
+              (if (!= (lookupType (cgTypes cg) n) 0)
+                argsWrite
+                {
+                  (let full (mangledForCg cg n))
+                  (let sig (findFSigCg cg full))
+                  ; surplus arguments call the closure the function
+                  ; answers, which may do anything
+                  (if (|| (== sig 0) (> (spineArity e) (arrowArity (readAstNode sig 3))))
+                    true
+                    {
+                      (vecPush names full)
+                      argsWrite
+                    })
+                }))))
+      })
+  })
+
+; The primitives that read and never write: arithmetic and comparison
+; on words, loads, a fresh allocation, taking a share, an address, the
+; float conversions, the arguments, and the index trap.
+(:: writesReadOnlyPrim (-> String Bool))
+(fn (writesReadOnlyPrim n)
+  (|| (isIntegerWordName n)
+    (|| (strEq n "__load64")
+      (|| (strEq n "__load8")
+        (|| (strEq n "__alloc")
+          (|| (strEq n "__retain")
+            (|| (strEq n "__retainref")
+              (|| (strEq n "__addr")
+                (|| (strEq n "__floatToBits")
+                  (|| (strEq n "__floatFromBits")
+                    (|| (strEq n "__intToFloat")
+                      (|| (strEq n "__floatToInt")
+                        (|| (strEq n "__argc")
+                          (|| (strEq n "__argv") (strEq n "__indexTrap")))))))))))))))
+
+(:: writesNameIn (-> String Names Bool))
+(fn (writesNameIn n bound)
+  {
+    (let mut hit false)
+    {
+      (for b in bound
+        (if (strEq b n)
+          (set hit true)))
+      hit
+    }
+  })
+
 ; An OWNED temporary handed to a call is released once the call has
 ; returned: the callee borrowed it (event 1), every store it could
 ; make took a share (events 5/6, MM-LIFE-2g), and a callee that
@@ -27251,16 +27511,16 @@
 (pub fn (argOwnedRelease cg fnName args i)
   {
     (let cls (fnResultClass cg fnName))
-    (if (|| (== cls 0)
-          (|| (== cls 2)
-            (&& (== cls 1)
-              (|| (!= (lendClass cg (vecGet args i)) 0)
-                (!= (fieldArgClass cg (vecGet args i)) 0)))))
+    ; A lent argument's share guards it against the callee writing
+    ; over the place it was lent from. A callee that writes nothing
+    ; (`fnMayWrite`) cannot, so the argument stays borrowed.
+    (let lentShared
+      (&& (== (fnMayWrite cg fnName) 1)
+        (|| (!= (lendClass cg (vecGet args i)) 0) (!= (fieldArgClass cg (vecGet args i)) 0))))
+    (if (|| (== cls 0) (|| (== cls 2) (&& (== cls 1) lentShared)))
       (if (&&
             (|| (== (valueOwnedRef cg (vecGet args i)) 1)
-              (|| (!= (lendClass cg (vecGet args i)) 0)
-                (|| (!= (transferClass cg (vecGet args i)) 0)
-                  (!= (fieldArgClass cg (vecGet args i)) 0))))
+              (|| lentShared (!= (transferClass cg (vecGet args i)) 0)))
             (&& (== (isStaticSentinelNode cg (vecGet args i)) 0)
               (&& (== (isNullaryConNode cg (vecGet args i)) 0)
                 (&& (== (& (fnCallStashMask cg fnName args) (| (paramBit i) (ownerBit i))) 0)
@@ -29524,12 +29784,19 @@
                       1
                       0))
                 }))
+            ; Its share guards against a store in the scope releasing the
+            ; value under it. A scope that writes nothing cannot, so the
+            ; binding borrows, as a parameter does.
+            (let guarded
+              (if (== held 1)
+                (scopeMayWrite cg1 body)
+                false))
             (let fieldAlias
-              (if (&& (== fieldCand 1) (== held 1))
+              (if (&& (== fieldCand 1) guarded)
                 1
                 0))
             (let borrowCls
-              (if (== held 1)
+              (if guarded
                 lendCls
                 0))
             (let ownCls (letTransferClass cg1 valExpr name body))

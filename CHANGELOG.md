@@ -16,6 +16,14 @@ its changelog too.
 
 ## Unreleased
 
+- Reading a field or a vector element no longer counts when nothing can
+  overwrite it. Passed to a function that writes nothing (`strLen`,
+  `vecLen`, `strEq`), or bound by a `let` or a `for` whose body writes
+  nothing, the value is borrowed: no retain and no release. A loop that
+  reads `r.name` from every record of a `(Vec Rec)` runs in 65% of the
+  time it took. Tested by `tests/stdlib/355-arc-events.ax` and the ARC
+  fixtures beside it.
+
 - `StrList` in `Str` keeps a list of strings as one run of bytes and
   the end of each: two blocks however many strings it holds, with
   nothing to walk when it goes. `strListGet` answers a slice that
