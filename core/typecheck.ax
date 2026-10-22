@@ -8367,9 +8367,22 @@
     {
       (while (< i (vecLen fields))
         {
-          (let code (wordWidthCode tc (nodeTyChild (vecGet fields i))))
+          (let ty (tyExpandAliases tc (nodeTyChild (vecGet fields i)) 0))
+          (let code (wordWidthCodeNode tc ty))
           (let bits (wordCodeBits code))
-          (let piece (wordPlace (vecGet args i) bits shift span))
+          (let value (vecGet args i))
+          ; Packing narrows a link just as a heap field store does.
+          ; Check the original value before masking, evaluating it once.
+          (let checked
+            (if (> (linkWidthCode ty) 0)
+              (setNodeTyChild
+                (nodeBuildESubcheck value
+                  (vecPush (vecPush nodesNew (nodeBuildEInt 0 0 0 span))
+                    (nodeBuildEInt (+ (wordMask bits) 1) 0 0 span))
+                  (nodeBuildEStr "\"axiom: link does not fit its field\\n\"" 0 0 span) span)
+                ty)
+              value))
+          (let piece (wordPlace checked bits shift span))
           {
             (set acc (if (== i 0)
               piece
