@@ -1980,26 +1980,34 @@
                 (die (concat (concat "error: could not create directory `" deps) "`\n") 4)
                 {
                   (let rc (fetchClone url tmp))
-                  (if (< rc 0)
-                    (die "error: `git` was not found on PATH; install git and try again\n" 4)
-                    (if (!= rc 0)
-                      {
-                        (fetchDiscard tmp)
-                        (die
-                          (concat (concat "error: cloning `" url)
-                            (concat "` failed (git exited "
-                              (concat (fmtInt rc) "); nothing was checked out\n")))
-                          4)
-                      }
-                      (if (isErr (renamePath tmp (pkgStripSlash dest)))
+                  (match rc
+                    ((Err _)
+                      (die "error: `git` was not found on PATH; install git and try again\n" 4)
+                    )
+                    ((Ok rc)
+                      (if (!= rc 0)
                         {
-                          (fetchDiscard tmp)
+                          (match (fetchDiscard tmp)
+                            ((Ok _) ())
+                            ((Err _) ()))
                           (die
-                            (concat "error: the clone finished but could not be moved to `"
-                              (concat dest "`\n"))
+                            (concat (concat "error: cloning `" url)
+                              (concat "` failed (git exited "
+                                (concat (fmtInt rc) "); nothing was checked out\n")))
                             4)
                         }
-                        (fetchUrls urls base (+ i 1)))))
+                        (if (isErr (renamePath tmp (pkgStripSlash dest)))
+                          {
+                            (match (fetchDiscard tmp)
+                              ((Ok _) ())
+                              ((Err _) ()))
+                            (die
+                              (concat "error: the clone finished but could not be moved to `"
+                                (concat dest "`\n"))
+                              4)
+                          }
+                          (fetchUrls urls base (+ i 1))))
+                    ))
                 })
             }
           })
@@ -2009,7 +2017,7 @@
 ; Remove this fetch's own temporary clone, if git left one. Only ever
 ; called with the `.fetch-<key>-<pid>` path this process chose, so it
 ; cannot reach a checkout or anything else under the manifest.
-(pub :: fetchDiscard (-> String Int))
+(pub :: fetchDiscard (-> String (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -2023,12 +2031,11 @@
         (runTool "rm" args)
       }
     }
-    0))
+    (Ok 0)))
 
-; `git clone URL DEST`, answering git's exit code, or a negative
-; errno when git could not be started at all (`runTool`'s contract:
-; callers tell the two apart by sign).
-(pub :: fetchClone (-> String String Int))
+; `git clone URL DEST`, keeping the child exit code in Ok and an
+; OS launch or wait failure in Err, as runTool does.
+(pub :: fetchClone (-> String String (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)

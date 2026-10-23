@@ -33,7 +33,7 @@ def bridges(legacy):
     return {'driver.ax': driver, 'main.ax': main}
 
 
-def check(compiler, root, work, baseline):
+def check(compiler, root, work, baseline, fetch_only=False):
     system = platform.system()
     if system not in ('Darwin', 'Linux', 'FreeBSD'):
         (work / 'report.json').write_text(json.dumps({'status': 'skipped', 'host': system,
@@ -47,7 +47,7 @@ def check(compiler, root, work, baseline):
               for folder in ('core', 'stdlib') for path in sorted((source_root / folder).rglob('*.ax'))}
     builder_hash = hashlib.sha256(compiler.read_bytes()).hexdigest()
     report = {'host': system, 'builder_sha256': builder_hash, 'source_sha256': hashes,
-              'baseline': bool(baseline), 'configurations': [], 'controls': [], 'refusals': [],
+              'baseline': bool(baseline), 'fetch_only': fetch_only, 'configurations': [], 'controls': [], 'refusals': [],
               'limits': ['Native host O0/O2 with allocation poisoning; no Windows execution claim.',
                          'Sys launch/wait/redirection contracts are trusted and unchanged; Ok uses numeric exit and 128+signal ABI.',
                          'Crate preparation, rustfmt and fetch cleanup retain their existing best-effort policies.',
@@ -108,6 +108,7 @@ def check(compiler, root, work, baseline):
         add('clone-success',('clone',),tool='git',log=argv('git','clone','url;literal','clone dest'))
         add('clone-failed',('clone',),tool='git',mode='fail7',stdout=b'ok 7\n',log=argv('git','clone','url;literal','clone dest'))
         add('clone-missing',('clone',),omitted='git',stdout=b'err 2\n',log=b'')
+        add('clone-exit127',('clone',),tool='git',mode='fail127',stdout=b'ok 127\n',log=argv('git','clone','url;literal','clone dest'))
         add('discard-absent',('discard',),log=b'')
         add('discard-present',('discard',),tool='rm',log=argv('rm','-rf','clone dest'))
         add('discard-missing',('discard',),omitted='rm',stdout=b'err 2\n',log=b'')
@@ -122,6 +123,8 @@ def check(compiler, root, work, baseline):
             add('implib-'+kind,('implib',),tool='llvm-dlltool',mode='fail7' if kind=='failed' else 'ok',omitted='llvm-dlltool' if kind=='missing' else None,stdout=None)
         for kind in ('success','failed','missing'):
             add('fetch-'+kind,('fetch',),tool='git',mode='fail7' if kind=='failed' else 'ok',omitted='git' if kind=='missing' else None,stdout=None,stderr=None,code=0 if kind=='success' else 4)
+        add('fetch-cleanup-missing',('fetch',),tool='git',mode='fail7',omitted='rm',stdout=None,stderr=None,code=4)
+        add('fetch-rename-failed',('fetch',),tool='git',stdout=None,stderr=None,code=4)
         for tool in ('llc','cc'):
             for kind in ('failed','missing'):
                 add('repl-'+tool+'-'+kind,('repl',),tool=tool,mode='fail7',omitted=tool if kind=='missing' else None,
@@ -134,6 +137,7 @@ def check(compiler, root, work, baseline):
         outcomes={}
         for name,args,tool,mode,omitted,stdout,stderr,code,expected_log in cases:
             if restricted and name not in restricted: continue
+            if fetch_only and not name.startswith(('clone-', 'discard-', 'fetch-')): continue
             folder=data/name; folder.mkdir(); tools=folder/'bin';tools.mkdir()
             for toolname in ('native','llc','cc','ar','ld.lld','lld-link','llvm-dlltool','axiom-bindgen','cargo','git','rm'):
                 if toolname!=omitted: shutil.copy2(child,tools/toolname)
@@ -141,6 +145,10 @@ def check(compiler, root, work, baseline):
             (folder/'crate/Cargo.toml').write_text('[package]\nname = "demo"\n')
             (folder/'input.ll').write_text('; input\n')
             (folder/'project').mkdir(); (folder/'scratch').mkdir()
+            if name=='fetch-rename-failed':
+                deps=folder/'project/.axiom/deps';deps.mkdir(parents=True)
+                key='example.invalid-repo-'+hashlib.sha256(b'https://example.invalid/repo').hexdigest()[:32]
+                (deps/key).write_text('occupied\n')
             if name in ('discard-present','discard-missing'):
                 (folder/'clone dest').mkdir();(folder/'clone dest/partial').write_text('partial\n')
             local=dict(env,PATH=str(tools),TMPDIR=str(folder/'scratch'),AXIOM_TEST_RUN_MODE=mode,
@@ -170,12 +178,19 @@ def check(compiler, root, work, baseline):
                 if (folder/'output.o.kernel32.def').exists():bad.append('def-cleanup')
             if name.startswith('fetch-'):
                 if not ran.stdout.startswith(b'fetching project/.axiom/deps/'):bad.append('fetch-progress')
-                if omitted:
+                if omitted=='git':
                     if ran.stderr!=b'error: `git` was not found on PATH; install git and try again\n':bad.append('fetch-missing')
                 elif mode=='fail7':
                     if ran.stderr!=b'error: cloning `https://example.invalid/repo` failed (git exited 7); nothing was checked out\n':bad.append('fetch-failure')
+                elif name=='fetch-rename-failed':
+                    expected=('error: the clone finished but could not be moved to `project/.axiom/deps/'+key+'/`\n').encode()
+                    if ran.stderr!=expected:bad.append('fetch-rename-failure')
+                    if (deps/key).read_text()!='occupied\n':bad.append('existing-file-changed')
                 elif ran.stderr or not ran.stdout.endswith(b'status 0\n'):bad.append('fetch-success')
-                if list((folder/'project/.axiom/deps').glob('.fetch-*')):bad.append('temporary-clone-cleanup')
+                left=list((folder/'project/.axiom/deps').glob('.fetch-*'))
+                if name=='fetch-cleanup-missing':
+                    if len(left)!=1 or not (left[0]/'partial').exists():bad.append('best-effort-cleanup')
+                elif left:bad.append('temporary-clone-cleanup')
             if name.startswith('repl-') and list((folder/'scratch').iterdir()):bad.append('repl-cleanup')
             if name=='discard-present' and (folder/'clone dest').exists():bad.append('discard-cleanup')
             if name=='discard-missing' and not (folder/'clone dest/partial').exists():bad.append('missing-rm-changed-files')
@@ -200,19 +215,41 @@ def check(compiler, root, work, baseline):
                   ('child-status-erased','        (sysRunPath tool v sysEnvp)','        (match (sysRunPath tool v sysEnvp) ((Ok _) (Ok 0)) ((Err e) (Err e)))',('nonzero','exit127','signal','clone-failed')),
                   ('nonzero-success','((Ok code) (== code 0))','((Ok _) true)',('assemble-native-failed','repl-llc-failed','implib-failed'))]
         for label,before,after,required in variants:
+            if fetch_only: required=tuple(name for name in required if name.startswith(('clone-', 'discard-', 'fetch-')))
+            if not required: continue
             changed=dict(source);changed['driver.ax']=replace_once(source['driver.ax'],before,after,label)
             altered=modules(label,changed); binary=build(label,root/'tests/tools/driver-run-tool-results.axp',altered,0)
             observed=exercise(label,binary,altered,work/'child-O0',required)
             if any(observed[name]['passed'] for name in required):raise AssertionError((label,observed))
             report['controls'].append({'name':label,'failed_cases':list(required)})
             print('ok '+label+': required cases fail',flush=True)
+        label='fetch-cleanup-skipped';changed=dict(source)
+        # Formatting differs with nesting; replace each complete match by its
+        # parsed expression rather than touching another cleanup operation.
+        ast=runpy.run_path(str(root/'tests/selfhost/cli-flag-values.py'))
+        text=source['main.ax'];fn=ast['declaration'](text,'fetchUrls')
+        nodes=[n for n in ast['walk'](ast['parse'](fn)[-1]) if ast['op'](n)=='match'
+               and ast['value'](fn,n[2][1])=='(fetchDiscard tmp)']
+        assert len(nodes)==2
+        altered_fn=fn
+        for node in sorted(nodes,key=lambda n:n[0],reverse=True):altered_fn=altered_fn[:node[0]]+'()'+altered_fn[node[1]:]
+        changed['main.ax']=replace_once(text,fn,altered_fn,label)
+        altered=modules(label,changed);binary=build(label,root/'tests/tools/driver-run-tool-results.axp',altered,0)
+        required=('fetch-failed','fetch-rename-failed')
+        observed=exercise(label,binary,altered,work/'child-O0',required)
+        assert all(not observed[name]['passed'] for name in required),observed
+        report['controls'].append({'name':label,'failed_cases':list(required)})
+        print('ok '+label+': required cases fail',flush=True)
         for label,body,code in (
             ('erased-result','(runTool "tool" vecNew)','AX3004'),
             ('missing-err','(match (runTool "tool" vecNew) ((Ok code) code))','AX3005'),
             ('missing-ok','(match (runTool "tool" vecNew) ((Err _) 0))','AX3005'),
             ('erased-stderr','(runToolErrTo "tool" vecNew "err")','AX3004'),
-            ('erased-quiet','(runToolQuiet "tool" vecNew)','AX3004')):
-            fixture=work/(label+'.ax');fixture.write_text('(import driver)\n(import Err)\n(:: bad Int)\n;@axiom:effect(io)\n;@axiom:effect(spawn)\n;@axiom:effect(block)\n(fn (bad) '+body+')\n(:: main Int) (fn (main) 0)\n')
+            ('erased-quiet','(runToolQuiet "tool" vecNew)','AX3004'),
+            ('erased-clone','(fetchClone "url" "path")','AX3004'),
+            ('erased-discard','(fetchDiscard "path")','AX3004'),
+            ('clone-missing-err','(match (fetchClone "url" "path") ((Ok code) code))','AX3005')):
+            fixture=work/(label+'.ax');fixture.write_text('(import driver)\n(import main (fetchClone fetchDiscard))\n(import Err)\n(:: bad Int)\n;@axiom:effect(io)\n;@axiom:effect(spawn)\n;@axiom:effect(block)\n(fn (bad) '+body+')\n(:: main Int) (fn (main) 0)\n')
             ran=subprocess.run([str(compiler),'--diagnostic-format=ai','check',str(fixture)],env=env,capture_output=True,text=True,timeout=90)
             errors=[line for line in ran.stderr.splitlines() if line.startswith('E ')]
             if ran.returncode!=1 or len(errors)!=1 or f'E {code} ' not in errors[0]:raise AssertionError((label,ran.returncode,ran.stderr))
@@ -227,10 +264,11 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--axiom',required=True,type=Path);parser.add_argument('--work',type=Path)
     parser.add_argument('--baseline-root',type=Path)
+    parser.add_argument('--fetch-only',action='store_true',help='Run only fetch/clone/discard policies and their controls')
     args=parser.parse_args();root=Path(__file__).resolve().parents[2]
     if args.work:
-        args.work.mkdir(parents=True,exist_ok=True);check(args.axiom.resolve(),root,args.work.resolve(),args.baseline_root)
+        args.work.mkdir(parents=True,exist_ok=True);check(args.axiom.resolve(),root,args.work.resolve(),args.baseline_root,args.fetch_only)
     else:
-        with tempfile.TemporaryDirectory(prefix='axiom-run-tool-') as work:check(args.axiom.resolve(),root,Path(work),args.baseline_root)
+        with tempfile.TemporaryDirectory(prefix='axiom-run-tool-') as work:check(args.axiom.resolve(),root,Path(work),args.baseline_root,args.fetch_only)
 
 if __name__=='__main__':main()
