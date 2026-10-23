@@ -17702,7 +17702,7 @@
 ; stage0's `param_callables`. An arrow, a type variable or poison can;
 ; a concrete `Int` cannot, and marking one would claim a transparency
 ; the signature forbids.
-(pub :: paramCallablesOf (-> ASTNode Int Ints))
+(pub :: paramCallablesOf (-> (Option ASTNode) Int Ints))
 (pub fn (paramCallablesOf ty count)
   {
     (let v vecNew)
@@ -17712,24 +17712,28 @@
     }
   })
 
-(pub :: paramCallablesInto (-> Ints ASTNode Int Int Int))
+(pub :: paramCallablesInto (-> Ints (Option ASTNode) Int Int Int))
 (pub fn (paramCallablesInto v ty count i)
   (if (>= i count)
     0
-    (if (nodeSame ty nilNode)
-      {
-        (vecPush v 1)
-        (paramCallablesInto v nilNode count (+ i 1))
-      }
-      (if (!= (nodeTag ty) TAG_T_ARR)
+    (match ty
+      ((None)
         {
           (vecPush v 1)
-          (paramCallablesInto v nilNode count (+ i 1))
+          (paramCallablesInto v None count (+ i 1))
         }
-        {
-          (vecPush v (tyIsCallable (nodeAChild ty)))
-          (paramCallablesInto v (nodeBChild ty) count (+ i 1))
-        }))))
+      )
+      ((Some signature)
+        (if (&& (! (nodeSame signature nilNode)) (== (nodeTag signature) TAG_T_ARR))
+          {
+            (vecPush v (tyIsCallable (nodeAChild signature)))
+            (paramCallablesInto v (bsTypeOpt (nodeBChild signature)) count (+ i 1))
+          }
+          {
+            (vecPush v 1)
+            (paramCallablesInto v None count (+ i 1))
+          })
+      ))))
 
 (pub :: tyIsCallable (-> ASTNode Int))
 (pub fn (tyIsCallable t)
@@ -17757,15 +17761,12 @@
 (pub :: bodyScopeOf (-> TC ASTNode BScope))
 (pub fn (bodyScopeOf tc d)
   {
-    (let entFound (findFnEnt tc (nodeAName d)))
-    {
-      (let sig
-        (if (let (Some ent) entFound)
-          (fnEntTy ent)
-          nilNode))
-      (bsMake vecNew (nodeBNames d) (paramCallablesOf sig (vecLen (nodeBNames d))) vecNew
-        (bsTypeOpt sig) (bodyCtxReset tc))
-    }
+    (let signature
+      (:: (match (findFnEnt tc (nodeAName d))
+        ((None) None)
+        ((Some entry) (bsTypeOpt entry.ty))) (Option ASTNode)))
+    (bsMake vecNew (nodeBNames d) (paramCallablesOf signature (vecLen (nodeBNames d))) vecNew
+      signature (bodyCtxReset tc))
   })
 
 ; The shared body context (`UState` word 11), emptied for a new walk.
@@ -20140,10 +20141,7 @@
         ; An opaque local answers 0 here and every position stays
         ; conservative, which is the right answer for a value whose
         ; identity the walk lost.
-        (escapeArgs bound args 0 acc
-          (match (bsParamTy bound (bsParamAlias bound n))
-            ((Some ty) ty)
-            ((None) nilNode)))
+        (escapeArgs bound args 0 acc (bsParamTy bound (bsParamAlias bound n)))
         ; An OPAQUE local: the value came out of memory, so no call edge
         ; carries what it performs and `markEparam` had no parameter to
         ; mark. This is the `let`-shaped spelling of the same hole the
@@ -20296,13 +20294,25 @@
 ; expected function type`, and handing an arrow to one is `AX3004`
 ; too. So no well-typed program can put a function where a nominal
 ; type is declared, which is the same fact this whole rule rests on.
-(pub :: escapeArgs (-> BScope Nodes Int Strings ASTNode Int))
+; Missing signature or argument-position evidence stays callable, so an
+; unfollowed value at that position keeps the row incomplete.
+(pub :: parameterMayBeCallable (-> (Option ASTNode) Int Bool))
+(pub fn (parameterMayBeCallable signature position)
+  (match signature
+    ((None) true)
+    ((Some declared)
+      (match (arrowParamTy declared position)
+        ((None) true)
+        ((Some parameter) (== (tyIsCallable parameter) 1)))
+    )))
+
+(pub :: escapeArgs (-> BScope Nodes Int Strings (Option ASTNode) Int))
 (pub fn (escapeArgs bound args i acc cty)
   (if (>= i (vecLen args))
     0
     {
       (if (&& (== (escapeValue bound (vecGet args i)) 0)
-            (&& (!= (as acc Int) 0) (== (tyIsCallable (arrowParamTy cty i)) 1)))
+            (&& (!= (as acc Int) 0) (parameterMayBeCallable cty i)))
         (effAdd acc effIncomplete))
       (escapeArgs bound args (+ i 1) acc cty)
     }))
@@ -21174,7 +21184,7 @@
 (pub fn (bsParamTy b source)
   (if (let (Some index) (bsAliasParam source))
     (if (let (Some signature) (bsFnTy b))
-      (bsTypeOpt (arrowParamTy signature index))
+      (arrowParamTy signature index)
       None)
     None))
 
@@ -30975,9 +30985,9 @@
       (tcSetCurParams tc params)
       (tcSetCurCallable tc
         (paramCallablesOf
-          (if (let (Some ent) entFound)
-            (fnEntTy ent)
-            nilNode)
+          (:: (match entFound
+            ((None) None)
+            ((Some ent) (bsTypeOpt (fnEntTy ent)))) (Option ASTNode))
           (vecLen params)))
       ; MM-LIFE-2d: the body's evidence context - this function's
       ; own ordered tyvars (what a symbolic witness indexes into)

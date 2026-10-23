@@ -1,0 +1,46 @@
+; Shared parameter lookup keeps callback refusal and poison diagnostics stable.
+(import core)
+(import Host)
+(import lexer)
+(import parser)
+(import typecheck)
+(import codegen)
+(import expand)
+(import diag)
+(import Vec)
+(import IO)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let nodes (pResNodes parsed))
+        (let units
+          (vecPush vecNew
+            (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+        (let bares vecNew)
+        (let fulls vecNew)
+        (let mods vecNew)
+        (let merged (resolveImports nodes bares fulls mods (targetCode hostTarget) "" units))
+        (expandProgram nodes merged vecNew vecNew units bares fulls mods)
+        (let tc (checkModuleTcTyped nodes merged units))
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      }
+      (writeStr stderr "invalid arrow parameter diagnostic fixture\n"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "1482-callback-alias-effects.ax"
+      "(struct Cell\n  (run : (-> Int Int)))\n\n(data Callback\n  (Callback (-> Int Int)))\n\n(:: invoke (-> (-> Int Int) Int Int))\n;@axiom:effect(pure)\n(fn (invoke f x)\n  (f x))\n\n(:: identity (-> (-> Int Int) Int Int))\n(fn (identity f)\n  f)\n\n(:: wrap (-> (-> Int Int) Cell))\n(fn (wrap f)\n  (Cell :run f))\n\n(:: inc (-> Int Int))\n(fn (inc x)\n  (+ x 1))\n\n(:: fieldAlias (-> Cell Int Int))\n;@axiom:effect(pure)\n;@axiom:restrict(no-io, strict)\n(fn (fieldAlias cell n)\n  {\n    (let callback cell.run)\n    (let alias callback)\n    (invoke alias n)\n  })\n\n(:: resultAlias (-> (-> Int Int) Int Int))\n;@axiom:effect(pure)\n;@axiom:restrict(no-io, strict)\n(fn (resultAlias f n)\n  {\n    (let callback (identity f))\n    (invoke callback n)\n  })\n\n(:: patternAlias (-> Callback Int Int))\n;@axiom:effect(pure)\n;@axiom:restrict(no-io, strict)\n(fn (patternAlias value n)\n  (match value\n    ((Callback callback) (invoke callback n))))\n\n(:: mutableAlias (-> Cell Int Int))\n;@axiom:effect(pure)\n;@axiom:restrict(no-io, strict)\n(fn (mutableAlias cell n)\n  {\n    (let mut callback inc)\n    (set callback cell.run)\n    (invoke callback n)\n  })\n\n(:: capturedAlias (-> Cell Int Int))\n;@axiom:restrict(no-io, strict)\n(fn (capturedAlias cell n)\n  {\n    (let callback cell.run)\n    (let captured (lambda (x) (invoke callback x)))\n    (captured n)\n  })\n\n(:: direct (-> Cell Int Int))\n;@axiom:effect(pure)\n;@axiom:restrict(no-io, strict)\n(fn (direct cell n)\n  (invoke cell.run n))\n\n(:: known (-> Int Int))\n;@axiom:effect(pure)\n;@axiom:restrict(no-io, strict)\n(fn (known n)\n  {\n    (let callback inc)\n    (invoke callback n)\n  })\n\n(:: forwarded (-> (-> Int Int) Int Int))\n;@axiom:effect(pure)\n(fn (forwarded f n)\n  {\n    (let callback f)\n    (invoke callback n)\n  })\n\n(:: main Int)\n(fn (main)\n  {\n    (let filled (Cell :run inc))\n    (known 41)\n  })\n")
+    (checkSource "argument-position-effects.ax"
+      "(:: twiceInt (-> (-> Int Int) Int Int))\n;@axiom:restrict(no-io, strict)\n(fn (twiceInt callback value) (callback (callback value)))\n(:: twiceVar (-> (-> a a) a a))\n;@axiom:restrict(no-io, strict)\n(fn (twiceVar callback value) (callback (callback value)))\n(:: applyArr (-> (-> (-> Int Int) Int) Int Int))\n;@axiom:restrict(no-io, strict)\n(fn (applyArr callback value) (callback (lambda (x) (+ x value))))\n(:: main Int) (fn (main) 0)\n")
+    (checkSource "argument-position-poison.ax"
+      "(:: poisoned (-> Ghost Int))\n;@axiom:restrict(no-io, strict)\n(fn (poisoned callback) (callback 0))\n(:: main Int) (fn (main) 0)\n")
+    0
+  })

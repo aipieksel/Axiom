@@ -1,0 +1,232 @@
+; Optional argument types retain conservative checker and emitter classifications.
+(import core)
+(import Host)
+(import lexer)
+(import parser)
+(import typecheck)
+(import codegen)
+(import checked)
+(import expand)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same result expected)
+  (match result
+    ((None) false)
+    ((Some value) (nodeSame value expected))))
+
+(:: intsAre (-> Ints Ints Bool))
+(fn (intsAre actual expected)
+  {
+    (let mut good (== (vecLen actual) (vecLen expected)))
+    (for i in 0..(vecLen actual)
+      (if (&& good (< i (vecLen expected)))
+        (set good (== (vecGet actual i) (vecGet expected i)))))
+    good
+  })
+
+(:: retained (Option ASTNode))
+(fn (retained)
+  (arrowParamTy (mkTArr (mkTCon (strDup "OwnedParameter") vecNew) mkIntTy) 0))
+
+(:: signature (-> ASTNode Int FSig))
+(fn (signature ty arity)
+  (FSig
+    :name "Probe"
+    :nameLen 5
+    :flags vecNew
+    :sigTy ty
+    :takesEv 1
+    :owned 1
+    :arity arity
+    :stash 0
+    :ret 0
+    :consume 0
+    :transfer 0
+    :callers 0
+    :writes 0))
+
+(:: configured (-> ASTNode Names CG))
+(fn (configured ty params)
+  {
+    (let cg newCG)
+    (set cg.curDeclNode (nodeBuildDFn "Probe" params (mkEInt 0) 0))
+    (set cg.floatSigs (vecPush vecNew (signature ty (vecLen params))))
+    cg
+  })
+
+(:: escaped (-> (Option ASTNode) Int Strings))
+(fn (escaped ty start)
+  {
+    (let row vecNew)
+    (let bound (bsWith (bsNew vecNew vecNew vecNew nilNode) "opaque" BoundOpaque))
+    (escapeArgs bound (vecPush vecNew (mkEVarAt "opaque" 0)) start row ty)
+    row
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let intTy mkIntTy)
+    (let stringTy mkStringTy)
+    (let unitTy mkUnitTy)
+    (let poison mkTErr)
+    (let wild (mkTVar ""))
+    (let variable (mkTVar "a"))
+    (let arrow (mkTArr intTy (mkTArr stringTy unitTy)))
+    (let poisonArrow (mkTArr poison unitTy))
+    (let wildArrow (mkTArr wild unitTy))
+    (let functionArrow (mkTArr (mkTArr intTy intTy) unitTy))
+    (let names (vecPush (vecPush (vecPush vecNew "first") "second") "third"))
+    (let cg (configured arrow names))
+    (let short (configured intTy names))
+    (let generic (configured (mkTArr variable unitTy) names))
+    (let vecCG (configured (mkTArr (mkTCon "Vec" (vecPush vecNew intTy)) unitTy) names))
+    (let call (mkEApp (mkEVarAt "Probe" 0) (mkEVarAt "first" 0)))
+    (let scope (bsNew names vecNew vecNew arrow))
+    (let emptyTC (tcNew vecNew vecNew vecNew))
+    (let missingDecl (nodeBuildDFn "unregistered" names (mkEInt 0) 0))
+    (let absentScope (bodyScopeOf emptyTC missingDecl))
+    (say 1 (isNone (arrowParamTy nilNode 0)))
+    (say 2 (isNone (arrowParamTy intTy 0)))
+    (say 3 (same (arrowParamTy arrow 0) intTy))
+    (say 4 (same (arrowParamTy arrow 1) stringTy))
+    (say 5 (isNone (arrowParamTy arrow 2)))
+    (say 6 (same (arrowParamTy arrow -1) intTy))
+    (say 7 (isNone (arrowParamTy arrow 9223372036854775807)))
+    (say 8 (isNone (arrowParamTy poison 0)))
+    (say 9 (same (arrowParamTy poisonArrow 0) poison))
+    (say 10 (same (arrowParamTy wildArrow 0) wild))
+    (say 11 (isNone (arrowParamTy (mkTArr nilNode intTy) 0)))
+    (say 12 (isNone (arrowParamTy (mkTArr intTy nilNode) 1)))
+    (say 13 (same (arrowParamTy (mkTArr unitTy intTy) 0) unitTy))
+    (say 14
+      (match retained
+        ((None) false)
+        ((Some value) (strEq (nodeAName value) "OwnedParameter"))))
+    (say 15 (parameterMayBeCallable None 0))
+    (say 16 (parameterMayBeCallable None 9))
+    (say 17 (! (parameterMayBeCallable (Some arrow) 0)))
+    (say 18 (! (parameterMayBeCallable (Some arrow) 1)))
+    (say 19 (parameterMayBeCallable (Some arrow) 2))
+    (say 20 (parameterMayBeCallable (Some poison) 0))
+    (say 21 (parameterMayBeCallable (Some poisonArrow) 0))
+    (say 22 (parameterMayBeCallable (Some wildArrow) 0))
+    (say 23 (parameterMayBeCallable (Some functionArrow) 0))
+    (say 24 (parameterMayBeCallable (Some nilNode) 0))
+    (say 25 (parameterMayBeCallable (Some unitTy) 0))
+    (say 26 (intsAre (paramCallablesOf None 3) (vecPush (vecPush (vecPush vecNew 1) 1) 1)))
+    (say 27 (intsAre (paramCallablesOf (Some arrow) 2) (vecPush (vecPush vecNew 0) 0)))
+    (say 28
+      (intsAre (paramCallablesOf (Some arrow) 4)
+        (vecPush (vecPush (vecPush (vecPush vecNew 0) 0) 1) 1)))
+    (say 29 (intsAre (paramCallablesOf (Some intTy) 2) (vecPush (vecPush vecNew 1) 1)))
+    (say 30 (intsAre (paramCallablesOf (Some poisonArrow) 1) (vecPush vecNew 1)))
+    (say 31 (== (vecLen (paramCallablesOf None 0)) 0))
+    (say 32 (== (vecLen (paramCallablesOf None -1)) 0))
+    (say 33 (same (bsParamTy scope (BoundParam 0)) intTy))
+    (say 34 (same (bsParamTy scope (BoundParam 1)) stringTy))
+    (say 35 (isNone (bsParamTy scope (BoundParam 2))))
+    (say 36 (isNone (bsParamTy scope BoundOpaque)))
+    (say 37 (isNone (bsFnTy absentScope)))
+    (say 38 (intsAre (bsCallable absentScope) (vecPush (vecPush (vecPush vecNew 1) 1) 1)))
+    (say 39 (== (effIn (escaped None 0) effIncomplete) 1))
+    (say 40 (== (effIn (escaped (Some arrow) 0) effIncomplete) 0))
+    (say 41 (== (effIn (escaped (Some functionArrow) 0) effIncomplete) 1))
+    (say 42 (== (effIn (escaped (Some intTy) 0) effIncomplete) 1))
+    (say 43 (== (vecLen (escaped None 1)) 0))
+    (say 44 (== (parameterTypeClass cg None) 1))
+    (say 45 (== (parameterTypeClass cg (Some intTy)) 0))
+    (say 46 (== (parameterTypeClass cg (Some stringTy)) 2))
+    (say 47 (== (parameterTypeClass cg (Some unitTy)) 0))
+    (say 48 (== (parameterTypeClass cg (Some variable)) 1))
+    (say 49 (== (parameterTypeClass cg (Some poison)) 1))
+    (say 50 (== (tyvarSlotsFrom cg arrow 3 0) (| (bothForms (paramBit 0)) (wordBit 2))))
+    (say 51 (== (refParamOwnerBits cg "Probe") (ownerBit 1)))
+    (say 52 (== (refParamOwnerBits short "Probe") 0))
+    (say 53 (== (paramFlowBit cg names 0) (| (wordBit 0) (ownerBit 0))))
+    (say 54 (== (paramFlowBit cg names 1) (paramBit 1)))
+    (say 55 (== (paramFlowBit cg names 2) (paramBit 2)))
+    (say 56 (!= (arrowProbeParks cg call arrow names) 0))
+    (say 57 (== (arrowProbeParks cg call intTy names) 0))
+    (say 58 (== (paramIsHandle cg names 1) 1))
+    (say 59 (== (paramIsHandle cg names 2) 0))
+    (say 60 (== (paramIsHandle vecCG names 0) 2))
+    (say 61 (== (paramClassOf cg names 0) 0))
+    (say 62 (== (paramClassOf cg names 1) 2))
+    (say 63 (== (paramClassOf cg names 2) 1))
+    (say 64 (== (curParamRefClass cg 1) 1))
+    (say 65 (== (curParamRefClass cg 2) 0))
+    (say 66 (== (curParamEvBit generic 0) 0))
+    (say 67 (== (curParamEvBit generic 2) -1))
+    (say 68 (== (curParamEvBit cg 0) -1))
+    (pairSetSlot cg 7 1)
+    (pairSetSlot cg 14 arrow)
+    (say 69 (== (curParamRefClass cg 1) 1))
+    (say 70 (== (curParamRefClass cg 2) 0))
+    (let available
+      (parseModule
+        (lex "(pub :: available (-> Int String Int)) (pub fn (available number text) number)")))
+    (if (pResOk available)
+      {
+        (let declarations (pResNodes available))
+        (let tc (tcNew declarations declarations vecNew))
+        (let presentScope (bodyScopeOf tc (vecGet declarations 1)))
+        (say 71 (isSome (bsFnTy presentScope)))
+        (say 72 (intsAre (bsCallable presentScope) (vecPush (vecPush vecNew 0) 0)))
+      }
+      {
+        (say 71 false)
+        (say 72 false)
+      })
+    (say 73 (same (bsParamTy (bsNew names vecNew vecNew poisonArrow) (BoundParam 0)) poison))
+    (let generatedSource
+      "(import Str)\n(:: loop (-> Int String String)) (fn (loop count text) (if (<= count 0) text (loop (- count 1) text)))\n(:: identity (-> a a)) (fn (identity value) value)\n(:: applyInt (-> (-> Int Int) Int Int)) (fn (applyInt callback value) (callback value))\n(:: makeAdder (-> Int Int Int)) (fn (makeAdder offset) (lambda (value) (+ offset value)))\n(:: main Int) (fn (main) { (let text (loop 32 (identity \"retained\"))) (if (&& (== (strLen text) 8) (== (applyInt (makeAdder 2) 40) 42)) 42 1) })\n")
+    (let parsed (parseModule (lex generatedSource)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let units
+          (vecPush vecNew
+            (CUnit2
+              :file "arrow-native.ax"
+              :src generatedSource
+              :name None
+              :imports vecNew
+              :library false)))
+        (let bares vecNew)
+        (let fulls vecNew)
+        (let mods vecNew)
+        (let merged (resolveImports declarations bares fulls mods (targetCode hostTarget) "" units))
+        (expandProgram declarations merged vecNew vecNew units bares fulls mods)
+        (let result (checkExpandedProgram declarations merged units))
+        (if (> (countErrorDiags result.diagnostics) 0)
+          {
+            (writeStr stderr (renderDiagsUnits result.diagnostics units))
+            3
+          }
+          (if (let (Some program) result.program)
+            {
+              (writeStr stdout "-- emitted llvm --\n")
+              (writeStr stdout
+                (emitCheckedProgram program bares fulls (targetCode hostTarget) false))
+              0
+            }
+            4))
+      }
+      2)
+  })

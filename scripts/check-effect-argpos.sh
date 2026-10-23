@@ -280,7 +280,7 @@ echo "== 4. and the type test is what does it (ablation) =="
 # --------------------------------------------------------------------
 # The seam is `escapeArgs`'s whole condition, matched exactly once, so
 # a rename or reformat upstream fails here loudly instead of ablating
-# nothing. The first seam drops the `(arrowParamTy cty i)` type test.
+# nothing. The first seam drops the optional parameter callability test.
 # When a port or the formatter respells the condition without changing
 # the rule, update both strings to the new spelling.
 abl="$work/tree"
@@ -289,7 +289,7 @@ cp -R "$repo_root/core" "$repo_root/stdlib" "$abl/"
 # The condition as the formatter lays it out, then the same block with
 # the callable conjunct removed.
 seam_old='      (if (&& (== (escapeValue bound (vecGet args i)) 0)
-            (&& (!= (as acc Int) 0) (== (tyIsCallable (arrowParamTy cty i)) 1)))'
+            (&& (!= (as acc Int) 0) (parameterMayBeCallable cty i)))'
 seam_new='      (if (&& (== (escapeValue bound (vecGet args i)) 0)
             (!= (as acc Int) 0))'
 n_seam="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().count(sys.argv[2]))' "$abl/core/typecheck.ax" "$seam_old" || true)"
@@ -305,13 +305,13 @@ s = open(p, encoding="utf-8").read()
 assert s.count(old) == 1
 s = s.replace(old, new)
 alias_old = '''        (let alias (bsParamAlias b (nodeAName inner)))
-        (epUseApply b alias u)
-        (if (== alias bsOpaque)
+        (epUseApply b (bsAliasParam alias) u)
+        (if (bsIsOpaque alias)
           0
           (if (let (Some values) (bsValsOf b (nodeAName inner)))
             values.complete
             1))'''
-alias_new = '''        (epUseApply b (bsParamAlias b (nodeAName inner)) u)
+alias_new = '''        (epUseApply b (bsAliasParam (bsParamAlias b (nodeAName inner))) u)
         1'''
 assert s.count(alias_old) == 1, 'missing callback alias enforcement seam'
 open(p, "w", encoding="utf-8").write(s.replace(alias_old, alias_new))

@@ -8076,33 +8076,27 @@
       (+ 1 (arrowArity (nodeBChild t)))
       0)))
 
-; The type declared for argument position `i` of the arrow `t`, or 0
-; when there is no answer - `t` is absent, or the spine ran out of
-; arrows before `i`.
+; The type declared for argument position `i` of the arrow `t`, or None
+; when no type is available: the input is absent, the spine ran out, or
+; the packed argument slot has no type. Poison and inference variables
+; remain present. Non-positive positions retain the first-position rule.
 ;
-; ZERO IS THE UNKNOWN, and both readers pair it with a classifier that
-; treats 0 as the conservative answer: `codegen`'s `fldClass` calls it
-; a word, so an `Int` parameter is never retained; `typecheck`'s
-; `tyIsCallable` calls it callable, so an unfollowed argument in an
-; unknown position is still a hole. A missing signature, an
-; over-applied spine and a poisoned type therefore all land on the safe
-; side without a second test at either call site.
-;
-; HERE BECAUSE IT HAD TWO HOMES. `codegen.ax` wrote it for the
-; ownership pass and `typecheck.ax` wrote it again, byte for byte
-; except for `<= 0` against `== 0`, for the effect walk's
-; argument-position question - and the two modules do not import each
-; other, so nothing compared them. `arrowArity` beside it has always
-; lived here for the same reason: an arrow spine is the parser's shape
-; and every pass reads it the same way.
-(pub :: arrowParamTy (-> ASTNode Int ASTNode))
+; Readers choose their conservative classification explicitly: the checker
+; treats a missing parameter type as callable; the emitter treats it as
+; unclassifiable, preserving the existing unknown-type class.
+(pub :: arrowParamTy (-> ASTNode Int (Option ASTNode)))
 (pub fn (arrowParamTy t i)
   (if (nodeSame t nilNode)
-    nilNode
+    None
     (if (!= (nodeTag t) TAG_T_ARR)
-      nilNode
+      None
       (if (<= i 0)
-        (nodeAChild t)
+        {
+          (let parameter (nodeAChild t))
+          (if (nodeSame parameter nilNode)
+            None
+            (Some parameter))
+        }
         (arrowParamTy (nodeBChild t) (- i 1))))))
 
 ; Allocation-free access to one argument of the canonical application spine.

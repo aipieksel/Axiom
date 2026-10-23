@@ -3073,7 +3073,7 @@
     0
     (|
       {
-        (let cls (fldClass cg (arrowParamTy sigTy i)))
+        (let cls (parameterTypeClass cg (arrowParamTy sigTy i)))
         (if (== cls 0)
           ; an `Int` slot: a word of a binding handed to it is
           ; parked there uncounted, and the binding must outlive the
@@ -3261,7 +3261,7 @@
         {
           (while (&& (< i n) (< i 19))
             {
-              (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 2)
+              (if (== (parameterTypeClass cg (arrowParamTy (fsigTy e) i)) 2)
                 (set m (| m (ownerBit i))))
               (set i (+ i 1))
             })
@@ -3454,7 +3454,7 @@
           {
             (let eFound (findFSigCg cg (nodeAName d)))
             (if (let (Some e) eFound)
-              (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 0)
+              (if (== (parameterTypeClass cg (arrowParamTy (fsigTy e) i)) 0)
                 (| (wordBit i) (ownerBit i))
                 (paramBit i))
               (paramBit i))
@@ -4419,7 +4419,7 @@
   (if (>= i n_)
     0
     {
-      (if (== (fldClass cg (arrowParamTy sigTy i)) 0)
+      (if (== (parameterTypeClass cg (arrowParamTy sigTy i)) 0)
         (stashAdd cell (parkForms (flowMask cg (spineArgAt e i) params env))))
       (selfSlotParksFrom cg e sigTy n_ params env cell (+ i 1))
     }))
@@ -4616,18 +4616,15 @@
           {
             (let eFound (findFSigCg cg (nodeAName d)))
             (if (let (Some e) eFound)
-              {
-                (let t (arrowParamTy (fsigTy e) i))
-                (if (nodeSame t nilNode)
-                  0
-                  (if (== (nodeTag t) TAG_T_CON)
-                    (if (strEq (nodeAName t) "String")
-                      1
-                      (if (strEq (nodeAName t) "Vec")
-                        2
-                        0))
-                    0))
-              }
+              (if (let (Some t) (arrowParamTy (fsigTy e) i))
+                (if (== (nodeTag t) TAG_T_CON)
+                  (if (strEq (nodeAName t) "String")
+                    1
+                    (if (strEq (nodeAName t) "Vec")
+                      2
+                      0))
+                  0)
+                0)
               0)
           }))
     }))
@@ -4643,7 +4640,7 @@
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
-            (fldClass cg (arrowParamTy (fsigTy e) i))
+            (parameterTypeClass cg (arrowParamTy (fsigTy e) i))
             2)
         }))
   })
@@ -19895,8 +19892,10 @@
 (pub :: curParamRefClass (-> CG Int Int))
 (pub fn (curParamRefClass cg i)
   (if (== (pairSlot cg 7) 1)
-    (if (== (fldClass cg (tyResolve (arrowParamTy (pairNode cg 14) i))) 2)
-      1
+    (if (let (Some parameter) (arrowParamTy (pairNode cg 14) i))
+      (if (== (fldClass cg (tyResolve parameter)) 2)
+        1
+        0)
       0)
     {
       (let d (cgCurDecl cg))
@@ -19905,7 +19904,7 @@
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
-            (if (== (fldClass cg (arrowParamTy (fsigTy e) i)) 2)
+            (if (== (parameterTypeClass cg (arrowParamTy (fsigTy e) i)) 2)
               1
               0)
             0)
@@ -19934,20 +19933,17 @@
           (if (let (Some e) eFound)
             (if (== (fsigTakesEv e) 0)
               (- 0 1)
-              {
-                (let tn (arrowParamTy (fsigTy e) i))
-                (if (nodeSame tn nilNode)
+              (if (let (Some tn) (arrowParamTy (fsigTy e) i))
+                (if (!= (tyIsSrcVar tn) 1)
                   (- 0 1)
-                  (if (!= (tyIsSrcVar tn) 1)
-                    (- 0 1)
+                  {
+                    (let vars vecNew)
                     {
-                      (let vars vecNew)
-                      {
-                        (cgSigVarsInto (fsigTy e) vars)
-                        (strVecIdx vars (nodeAName tn))
-                      }
-                    }))
-              })
+                      (cgSigVarsInto (fsigTy e) vars)
+                      (strVecIdx vars (nodeAName tn))
+                    }
+                  })
+                (- 0 1)))
             (- 0 1))
         })
     }))
@@ -28600,6 +28596,14 @@
     (if (strEq (vecGet names i) name)
       1
       (dataTyKnown names name (+ i 1)))))
+
+; Argument-position absence keeps the existing unclassifiable class.
+; Present types retain the normal field classification without a nil bridge.
+(pub :: parameterTypeClass (-> CG (Option ASTNode) Int))
+(pub fn (parameterTypeClass cg parameter)
+  (match parameter
+    ((None) 1)
+    ((Some ty) (fldClass cg ty))))
 
 ; 0 = machine scalar, 2 = reference, 1 = unclassifiable (forces leaf)
 (pub :: fldClass (-> CG ASTNode Int))
