@@ -12688,7 +12688,7 @@
                           }
                           (if (|| (== (isBuiltinName name) 1)
                                 (|| (== (isMacroName tc name) 1)
-                                  (&& (== inHead 1) (== (showIsHead name) 1))))
+                                  (&& (== inHead 1) (showIsHead name))))
                             mkSilentWild
                             (emitUndefinedVar tc name (nodeSpan e))))
                       })
@@ -14228,8 +14228,8 @@
         (let formatting
           (if (&& (== headIsVar 1) (== inHead 0))
             (showIsHead (nodeAName head))
-            0))
-        (if (== formatting 1)
+            false))
+        (if formatting
           (showBuiltin tc e head)
           ; MM-PAR-6, and it answers nothing: a SIDE CHECK, bound and
           ; ignored so the arms below decide this application's type
@@ -14775,11 +14775,9 @@
 ; `bareOf` would additionally claim a `Mod$format#`, which no program
 ; can declare and no expansion emits, so it would widen the claim
 ; without widening what it can ever match.
-(pub :: showIsHead (-> String Int))
+(pub :: showIsHead (-> String Bool))
 (pub fn (showIsHead hname)
-  (if (strEq hname "format#")
-    1
-    0))
+  (strEq hname "format#"))
 
 ; Resolve `(format# x)`, `e` the application and `head` its var node.
 ;
@@ -14833,7 +14831,7 @@
     {
       (let h (spineHead e))
       (if (== (nodeTag h) TAG_E_VAR)
-        (== (showIsHead (nodeAName h)) 1)
+        (showIsHead (nodeAName h))
         false)
     }
     false)
@@ -15142,7 +15140,7 @@
               None
               {
                 (let key (showTyName ty))
-                (if (== (showSeenName seen key 0) 1)
+                (if (showSeenName seen key 0)
                   None
                   {
                     (let dentFound (findData tc n))
@@ -15162,12 +15160,12 @@
           })))
   })
 
-(pub :: showSeenName (-> Strings String Int Int))
+(pub :: showSeenName (-> Strings String Int Bool))
 (pub fn (showSeenName seen key i)
   (if (>= i (vecLen seen))
-    0
+    false
     (if (strEq (vecGetStr seen i) key)
-      1
+      true
       (showSeenName seen key (+ i 1)))))
 
 (pub :: showDerivableCtors (-> TC (Vec CtorEnt) ASTNode Strings Int (Option ASTNode)))
@@ -15464,19 +15462,19 @@
       false)
   })
 
-(pub :: showCtorsHaveFields (-> (Vec CtorEnt) Int Int))
+(pub :: showCtorsHaveFields (-> (Vec CtorEnt) Int Bool))
 (pub fn (showCtorsHaveFields ctors i)
   (if (>= i (vecLen ctors))
-    0
+    false
     (if (> (vecLen (ctorEntFieldTys (vecGet ctors i))) 0)
-      1
+      true
       (showCtorsHaveFields ctors (+ i 1)))))
 
 ; The ancestor guard around a body, when the type has anything to
 ; recurse into.
-(pub :: showGuarded (-> TC ASTNode Int Int (Option ASTNode)))
+(pub :: showGuarded (-> TC ASTNode Bool Int (Option ASTNode)))
 (pub fn (showGuarded tc body hasFields sp)
-  (if (== hasFields 0)
+  (if (! hasFields)
     (Some body)
     (if (let (Some seenFn) (showEnsureSeen tc sp))
       (if (let (Some pushFn) (showHelperName tc "Vec" "vecPush" sp))
@@ -15568,7 +15566,7 @@
           (Some (showLit "{}" sp))
           (if (let (Some body) (showStructBody tc fields (showLit "{" sp) sp 0))
             (if (let (Some closed) (showCat tc body (showLit "}" sp) sp))
-              (showGuarded tc closed 1 sp)
+              (showGuarded tc closed true sp)
               None)
             None))))
     (if (let (Some body) rendered)

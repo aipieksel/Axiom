@@ -18,7 +18,7 @@ def check(compiler, root, work, baseline=None):
     source = (snapshot / 'core/typecheck.ax').read_text()
     fixture = (root / 'tests/selfhost/typecheck-show-outcomes.axp').read_text()
     diagnostics = (root / 'tests/tools/checker-renderer-diagnostics.axp').read_text()
-    expected = ''.join(f'{i} true\n' for i in range(1, 46))
+    expected = ''.join(f'{i} true\n' for i in range(1, 77))
     golden = (root / 'tests/tools/checker-renderer-options.golden').read_text()
     report = {
         'builder': str(compiler),
@@ -69,9 +69,9 @@ def check(compiler, root, work, baseline=None):
     for level in (0, 2):
         assert native('positive-O' + str(level), level, source, fixture) == expected, level
         assert native('diagnostics-O' + str(level), level, source, diagnostics) == golden, level
-        report['configurations'].append({'opt': level, 'allocation_poison': True, 'cases': 45,
+        report['configurations'].append({'opt': level, 'allocation_poison': True, 'cases': 76,
                                          'diagnostic_cases': 5, 'diagnostic_bytes': len(golden.encode())})
-        print(f'ok   Show outcomes: 45 cases and 5 exact renderer diagnostics O{level}', flush=True)
+        print(f'ok   Show outcomes: 76 cases and 5 exact renderer diagnostics O{level}', flush=True)
 
     existing = (root / 'tests/tools/checker-renderer-options.axp').read_text()
     assert native('existing-consumer', 0, source, existing) == ''.join(f'{i} true\n' for i in range(1, 51))
@@ -96,6 +96,14 @@ def check(compiler, root, work, baseline=None):
          '(if (if (== (nodeTag e) TAG_E_APP)', '(if (if false', {42}),
         ('drop-unavailable-diagnostic', 'showBuiltin',
          '(showNoRenderingDiag tc arg at)', '0', {32, 33}),
+        ('claim-qualified-head', 'showIsHead', '(strEq hname "format#")',
+         '(strEq (bareOf hname) "format#")', {48}),
+        ('lose-seen-name', 'showSeenName', '      true', '      false', {54, 55, 58, 62}),
+        ('invent-seen-name', 'showSeenName', '    false', '    true', {53, 56, 57, 59, 60, 61}),
+        ('lose-constructor-fields', 'showCtorsHaveFields', '      true', '      false', {65, 66}),
+        ('invent-constructor-fields', 'showCtorsHaveFields', '    false', '    true', {63, 64, 67, 68, 75}),
+        ('omit-field-guard', 'showGuarded', '(if (! hasFields)', '(if true', {71, 72, 73}),
+        ('invent-field-guard', 'showGuarded', '(if (! hasFields)', '(if false', {69, 70, 72, 74}),
     ]
     for label, function, before, after, failures in controls:
         start = source.index('(pub fn (' + function + ' ')
@@ -104,7 +112,7 @@ def check(compiler, root, work, baseline=None):
         assert body.count(before) == 1, (label, 'mutation anchor changed')
         changed = source[:start] + body.replace(before, after) + source[end:]
         rows = native(label, 0, changed, fixture).splitlines()
-        assert len(rows) == 45, (label, rows)
+        assert len(rows) == 76, (label, rows)
         observed = set()
         for i, row in enumerate(rows, 1):
             assert row in (f'{i} true', f'{i} false'), (label, row)
@@ -117,13 +125,18 @@ def check(compiler, root, work, baseline=None):
     env = modules('refusals', source)
     for label, declaration, code in [
         ('raw-status', '(:: bad Int) (fn (bad) ShowRewritten)', 'AX3004'),
+        ('raw-head-predicate', '(:: bad Int) (fn (bad) (showIsHead "format#"))', 'AX3004'),
+        ('raw-seen-predicate', '(:: bad Int) (fn (bad) (showSeenName vecNew "x" 0))', 'AX3004'),
+        ('raw-fields-predicate', '(:: bad Int) (fn (bad) (showCtorsHaveFields vecNew 0))', 'AX3004'),
+        ('raw-has-fields', '(:: bad (-> TC ASTNode (Option ASTNode))) '
+         '(fn (bad tc body) (showGuarded tc body 1 0))', 'AX3004'),
         ('missing-refusal', '(:: bad (-> ShowOutcome Int)) (fn (bad value) '
          '(match value ((ShowUnavailable) 1) ((ShowRewritten) 2) ((ShowSpliced) 3)))', 'AX3005'),
         ('raw-resolver', '(:: bad (-> TC ASTNode ASTNode ASTNode ASTNode Int)) '
          '(fn (bad tc expression head argument ty) (showResolve tc expression head argument ty))', 'AX3004'),
     ]:
         path = work / (label + '.ax')
-        path.write_text('(import core)\n(import typecheck)\n' + declaration + '\n')
+        path.write_text('(import core)\n(import typecheck)\n(import Vec)\n' + declaration + '\n')
         result = invoke(label, [str(compiler), '--diagnostic-format=ai', 'check', str(path)], env)
         errors = [line for line in result.stderr.splitlines() if line.startswith('E ')]
         assert result.returncode == 1 and len(errors) == 1 and errors[0].startswith('E ' + code + ' '), (
