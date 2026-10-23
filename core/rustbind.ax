@@ -1215,7 +1215,11 @@
                           }
                           {
                             (vecPush raws (rbRawDecl name params))
-                            (vecPush wraps (rbWrapper decls name ty params res names))
+                            (match res
+                              ((None) __indexTrap)
+                              ((Some result)
+                                (vecPush wraps (rbWrapper decls name ty params result names))
+                              ))
                             0
                           })
                       }))
@@ -1313,7 +1317,7 @@
 
 ; The first type the binding cannot carry, spelled for the note; ""
 ; when every leaf is carried.
-(:: rbFirstUnsupported (-> (Vec ASTNode) (Vec ASTNode) ASTNode String))
+(:: rbFirstUnsupported (-> (Vec ASTNode) (Vec ASTNode) (Option ASTNode) String))
 (fn (rbFirstUnsupported decls params res)
   {
     (let mut i 0)
@@ -1325,9 +1329,15 @@
             (set bad (rbUncarriedPhrase decls (vecGet params i))))
           (set i (+ i 1))
         })
-      (if (&& (== (strLen bad) 0) (== (strLen (rbRustType decls res 1)) 0))
-        (rbUncarriedPhrase decls res)
-        bad)
+      (if (> (strLen bad) 0)
+        bad
+        (match res
+          ((None) "`?`, which the binding does not carry")
+          ((Some result)
+            (if (== (strLen (rbRustType decls result 1)) 0)
+              (rbUncarriedPhrase decls result)
+              "")
+          )))
     }
   })
 

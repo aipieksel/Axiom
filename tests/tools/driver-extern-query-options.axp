@@ -1,0 +1,156 @@
+(import core)
+(import parser)
+(import driver)
+(import diag)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found expected)
+  (match found
+    ((None) false)
+    ((Some node) (nodeSame node expected))))
+
+(:: textIs (-> (Option String) String Bool))
+(fn (textIs found expected)
+  (match found
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: external (-> String Nodes ASTNode))
+(fn (external library fields)
+  (nodeBuildDExtern library vecNew fields 0))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: queryRetires (-> Nodes ASTNode Bool))
+(fn (queryRetires declarations ty)
+  {
+    (let item (findExternItem declarations "symbol" 0))
+    (let library (findExternLib declarations "symbol" 0))
+    (let result (sigResultOf ty))
+    (&& (isSome item) (&& (textIs library "Owned") (isSome result)))
+  })
+
+(:: detachedItem (Option ASTNode))
+(fn (detachedItem)
+  (findExternItem
+    (vecPush vecNew
+      (external "Detached"
+        (vecPush vecNew (nodeBuildFieldExtern "name" (mkTCon "Int" vecNew) "symbol" 0))))
+    "symbol" 0))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let int (mkTCon "Int" vecNew))
+    (let float (mkTCon "Float" vecNew))
+    (let string (mkTCon "String" vecNew))
+    (let first (nodeBuildFieldExtern "first" int "symbol" (mkSpan 1 4)))
+    (let second (nodeBuildFieldExtern "second" float "symbol" (mkSpan 5 9)))
+    (let fields (vecPush (vecPush vecNew first) second))
+    (let declarations
+      (vecPush (vecPush vecNew (external "First" fields))
+        (external "Second" (vecPush vecNew second))))
+    (say 1 (isNone (findExternItem vecNew "symbol" 0)))
+    (say 2 (isNone (findExternItemIn vecNew "symbol" 0)))
+    (say 3 (same (findExternItemIn fields "symbol" 0) first))
+    (say 4 (same (findExternItemIn fields "symbol" 1) second))
+    (say 5 (isNone (findExternItemIn fields "symbol" 2)))
+    (say 6 (same (findExternItem declarations "symbol" 0) first))
+    (say 7 (same (findExternItem declarations "symbol" 1) second))
+    (say 8 (isNone (findExternItem declarations "symbol" 2)))
+    (say 9 (isNone (findExternItem declarations "missing" 0)))
+    (say 10
+      (same
+        (findExternItem (vecPush (vecPush vecNew (mkEInt 0)) (vecGet declarations 0)) "symbol" 0)
+        first))
+    (say 11 (isNone (findExternLib vecNew "symbol" 0)))
+    (say 12 (textIs (findExternLib declarations "symbol" 0) "First"))
+    (say 13 (textIs (findExternLib declarations "symbol" 1) "Second"))
+    (say 14 (isNone (findExternLib declarations "missing" 0)))
+    (say 15 (textIs (findExternLib (vecPush vecNew (external "" fields)) "symbol" 0) ""))
+    (say 16 (isNone (findExternLib (vecPush vecNew (external "Empty" vecNew)) "symbol" 0)))
+    (say 17 (isNone (sigResultOf nilNode)))
+    (say 18 (same (sigResultOf int) int))
+    (say 19 (same (sigResultOf (mkTArr int string)) string))
+    (say 20 (same (sigResultOf (mkTArr float (mkTArr int string))) string))
+    (say 21 (isNone (sigResultOf (mkTArr int nilNode))))
+    (say 22 (isNone (externSigTag nilNode)))
+    (say 23 (textIs (externSigTag int) "_i"))
+    (say 24 (textIs (externSigTag string) "_s"))
+    (say 25 (textIs (externSigTag (mkTArr float (mkTArr int string))) "fi_s"))
+    (say 26 (textIs (externSigTag (mkTArr (mkTArr int int) float)) "c_f"))
+    (say 27 (strEq (sigParamTags int) ""))
+    (say 28 (textIs (externSigTag (mkTArr int nilNode)) "i_i"))
+    (let ownedName (strDup "Owned"))
+    (let ownedDeclaration (external ownedName (vecPush vecNew first)))
+    (let ownedDeclarations (vecPush vecNew ownedDeclaration))
+    (let arrow (mkTArr float string))
+    (let fieldBefore (count first))
+    (let resultBefore (count string))
+    (let libraryBefore (count ownedName))
+    (let declarationsBefore (count ownedDeclarations))
+    (let mut valid true)
+    (for iteration in 0..32
+      (if (! (queryRetires ownedDeclarations arrow))
+        (set valid false)))
+    (say 29 valid)
+    (say 30 (== (count first) fieldBefore))
+    (say 31 (== (count string) resultBefore))
+    (say 32 (== (count ownedName) libraryBefore))
+    (say 33 (== (count ownedDeclarations) declarationsBefore))
+    (say 34
+      (match detachedItem
+        ((None) false)
+        ((Some node) (strEq (nodeAName node) "name"))))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "extern.ax" :src "sample" :name None :imports vecNew :library false)))
+    (say 35
+      (==
+        (groundEachSpanned (vecPush vecNew "unknown") (vecPush vecNew "unknown\0") vecNew vecNew
+          units FMT_AI 0)
+        0))
+    (say 36
+      (==
+        (groundEachSpanned (vecPush vecNew "missingType")
+          (vecPush vecNew "missingType\0missingType__sig_f_s\0") vecNew
+          (vecPush vecNew
+            (external "Library"
+              (vecPush vecNew (nodeBuildFieldExtern "missingType" nilNode "missingType" 0))))
+          units FMT_AI 0)
+        0))
+    (say 37
+      (==
+        (groundEachSpanned (vecPush vecNew "symbol") (vecPush vecNew "symbol\0symbol__sig__i\0")
+          vecNew declarations units FMT_AI 0)
+        0))
+    (say 38
+      (==
+        (groundEachSpanned (vecPush vecNew "multi") (vecPush vecNew "multi\0multi__sig_fi_s\0")
+          vecNew
+          (vecPush vecNew
+            (external "Library"
+              (vecPush vecNew
+                (nodeBuildFieldExtern "multi" (mkTArr float (mkTArr int string)) "multi" 0))))
+          units FMT_AI 0)
+        0))
+    (say 39
+      (==
+        (groundEachSpanned (vecPush vecNew "symbol") (vecPush vecNew "symbol\0") vecNew
+          declarations units FMT_AI 0)
+        0))
+    (say 40 (isNone (findExternItemIn nilNodes "symbol" 0)))
+    0
+  })

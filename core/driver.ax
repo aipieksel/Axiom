@@ -2194,67 +2194,71 @@
         ; three-argument shim would build, link and answer garbage
         {
           (let want
-            {
-              (let it (findExternItem decls n 0))
-              (if (nodeSame it nilNode)
-                ""
-                (externSigTag (nodeBChild it)))
-            })
+            (match (findExternItem decls n 0)
+              ((None) None)
+              ((Some item) (externSigTag (nodeBChild item)))))
           (let have (descriptorsOf blobs n))
-          (if (|| (== (strLen want) 0) (|| (== (vecLen have) 0) (>= (strIndexIn have want) 0)))
-            (groundEachSpanned names blobs paths decls units dfmt (+ i 1))
-            {
-              (let item (findExternItem decls n 0))
-              {
-                (let d
-                  (mkDiag SEV_ERROR "AX4005" "extern-shape"
-                    (if (nodeSame item nilNode)
-                      0
-                      (nodeSpan item))
-                    (concat (concat "`" (concat n "` is exported by the crate for "))
-                      (concat
-                        (concat (sigTagSpelled (vecGet have 0))
-                          (concat "; the `extern` item declares " (sigTagSpelled want)))
-                        ""))
-                    None
-                    (Some
-                      "the Rust shim and the `extern` item must agree on every parameter and the result (docs/ffi.md, the type table); regenerate the binding module with `axiom-bindgen`, or fix the hand-written item")))
-                (let ds vecNew)
+          (match want
+            ((None) (groundEachSpanned names blobs paths decls units dfmt (+ i 1)))
+            ((Some want)
+              (if (|| (== (vecLen have) 0) (>= (strIndexIn have want) 0))
+                (groundEachSpanned names blobs paths decls units dfmt (+ i 1))
                 {
-                  (if (let (Some u) (findExternUnit decls n units))
-                    (diagSetUnit d u)
-                    ())
-                  (vecPush ds d)
+                  (let item (findExternItem decls n 0))
                   {
-                    (let out
-                      (renderDiagsFormat dfmt ds
-                        (if (nodeSame item nilNode)
-                          {
-                            (let uv vecNew)
-                            {
-                              (vecPush uv
-                                (CUnit2
-                                  :file "<link>"
-                                  :src ""
-                                  :name None
-                                  :imports vecNew
-                                  :library false))
-                              uv
-                            }
-                          }
-                          units)))
-                    (writeStr stderr out)
+                    (let d
+                      (mkDiag SEV_ERROR "AX4005" "extern-shape"
+                        (match item
+                          ((None) 0)
+                          ((Some item) (nodeSpan item)))
+                        (concat (concat "`" (concat n "` is exported by the crate for "))
+                          (concat
+                            (concat (sigTagSpelled (vecGet have 0))
+                              (concat "; the `extern` item declares " (sigTagSpelled want)))
+                            ""))
+                        None
+                        (Some
+                          "the Rust shim and the `extern` item must agree on every parameter and the result (docs/ffi.md, the type table); regenerate the binding module with `axiom-bindgen`, or fix the hand-written item")))
+                    (let ds vecNew)
+                    {
+                      (if (let (Some u) (findExternUnit decls n units))
+                        (diagSetUnit d u)
+                        ())
+                      (vecPush ds d)
+                      {
+                        (let out
+                          (renderDiagsFormat dfmt ds
+                            (if (isNone item)
+                              {
+                                (let uv vecNew)
+                                {
+                                  (vecPush uv
+                                    (CUnit2
+                                      :file "<link>"
+                                      :src ""
+                                      :name None
+                                      :imports vecNew
+                                      :library false))
+                                  uv
+                                }
+                              }
+                              units)))
+                        (writeStr stderr out)
+                      }
+                      exitToolFailed
+                    }
                   }
-                  exitToolFailed
-                }
-              }
-            })
+                })
+            ))
         }
         ; the item's span is in ITS module's unit - an
         ; imported binding module, usually
         {
           (let item (findExternItem decls n 0))
-          (let lib (findExternLib decls n 0))
+          (let lib
+            (match (findExternLib decls n 0)
+              ((None) "")
+              ((Some library) library)))
           {
             (let msg
               (if (== (vecLen paths) 0)
@@ -2278,9 +2282,9 @@
             {
               (let d
                 (mkDiag SEV_ERROR "AX4004" "ungrounded-symbol"
-                  (if (nodeSame item nilNode)
-                    0
-                    (nodeSpan item))
+                  (match item
+                    ((None) 0)
+                    ((Some item) (nodeSpan item)))
                   msg None (Some help)))
               (let ds vecNew)
               {
@@ -2291,7 +2295,7 @@
                 {
                   (let out
                     (renderDiagsFormat dfmt ds
-                      (if (nodeSame item nilNode)
+                      (if (isNone item)
                         {
                           (let u vecNew)
                           {
@@ -2329,8 +2333,7 @@
     None
     {
       (let d (vecGet decls i))
-      (if (&& (== (nodeTag d) TAG_D_EXTERN)
-            (! (nodeSame (findExternItemIn (nodeCChildren d) sym 0) nilNode)))
+      (if (&& (== (nodeTag d) TAG_D_EXTERN) (isSome (findExternItemIn (nodeCChildren d) sym 0)))
         (match (nodeModuleOpt d)
           ((None) (Some 0))
           ((Some name) (unitIndexOf units name 0)))
@@ -2340,11 +2343,19 @@
 ; The descriptor string an extern item's declared type spells:
 ; `<params>_<ret>`, one tag per parameter, the result after the
 ; underscore. Mirrors rust/axiom-ffi-classify.
-(pub :: externSigTag (-> ASTNode String))
+(pub :: externSigTag (-> ASTNode (Option String)))
 (pub fn (externSigTag ty)
   (if (nodeSame ty nilNode)
-    ""
-    (concat (sigParamTags ty) (concat "_" (sigTagOf (sigResultOf ty))))))
+    None
+    (Some
+      (concat
+        (sigParamTags ty)
+        (concat
+          "_"
+          (match (sigResultOf ty)
+            ; A malformed arrow's missing result keeps the legacy word tag.
+            ((None) "i")
+            ((Some result) (sigTagOf result))))))))
 
 (pub :: sigParamTags (-> ASTNode String))
 (pub fn (sigParamTags ty)
@@ -2352,11 +2363,13 @@
     (concat (sigTagOf (nodeAChild ty)) (sigParamTags (nodeBChild ty)))
     ""))
 
-(pub :: sigResultOf (-> ASTNode ASTNode))
+(pub :: sigResultOf (-> ASTNode (Option ASTNode)))
 (pub fn (sigResultOf ty)
-  (if (&& (! (nodeSame ty nilNode)) (== (nodeTag ty) TAG_T_ARR))
-    (sigResultOf (nodeBChild ty))
-    ty))
+  (if (nodeSame ty nilNode)
+    None
+    (if (== (nodeTag ty) TAG_T_ARR)
+      (sigResultOf (nodeBChild ty))
+      (Some ty))))
 
 (pub :: sigTagOf (-> ASTNode String))
 (pub fn (sigTagOf t)
@@ -2444,42 +2457,38 @@
         "(-> Int ...)"
         "Int"))))
 
-; The extern ITEM node binding linker symbol `sym`, or 0.
-(pub :: findExternItem (-> (Vec ASTNode) String Int ASTNode))
+; The extern item binding linker symbol `sym`, or None.
+(pub :: findExternItem (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (findExternItem decls sym i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (== (nodeTag d) TAG_D_EXTERN)
-        {
-          (let it (findExternItemIn (nodeCChildren d) sym 0))
-          (if (nodeSame it nilNode)
-            (findExternItem decls sym (+ i 1))
-            it)
-        }
+        (match (findExternItemIn (nodeCChildren d) sym 0)
+          ((None) (findExternItem decls sym (+ i 1)))
+          ((Some item) (Some item)))
         (findExternItem decls sym (+ i 1)))
     }))
 
-(pub :: findExternItemIn (-> (Vec ASTNode) String Int ASTNode))
+(pub :: findExternItemIn (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (findExternItemIn items sym i)
   (if (== (as items Int) 0)
-    nilNode
+    None
     (if (>= i (vecLen items))
-      nilNode
+      None
       (if (strEq (nodeCName (vecGet items i)) sym)
-        (vecGet items i)
+        (Some (vecGet items i))
         (findExternItemIn items sym (+ i 1))))))
 
-(pub :: findExternLib (-> (Vec ASTNode) String Int String))
+(pub :: findExternLib (-> (Vec ASTNode) String Int (Option String)))
 (pub fn (findExternLib decls sym i)
   (if (>= i (vecLen decls))
-    ""
+    None
     {
       (let d (vecGet decls i))
-      (if (&& (== (nodeTag d) TAG_D_EXTERN)
-            (! (nodeSame (findExternItemIn (nodeCChildren d) sym 0) nilNode)))
-        (nodeAName d)
+      (if (&& (== (nodeTag d) TAG_D_EXTERN) (isSome (findExternItemIn (nodeCChildren d) sym 0)))
+        (Some (nodeAName d))
         (findExternLib decls sym (+ i 1)))
     }))
 
