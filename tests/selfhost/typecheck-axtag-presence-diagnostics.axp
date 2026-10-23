@@ -1,0 +1,53 @@
+; These source diagnostics are pinned against the unchanged lookup.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import IO)
+(import Vec)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (println name)
+    (match (parseModuleWith (lex source) (scanAxtags source))
+      ((ParseFailed error) __indexTrap)
+      ((ParseSuccess declarations after)
+        {
+          (let units
+            (vecPush vecNew
+              (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+          (let tc (tcNew declarations declarations units))
+          (tcWalkDecls tc 0)
+          (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+        }
+      ))
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "deprecated-value.ax"
+      ";@axiom:deprecated(use (newer 1))\n(pub fn (old) 0)\n(pub fn (use) (old))\n")
+    (checkSource "deprecated-empty.ax"
+      ";@axiom:deprecated()\n(pub fn (old) 0)\n(pub fn (use) (old))\n")
+    (checkSource "deprecated-first-empty.ax"
+      ";@axiom:deprecated()\n;@axiom:deprecated(later)\n(pub fn (old) 0)\n(pub fn (use) (old))\n")
+    (checkSource "deprecated-first-value.ax"
+      ";@axiom:deprecated(first)\n;@axiom:deprecated(second)\n(pub fn (old) 0)\n(pub fn (use) (old))\n")
+    (checkSource "effect-missing.ax"
+      "(effect Alarm (ring :: (-> Int Int)))\n;@axiom:effect(Alarm)\n(:: main Int)\n(fn (main) (ring 1))\n")
+    (checkSource "effect-empty.ax"
+      ";@axiom:unhandled()\n(effect Alarm (ring :: (-> Int Int)))\n;@axiom:effect(Alarm)\n(:: main Int)\n(fn (main) (ring 1))\n")
+    (checkSource "effect-trap.ax"
+      ";@axiom:unhandled(trap)\n(effect Alarm (ring :: (-> Int Int)))\n;@axiom:effect(Alarm)\n(:: main Int)\n(fn (main) (ring 1))\n")
+    (checkSource "effect-case.ax"
+      ";@axiom:unhandled(Trap)\n(effect Alarm (ring :: (-> Int Int)))\n;@axiom:effect(Alarm)\n(:: main Int)\n(fn (main) (ring 1))\n")
+    (checkSource "effect-first-empty.ax"
+      ";@axiom:unhandled()\n;@axiom:unhandled(trap)\n(effect Alarm (ring :: (-> Int Int)))\n;@axiom:effect(Alarm)\n(:: main Int)\n(fn (main) (ring 1))\n")
+    (checkSource "effect-first-trap.ax"
+      ";@axiom:unhandled(trap)\n;@axiom:unhandled(abort)\n(effect Alarm (ring :: (-> Int Int)))\n;@axiom:effect(Alarm)\n(:: main Int)\n(fn (main) (ring 1))\n")
+  })

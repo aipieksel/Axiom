@@ -10159,9 +10159,9 @@
       1
       (declHasAxtagFrom tags key (+ i 1)))))
 
-; The value of an AXTAG on this declaration, or "" for no such key.
+; The first matching tag's value, including empty text, or None.
 ; Each tag owns its source offset and complete annotation text.
-(pub :: axtagValueOf (-> ASTNode String String))
+(pub :: axtagValueOf (-> ASTNode String (Option String)))
 (pub fn (axtagValueOf d key)
   (axtagValueFrom (nodeAxtagsOf d) key 0))
 
@@ -10205,12 +10205,12 @@
       "")
   })
 
-(pub :: axtagValueFrom (-> Axtags String Int String))
+(pub :: axtagValueFrom (-> Axtags String Int (Option String)))
 (pub fn (axtagValueFrom tags key i)
   (if (>= i (vecLen tags))
-    ""
+    None
     (if (strEq (axtagKeyOf (vecGet tags i)) key)
-      (axtagTextValue (vecGet tags i))
+      (Some (axtagTextValue (vecGet tags i)))
       (axtagValueFrom tags key (+ i 1)))))
 
 (pub :: tcCheckSigTypeOf (-> TC ASTNode Int))
@@ -29639,15 +29639,16 @@
       {
         {
           (let d (vecGet decls i))
-          (if (&& (|| (== (nodeTag d) TAG_D_SIG) (== (nodeTag d) TAG_D_FN))
-                (> (strLen (axtagValueOf d "deprecated")) 0))
-            (vecPush acc d)
-            ())
+          (if (|| (== (nodeTag d) TAG_D_SIG) (== (nodeTag d) TAG_D_FN))
+            (if (let (Some replacement) (axtagValueOf d "deprecated"))
+              (if (> (strLen replacement) 0)
+                (vecPush acc d))))
         }
         (deprecatedBuild decls acc (+ i 1))
       })))
 
-; The first indexed declaration wins; Some empty text is distinct from None.
+; The first indexed declaration wins. A missing or empty tag on that
+; declaration yields Some empty text; None means no declaration matched.
 (pub :: deprecatedFrom (-> (Vec ASTNode) String Int (Option String)))
 (pub fn (deprecatedFrom tbl name i)
   (if (== (as tbl Int) 0)
@@ -29657,7 +29658,12 @@
       {
         (let d (vecGet tbl i))
         (if (strEq (bareOf (nodeAName d)) (bareOf name))
-          (Some (axtagValueOf d "deprecated"))
+          {
+            (let replacement (axtagValueOf d "deprecated"))
+            (match replacement
+              ((None) (Some ""))
+              ((Some _) replacement))
+          }
           (deprecatedFrom tbl name (+ i 1)))
       })))
 
@@ -30084,8 +30090,10 @@
 (pub :: effectDeclTraps (-> TC String Int))
 (pub fn (effectDeclTraps tc name)
   (if (let (Some declaration) (findEffectDecl tc name))
-    (if (strEq (axtagValueOf declaration "unhandled") "trap")
-      1
+    (if (let (Some policy) (axtagValueOf declaration "unhandled"))
+      (if (strEq policy "trap")
+        1
+        0)
       0)
     0))
 
