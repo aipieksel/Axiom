@@ -5113,15 +5113,15 @@
   (intoNode : ASTNode)
   (text : String))
 
-; The index of the operand called `nm`, or -1.
-(pub :: expAsmOpAt (-> (Vec AsmOp) String Int Int))
+; The index of the operand called `nm`, if present.
+(pub :: expAsmOpAt (-> (Vec AsmOp) String Int (Option Int)))
 (pub fn (expAsmOpAt ops nm i)
-  (if (>= i (vecLen ops))
-    (- 0 1)
+  (if (|| (< i 0) (>= i (vecLen ops)))
+    None
     {
       (let p (vecGet ops i))
       (if (strEq p.name nm)
-        i
+        (Some i)
         (expAsmOpAt ops nm (+ i 1)))
     }))
 
@@ -5342,7 +5342,7 @@
                   (expAsmBad env (nodeSpan (vecGet args 1))
                     (concat (concat "`" reg)
                       "` is named twice in this arm; an operand's register is its own"))
-                  (if (>= prev 0)
+                  (if (let (Some prev) prev)
                     {
                       (let p (vecGet ops prev))
                       (expAsmBad env (nodeSpan (vecGet args 0)) (expAsmDupWhy p.kind kind nm))
@@ -6181,13 +6181,7 @@
     (let k (expAsmOpAt ops nm 0))
     (let off (- from 1))
     (let len (+ (- close from) 2))
-    (if (< k 0)
-      {
-        (expAsmErr errs errSps tnode off len
-          (concat (concat "the template writes `{" nm)
-            "}`, and no operand of this arm has that name; write `{{` and `}}` for literal braces"))
-        ""
-      }
+    (if (let (Some k) k)
       {
         (let p (vecGet ops k))
         {
@@ -6218,6 +6212,12 @@
                   (concat (concat ":" m) "}")
                   "}"))))
         }
+      }
+      {
+        (expAsmErr errs errSps tnode off len
+          (concat (concat "the template writes `{" nm)
+            "}`, and no operand of this arm has that name; write `{{` and `}}` for literal braces"))
+        ""
       })
   })
 
