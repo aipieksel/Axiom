@@ -423,7 +423,7 @@
   (mut bareFirst : (Option DeclIndex))
   (mut tailRetain : Nodes)
   (mut pendingOwned : Strings)
-  (mut allocaMark : Int)
+  (mut allocaMark : (Option Int))
   (mut hoisted : (Vec String))
   (mut argEv : (Vec Int))
   (pairState : PairState))
@@ -591,7 +591,7 @@
         :bareFirst (None)
         :tailRetain vecNew
         :pendingOwned vecNew
-        :allocaMark (- 0 1)
+        :allocaMark None
         :hoisted vecNew
         :argEv vecNew
         :pairState ps)
@@ -1224,15 +1224,15 @@
   })
 
 ; Word 43: the line the function's hoisted allocas go in front of, or
-; -1 outside a function body.
-(:: cgAllocaMark (-> CG Int))
+; None outside a function body.
+(:: cgAllocaMark (-> CG (Option Int)))
 (fn (cgAllocaMark cg)
   {
     (let c cg)
     c.allocaMark
   })
 
-(:: cgSetAllocaMark (-> CG Int CG))
+(:: cgSetAllocaMark (-> CG (Option Int) CG))
 (fn (cgSetAllocaMark cg mark)
   {
     (let c cg)
@@ -32172,7 +32172,7 @@
   {
     (let cgM (emitLine cg ""))
     {
-      (cgSetAllocaMark cgM (- (vecLen (cgLines cgM)) 1))
+      (cgSetAllocaMark cgM (Some (- (vecLen (cgLines cgM)) 1)))
       (cgSetHoisted cgM vecNew)
       cgM
     }
@@ -32180,7 +32180,7 @@
 
 (pub :: emitAlloca (-> CG String CG))
 (pub fn (emitAlloca cg ar)
-  (if (< (cgAllocaMark cg) 0)
+  (if (isNone (cgAllocaMark cg))
     (emitLine cg (concat (concat "  " ar) " = alloca i64"))
     {
       (vecPush (cgHoisted cg) (concat (concat "  " ar) " = alloca i64"))
@@ -32191,20 +32191,20 @@
 ;@axiom:effect(unsafe)
 (pub fn (closeAllocaMark cg)
   {
-    (let mark (cgAllocaMark cg))
-    (if (< mark 0)
-      cg
+    (let markFound (cgAllocaMark cg))
+    (if (let (Some mark) markFound)
       {
         (let hoisted (cgHoisted cg))
         {
           (if (> (vecLen hoisted) 0)
             (vecSet (cgLines cg) mark (joinAllocas hoisted))
             (as 0 (Vec String)))
-          (cgSetAllocaMark cg (- 0 1))
+          (cgSetAllocaMark cg None)
           (cgSetHoisted cg vecNew)
           cg
         }
-      })
+      }
+      cg)
   })
 
 ; One buffer of the exact size, not a recursive concatenation: 40,000
@@ -33139,7 +33139,7 @@
   {
     (let line
       (concat "  " (concat cell (concat " = alloca i64, i64 " (concat words ", align 16")))))
-    (if (< (cgAllocaMark cg) 0)
+    (if (isNone (cgAllocaMark cg))
       (emitLine cg line)
       {
         (vecPush (cgHoisted cg) line)
@@ -33156,7 +33156,7 @@
         (if (|| (== (resRegistryOn cg) 1) (reserveSupported cg))
           " = alloca i64, i64 4, align 16 ; axiom region mark"
           " = alloca i64, i64 3, align 16 ; axiom region mark")))
-    (if (< (cgAllocaMark cg) 0)
+    (if (isNone (cgAllocaMark cg))
       (emitLine cg line)
       {
         (vecPush (cgHoisted cg) line)

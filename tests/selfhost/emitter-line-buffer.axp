@@ -152,7 +152,7 @@
     (probeSetHoisted cg second)
     (say 24 (== (countOf (as first Int)) (- beforeReplacement 1)))
     (say 25 (strEq (vecGet old 0) "73"))
-    (say 26 (&& (== (memGetWord (as cg Int) 43) (- 0 1)) (== (memGetWord (as cg Int) 0) lines)))
+    (say 26 (&& (isNone cg.allocaMark) (== (memGetWord (as cg Int) 0) lines)))
     (say 27 (probeSameHoistedGetter cg "91"))
     (let beforeSame (countOf (as second Int)))
     (probeSetHoisted cg second)
@@ -194,12 +194,19 @@
 (fn (hoistedAllocaChecks)
   {
     (let cg newCG)
+    (set cg.pairState.threads 1)
+    (cgSetRegistry cg 0)
     (let initial (memGetWord (as cg Int) 44))
     (closeAllocaMark cg)
     (say 34 (== (memGetWord (as cg Int) 44) initial))
     (emitLine cg "define i64 @held() #0 {")
     (openAllocaMark cg)
-    (say 35 (&& (== (memGetWord (as cg Int) 43) 1) (!= (memGetWord (as cg Int) 44) initial)))
+    (say 35
+      (&&
+        (match cg.allocaMark
+          ((None) false)
+          ((Some mark) (== mark 1)))
+        (!= (memGetWord (as cg Int) 44) initial)))
     (let active (probeHoisted cg))
     (emitAlloca cg "%.a")
     (emitAlloca cg "%.b")
@@ -210,7 +217,7 @@
     (closeAllocaMark cg)
     (say 37
       (&& (== (countOf (as active Int)) 1)
-        (&& (== (memGetWord (as cg Int) 43) (- 0 1)) (== (countOf (memGetWord (as cg Int) 44)) 1))))
+        (&& (isNone cg.allocaMark) (== (countOf (memGetWord (as cg Int) 44)) 1))))
     (say 38
       (strEq (joinAllocas active)
         "  %.a = alloca i64\n  %.b = alloca i64\n  %.recover = alloca i64, i64 8, align 16\n  %.region = alloca i64, i64 3, align 16 ; axiom region mark"))
@@ -230,13 +237,13 @@
     (emitLine cg "define i64 @nested() #0 {")
     (openAllocaMark cg)
     (emitAlloca cg "%.outer.a")
-    (let mark (memGetWord (as cg Int) 43))
+    (let mark cg.allocaMark)
     (let outer (probeHoisted cg))
     (openAllocaMark cg)
     (let mut balanced (== (countOf (as outer Int)) 1))
     (emitAlloca cg "%.inner")
     (closeAllocaMark cg)
-    (memSetWord (as cg Int) 43 mark)
+    (set cg.allocaMark mark)
     (probeSetHoisted cg outer)
     (if (!= (countOf (as outer Int)) 2)
       (set balanced false))
@@ -280,6 +287,8 @@
 (fn (payloadChecks)
   {
     (let cg newCG)
+    (set cg.pairState.threads 1)
+    (cgSetRegistry cg 0)
     (openAllocaMark cg)
     (emitAlloca cg "%.payload")
     (emitRecoverCell cg "%.recover" "8")
@@ -317,6 +326,8 @@
           (strEq region "  %.region = alloca i64, i64 3, align 16 ; axiom region mark"))))
     (say 53 (== hoistedPayloadGrowth 0))
     (let direct newCG)
+    (set direct.pairState.threads 1)
+    (cgSetRegistry direct 0)
     (emitAlloca direct "%.direct")
     (emitRecoverCell direct "%.recover" "8")
     (emitRegionCell direct "%.region")
@@ -340,6 +351,7 @@
 ; Reuse one context and clear its rendered lines, so retained output is
 ; not confused with an ordinary producer or getter share that escaped.
 (:: payloadIteration (-> CG Int Bool Int))
+;@axiom:effect(io)
 (fn (payloadIteration cg i hoist)
   {
     (if hoist
@@ -354,6 +366,7 @@
   })
 
 (:: payloadGrowth (-> Bool Int))
+;@axiom:effect(io)
 (fn (payloadGrowth hoist)
   {
     (let cg newCG)

@@ -124,6 +124,7 @@ python3 tests/selfhost/emitter-signature-types.py --axiom "$axc"
 python3 tests/selfhost/emitter-lambda-type-options.py --axiom "$axc"
 python3 tests/selfhost/emitter-signature-arity-options.py --axiom "$axc"
 python3 tests/selfhost/emitter-data-field-query-options.py --axiom "$axc"
+python3 tests/selfhost/emitter-alloca-marker-options.py --axiom "$axc"
 python3 tests/selfhost/emitter-declaration-options.py --axiom "$axc"
 python3 tests/selfhost/lsp-field-query-options.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/lsp-hierarchy-query-options.py --axiom "$axc" --negative-controls
