@@ -26603,10 +26603,8 @@
     0
   })
 
-; Whether either tag set carries a bare `isr` claim. Same head rule
-; as `restrictCollect` - the content up to `(` - and the same null
-; guard, so a value riding on the key (`isr(foo)`) still claims;
-; there is nothing to read out of one.
+; Whether either tag set carries an `isr` claim. The key ends at
+; a present `(`, so bare `isr` and `isr(foo)` both claim it.
 (pub :: tagsHaveIsr (-> Axtags Axtags Int))
 (pub fn (tagsHaveIsr sig own)
   (if (== (tagsHaveIsrIn sig 0) 1)
@@ -26620,14 +26618,11 @@
     {
       (let content (axtagContent (vecGet tags i)))
       {
-        (let op
-          (if (let (Some k) (strFindByte content 40 0))
-            k
-            (- 0 1)))
+        (let op (strFindByte content 40 0))
         (if (strEq
-              (if (< op 0)
-                content
-                (strSlice content 0 op))
+              (if (let (Some opening) op)
+                (strSlice content 0 opening)
+                content)
               "isr")
           1
           (tagsHaveIsrIn tags (+ i 1)))
@@ -26825,25 +26820,15 @@
 (pub fn (restrictCollect tags rs i)
   (if (>= i (vecLen tags))
     0
-    ; `op` STAYS AN INT HERE. It is handed on to `axtagListValue`,
-    ; whose own signature takes the open-paren index with -1 for
-    ; "no value" and documents it four lines above itself. The
-    ; match is at the point of production, so the `Option` is
-    ; consumed in registers and nothing is boxed; what survives is
-    ; a private convention between two functions in this file, not
-    ; a public sentinel contract.
     {
       (let content (axtagContent (vecGet tags i)))
       {
-        (let op
-          (if (let (Some k) (strFindByte content 40 0))
-            k
-            (- 0 1)))
+        (let op (strFindByte content 40 0))
         {
           (if (strEq
-                (if (< op 0)
-                  content
-                  (strSlice content 0 op))
+                (if (let (Some opening) op)
+                  (strSlice content 0 opening)
+                  content)
                 "restrict")
             (restrictSplit (axtagListValue content op) rs)
             ())
@@ -26852,18 +26837,18 @@
       }
     }))
 
-; The bytes between `(` at `op` and the last `)`, or "" when there is
-; no value or the last `)` does not follow the `(`.
-(pub :: axtagListValue (-> String Int String))
-(pub fn (axtagListValue content op)
-  (if (< op 0)
-    ""
+; The bytes between a present opening delimiter and the last `)`.
+; Missing or invalid delimiters normalise to empty text.
+(pub :: axtagListValue (-> String (Option Int) String))
+(pub fn (axtagListValue content opening)
+  (if (let (Some op) opening)
     {
       (let cl (axtagCloseAt content))
-      (if (|| (>= cl (strLen content)) (<= cl op))
+      (if (|| (< op 0) (|| (>= cl (strLen content)) (<= cl op)))
         ""
         (strSlice content (+ op 1) (- cl (+ op 1))))
-    }))
+    }
+    ""))
 
 ; Split on `,`, trimming blanks, pushing each name once. A tag naming
 ; NOTHING - `restrict` or `restrict()` - pushes the empty name, so
@@ -29739,31 +29724,25 @@
 ; the body performs an unsafe operation itself (`unsafeLexical`).
 (pub :: checkOneAxtag (-> TC ASTNode String Strings Ints Int Int))
 (pub fn (checkOneAxtag tc d content eff eparams lex)
-  ; Same as `restrictCollect`: `op` is read twice in one `let` group
-  ; and once as an offset into `content`, so it stays an Int and the
-  ; match sits where the call is.
   ; Purity has one spelling, `effect(pure)`. A bare `pure` key is
   ; refused by `axtagKeyTypo` (AX3078) rather than checked here.
   {
-    (let op
-      (if (let (Some k) (strFindByte content 40 0))
-        k
-        (- 0 1)))
+    (let op (strFindByte content 40 0))
     {
       (let key
-        (if (< op 0)
-          content
-          (strSlice content 0 op)))
+        (if (let (Some opening) op)
+          (strSlice content 0 opening)
+          content))
       (let val
-        (if (< op 0)
-          ""
-          (strSlice content (+ op 1) (- (axtagCloseAt content) (+ op 1)))))
+        (if (let (Some opening) op)
+          (strSlice content (+ opening 1) (- (axtagCloseAt content) (+ opening 1)))
+          ""))
       (let trail
-        (if (< op 0)
-          ""
+        (if (isSome op)
           (strTrimBlanks
             (strSlice content (+ (axtagCloseAt content) 1)
-              (- (strLen content) (+ (axtagCloseAt content) 1))))))
+              (- (strLen content) (+ (axtagCloseAt content) 1))))
+          ""))
       (if (> (strLen trail) 0)
         (emitDiag tc
           (diagSetLabel
@@ -33783,15 +33762,12 @@
     {
       (let content (axtagContent (vecGet tags i)))
       {
-        (let op
-          (if (let (Some k) (strFindByte content 40 0))
-            k
-            (- 0 1)))
+        (let op (strFindByte content 40 0))
         {
           (if (strEq
-                (if (< op 0)
-                  content
-                  (strSlice content 0 op))
+                (if (let (Some opening) op)
+                  (strSlice content 0 opening)
+                  content)
                 "ct")
             (restrictSplit (axtagListValue content op) cs))
           (ctCollect tags cs (+ i 1))

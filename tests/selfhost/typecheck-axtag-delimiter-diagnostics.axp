@@ -1,0 +1,47 @@
+; These source diagnostics are pinned against the unchanged lookup.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import IO)
+(import Vec)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (println name)
+    (match (parseModuleWith (lex source) (scanAxtags source))
+      ((ParseFailed error) __indexTrap)
+      ((ParseSuccess declarations after)
+        {
+          (let units
+            (vecPush vecNew
+              (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+          (let tc (tcNew declarations declarations units))
+          (tcWalkDecls tc 0)
+          (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+        }
+      ))
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "restrict-bare.ax" ";@axiom:restrict\n(pub fn (test) 0)\n")
+    (checkSource "restrict-empty.ax" ";@axiom:restrict()\n(pub fn (test) 0)\n")
+    (checkSource "restrict-unclosed.ax" ";@axiom:restrict(no-io\n(pub fn (test) 0)\n")
+    (checkSource "restrict-unknown.ax" ";@axiom:restrict(no-fo)\n(pub fn (test) 0)\n")
+    (checkSource "restrict-ok.ax" ";@axiom:restrict(no-io)\n(pub fn (test) 0)\n")
+    (checkSource "restrict-trailing.ax" ";@axiom:restrict(no-io) strict\n(pub fn (test) 0)\n")
+    (checkSource "effect-ok.ax" ";@axiom:effect(pure)\n(pub fn (test) 0)\n")
+    (checkSource "effect-unclosed.ax" ";@axiom:effect(pure\n(pub fn (test) 0)\n")
+    (checkSource "effect-trailing.ax" ";@axiom:effect(pure) extra\n(pub fn (test) 0)\n")
+    (checkSource "effect-bare.ax" ";@axiom:effect\n(pub fn (test) 0)\n")
+    (checkSource "effect-empty.ax" ";@axiom:effect()\n(pub fn (test) 0)\n")
+    (checkSource "ct-bare.ax" ";@axiom:ct\n(pub fn (test) 0)\n")
+    (checkSource "ct-empty.ax" ";@axiom:ct()\n(pub fn (test) 0)\n")
+    (checkSource "ct-unknown.ax" ";@axiom:ct(missing)\n(pub fn (test) 0)\n")
+  })

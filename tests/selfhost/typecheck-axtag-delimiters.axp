@@ -1,0 +1,121 @@
+; Optional delimiters preserve the existing metadata readers' policies.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: entry (-> String AxtagEnt))
+(fn (entry text)
+  (AxtagEnt :off 0 :content text))
+
+(:: one (-> String Axtags))
+(fn (one text)
+  (vecPush vecNew (entry text)))
+
+(:: two (-> String String Axtags))
+(fn (two first second)
+  (vecPush (one first) (entry second)))
+
+(:: namesAre (-> Strings Strings Bool))
+(fn (namesAre actual expected)
+  {
+    (let mut good (== (vecLen actual) (vecLen expected)))
+    (for i in 0..(vecLen actual)
+      (if good
+        (set good (strEq (vecGet actual i) (vecGet expected i)))))
+    good
+  })
+
+(:: restrictions (-> Axtags Strings))
+(fn (restrictions tags)
+  {
+    (let result vecNew)
+    (restrictCollect tags result 0)
+    result
+  })
+
+(:: secrets (-> Axtags Strings))
+(fn (secrets tags)
+  {
+    (let result vecNew)
+    (ctCollect tags result 0)
+    result
+  })
+
+(:: tagCode (-> String (Option String)))
+(fn (tagCode content)
+  {
+    (let declaration (nodeBuildDFn "test" vecNew (mkEInt 0) (mkSpan 5 9)))
+    (let declarations (vecPush vecNew declaration))
+    (let tc (tcNew declarations declarations vecNew))
+    (checkOneAxtag tc declaration content vecNew vecNew 0)
+    (if (== (vecLen (tcOutVec tc)) 0)
+      None
+      (if (== (vecLen (tcOutVec tc)) 1)
+        (Some (diagCode (vecGet (tcOutVec tc) 0)))
+        (Some "multiple")))
+  })
+
+(:: codeIs (-> String String Bool))
+(fn (codeIs content expected)
+  (match (tagCode content)
+    ((None) false)
+    ((Some code) (strEq code expected))))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (strEq (axtagListValue "(value)" (Some 0)) "value"))
+    (say 2 (strEq (axtagListValue "(value)" None) ""))
+    (say 3 (strEq (axtagListValue "key(value)" (Some 3)) "value"))
+    (say 4 (strEq (axtagListValue "key" None) ""))
+    (say 5 (strEq (axtagListValue "key()" (Some 3)) ""))
+    (say 6 (strEq (axtagListValue "key(value" (Some 3)) ""))
+    (say 7 (strEq (axtagListValue ")" (Some 0)) ""))
+    (say 8 (strEq (axtagListValue "(value)" (Some -1)) ""))
+    (say 9 (strEq (axtagListValue "key(value)" (Some 99)) ""))
+    (say 10 (strEq (axtagListValue "key(use (f x))" (Some 3)) "use (f x)"))
+    (say 11 (strEq (axtagListValue "key(value) ignored" (Some 3)) "value"))
+    (say 12 (strEq (axtagListValue "key( value )" (strFindByte "key( value )" 40 0)) " value "))
+    (say 13 (namesAre (restrictions (one "restrict")) (vecPush vecNew "")))
+    (say 14 (namesAre (restrictions (one "restrict()")) (vecPush vecNew "")))
+    (say 15 (namesAre (restrictions (one "restrict(open")) (vecPush vecNew "")))
+    (say 16 (namesAre (restrictions (one "restrict(no-io)")) (vecPush vecNew "no-io")))
+    (say 17
+      (namesAre (restrictions (two "restrict(no-io,no-alloc)" "restrict(no-io, strict)"))
+        (vecPush (vecPush (vecPush vecNew "no-io") "no-alloc") "strict")))
+    (say 18 (namesAre (restrictions (one "other(no-io)")) vecNew))
+    (say 19 (namesAre (restrictions (one "restrict(no-io) trailing")) (vecPush vecNew "no-io")))
+    (say 20 (namesAre (secrets (one "ct")) (vecPush vecNew "")))
+    (say 21 (namesAre (secrets (one "ct()")) (vecPush vecNew "")))
+    (say 22 (namesAre (secrets (one "ct(open")) (vecPush vecNew "")))
+    (say 23
+      (namesAre (secrets (two "ct(x, y)" "ct(x,*ptr)"))
+        (vecPush (vecPush (vecPush vecNew "x") "y") "*ptr")))
+    (say 24 (namesAre (secrets (one "other(x)")) vecNew))
+    (say 25 (== (tagsHaveIsrIn (one "isr") 0) 1))
+    (say 26 (== (tagsHaveIsrIn (one "isr()") 0) 1))
+    (say 27 (== (tagsHaveIsrIn (one "isr(irq)") 0) 1))
+    (say 28 (== (tagsHaveIsrIn (one "isr(open") 0) 1))
+    (say 29 (== (tagsHaveIsrIn (one "isr extra") 0) 0))
+    (say 30 (== (tagsHaveIsrIn (two "other(irq)" "isr") 0) 1))
+    (say 31 (== (tagsHaveIsrIn vecNew 0) 0))
+    (say 32 (isNone (tagCode "effect(pure)")))
+    (say 33 (isNone (tagCode "effect(pure")))
+    (say 34 (isNone (tagCode "effect(pure)  ")))
+    (say 35 (codeIs "effect(pure) trailing" "AX3138"))
+    (say 36 (codeIs "pure" "AX3078"))
+    (say 37 (codeIs "effct" "AX3039"))
+    (say 38 (codeIs "restrict(no-io) strict" "AX3138"))
+    (say 39 (isNone (tagCode "restrict")))
+    (say 40 (strEq (axtagListValue (strDup "key(dynamic)") (Some 3)) "dynamic"))
+  })

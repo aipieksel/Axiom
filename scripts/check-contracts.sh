@@ -126,6 +126,7 @@ python3 tests/selfhost/typecheck-entry-source-options.py --axiom "$axc"
 python3 tests/selfhost/emitter-signature-flags.py --axiom "$axc"
 python3 tests/selfhost/checker-axtag-owners.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/typecheck-axtag-presence.py --axiom "$axc"
+python3 tests/selfhost/typecheck-axtag-delimiters.py --axiom "$axc"
 python3 tests/tools/compiler-tag-consumers.py --axiom "$axc"
 python3 tests/tools/expansion-interner-owner.py "$axc"
 python3 tests/tools/rustbind-query-options.py "$axc"
