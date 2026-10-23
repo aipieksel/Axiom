@@ -1,0 +1,87 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: parsed (-> String Nodes))
+(fn (parsed source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) __indexTrap)
+    ((ParseSuccess nodes _) nodes)))
+
+(:: at (-> String String Int))
+(fn (at source needle)
+  (match (strFind source needle 0)
+    ((None) __indexTrap)
+    ((Some n) n)))
+
+(:: unit (-> (Option String) String String CUnit2))
+(fn (unit name path source)
+  (CUnit2 :file path :src source :name name :imports vecNew :library false))
+
+(:: idx (-> (Option Int) (Option Int) Bool))
+(fn (idx got want)
+  (match want
+    ((None) (isNone got))
+    ((Some wanted)
+      (match got
+        ((None) false)
+        ((Some found) (== found wanted)))
+    )))
+
+(:: uriIs (-> (Option String) String Bool))
+(fn (uriIs got want)
+  (match got
+    ((None) false)
+    ((Some found) (strEq found want))))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n ok)
+  (println "{n} {ok}"))
+
+(:: request (-> String String String ()))
+;@axiom:effect(io)
+(fn (request title source needle)
+  {
+    (println "CASE {title}")
+    (let mainUri "file:///tmp/axiom-module-options/Main.ax")
+    (let peerUri "file:///tmp/axiom-module-options/Peer.ax")
+    (let path "/tmp/axiom-module-options/Main.ax")
+    (let peer
+      "(pub data Choice (Stop))\n(pub struct Box)\n(pub :: make (-> Int Choice))\n(pub fn (make x) Stop)")
+    (let uris (vecPush (vecPush vecNew mainUri) peerUri))
+    (let texts (vecPush (vecPush vecNew source) peer))
+    (let workspace
+      (lspWorkspaceNew uris texts (vecPush (vecPush (vecPush (vecPush vecNew 1) 1) 1) 1)))
+    (let offset (at source needle))
+    (let params (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (println (jsonWrite (lspDefinition workspace source mainUri params "")))
+    (println (jsonWrite (lspDeclaration workspace source mainUri params "")))
+    (println (jsonWrite (lspHover workspace source mainUri params "")))
+    (println (jsonWrite (lspTypeDefinition workspace source mainUri params)))
+    (println (jsonWrite (lspSignatureHelp workspace source mainUri params)))
+    (println (jsonWrite (lspReferences workspace source mainUri params uris texts "")))
+    (println (jsonWrite (lspPrepareTypeHierarchy workspace source mainUri params)))
+    (println
+      (jsonWrite
+        (lspWorkspaceSymbols workspace uris texts (jsonObjPut jsonObj "query" (jsonStr "make")))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (request "function" "(import Peer)\n(fn (use) (make 1))" "make")
+    (request "constructor" "(import Peer)\n(fn (use) Stop)" "Stop")
+    (request "data-type" "(import Peer)\n(:: use (-> Choice Int))\n(fn (use x) 1)" "Choice")
+    (request "struct-type" "(import Peer)\n(:: use (-> Box Int))\n(fn (use x) 1)" "Box")
+    (request "module" "(import Peer)\n(fn (use) 1)" "Peer")
+    (request "missing" "(import Peer)\n(fn (use) missing)" "missing")
+    (request "local" "(import Peer)\n(fn (use) 1)" "use")
+    0
+  })

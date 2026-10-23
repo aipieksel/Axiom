@@ -3248,30 +3248,16 @@
 ; here: `lsp.ax` reaches for `parser`, `typecheck`, `expand` and
 ; `codegen` and not for the symbol renderer, and a module dependency
 ; taken for fifteen lines is a dependency the next reader has to
-; explain. Answers -1 when no unit carries that name, which is what a
+; explain. Answers None when no unit carries that name, which is what a
 ; declaration the resolver did not attribute looks like.
-(pub :: lspUnitOf (-> Units Int Int))
-;@axiom:effect(unsafe)
+(pub :: lspUnitOf (-> Units (Option String) (Option Int)))
+;@axiom:effect(alloc)
 (pub fn (lspUnitOf units module)
   ; Imported units begin at 1. The entry file carries None, and the
   ; shared name predicate handles both unnamed and named units.
-  {
-    (let n (vecLen units))
-    (let mut i 1)
-    (let mut at (- 0 1))
-    {
-      (while (< i n)
-        {
-          (if (unitNameIs (vecGet units i) (as module String))
-            {
-              (set at i)
-              (set i n)
-            })
-          (set i (+ i 1))
-        })
-      at
-    }
-  })
+  (match module
+    ((None) None)
+    ((Some name) (lspUnitNamed units name))))
 
 ; `/a/b.ax` -> `file:///a/b.ax`, the inverse of `lspUriToPath`.
 ;
@@ -3507,14 +3493,16 @@
         (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
         (if (let (Some d) d)
           {
-            (let u (lspUnitOf units (nodeModule d)))
-            (if (< u 0)
-              jsonNull
-              {
-                (let unit (vecGet units u))
-                (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (unitFile unit))))
-                  "range" (lspRange (unitSrc unit) (nodeSpan d)))
-              })
+            (let u (lspUnitOf units (nodeModuleOpt d)))
+            (match u
+              ((None) jsonNull)
+              ((Some u)
+                {
+                  (let unit (vecGet units u))
+                  (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (unitFile unit))))
+                    "range" (lspRange (unitSrc unit) (nodeSpan d)))
+                }
+              ))
           }
           (lspCtorDefinitionImported allDecls units w))
       }
@@ -3947,20 +3935,20 @@
     }
   })
 
-; The unit whose module is named `w`, or -1. `lspUnitOf` asks the
-; same of a module handle; this asks it of the name a document spells,
+; The unit whose module is named `w`, or None. `lspUnitOf` asks the
+; same of an optional module name; this asks the name a document spells,
 ; from unit 1 for `lspUnitOf`'s reason (unit 0 has no module name).
-(pub :: lspUnitNamed (-> Units String Int))
+(pub :: lspUnitNamed (-> Units String (Option Int)))
 (pub fn (lspUnitNamed units w)
   {
     (let mut i 1)
-    (let mut at (- 0 1))
+    (let mut at (:: None (Option Int)))
     {
       (while (< i (vecLen units))
         {
           (if (unitNameIs (vecGet units i) w)
             {
-              (set at i)
+              (set at (Some i))
               (set i (vecLen units))
             })
           (set i (+ i 1))
@@ -3983,21 +3971,23 @@
         (let units r.units)
         {
           (let u (lspUnitNamed units w))
-          (if (< u 0)
-            jsonNull
-            {
-              (let unit (vecGet units u))
+          (match u
+            ((None) jsonNull)
+            ((Some u)
               {
-                (let doc (docModuleDoc (unitSrc unit)))
-                (lspMarkdownHover
-                  (concat (concat (concat "```axiom\n(import " w) ")\n```\n\n*module* `")
-                    (concat (concat (unitFile unit) "`\n")
-                      (if (== (strLen doc) 0)
-                        ""
-                        (concat "\n" doc))))
-                  range)
+                (let unit (vecGet units u))
+                {
+                  (let doc (docModuleDoc (unitSrc unit)))
+                  (lspMarkdownHover
+                    (concat (concat (concat "```axiom\n(import " w) ")\n```\n\n*module* `")
+                      (concat (concat (unitFile unit) "`\n")
+                        (if (== (strLen doc) 0)
+                          ""
+                          (concat "\n" doc))))
+                    range)
+                }
               }
-            })
+            ))
         }
       }
       jsonNull)))
@@ -4236,13 +4226,15 @@
         (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
         (if (let (Some d) d)
           {
-            (let u (lspUnitOf units (nodeModule d)))
-            (if (< u 0)
-              jsonNull
-              {
-                (let unit (vecGet units u))
-                (lspHoverAt (unitSrc unit) allDecls d range (unitName unit))
-              })
+            (let u (lspUnitOf units (nodeModuleOpt d)))
+            (match u
+              ((None) jsonNull)
+              ((Some u)
+                {
+                  (let unit (vecGet units u))
+                  (lspHoverAt (unitSrc unit) allDecls d range (unitName unit))
+                }
+              ))
           }
           (lspHoverCtorImported allDecls units w range))
       }
@@ -7952,9 +7944,9 @@
 ; imports. The module that declares it is found the way `definition`
 ; finds it - preflight, then the resolver, then `lspFindImported` - and
 ; if THAT file is open in the store, its URI is answered, so its own
-; occurrences can be listed. "" when the name is not an import, or
+; occurrences can be listed. None when the name is not an import, or
 ; the declaring file is not open.
-(pub :: lspNavHomeUri (-> LspWorkspace String String (Vec ASTNode) String Strings String))
+(pub :: lspNavHomeUri (-> LspWorkspace String String Nodes String Strings (Option String)))
 ;@axiom:effect(io)
 (pub fn (lspNavHomeUri workspace path src decls w uris)
   (if (let (Some r) (lspResolveFor workspace path src decls))
@@ -7965,20 +7957,22 @@
         (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
         (if (let (Some d) d)
           {
-            (let u (lspUnitOf units (nodeModule d)))
-            (if (< u 0)
-              ""
-              {
-                (let huri (lspPathToUri (unitFile (vecGet units u))))
-                (if (< (docFind uris huri) 0)
-                  ""
-                  huri)
-              })
+            (let u (lspUnitOf units (nodeModuleOpt d)))
+            (match u
+              ((None) None)
+              ((Some u)
+                {
+                  (let huri (lspPathToUri (unitFile (vecGet units u))))
+                  (if (< (docFind uris huri) 0)
+                    None
+                    (Some huri))
+                }
+              ))
           }
-          "")
+          None)
       }
     }
-    ""))
+    None))
 
 ; ------------------------------------------------------------------
 ; `textDocument/references`: every occurrence of the name under the
@@ -8052,28 +8046,32 @@
 (pub fn (lspNavHomeLocations workspace out path src decls bare incl uris texts)
   {
     (let huri (lspNavHomeUri workspace path src decls bare uris))
-    (if (== (strLen huri) 0)
-      (if (== incl 1)
-        {
-          (let loc (lspDefinitionImported workspace path src decls bare))
-          (if (jsonIsNull loc)
-            0
-            {
-              (jsonArrPush out loc)
+    (match huri
+      ((None)
+        (if (== incl 1)
+          {
+            (let loc (lspDefinitionImported workspace path src decls bare))
+            (if (jsonIsNull loc)
               0
-            })
-        }
-        0)
-      {
-        (let htext (docText uris texts huri))
+              {
+                (jsonArrPush out loc)
+                0
+              })
+          }
+          0)
+      )
+      ((Some huri)
         {
-          (let hdecls (lspNavParse htext))
-          (if (== (as hdecls Int) 0)
-            0
-            (lspNavLocations out huri htext (lspLineIndex htext)
-              (lspNavSameKey (lspNavOccurrences htext hdecls) bare incl)))
+          (let htext (docText uris texts huri))
+          {
+            (let hdecls (lspNavParse htext))
+            (if (== (as hdecls Int) 0)
+              0
+              (lspNavLocations out huri htext (lspLineIndex htext)
+                (lspNavSameKey (lspNavOccurrences htext hdecls) bare incl)))
+          }
         }
-      })
+      ))
   })
 
 ; ------------------------------------------------------------------
@@ -9225,13 +9223,15 @@
   (if (nodeSame d nilNode)
     jsonNull
     {
-      (let u (lspUnitOf units (nodeModule d)))
-      (if (< u 0)
-        jsonNull
-        {
-          (let unit (vecGet units u))
-          (lspNavLocOf (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan d))
-        })
+      (let u (lspUnitOf units (nodeModuleOpt d)))
+      (match u
+        ((None) jsonNull)
+        ((Some u)
+          {
+            (let unit (vecGet units u))
+            (lspNavLocOf (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan d))
+          }
+        ))
     }))
 
 ; The last `(:: name T)` the MERGED list carries for `name`, under a
@@ -9718,14 +9718,16 @@
       (let d (lspFindImportedFn allDecls name (- (vecLen allDecls) 1)))
       (if (let (Some d) d)
         {
-          (let u (lspUnitOf units (nodeModule d)))
-          (if (< u 0)
-            0
-            {
-              (let unit (vecGet units u))
-              (lspChItem (unitSrc unit) (lspLineIndex (unitSrc unit))
-                (lspPathToUri (unitFile unit)) d)
-            })
+          (let u (lspUnitOf units (nodeModuleOpt d)))
+          (match u
+            ((None) 0)
+            ((Some u)
+              {
+                (let unit (vecGet units u))
+                (lspChItem (unitSrc unit) (lspLineIndex (unitSrc unit))
+                  (lspPathToUri (unitFile unit)) d)
+              }
+            ))
         }
         0)
     }
@@ -9952,14 +9954,16 @@
       (let d (lspThFindImportedType allDecls name (- (vecLen allDecls) 1)))
       (if (let (Some d) d)
         {
-          (let u (lspUnitOf units (nodeModule d)))
-          (if (< u 0)
-            0
-            {
-              (let unit (vecGet units u))
-              (lspThItem (unitSrc unit) (lspLineIndex (unitSrc unit))
-                (lspPathToUri (unitFile unit)) d)
-            })
+          (let u (lspUnitOf units (nodeModuleOpt d)))
+          (match u
+            ((None) 0)
+            ((Some u)
+              {
+                (let unit (vecGet units u))
+                (lspThItem (unitSrc unit) (lspLineIndex (unitSrc unit))
+                  (lspPathToUri (unitFile unit)) d)
+              }
+            ))
         }
         0)
     }
@@ -10693,13 +10697,15 @@
         (if (let (Some d) d)
           (if (== (nodeTag d) TAG_D_FN)
             {
-              (let u (lspUnitOf units (nodeModule d)))
-              (if (< u 0)
-                0
-                {
-                  (let unit (vecGet units u))
-                  (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
-                })
+              (let u (lspUnitOf units (nodeModuleOpt d)))
+              (match u
+                ((None) 0)
+                ((Some u)
+                  {
+                    (let unit (vecGet units u))
+                    (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
+                  }
+                ))
             }
             {
               (let c (lspViewFindCtor allDecls head 1))
@@ -11949,8 +11955,8 @@
                   (let bare (bareOf (nodeAName d)))
                   (if (lspViewDeclWants d bare query)
                     {
-                      (let u (lspUnitOf units (nodeModule d)))
-                      (if (! (< u 0))
+                      (let u (lspUnitOf units (nodeModuleOpt d)))
+                      (if (let (Some u) u)
                         {
                           (let unit (vecGet units u))
                           {
@@ -13761,52 +13767,54 @@
     (if (isSome (strVecIdx seen key))
       0
       {
-        (let u (lspUnitOf units (nodeModule decl)))
-        (if (< u 0)
-          0
-          {
-            (let hsrc (unitSrc (vecGet units u)))
-            (let hpath (unitFile (vecGet units u)))
+        (let u (lspUnitOf units (nodeModuleOpt decl)))
+        (match u
+          ((None) 0)
+          ((Some u)
             {
-              (let o (lspFormStart hsrc (spanStart (nodeSpan decl))))
-              (if (strEq (lspViewHeadAt hsrc o) "pub")
-                {
-                  (let edit (lspImportEdit src uri ix decls mod name))
-                  (if (== edit 0)
-                    0
+              (let hsrc (unitSrc (vecGet units u)))
+              (let hpath (unitFile (vecGet units u)))
+              {
+                (let o (lspFormStart hsrc (spanStart (nodeSpan decl))))
+                (if (strEq (lspViewHeadAt hsrc o) "pub")
+                  {
+                    (let edit (lspImportEdit src uri ix decls mod name))
+                    (if (== edit 0)
+                      0
+                      {
+                        (vecPush seen key)
+                        (jsonArrPush out
+                          (lspFixActionJson (lspFixImportTitle mod name) "quickfix" d src uri ix
+                            edit))
+                        0
+                      })
+                  }
+                  {
+                    (let hix (lspLineIndex hsrc))
+                    (let edits jsonArr)
+                    (let sig (lspFindSig allDecls (nodeAName decl) (- (vecLen allDecls) 1)))
                     {
+                      (jsonArrPush edits (lspFixTextEdit hsrc hix (+ o 1) "pub "))
+                      (if (let (Some sig) sig)
+                        {
+                          (let so (lspFormStart hsrc (spanStart (nodeSpan sig))))
+                          (if (! (strEq (lspViewHeadAt hsrc so) "pub"))
+                            (jsonArrPush edits (lspFixTextEdit hsrc hix (+ so 1) "pub ")))
+                        }
+                        ())
                       (vecPush seen key)
                       (jsonArrPush out
-                        (lspFixActionJson (lspFixImportTitle mod name) "quickfix" d src uri ix
-                          edit))
+                        (lspFixActionJson
+                          (concat (concat (concat "Make `" name) "` public in `") (concat mod "`"))
+                          "quickfix" d src uri ix
+                          (jsonObjPut jsonObj "changes"
+                            (jsonObjPut jsonObj (lspPathToUri hpath) edits))))
                       0
-                    })
-                }
-                {
-                  (let hix (lspLineIndex hsrc))
-                  (let edits jsonArr)
-                  (let sig (lspFindSig allDecls (nodeAName decl) (- (vecLen allDecls) 1)))
-                  {
-                    (jsonArrPush edits (lspFixTextEdit hsrc hix (+ o 1) "pub "))
-                    (if (let (Some sig) sig)
-                      {
-                        (let so (lspFormStart hsrc (spanStart (nodeSpan sig))))
-                        (if (! (strEq (lspViewHeadAt hsrc so) "pub"))
-                          (jsonArrPush edits (lspFixTextEdit hsrc hix (+ so 1) "pub ")))
-                      }
-                      ())
-                    (vecPush seen key)
-                    (jsonArrPush out
-                      (lspFixActionJson
-                        (concat (concat (concat "Make `" name) "` public in `") (concat mod "`"))
-                        "quickfix" d src uri ix
-                        (jsonObjPut jsonObj "changes"
-                          (jsonObjPut jsonObj (lspPathToUri hpath) edits))))
-                    0
-                  }
-                })
+                    }
+                  })
+              }
             }
-          })
+          ))
       })
   })
 
@@ -14511,13 +14519,15 @@
         (let c (lspCtorNodeOf (Some dat) name))
         (if (let (Some c) c)
           {
-            (let u (lspUnitOf units (nodeModule dat)))
-            (if (< u 0)
-              jsonNull
-              {
-                (let unit (vecGet units u))
-                (lspNavLocOf (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan c))
-              })
+            (let u (lspUnitOf units (nodeModuleOpt dat)))
+            (match u
+              ((None) jsonNull)
+              ((Some u)
+                {
+                  (let unit (vecGet units u))
+                  (lspNavLocOf (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan c))
+                }
+              ))
           }
           jsonNull)
       }
@@ -14543,14 +14553,16 @@
       (if (isNone (lspCtorNodeOf (Some dat) name))
         jsonNull
         {
-          (let u (lspUnitOf units (nodeModule dat)))
-          (if (< u 0)
-            jsonNull
-            {
-              (let unit (vecGet units u))
-              (lspHoverAtNote (unitSrc unit) allDecls dat range (unitName unit)
-                (lspCtorNote dat name))
-            })
+          (let u (lspUnitOf units (nodeModuleOpt dat)))
+          (match u
+            ((None) jsonNull)
+            ((Some u)
+              {
+                (let unit (vecGet units u))
+                (lspHoverAtNote (unitSrc unit) allDecls dat range (unitName unit)
+                  (lspCtorNote dat name))
+              }
+            ))
         })
       jsonNull)
   })
@@ -14568,13 +14580,15 @@
       (if (isNone (lspCtorNodeOf (Some dat) name))
         jsonNull
         {
-          (let u (lspUnitOf units (nodeModule dat)))
-          (if (< u 0)
-            jsonNull
-            {
-              (let unit (vecGet units u))
-              (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan dat))
-            })
+          (let u (lspUnitOf units (nodeModuleOpt dat)))
+          (match u
+            ((None) jsonNull)
+            ((Some u)
+              {
+                (let unit (vecGet units u))
+                (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit) (nodeSpan dat))
+              }
+            ))
         })
       jsonNull)
   })
@@ -14687,14 +14701,16 @@
                     (let d (lspFindTypeImported allDecls (nodeAName ty) (- (vecLen allDecls) 1)))
                     (if (let (Some d) d)
                       {
-                        (let u (lspUnitOf units (nodeModule d)))
-                        (if (< u 0)
-                          jsonNull
-                          {
-                            (let unit (vecGet units u))
-                            (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
-                              (nodeSpan d))
-                          })
+                        (let u (lspUnitOf units (nodeModuleOpt d)))
+                        (match u
+                          ((None) jsonNull)
+                          ((Some u)
+                            {
+                              (let unit (vecGet units u))
+                              (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
+                                (nodeSpan d))
+                            }
+                          ))
                       }
                       jsonNull)
                   })
