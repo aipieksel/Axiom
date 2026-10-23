@@ -5045,7 +5045,7 @@
                 "` is not an architecture `asm` knows; an arm opens with `aarch64` or `x86_64`"))
             ""
           }
-          (if (>= (expAsmNameAt seen arch 0) 0)
+          (if (isSome (expAsmNameAt seen arch 0))
             {
               (expAsmBad env (nodeSpan head)
                 (concat (concat "a second `" arch)
@@ -5232,7 +5232,7 @@
             (expAsmBad env (nodeSpan a)
               (concat (concat "`" w)
                 "` is not an `asm` option; the options are `pure`, `nomem`, `readonly`, `preserves_flags`, `noreturn`, `nostack`, `att_syntax` and `intel_syntax`"))
-            (if (>= (expAsmNameAt opts w 0) 0)
+            (if (isSome (expAsmNameAt opts w 0))
               (expAsmBad env (nodeSpan a)
                 (concat (concat "`" w) "` is given twice; an arm states an option once"))
               {
@@ -5338,7 +5338,7 @@
               (let prev (expAsmOpAt ops nm 0))
               (if (> (strLen regBad) 0)
                 (expAsmBad env (nodeSpan (vecGet args 1)) regBad)
-                (if (&& hasReg (>= (expAsmNameAt regs reg 0) 0))
+                (if (&& hasReg (isSome (expAsmNameAt regs reg 0)))
                   (expAsmBad env (nodeSpan (vecGet args 1))
                     (concat (concat "`" reg)
                       "` is named twice in this arm; an operand's register is its own"))
@@ -5507,7 +5507,7 @@
               (let why (expAsmClobberRegWhy arch r))
               (if (> (strLen why) 0)
                 (expAsmBad env (nodeSpan a) why)
-                (if (>= (expAsmNameAt regs r 0) 0)
+                (if (isSome (expAsmNameAt regs r 0))
                   (expAsmBad env (nodeSpan a)
                     (concat (concat "`" r)
                       "` is named twice in this arm; a clobbered register can't also hold an operand"))
@@ -5533,17 +5533,17 @@
           acc))
     }))
 
-; The index of the `k`th output with no `into` (0-based), or -1. The
+; The index of the `k`th output with no `into` (0-based), if present. The
 ; form answers the first; a second has nowhere to go.
-(pub :: expAsmAnswered (-> (Vec AsmOp) Int Int Int))
+(pub :: expAsmAnswered (-> (Vec AsmOp) Int Int (Option Int)))
 (pub fn (expAsmAnswered ops k i)
-  (if (>= i (vecLen ops))
-    (- 0 1)
+  (if (|| (< i 0) (>= i (vecLen ops)))
+    None
     {
       (let p (vecGet ops i))
       (if (&& (expAsmOutKind p.kind) (== (strLen p.into) 0))
         (if (== k 0)
-          i
+          (Some i)
           (expAsmAnswered ops (- k 1) (+ i 1)))
         (expAsmAnswered ops k (+ i 1)))
     }))
@@ -5564,12 +5564,9 @@
 ; The node of option `w`, or 0 when the arm doesn't give it.
 (pub :: expAsmOptNode (-> Strings (Vec ASTNode) String ASTNode))
 (pub fn (expAsmOptNode opts optNodes w)
-  {
-    (let k (expAsmNameAt opts w 0))
-    (if (< k 0)
-      nilNode
-      (vecGet optNodes k))
-  })
+  (if (let (Some k) (expAsmNameAt opts w 0))
+    (vecGet optNodes k)
+    nilNode))
 
 ; What the arm's items say together, once each is well formed: one
 ; answered output at most, and options that agree with each other and
@@ -5587,9 +5584,9 @@
     (let att (expAsmOptNode opts optNodes "att_syntax"))
     (let intel (expAsmOptNode opts optNodes "intel_syntax"))
     (let bare (expAsmFirstOut ops false 0))
-    (if (>= second 0)
+    (if (let (Some secondIndex) second)
       {
-        (let p (vecGet ops second))
+        (let p (vecGet ops secondIndex))
         (expAsmBad env (nodeSpan p.node)
           (concat (concat "an arm answers one value, and `" p.name)
             (concat "` is a second output with nowhere to go; store it in a `mut` binding: `("
@@ -5624,12 +5621,12 @@
                       (expAsmOptsBad env (nodeSpan p.node)
                         "a `noreturn` block never finishes, so it has no outputs")
                     }
-                    (if (&& (! (nodeSame nomem nilNode)) (>= (expAsmNameAt clobs "memory" 0) 0))
+                    (if (&& (! (nodeSame nomem nilNode)) (isSome (expAsmNameAt clobs "memory" 0)))
                       (expAsmOptsBad env (nodeSpan nomem)
                         "`nomem` says the instructions touch no memory, and the arm clobbers `memory`; keep the one that is true")
                       (if (&& (! (nodeSame keeps nilNode))
-                            (|| (>= (expAsmNameAt clobs "cc" 0) 0)
-                              (>= (expAsmNameAt clobs "flags" 0) 0)))
+                            (|| (isSome (expAsmNameAt clobs "cc" 0))
+                              (isSome (expAsmNameAt clobs "flags" 0))))
                         (expAsmOptsBad env (nodeSpan keeps)
                           "`preserves_flags` says the instructions leave the flags alone, and the arm clobbers them; keep the one that is true")
                         (if (&& (> (vecLen abis) 0) (>= bare 0))
@@ -5752,9 +5749,9 @@
           }
           {
             (let k (expAsmFirstUnused ops used 0))
-            (if (>= k 0)
+            (if (let (Some unusedIndex) k)
               {
-                (expAsmUnused env (vecGet ops k))
+                (expAsmUnused env (vecGet ops unusedIndex))
                 ""
               }
               (expAsmArmText arch tnode env bs vals ops slots clobs opts abis tmpl nOut))
@@ -5762,17 +5759,17 @@
       })
   })
 
-; The first operand the template never names that needs naming, or -1.
+; The first operand the template never names that needs naming, if any.
 ; An operand in a register of its own needn't be named: the
 ; instructions reach it by that register, as a syscall reaches `x8`.
-(pub :: expAsmFirstUnused (-> (Vec AsmOp) Ints Int Int))
+(pub :: expAsmFirstUnused (-> (Vec AsmOp) Ints Int (Option Int)))
 (pub fn (expAsmFirstUnused ops used i)
-  (if (>= i (vecLen ops))
-    (- 0 1)
+  (if (|| (< i 0) (>= i (vecLen ops)))
+    None
     {
       (let p (vecGet ops i))
       (if (&& (== (vecGet used i) 0) (== (strLen p.reg) 0))
-        i
+        (Some i)
         (expAsmFirstUnused ops used (+ i 1)))
     }))
 
@@ -5932,7 +5929,7 @@
 
 (pub :: expAsmFlag (-> Strings String String String))
 (pub fn (expAsmFlag opts w letter)
-  (if (>= (expAsmNameAt opts w 0) 0)
+  (if (isSome (expAsmNameAt opts w 0))
     letter
     ""))
 
@@ -6339,12 +6336,12 @@
       i
       (expAsmColon s (+ i 1)))))
 
-(pub :: expAsmNameAt (-> Strings String Int Int))
+(pub :: expAsmNameAt (-> Strings String Int (Option Int)))
 (pub fn (expAsmNameAt names nm i)
-  (if (>= i (vecLen names))
-    (- 0 1)
+  (if (|| (< i 0) (>= i (vecLen names)))
+    None
     (if (strEq (vecGetStr names i) nm)
-      i
+      (Some i)
       (expAsmNameAt names nm (+ i 1)))))
 
 (pub :: expAsmModifier (-> String String Bool))

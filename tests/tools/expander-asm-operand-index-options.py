@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check typed assembler operand indexes and their two real expansion callers."""
+"""Check typed assembler indexes, their real callers and preserved diagnostics."""
 import argparse
 import hashlib
 import json
@@ -12,13 +12,13 @@ import tempfile
 def check(compiler, root, work):
     source = (root / 'core/expand.ax').read_text()
     fixture = root / 'tests/tools/expander-asm-operand-index-options.axp'
-    expected = ''.join(f'{i} true\n' for i in range(1, 10))
+    expected = ''.join(f'{i} true\n' for i in range(1, 28))
     env = dict(os.environ, AXIOM_STDLIB=str(root / 'stdlib'))
     report = {'builder_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
               'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
               'configurations': [], 'diagnostics': [], 'controls': [], 'refusals': [],
               'limits': ['Native O0/O2 allocation-poison checks and existing AXDL messages; no memory soundness claim.',
-                         'Only the operand index API changes; register/name index queries and AsmOp fields remain separate.']}
+                         'Assembler lookup indexes change; generated slot numbers and AsmOp fields remain separate.']}
 
     def modules(label, text):
         directory = work / (label + '-core')
@@ -47,8 +47,8 @@ def check(compiler, root, work):
 
     for level in (0, 2):
         build_run('positive-O' + str(level), source, level)
-        report['configurations'].append({'optimization': level, 'poison': True, 'cases': 9})
-        print(f'ok   operand indexes: 9 outcomes O{level} poison', flush=True)
+        report['configurations'].append({'optimization': level, 'poison': True, 'cases': 27})
+        print(f'ok   operand indexes: 27 outcomes O{level} poison', flush=True)
 
     diagnostic_files = ('1044-inline-asm', '1280-inline-asm-forms', '1281-asm-operand-unused')
     def diagnostics(native, expected_equal):
@@ -70,14 +70,38 @@ def check(compiler, root, work):
         assert text.count(before) == 1, (label, text.count(before))
         return text.replace(before, after, 1)
 
-    missing = replace_once(source, '(if (|| (< i 0) (>= i (vecLen ops)))\n    None',
-                           '(if (|| (< i 0) (>= i (vecLen ops)))\n    (Some 0)', 'missing-forged')
+    def replace_in_function(text, function, before, after, label):
+        start = text.index('(pub fn (' + function + ' ')
+        end = text.find('\n(pub ', start + 1)
+        assert end > start, label
+        part = text[start:end]
+        assert part.count(before) == 1, (label, part.count(before))
+        return text[:start] + part.replace(before, after, 1) + text[end:]
+
+    missing = replace_in_function(
+        source, 'expAsmOpAt',
+        '(if (|| (< i 0) (>= i (vecLen ops)))\n    None',
+        '(if (|| (< i 0) (>= i (vecLen ops)))\n    (Some 0)', 'missing-forged')
     no_index = replace_once(source, '(if (strEq p.name nm)\n        (Some i)',
                             '(if (strEq p.name nm)\n        None', 'present-erased')
-    bad_start = replace_once(source, '(if (|| (< i 0) (>= i (vecLen ops)))',
-                             '(if (>= i (vecLen ops))', 'negative-start-unchecked')
+    bad_start = replace_in_function(
+        source, 'expAsmOpAt', '(if (|| (< i 0) (>= i (vecLen ops)))',
+        '(if (>= i (vecLen ops))', 'negative-start-unchecked')
+    no_name = replace_in_function(
+        source, 'expAsmNameAt', '(if (strEq (vecGetStr names i) nm)\n      (Some i)',
+        '(if (strEq (vecGetStr names i) nm)\n      None', 'name-present-erased')
+    no_answer = replace_in_function(
+        source, 'expAsmAnswered', '(if (== k 0)\n          (Some i)',
+        '(if (== k 0)\n          None', 'answer-present-erased')
+    no_unused = replace_in_function(
+        source, 'expAsmFirstUnused',
+        '(if (&& (== (vecGet used i) 0) (== (strLen p.reg) 0))\n        (Some i)',
+        '(if (&& (== (vecGet used i) 0) (== (strLen p.reg) 0))\n        None',
+        'unused-present-erased')
     for label, text in [('missing-forged', missing), ('present-erased', no_index),
-                        ('negative-start-unchecked', bad_start)]:
+                        ('negative-start-unchecked', bad_start),
+                        ('name-present-erased', no_name), ('answer-present-erased', no_answer),
+                        ('unused-present-erased', no_unused)]:
         result = build_run(label, text, 0, False)
         report['controls'].append({'name': label, 'returncode': result.returncode,
                                    'changed_output': result.stdout != expected})
@@ -108,6 +132,9 @@ def check(compiler, root, work):
     local = modules('refusals', source)
     for label, declaration, code in (
         ('raw-index', '(:: bad Int) (fn (bad) (expAsmOpAt vecNew "x" 0))', 'AX3004'),
+        ('raw-name-index', '(:: bad Int) (fn (bad) (expAsmNameAt vecNew "x" 0))', 'AX3004'),
+        ('raw-answered-index', '(:: bad Int) (fn (bad) (expAsmAnswered vecNew 0 0))', 'AX3004'),
+        ('raw-unused-index', '(:: bad Int) (fn (bad) (expAsmFirstUnused vecNew vecNew 0))', 'AX3004'),
         ('missing-none', '(:: bad Int) (fn (bad) (match (expAsmOpAt vecNew "x" 0) ((Some index) index)))', 'AX3005'),
         ('missing-some', '(:: bad Int) (fn (bad) (match (expAsmOpAt vecNew "x" 0) ((None) 0)))', 'AX3005'),
     ):
