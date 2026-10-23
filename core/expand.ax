@@ -7492,8 +7492,7 @@
         0
         {
           (let r (vecGet rules i))
-          (let k (expRepIndex r))
-          (if (>= k 0)
+          (if (let (Some k) (expRepIndex r))
             {
               (let fixed vecNew)
               (for j in 0..k
@@ -7560,9 +7559,9 @@
           ; thing and is not built.
           {
             (let k (expRepIndex (vecGet rules i)))
-            (if (if (< k 0)
-              false
-              (== (patHasEllipsis (vecGet (expRulePats (vecGet rules i)) k)) 1))
+            (if (match k
+              ((None) false)
+              ((Some index) (== (patHasEllipsis (vecGet (expRulePats (vecGet rules i)) index)) 1)))
               (expEmit env
                 (mkDiagNote SEV_ERROR "AX3034" "macro-ellipsis" (nodeSpan mac)
                   (concat (concat "macro `" (nodeAName mac)) "` repeats beneath a repeat") 0 0
@@ -7671,21 +7670,18 @@
       (if (>= i (vecLen rules))
         0
         {
-          {
-            (let j (expShadowingRule rules i 0))
-            (if (>= j 0)
-              (expEmit env
-                (mkDiagNote SEV_ERROR "AX3033" "macro-unreachable-rule" (nodeSpan mac)
+          (if (let (Some j) (expShadowingRule rules i 0))
+            (expEmit env
+              (mkDiagNote SEV_ERROR "AX3033" "macro-unreachable-rule" (nodeSpan mac)
+                (concat
                   (concat
-                    (concat
-                      (concat (concat "macro `" (nodeAName mac))
-                        "` has a rule that can never match: rule ")
-                      (concat (expFmtInt (+ i 1)) " is shadowed by rule "))
-                    (expFmtInt (+ j 1)))
-                  0 0
-                  "give the earlier rule a pattern that can FAIL - a literal, or a parenthesised shape of two or more elements - or delete this one. A one-element `(p)` is the bare binder `p`: the parentheses are the same ones an argument loses, so it still matches everything"
-                  "rules are tried IN ORDER and the first whose pattern matches wins (macro-system.md MAC-LANG-18); an earlier rule of the same arity whose elements are all plain binders matches every invocation of that arity, so nothing of that arity after it is reachable")))
-          }
+                    (concat (concat "macro `" (nodeAName mac))
+                      "` has a rule that can never match: rule ")
+                    (concat (expFmtInt (+ i 1)) " is shadowed by rule "))
+                  (expFmtInt (+ j 1)))
+                0 0
+                "give the earlier rule a pattern that can FAIL - a literal, or a parenthesised shape of two or more elements - or delete this one. A one-element `(p)` is the bare binder `p`: the parentheses are the same ones an argument loses, so it still matches everything"
+                "rules are tried IN ORDER and the first whose pattern matches wins (macro-system.md MAC-LANG-18); an earlier rule of the same arity whose elements are all plain binders matches every invocation of that arity, so nothing of that arity after it is reachable")))
           ; Its OWN code since 2026-08-16. This shared
           ; `AX3020` while the refusal was "two rules of
           ; one arity", on the stated ground that both
@@ -7701,46 +7697,37 @@
     )))
 
 ; The index of an earlier IRREFUTABLE rule that takes every
-; invocation rule `i` could take, or -1.
+; invocation rule `i` could take; None when no earlier rule covers it.
 ;
 ; Without a repeat both rules take exactly one arity, so the test is
 ; equality. WITH one the earlier rule's arity is a floor and it takes
 ; everything from there up, so it starves any later rule whose own
 ; floor is at least as high - which is how `(m a ...)` first makes
 ; every rule after it dead.
-(pub :: expShadowingRule (-> MacroRules Int Int Int))
+(pub :: expShadowingRule (-> MacroRules Int Int (Option Int)))
 (pub fn (expShadowingRule rules i j)
   (if (>= j i)
-    (- 0 1)
+    None
     {
-      (let e (vecGet rules j))
-      (let l (vecGet rules i))
-      {
-        (let ke (expRepIndex e))
-        (let kl (expRepIndex l))
-        (if (&&
-              (== (expRuleIrrefutable e) 1)
-              (if (>= ke 0)
-                ; The earlier rule repeats, so it covers every
-                ; arity from `ke` up. It starves the later one
-                ; when the later's LOWEST arity is already
-                ; inside that range.
-                (>=
-                  (if (>= kl 0)
-                    kl
-                    (vecLen (expRulePats l)))
-                  ke)
-                ; The earlier rule is fixed, so it covers one
-                ; arity. That can starve another FIXED rule of
-                ; the same arity and nothing else - a later
-                ; REPEATING rule still has every higher arity to
-                ; itself, which is why `((m T a) …)` before
-                ; `((m T a b ...) …)` is two live rules and not
-                ; a mistake.
-                (&& (< kl 0) (== (vecLen (expRulePats e)) (vecLen (expRulePats l))))))
-          j
-          (expShadowingRule rules i (+ j 1)))
-      }
+      (let earlier (vecGet rules j))
+      (let later (vecGet rules i))
+      (let covers
+        (match (expRepIndex earlier)
+          ((Some floor)
+            (>=
+              (match (expRepIndex later)
+                ((Some laterFloor) laterFloor)
+                ((None) (vecLen (expRulePats later))))
+              floor)
+          )
+          ((None)
+            (match (expRepIndex later)
+              ((Some _) false)
+              ((None) (== (vecLen (expRulePats earlier)) (vecLen (expRulePats later)))))
+          )))
+      (if (&& (== (expRuleIrrefutable earlier) 1) covers)
+        (Some j)
+        (expShadowingRule rules i (+ j 1)))
     }))
 
 ; A rule-form macro's template is checked ONCE, at the macro's own
@@ -7788,21 +7775,21 @@
 (pub fn (expRuleReps r)
   r.repeats)
 
-; The index of the rule's repeating element, or -1. v1 admits ONE, and
+; The optional index of the rule's repeating element. v1 admits ONE, and
 ; `expCheckRuleEllipsis` refuses the rest: with two, "the remaining
 ; arguments" stops having an answer - `(m a ... b ...)` can split its
 ; arguments anywhere, and a macro system that picks for you is a macro
 ; system whose expansion nobody can predict.
-(pub :: expRepIndex (-> MacroRule Int))
+(pub :: expRepIndex (-> MacroRule (Option Int)))
 (pub fn (expRepIndex r)
   (expRepIndexFrom (expRuleReps r) 0))
 
-(pub :: expRepIndexFrom (-> Ints Int Int))
+(pub :: expRepIndexFrom (-> Ints Int (Option Int)))
 (pub fn (expRepIndexFrom reps i)
   (if (>= i (vecLen reps))
-    (- 0 1)
+    None
     (if (== (vecGet reps i) 1)
-      i
+      (Some i)
       (expRepIndexFrom reps (+ i 1)))))
 
 ; ------------------------------------------------------------------
@@ -8364,9 +8351,9 @@
     {
       (let r (vecGet rules i))
       (let k (expRepIndex (vecGet rules i)))
-      (if (if (< k 0)
-        (!= (vecLen (expRulePats r)) (vecLen args))
-        (< (vecLen args) k))
+      (if (match k
+        ((None) (!= (vecLen (expRulePats r)) (vecLen args)))
+        ((Some index) (< (vecLen args) index)))
         (expRuleForForms rules args (+ i 1) lctx)
         {
           (let names vecNew)
@@ -8386,25 +8373,26 @@
 (pub fn (expMatchRuleAt r args names vals seqs lctx)
   {
     (let ps (expRulePats r))
-    (let k (expRepIndex r))
-    (if (< k 0)
-      (expMatchVec ps args 0 names vals lctx)
-      (if (== (expMatchFixed ps args 0 k names vals lctx) 0)
-        0
-        {
-          (let pk (vecGet ps k))
-          (if (== (nodeTag pk) TAG_E_VAR)
-            {
-              (vecPush seqs (SeqBind :name (nodeAName pk) :forms (expTailFrom args k vecNew)))
-              1
-            }
-            ; A repeating PATTERN: every absorbed argument matches the
-            ; pattern, and each of its binders takes the sequence of
-            ; what it bound, in lockstep (MAC-LANG-16). A match
-            ; failure on any element fails the rule, exactly as a
-            ; fixed-element mismatch does.
-            (expMatchNestTail pk args k seqs lctx))
-        }))
+    (match (expRepIndex r)
+      ((None) (expMatchVec ps args 0 names vals lctx))
+      ((Some k)
+        (if (== (expMatchFixed ps args 0 k names vals lctx) 0)
+          0
+          {
+            (let pk (vecGet ps k))
+            (if (== (nodeTag pk) TAG_E_VAR)
+              {
+                (vecPush seqs (SeqBind :name (nodeAName pk) :forms (expTailFrom args k vecNew)))
+                1
+              }
+              ; A repeating PATTERN: every absorbed argument matches the
+              ; pattern, and each of its binders takes the sequence of
+              ; what it bound, in lockstep (MAC-LANG-16). A match
+              ; failure on any element fails the rule, exactly as a
+              ; fixed-element mismatch does.
+              (expMatchNestTail pk args k seqs lctx))
+          })
+      ))
   })
 
 ; The first `n` elements, one argument each.

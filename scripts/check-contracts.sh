@@ -91,6 +91,7 @@ python3 tests/tools/expansion-option-builders.py "$axc"
 python3 tests/tools/expansion-option-controls.py "$axc"
 python3 tests/tools/expansion-origin-options.py "$axc"
 python3 tests/tools/macro-owning-records.py "$axc"
+python3 tests/tools/macro-rule-index-options.py "$axc"
 
 failed=0
 checks=0

@@ -1,0 +1,138 @@
+; Repetition and rule-coverage queries preserve missing and zero indexes.
+(import core)
+(import parser)
+(import expand)
+(import Vec)
+(import Str)
+(import Fmt)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: indexIs (-> (Option Int) (Option Int) Bool))
+(fn (indexIs actual expected)
+  (match actual
+    ((None) (isNone expected))
+    ((Some value)
+      (match expected
+        ((None) false)
+        ((Some want) (== value want)))
+    )))
+
+(:: rule (-> Int (Option Int) MacroRule))
+(fn (rule count repeated)
+  {
+    (let patterns (:: vecNew Nodes))
+    (let names (:: vecNew Names))
+    (let repeats (:: vecNew Ints))
+    (for i in 0..count
+      {
+        (let name (concat "p" (fmtInt i)))
+        (vecPush names name)
+        (vecPush patterns (mkEVar name))
+        (vecPush repeats
+          (if (indexIs repeated (Some i))
+            1
+            0))
+      })
+    (MacroRule
+      :params names
+      :declarations vecNew
+      :patterns patterns
+      :spellings names
+      :repeats repeats
+      :literals (MacroLiterals :declared vecNew :used vecNew)
+      :expression (Some (mkEInt 42)))
+  })
+
+(:: literalRule MacroRule)
+(fn (literalRule)
+  (MacroRule
+    :params (vecPush vecNew "syntax/pat")
+    :declarations vecNew
+    :patterns (vecPush vecNew (mkEInt 1))
+    :spellings (vecPush vecNew "1")
+    :repeats (vecPush vecNew 0)
+    :literals (MacroLiterals :declared vecNew :used vecNew)
+    :expression (Some (mkEInt 41))))
+
+(:: pair (-> MacroRule MacroRule MacroRules))
+(fn (pair first second)
+  (vecPush (vecPush vecNew first) second))
+
+(:: covers (-> MacroRule MacroRule (Option Int) Bool))
+(fn (covers first second want)
+  (indexIs (expShadowingRule (pair first second) 1 0) want))
+
+(:: picked (-> MacroRule Nodes (Option ExpMatch)))
+(fn (picked candidate arguments)
+  (expRuleForForms (vecPush vecNew candidate) arguments 0 (expMatchCtx vecNew 0 0)))
+
+(:: sequenceIs (-> (Option ExpMatch) String Int Bool))
+(fn (sequenceIs candidate name want)
+  (match candidate
+    ((None) false)
+    ((Some found)
+      (match (expSeqLookup found.sequences name)
+        ((None) false)
+        ((Some forms) (== (vecLen forms) want)))
+    )))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (indexIs (expRepIndexFrom vecNew 0) None))
+    (say 2 (indexIs (expRepIndexFrom (vecPush (vecPush vecNew 0) 0) 0) None))
+    (say 3 (indexIs (expRepIndexFrom (vecPush vecNew 1) 0) (Some 0)))
+    (say 4 (indexIs (expRepIndexFrom (vecPush (vecPush vecNew 0) 1) 0) (Some 1)))
+    (let repeats (vecPush (vecPush vecNew 1) 1))
+    (say 5 (indexIs (expRepIndexFrom repeats 0) (Some 0)))
+    (say 6 (indexIs (expRepIndexFrom repeats 1) (Some 1)))
+    (say 7 (indexIs (expRepIndexFrom repeats 2) None))
+    (say 8 (indexIs (expRepIndexFrom (vecPush vecNew 2) 0) None))
+    (say 9 (indexIs (expRepIndex (rule 0 None)) None))
+    (say 10 (indexIs (expRepIndex (rule 1 (Some 0))) (Some 0)))
+    (say 11 (indexIs (expRepIndex (rule 3 (Some 2))) (Some 2)))
+    (say 12 (indexIs (expShadowingRule vecNew 0 0) None))
+    (say 13 (covers (rule 1 None) (rule 1 None) (Some 0)))
+    (say 14 (covers (rule 1 None) (rule 2 None) None))
+    (say 15 (covers literalRule (rule 1 None) None))
+    (say 16 (covers (rule 1 None) (rule 1 (Some 0)) None))
+    (say 17 (covers (rule 1 (Some 0)) (rule 0 None) (Some 0)))
+    (say 18 (covers (rule 2 (Some 1)) (rule 0 None) None))
+    (say 19 (covers (rule 2 (Some 1)) (rule 1 None) (Some 0)))
+    (say 20 (covers (rule 2 (Some 1)) (rule 1 (Some 0)) None))
+    (say 21 (covers (rule 1 (Some 0)) (rule 2 (Some 1)) (Some 0)))
+    (say 22 (covers (rule 2 (Some 1)) (rule 2 (Some 1)) (Some 0)))
+    (let third (vecPush (pair literalRule (rule 1 (Some 0))) (rule 1 None)))
+    (say 23 (indexIs (expShadowingRule third 2 0) (Some 1)))
+    (let ordered (vecPush (pair (rule 1 None) (rule 1 None)) (rule 1 None)))
+    (say 24 (indexIs (expShadowingRule ordered 2 0) (Some 0)))
+    (say 25 (indexIs (expShadowingRule ordered 2 1) (Some 1)))
+    (say 26 (indexIs (expShadowingRule ordered 0 0) None))
+    (say 27 (isNone (picked (rule 1 None) vecNew)))
+    (say 28 (sequenceIs (picked (rule 1 (Some 0)) vecNew) "p0" 0))
+    (say 29 (isNone (picked (rule 2 (Some 1)) vecNew)))
+    (say 30 (sequenceIs (picked (rule 2 (Some 1)) (vecPush vecNew (mkEInt 7))) "p1" 0))
+    (say 31
+      (sequenceIs (picked (rule 2 (Some 1)) (vecPush (vecPush vecNew (mkEInt 7)) (mkEInt 9))) "p1"
+        1))
+    (say 32
+      (match (expRuleForForms (pair literalRule (rule 1 None)) (vecPush vecNew (mkEInt 1)) 0
+               (expMatchCtx vecNew 0 0))
+        ((None) false)
+        ((Some found)
+          (match found.rule.expression
+            ((None) false)
+            ((Some expression) (== (nodeA expression) 41)))
+        )))
+    0
+  })
