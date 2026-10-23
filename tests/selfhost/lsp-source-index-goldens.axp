@@ -1,0 +1,107 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: parsed (-> String Nodes))
+(fn (parsed source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) __indexTrap)
+    ((ParseSuccess nodes _) nodes)))
+
+(:: at (-> String String Int))
+(fn (at source needle)
+  (match (strFind source needle 0)
+    ((None) __indexTrap)
+    ((Some offset) offset)))
+
+(:: request (-> String String String ()))
+;@axiom:effect(io)
+(fn (request title source needle)
+  {
+    (println "CASE {title}")
+    (let workspace (lspWorkspaceNew vecNew vecNew vecNew))
+    (let uri "file:///tmp/axiom-source-index/Main.ax")
+    (let offset
+      (match (strFind source needle 0)
+        ((None) 0)
+        ((Some found) found)))
+    (let params (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (println (jsonWrite (lspSignatureHelp workspace source uri params)))
+    (println (jsonWrite (lspDocumentSymbols source)))
+    (println (jsonWrite (lspSemanticTokens source)))
+    (println
+      (jsonWrite
+        (lspInlayHints workspace source uri
+          (jsonObjPut jsonObj "range"
+            (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+              (lspPos source (strLen source)))))))
+  })
+
+(:: organize (-> String String ()))
+;@axiom:effect(io)
+(fn (organize title source)
+  {
+    (println "CASE {title}")
+    (println
+      (jsonWrite
+        (lspOrganizeEdit source "file:///tmp/axiom-source-index/Main.ax" (parsed source)
+          (lex source) (scanAxtags source))))
+  })
+
+(:: extract (-> String String String ()))
+;@axiom:effect(io)
+(fn (extract title source needle)
+  {
+    (println "CASE {title}")
+    (let start (at source needle))
+    (println
+      (jsonWrite
+        (lspExtractAction source "file:///tmp/axiom-source-index/Main.ax" (parsed source)
+          (lspLineIndex source) (mkSpan start (+ start (strLen needle))))))
+  })
+
+(:: macro (-> String String String ()))
+;@axiom:effect(io)
+(fn (macro title source needle)
+  {
+    (println "CASE {title}")
+    (let workspace (lspWorkspaceNew vecNew vecNew vecNew))
+    (println
+      (jsonWrite
+        (lspExpandMacro workspace source "file:///tmp/axiom-source-index/Main.ax"
+          (jsonObjPut jsonObj "position" (lspPos source (at source needle))))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (request "empty" "" "")
+    (request "signature"
+      "(:: plus (-> Int Int Int))\n(fn (plus x y) (+ x y))\n(fn (use) (plus 1 2))" "1 2")
+    (request "header" "(:: plus (-> Int Int Int))\n(fn (plus x y) (+ x y))" "x y")
+    (request "header-open" "(:: plus (-> Int Int Int))\n(fn (plus x y" "x y")
+    (request "indented" "(:: plus (-> Int Int Int))\n  (fn (plus x y) (+ x y))" "x y")
+    (request "nullary" "(:: answer Int)\n(fn answer 42)" "answer 42")
+    (request "recovered" "(:: plus (-> Int Int Int))\n(fn (plus x y) (+ x y)" "x y")
+    (request "qualified" "(fn (use) (A::value 1))\n(fn (other box) box.value)" "value 1")
+    (request "plain" "(fn (use) (value 1))" "value 1")
+    (organize "imports" "(import Zed)\n(import Alpha)\n")
+    (organize "imports-docs-crlf"
+      ";;;; Module docs\r\n;;; Zed docs\r\n(import Zed) ; trailing\r\n\r\n;;; Alpha docs\r\n(import Alpha)\r\n")
+    (organize "imports-invalid-tail" "(import Zed) (import Alpha)")
+    (extract "extract-whole" "(fn (value) (+ 1 2))" "(+ 1 2)")
+    (extract "extract-block" "(fn (value) { (let x 1) (+ x 2) })" "(+ x 2)")
+    (extract "extract-nested" "(fn (value) (+ 1 (* 2 3)))" "(* 2 3)")
+    (extract "extract-cross-items" "(fn (value) (+ 1 2))" "1 2")
+    (macro "macro-declaration" "(macro (identity value) value)\n(fn (use) 1)" "identity")
+    (macro "macro-absent" "(fn (use) 1)" "use")
+    (macro "macro-products"
+      "(macro decl ((decl name) (:: name Int) (fn (name) 42)))\n(decl answer)" "answer")
+    0
+  })

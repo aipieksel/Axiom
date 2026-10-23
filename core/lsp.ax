@@ -3004,7 +3004,10 @@
     (let o (lspFormStart src (spanStart nameSpan)))
     {
       (let e (lspFormEnd src o))
-      (if (&& (!= o (lspHeaderOpen src (spanStart nameSpan)))
+      (if (&&
+            (match (lspHeaderOpen src (spanStart nameSpan))
+              ((None) true)
+              ((Some header) (!= o header)))
             (&& (<= o (spanStart nameSpan)) (<= (spanEnd nameSpan) e)))
         (mkSpan o e)
         0)
@@ -10510,38 +10513,35 @@
           (let ix (lspLineIndex src))
           {
             (let o (lspViewCallAt src (lspOffsetOf src ix (jsonGet params "position"))))
-            (if (< o 0)
-              jsonNull
-              ; Three forms that open with a declared name and are not
-              ; calls to it, cheapest question first: a keyword head; a
-              ; `fn` HEADER, `(fn (add x y) ...)`, whose first identifier
-              ; is the name being declared (measured: it answered its own
-              ; signature with the second parameter active); and a head
-              ; that resolves to a LOCAL spelled like a declared `fn`,
-              ; which the scope-aware walk decides (`lspNavLocalIndex`).
-              {
-                (let head (lspViewHeadAt src o))
-                (let hs (lspViewHeadStart src o))
-                (if (|| (== (strLen head) 0)
-                      (|| (== (strVecHas lspKeywords head) 1)
-                        (|| (lspViewIsFnHeader decls hs)
-                          (lspNavLocalIndexHas (lspNavLocalIndex src decls o (+ o 1)) hs))))
-                  jsonNull
-                  {
-                    (let local (lspViewSigLocal src decls head))
+            (match o
+              ((None) jsonNull)
+              ((Some o)
+                ; A keyword, a function header and a local binding that
+                ; shadows a declared function do not name calls to it.
+                {
+                  (let head (lspViewHeadAt src o))
+                  (let hs (lspViewHeadStart src o))
+                  (if (|| (== (strLen head) 0)
+                        (|| (== (strVecHas lspKeywords head) 1)
+                          (|| (lspViewIsFnHeader decls hs)
+                            (lspNavLocalIndexHas (lspNavLocalIndex src decls o (+ o 1)) hs))))
+                    jsonNull
                     {
-                      (let found
-                        (if (== local 0)
-                          (lspViewSigImported workspace (lspUriToPath uri) src decls head)
-                          local))
-                      (if (== found 0)
-                        jsonNull
-                        (lspViewSigHelp found
-                          (lspViewActiveArg src o
-                            (lspOffsetOf src ix (jsonGet params "position")))))
-                    }
-                  })
-              })
+                      (let local (lspViewSigLocal src decls head))
+                      {
+                        (let found
+                          (if (== local 0)
+                            (lspViewSigImported workspace (lspUriToPath uri) src decls head)
+                            local))
+                        (if (== found 0)
+                          jsonNull
+                          (lspViewSigHelp found
+                            (lspViewActiveArg src o
+                              (lspOffsetOf src ix (jsonGet params "position")))))
+                      }
+                    })
+                }
+              ))
           }
         }
       ))
@@ -10589,21 +10589,23 @@
     }
   })
 
-; The `(` of the innermost form containing `off`, or -1 when nothing
+; The `(` of the innermost form containing `off`, or None when nothing
 ; does. `lspEnclosingOpens` leaves a form opening exactly AT `off` to
 ; its caller; here it counts.
-(pub :: lspViewCallAt (-> String Int Int))
+(pub :: lspViewCallAt (-> String Int (Option Int)))
 (pub fn (lspViewCallAt src off)
-  (if (if (< off (strLen src))
-    (== (strByte src off) 40)
-    false)
-    off
-    {
-      (let opens (lspEnclosingOpens src off))
-      (if (== (vecLen opens) 0)
-        (- 0 1)
-        (vecGet opens (- (vecLen opens) 1)))
-    }))
+  (if (|| (< off 0) (> off (strLen src)))
+    None
+    (if (if (< off (strLen src))
+      (== (strByte src off) 40)
+      false)
+      (Some off)
+      {
+        (let opens (lspEnclosingOpens src off))
+        (if (== (vecLen opens) 0)
+          None
+          (Some (vecGet opens (- (vecLen opens) 1))))
+      })))
 
 ; The SignatureHelp object: one signature, active, with the argument
 ; index clamped to the last parameter once the cursor is past them
@@ -11095,7 +11097,7 @@
         (let n (strLen src))
         (let mut i (spanEnd (nodeSpan d)))
         (let mut k 0)
-        (let mut close (- 0 1))
+        (let mut close (:: None (Option Int)))
         (let mut go 1)
         {
           (while (if (== go 1)
@@ -11107,7 +11109,7 @@
                 (set i (+ i 1))
                 (if (== ch 41)
                   {
-                    (set close i)
+                    (set close (Some i))
                     (set go 0)
                   }
                   (if (isIdentChar ch)
@@ -11123,15 +11125,15 @@
                     }
                     (set go 0))))
             })
-          (if (if (>= close 0)
-            (== (nodeTag ty) TAG_T_ARR)
-            false)
-            (lspViewHint out src ix (+ close 1)
-              (concat " -> "
-                (match (lspViewResultTy ty)
-                  ((None) "{unknown}")
-                  ((Some result) (tyRender result))))
-              1 0 rs re)
+          (if (let (Some close) close)
+            (if (== (nodeTag ty) TAG_T_ARR)
+              (lspViewHint out src ix (+ close 1)
+                (concat " -> "
+                  (match (lspViewResultTy ty)
+                    ((None) "{unknown}")
+                    ((Some result) (tyRender result))))
+                1 0 rs re)
+              0)
             0)
         }
       })
@@ -12427,7 +12429,7 @@
   {
     (let mut i 0)
     (let mut t 0)
-    (let mut opener (- 0 1))
+    (let mut opener (:: None (Option Int)))
     (let mut valid true)
     (while (< i (vecLen decls))
       {
@@ -12440,24 +12442,38 @@
               {
                 (let token (vecGet tokens t))
                 (if (== (kindInt (tokenKind token)) (kindInt TK_LPAREN))
-                  (set opener (spanStart (tokenSpan token))))
+                  (set opener (Some (spanStart (tokenSpan token)))))
                 (set t (+ t 1))
               })
-            (let start (lspOrganizeStart src opener))
-            (let end (lspOrganizeEnd src (lspFormEnd src opener)))
-            (if (|| (< start 0) (< end 0))
-              (set valid false)
-              {
-                (let chunk (LspImportChunk :name (nodeAName d) :start start :end end))
-                (vecPush chunks chunk)
-                (if (> (vecLen chunks) 1)
-                  {
-                    (let previous (vecGet chunks (- (vecLen chunks) 2)))
-                    (if (! (lspOrganizeBlank src previous.end start))
-                      (set valid false))
-                  })
-                (vecPush sorted chunk)
-              })
+            (match opener
+              ((None)
+                (set valid false)
+              )
+              ((Some open)
+                (match (lspOrganizeStart src open)
+                  ((None)
+                    (set valid false)
+                  )
+                  ((Some start)
+                    (match (lspOrganizeEnd src (lspFormEnd src open))
+                      ((None)
+                        (set valid false)
+                      )
+                      ((Some end)
+                        {
+                          (let chunk (LspImportChunk :name (nodeAName d) :start start :end end))
+                          (vecPush chunks chunk)
+                          (if (> (vecLen chunks) 1)
+                            {
+                              (let previous (vecGet chunks (- (vecLen chunks) 2)))
+                              (if (! (lspOrganizeBlank src previous.end start))
+                                (set valid false))
+                            })
+                          (vecPush sorted chunk)
+                        }
+                      ))
+                  ))
+              ))
           })
         (set i (+ i 1))
       })
@@ -12476,10 +12492,10 @@
     blank
   })
 
-(pub :: lspOrganizeStart (-> String Int Int))
+(pub :: lspOrganizeStart (-> String Int (Option Int)))
 (pub fn (lspOrganizeStart src opener)
-  (if (< opener 0)
-    (- 0 1)
+  (if (|| (< opener 0) (>= opener (strLen src)))
+    None
     {
       (let mut start (lineStartOf src opener))
       (let mut go true)
@@ -12499,31 +12515,33 @@
             (set go false))
         })
       (if valid
-        start
-        (- 0 1))
+        (Some start)
+        None)
     }))
 
 ; The line ending is a separator, so a last import without a newline
 ; can move without joining the next form onto its line.
-(pub :: lspOrganizeEnd (-> String Int Int))
+(pub :: lspOrganizeEnd (-> String Int (Option Int)))
 (pub fn (lspOrganizeEnd src formEnd)
-  {
-    (let end (docLineEndFrom src formEnd))
-    (let mut i formEnd)
-    (while (if (< i end)
-      (lspIsSpace (strByte src i))
-      false)
-      (set i (+ i 1)))
-    (if (if (< i end)
-      (!= (strByte src i) 59)
-      false)
-      (- 0 1)
-      (if (if (> end 0)
-        (== (strByte src (- end 1)) 13)
+  (if (|| (< formEnd 0) (> formEnd (strLen src)))
+    None
+    {
+      (let end (docLineEndFrom src formEnd))
+      (let mut i formEnd)
+      (while (if (< i end)
+        (lspIsSpace (strByte src i))
         false)
-        (- end 1)
-        end))
-  })
+        (set i (+ i 1)))
+      (if (if (< i end)
+        (!= (strByte src i) 59)
+        false)
+        None
+        (if (if (> end 0)
+          (== (strByte src (- end 1)) 13)
+          false)
+          (Some (- end 1))
+          (Some end)))
+    }))
 
 (pub :: lspOrganizeSorted (-> String String (Vec LspImportChunk) (Vec LspImportChunk) Axtags Int))
 (pub fn (lspOrganizeSorted src uri chunks sorted tags)
@@ -13677,19 +13695,16 @@
 ; reference that way - or the whole string.
 (pub :: lspFixAfterColons (-> String String))
 (pub fn (lspFixAfterColons s)
-  {
-    (let i (lspFixLastColons s (- (strLen s) 2)))
-    (if (< i 0)
-      s
-      (strSlice s (+ i 2) (- (strLen s) (+ i 2))))
-  })
+  (match (lspFixLastColons s (- (strLen s) 2))
+    ((None) s)
+    ((Some i) (strSlice s (+ i 2) (- (strLen s) (+ i 2))))))
 
-(pub :: lspFixLastColons (-> String Int Int))
+(pub :: lspFixLastColons (-> String Int (Option Int)))
 (pub fn (lspFixLastColons s i)
-  (if (< i 0)
-    (- 0 1)
+  (if (|| (< i 0) (>= (+ i 1) (strLen s)))
+    None
     (if (&& (== (strByte s i) 58) (== (strByte s (+ i 1)) 58))
-      i
+      (Some i)
       (lspFixLastColons s (- i 1)))))
 
 ; The declaration of bare `name` that module `mod` carries in the
@@ -13906,24 +13921,26 @@
       0
       {
         (let fi (lspFixStatementAt src chain))
-        {
-          (let fs
-            (if (< fi 0)
-              bs
-              (vecGet chain (+ (* fi 4) 2))))
-          (let fe
-            (if (< fi 0)
-              be
-              (vecGet chain (+ (* fi 4) 3))))
-          (if (lspNavNot (lspFixPathIsPlain src chain (+ fi 1)))
-            0
-            {
-              (let occs (lspNavOccurrences src decls))
-              (if (lspNavNot (lspFixFreeIn occs ws we fs fe))
-                0
-                (lspExtractJson src uri ix ws we fs fe (lspFixFreshName occs)))
-            })
-        }
+        (let fs
+          (match fi
+            ((None) bs)
+            ((Some i) (vecGet chain (+ (* i 4) 2)))))
+        (let fe
+          (match fi
+            ((None) be)
+            ((Some i) (vecGet chain (+ (* i 4) 3)))))
+        (let pathStart
+          (match fi
+            ((None) 0)
+            ((Some i) (+ i 1))))
+        (if (lspNavNot (lspFixPathIsPlain src chain pathStart))
+          0
+          {
+            (let occs (lspNavOccurrences src decls))
+            (if (lspNavNot (lspFixFreeIn occs ws we fs fe))
+              0
+              (lspExtractJson src uri ix ws we fs fe (lspFixFreshName occs)))
+          })
       })
   })
 
@@ -13949,16 +13966,20 @@
               (let kids (lspFixKids src cs))
               {
                 (let k (lspFixKidHolding kids ws we 0))
-                (if (< k 0)
-                  (set go 0)
-                  {
-                    (vecPush chain cs)
-                    (vecPush chain k)
-                    (vecPush chain (vecGet kids (* k 2)))
-                    (vecPush chain (vecGet kids (+ (* k 2) 1)))
-                    (set cs (vecGet kids (* k 2)))
-                    (set ce (vecGet kids (+ (* k 2) 1)))
-                  })
+                (match k
+                  ((None)
+                    (set go 0)
+                  )
+                  ((Some k)
+                    {
+                      (vecPush chain cs)
+                      (vecPush chain k)
+                      (vecPush chain (vecGet kids (* k 2)))
+                      (vecPush chain (vecGet kids (+ (* k 2) 1)))
+                      (set cs (vecGet kids (* k 2)))
+                      (set ce (vecGet kids (+ (* k 2) 1)))
+                    }
+                  ))
               }
             }
             (set go 0))))
@@ -13966,27 +13987,30 @@
     }
   })
 
-(pub :: lspFixKidHolding (-> Ints Int Int Int Int))
+(pub :: lspFixKidHolding (-> Ints Int Int Int (Option Int)))
 (pub fn (lspFixKidHolding kids ws we k)
-  (if (>= (* k 2) (vecLen kids))
-    (- 0 1)
+  (if (|| (< k 0) (>= (+ (* k 2) 1) (vecLen kids)))
+    None
     (if (&& (<= (vecGet kids (* k 2)) ws) (>= (vecGet kids (+ (* k 2) 1)) we))
-      k
+      (Some k)
       (lspFixKidHolding kids ws we (+ k 1)))))
 
 ; The chain index of the innermost item whose parent is a brace
-; block - the statement - or -1 when the body itself is it.
-(pub :: lspFixStatementAt (-> String Ints Int))
+; block - the statement - or None when the body itself is it.
+(pub :: lspFixStatementAt (-> String Ints (Option Int)))
 (pub fn (lspFixStatementAt src chain)
   {
     (let n (/ (vecLen chain) 4))
-    (let mut at (- 0 1))
-    {
-      (for j in 0..n
-        (if (== (strByte src (vecGet chain (* j 4))) 123)
-          (set at j)))
-      at
-    }
+    (let mut at (:: None (Option Int)))
+    (for j in 0..n
+      {
+        (let start (vecGet chain (* j 4)))
+        (if (if (&& (>= start 0) (< start (strLen src)))
+          (== (strByte src start) 123)
+          false)
+          (set at (Some j)))
+      })
+    at
   })
 
 ; Every level from `from` down to the item: a form whose argument at
@@ -14296,17 +14320,18 @@
                   (&& (!= (nodeSpan d) 0) (<= (spanStart (nodeSpan d)) off)))
               {
                 (let hs (lspHeaderOpen src (spanStart (nodeSpan d))))
-                (if (&& (>= hs 0) (< off (lspFormEnd src hs)))
-                  (match (strVecIdx (nodeBNames d) w)
-                    ((Some k)
-                      {
-                        (let sig (lspFindSig decls (nodeAName d) (- (vecLen decls) 1)))
-                        (if (let (Some sig) sig)
-                          (set found (nthParamTy (nodeTyChild sig) k))
-                          ())
-                      }
-                    )
-                    ((None) ())))
+                (if (let (Some hs) hs)
+                  (if (< off (lspFormEnd src hs))
+                    (match (strVecIdx (nodeBNames d) w)
+                      ((Some k)
+                        {
+                          (let sig (lspFindSig decls (nodeAName d) (- (vecLen decls) 1)))
+                          (if (let (Some sig) sig)
+                            (set found (nthParamTy (nodeTyChild sig) k))
+                            ())
+                        }
+                      )
+                      ((None) ()))))
               })
             (set i (+ i 1))
           }
@@ -14317,22 +14342,22 @@
 
 ; The `(` that opens the header whose first identifier starts at
 ; `nameStart`, skipping the blanks a hand-written header may carry
-; between them; -1 when that byte is not a paren, which is the bare
+; between them; None when that byte is not a paren, which is the bare
 ; nullary form `(fn answer 42)` - it has no parameter list to be in.
-(pub :: lspHeaderOpen (-> String Int Int))
+(pub :: lspHeaderOpen (-> String Int (Option Int)))
 (pub fn (lspHeaderOpen src nameStart)
-  {
-    (let mut o (- nameStart 1))
+  (if (|| (<= nameStart 0) (> nameStart (strLen src)))
+    None
     {
+      (let mut o (- nameStart 1))
       (while (if (> o 0)
         (docIsBlank (strByte src o))
         false)
         (set o (- o 1)))
-      (if (&& (>= o 0) (== (strByte src o) 40))
-        o
-        (- 0 1))
-    }
-  })
+      (if (== (strByte src o) 40)
+        (Some o)
+        None)
+    }))
 
 ; The RESULT of an arrow chain: `(-> A B C)` answers `C`, and a type
 ; that is not an arrow answers itself - `(:: main Int)`'s `Int`.
@@ -15133,38 +15158,38 @@
           (let ix (lspLineIndex src))
           {
             (let site (lspMacroSiteAt src decls (lspOffsetOf src ix (jsonGet params "position"))))
-            (if (< site 0)
-              jsonNull
-              (lspExpandAt workspace (lspUriToPath uri) src decls site))
+            (match site
+              ((None) jsonNull)
+              ((Some site) (lspExpandAt workspace (lspUriToPath uri) src decls site)))
           }
         }
       ))
   })
 
 ; The INDEX of the invocation or macro declaration whose name or form
-; holds `off`, or -1. The name is asked first because it is one
+; holds `off`, or None. The name is asked first because it is one
 ; comparison; the form is scanned only for a name the cursor is not
 ; on. An index rather than the node, because the same position in the
 ; fresh parse is how the invocation is found again.
-(pub :: lspMacroSiteAt (-> String (Vec ASTNode) Int Int))
+(pub :: lspMacroSiteAt (-> String (Vec ASTNode) Int (Option Int)))
 (pub fn (lspMacroSiteAt src decls off)
   {
     (let n (vecLen decls))
     (let mut i 0)
-    (let mut found (- 0 1))
+    (let mut found (:: None (Option Int)))
     {
-      (while (&& (< i n) (< found 0))
+      (while (&& (< i n) (isNone found))
         {
           (let d (vecGet decls i))
           {
             (if (&& (|| (== (nodeTag d) TAG_D_MACROCALL) (== (nodeTag d) TAG_D_MACRO))
                   (!= (nodeSpan d) 0))
               (if (lspSpanHas (nodeSpan d) off)
-                (set found i)
+                (set found (Some i))
                 {
                   (let o (lspFormStart src (spanStart (nodeSpan d))))
                   (if (&& (>= off o) (< off (lspFormEnd src o)))
-                    (set found i))
+                    (set found (Some i)))
                 }))
             (set i (+ i 1))
           }
@@ -17788,32 +17813,34 @@
   })
 
 ; One past the end of the qualified chain beginning at `i` - segments
-; joined by `.` and `::`, as `lspNavQualSpan` reads them - or -1 when
+; joined by `.` and `::`, as `lspNavQualSpan` reads them - or None when
 ; no `::` joins it, in which case the identifier at `i` stands alone
 ; and a `.` after it is a field access.
-(pub :: lspHlChainEnd (-> String Int Int Int))
+(pub :: lspHlChainEnd (-> String Int Int (Option Int)))
 (pub fn (lspHlChainEnd src i n)
-  {
-    (let mut c (skipIdent src (+ i 1) n))
-    (let mut q 0)
-    (let mut go 1)
+  (if (|| (< i 0) (|| (>= i n) (> n (strLen src))))
+    None
     {
-      (while (== go 1)
-        (if (&& (< (+ c 2) n)
-              (&& (== (strByte src c) 58)
-                (&& (== (strByte src (+ c 1)) 58) (isIdentStart (strByte src (+ c 2))))))
-          {
-            (set c (skipIdent src (+ c 3) n))
-            (set q 1)
-          }
-          (if (&& (< (+ c 1) n) (&& (== (strByte src c) 46) (isIdentStart (strByte src (+ c 1)))))
-            (set c (skipIdent src (+ c 2) n))
-            (set go 0))))
-      (if (== q 1)
-        c
-        (- 0 1))
-    }
-  })
+      (let mut c (skipIdent src (+ i 1) n))
+      (let mut q 0)
+      (let mut go 1)
+      {
+        (while (== go 1)
+          (if (&& (< (+ c 2) n)
+                (&& (== (strByte src c) 58)
+                  (&& (== (strByte src (+ c 1)) 58) (isIdentStart (strByte src (+ c 2))))))
+            {
+              (set c (skipIdent src (+ c 3) n))
+              (set q 1)
+            }
+            (if (&& (< (+ c 1) n) (&& (== (strByte src c) 46) (isIdentStart (strByte src (+ c 1)))))
+              (set c (skipIdent src (+ c 2) n))
+              (set go 0))))
+        (if (== q 1)
+          (Some c)
+          None)
+      }
+    }))
 
 ; An identifier at `i`, or a qualified chain: every segment before the
 ; last is a namespace, and the last is classified as the one
@@ -17830,33 +17857,37 @@
     {
       (let e (skipIdent src (+ i 1) n))
       (let c (lspHlChainEnd src i n))
-      (if (< c 0)
-        {
-          (lspHlWord st i e)
-          (lspHlDots st e)
-        }
-        {
-          (let mut s i)
-          (let mut go 1)
+      (match c
+        ((None)
           {
-            (while (== go 1)
-              {
-                (let se (skipIdent src (+ s 1) n))
-                (if (>= se c)
-                  {
-                    (lspHlWord st s se)
-                    (set go 0)
-                  }
-                  {
-                    (lspHlEmit st s se SEM_NAMESPACE 0)
-                    (set s (if (== (strByte src se) 46)
-                      (+ se 1)
-                      (+ se 2)))
-                  })
-              })
-            c
+            (lspHlWord st i e)
+            (lspHlDots st e)
           }
-        })
+        )
+        ((Some c)
+          {
+            (let mut s i)
+            (let mut go 1)
+            {
+              (while (== go 1)
+                {
+                  (let se (skipIdent src (+ s 1) n))
+                  (if (>= se c)
+                    {
+                      (lspHlWord st s se)
+                      (set go 0)
+                    }
+                    {
+                      (lspHlEmit st s se SEM_NAMESPACE 0)
+                      (set s (if (== (strByte src se) 46)
+                        (+ se 1)
+                        (+ se 2)))
+                    })
+                })
+              c
+            }
+          }
+        ))
     }
   })
 
