@@ -3192,14 +3192,14 @@
 ; LAST WINS, which is `MAC-LANG-11`'s rule for macros and worth keeping
 ; for the rest: a file that declares a name twice is already
 ; ill-formed, and the last one is what the expander would have used.
-(pub :: lspFindDecl (-> (Vec ASTNode) String Int ASTNode))
+(pub :: lspFindDecl (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFindDecl decls name i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (lspWantsSymbol (nodeTag d)) (&& (strEq (nodeAName d) name) (!= (nodeSpan d) 0)))
-        d
+        (Some d)
         (lspFindDecl decls name (- i 1)))
     }))
 
@@ -3212,15 +3212,15 @@
 ; so the comparison is against `bareOf`; and it is not in this
 ; document, so a declaration whose module is 0 - the entry file - is
 ; skipped here, having already been offered by `lspFindDecl`.
-(pub :: lspFindImported (-> (Vec ASTNode) String Int ASTNode))
+(pub :: lspFindImported (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFindImported decls name i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (lspWantsSymbol (nodeTag d))
             (&& (!= (nodeModule d) 0) (&& (strEq (bareOf (nodeAName d)) name) (!= (nodeSpan d) 0))))
-        d
+        (Some d)
         (lspFindImported decls name (- i 1)))
     }))
 
@@ -3438,7 +3438,7 @@
                     loc
                     {
                       (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-                      (if (! (nodeSame d nilNode))
+                      (if (let (Some d) d)
                         (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
                           (lspRange src (nodeSpan d)))
                         ; A CONSTRUCTOR THIS DOCUMENT DECLARES, before
@@ -3487,8 +3487,7 @@
       (let units r.units)
       {
         (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-        (if (nodeSame d nilNode)
-          (lspCtorDefinitionImported allDecls units w)
+        (if (let (Some d) d)
           {
             (let u (lspUnitOf units (nodeModule d)))
             (if (< u 0)
@@ -3498,7 +3497,8 @@
                 (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr (lspPathToUri (unitFile unit))))
                   "range" (lspRange (unitSrc unit) (nodeSpan d)))
               })
-          })
+          }
+          (lspCtorDefinitionImported allDecls units w))
       }
     }
     jsonNull))
@@ -3620,8 +3620,7 @@
 (pub fn (lspFieldParamStruct decls owner name k)
   {
     (let sig (lspFindSig decls owner (- (vecLen decls) 1)))
-    (if (nodeSame sig nilNode)
-      None
+    (if (let (Some sig) sig)
       (if (let (Some t) (nthParamTy (nodeTyChild sig) k))
         (if (== (nodeTag t) TAG_T_CON)
           {
@@ -3631,7 +3630,8 @@
               None)
           }
           None)
-        None))
+        None)
+      None)
   })
 
 ; The struct behind a `let`: the constructor application the value
@@ -4034,7 +4034,7 @@
                                 local
                                 {
                                   (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-                                  (if (! (nodeSame d nilNode))
+                                  (if (let (Some d) d)
                                     (lspHoverAt src decls d range None)
                                     ; A CONSTRUCTOR is read at the `data` that
                                     ; declares it - the whole form, so its siblings
@@ -4114,12 +4114,12 @@
     (let sig
       (if (== (nodeTag d) TAG_D_FN)
         (lspFindSig ddecls (nodeAName d) (- (vecLen ddecls) 1))
-        nilNode))
+        None))
     {
       (let at
-        (if (nodeSame sig nilNode)
-          d
-          sig))
+        (if (let (Some sig) sig)
+          sig
+          d))
       {
         (let o (lspFormStart dsrc (spanStart (nodeSpan at))))
         {
@@ -4163,11 +4163,13 @@
 
 ; The fenced half. Everything read at its own form is quoted whole; a
 ; `fn` with no signature to be read at instead gives up its body.
-(pub :: lspHoverCode (-> String ASTNode ASTNode Int String))
+(pub :: lspHoverCode (-> String ASTNode (Option ASTNode) Int String))
 (pub fn (lspHoverCode dsrc d sig o)
-  (if (&& (nodeSame sig nilNode) (== (nodeTag d) TAG_D_FN))
-    (lspFirstLine (lspFormText dsrc o))
-    (lspFormText dsrc o)))
+  (if (let (Some sig) sig)
+    (lspFormText dsrc o)
+    (if (== (nodeTag d) TAG_D_FN)
+      (lspFirstLine (lspFormText dsrc o))
+      (lspFormText dsrc o))))
 
 ; The second lookup, and it is `lspDefinitionImported` with a different
 ; answer at the end: the same preflight, the same four scratch vectors,
@@ -4186,8 +4188,7 @@
       (let units r.units)
       {
         (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-        (if (nodeSame d nilNode)
-          (lspHoverCtorImported allDecls units w range)
+        (if (let (Some d) d)
           {
             (let u (lspUnitOf units (nodeModule d)))
             (if (< u 0)
@@ -4196,7 +4197,8 @@
                 (let unit (vecGet units u))
                 (lspHoverAt (unitSrc unit) allDecls d range (unitName unit))
               })
-          })
+          }
+          (lspHoverCtorImported allDecls units w range))
       }
     }
     jsonNull))
@@ -4481,14 +4483,14 @@
 ; so `NavHelper$bump`'s type is found under `NavHelper$bump`. Type
 ; names are not mangled, which is why this is asked about functions
 ; and nothing else.
-(pub :: lspFindSig (-> (Vec ASTNode) String Int ASTNode))
+(pub :: lspFindSig (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFindSig decls name i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_SIG) (&& (strEq (nodeAName d) name) (!= (nodeSpan d) 0)))
-        d
+        (Some d)
         (lspFindSig decls name (- i 1)))
     }))
 
@@ -5058,9 +5060,9 @@
   (if (== (nodeTag d) TAG_D_FN)
     {
       (let sig (lspFindSig decls (nodeAName d) (- (vecLen decls) 1)))
-      (if (nodeSame sig nilNode)
-        ""
-        (lspSigType src sig))
+      (if (let (Some sig) sig)
+        (lspSigType src sig)
+        "")
     }
     ""))
 
@@ -7915,8 +7917,7 @@
       (let units r.units)
       {
         (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-        (if (nodeSame d nilNode)
-          ""
+        (if (let (Some d) d)
           {
             (let u (lspUnitOf units (nodeModule d)))
             (if (< u 0)
@@ -7927,7 +7928,8 @@
                   ""
                   huri)
               })
-          })
+          }
+          "")
       }
     }
     ""))
@@ -8553,9 +8555,9 @@
 (pub fn (lspShapeParamTy decls owner k)
   {
     (let sig (lspFindSig decls owner (- (vecLen decls) 1)))
-    (if (nodeSame sig nilNode)
-      None
-      (nthParamTy (nodeTyChild sig) k))
+    (if (let (Some sig) sig)
+      (nthParamTy (nodeTyChild sig) k)
+      None)
   })
 
 ; The arrows of a curried type: `Int` is 0, `(-> Int Int)` is 1.
@@ -8639,7 +8641,7 @@
                   ))
                 {
                   (let sig (lspFindSig decls name (- (vecLen decls) 1)))
-                  (if (! (nodeSame sig nilNode))
+                  (if (let (Some sig) sig)
                     {
                       (let t (nodeTyChild sig))
                       (if (lspShapeIsBad t)
@@ -8728,7 +8730,7 @@
             nilNode
             {
               (let sig (lspFindSig decls name (- (vecLen decls) 1)))
-              (if (! (nodeSame sig nilNode))
+              (if (let (Some sig) sig)
                 (lspShapeApplyArrow (nodeTyChild sig) (vecLen args))
                 (if (!= (lspShapeBuiltinRes name) 0)
                   (lspShapeBuiltinTy name (vecLen args))
@@ -9037,11 +9039,11 @@
                   loc
                   {
                     (let s (lspFindSig decls w (- (vecLen decls) 1)))
-                    (if (! (nodeSame s nilNode))
+                    (if (let (Some s) s)
                       (lspNavLocOf uri src (nodeSpan s))
                       {
                         (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-                        (if (! (nodeSame d nilNode))
+                        (if (let (Some d) d)
                           (lspNavLocOf uri src (nodeSpan d))
                           ; Step 3a: a constructor. It is not written
                           ; twice, so there is no `(:: ...)` step 2
@@ -9090,11 +9092,11 @@
       (let units r.units)
       {
         (let s (lspFindImportedSig allDecls w (- (vecLen allDecls) 1)))
-        (if (! (nodeSame s nilNode))
+        (if (let (Some s) s)
           (lspUnitLocation units s)
           {
             (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-            (if (! (nodeSame d nilNode))
+            (if (let (Some d) d)
               (lspUnitLocation units d)
               (lspCtorDefinitionImported allDecls units w))
           })
@@ -9124,15 +9126,15 @@
 
 ; The last `(:: name T)` the MERGED list carries for `name`, under a
 ; bare comparison - `lspFindSig` with `lspFindImported`'s two rules.
-(pub :: lspFindImportedSig (-> (Vec ASTNode) String Int ASTNode))
+(pub :: lspFindImportedSig (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFindImportedSig decls name i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_SIG)
             (&& (!= (nodeModule d) 0) (&& (strEq (bareOf (nodeAName d)) name) (!= (nodeSpan d) 0))))
-        d
+        (Some d)
         (lspFindImportedSig decls name (- i 1)))
     }))
 
@@ -9140,26 +9142,26 @@
 ; hierarchy asks about functions and nothing else - a `data`, a
 ; `struct` and a macro have no body to call out of - so this is
 ; `lspFindDecl` narrowed to TAG_D_FN.
-(pub :: lspFindFn (-> (Vec ASTNode) String Int ASTNode))
+(pub :: lspFindFn (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFindFn decls name i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_FN) (&& (strEq (nodeAName d) name) (!= (nodeSpan d) 0)))
-        d
+        (Some d)
         (lspFindFn decls name (- i 1)))
     }))
 
-(pub :: lspFindImportedFn (-> (Vec ASTNode) String Int ASTNode))
+(pub :: lspFindImportedFn (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFindImportedFn decls name i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_FN)
             (&& (!= (nodeModule d) 0) (&& (strEq (bareOf (nodeAName d)) name) (!= (nodeSpan d) 0))))
-        d
+        (Some d)
         (lspFindImportedFn decls name (- i 1)))
     }))
 
@@ -9367,9 +9369,9 @@
                 jsonNull
                 {
                   (let d (lspFindFn decls w (- (vecLen decls) 1)))
-                  (if (nodeSame d nilNode)
-                    jsonNull
-                    (jsonArrPush jsonArr (lspChItem src ix uri d)))
+                  (if (let (Some d) d)
+                    (jsonArrPush jsonArr (lspChItem src ix uri d))
+                    jsonNull)
                 }))
           }
         }
@@ -9406,9 +9408,9 @@
               None
               {
                 (let d (lspFindFn decls name (- (vecLen decls) 1)))
-                (if (nodeSame d nilNode)
-                  None
-                  (Some (LspHierSubject :uri uri :name name :src src :decls decls :decl d)))
+                (if (let (Some d) d)
+                  (Some (LspHierSubject :uri uri :name name :src src :decls decls :decl d))
+                  None)
               })
           })
       }
@@ -9454,10 +9456,11 @@
       (for g in owners
         {
           (let d (lspFindFn odecls g.key (- (vecLen odecls) 1)))
-          (if (! (nodeSame d nilNode))
+          (if (let (Some d) d)
             (jsonArrPush out
               (jsonObjPut (jsonObjPut jsonObj "from" (lspChItem osrc oix ouri d)) "fromRanges"
-                (lspChRanges osrc oix g.spans))))
+                (lspChRanges osrc oix g.spans)))
+            ())
         })
       0
     }
@@ -9563,7 +9566,7 @@
           (for g in groups
             {
               (let d (lspFindFn decls g.key (- (vecLen decls) 1)))
-              (if (! (nodeSame d nilNode))
+              (if (let (Some d) d)
                 (jsonArrPush out
                   (jsonObjPut (jsonObjPut jsonObj "to" (lspChItem src ix uri d)) "fromRanges"
                     (lspChRanges src ix g.spans)))
@@ -9603,8 +9606,7 @@
     (let units r.units)
     {
       (let d (lspFindImportedFn allDecls name (- (vecLen allDecls) 1)))
-      (if (nodeSame d nilNode)
-        0
+      (if (let (Some d) d)
         {
           (let u (lspUnitOf units (nodeModule d)))
           (if (< u 0)
@@ -9614,7 +9616,8 @@
               (lspChItem (unitSrc unit) (lspLineIndex (unitSrc unit))
                 (lspPathToUri (unitFile unit)) d)
             })
-        })
+        }
+        0)
     }
   })
 
@@ -10547,10 +10550,15 @@
 (pub fn (lspViewSigLocal src decls head)
   {
     (let d (lspFindDecl decls head (- (vecLen decls) 1)))
-    (if (if (! (nodeSame d nilNode))
-      (== (nodeTag d) TAG_D_FN)
-      false)
-      (lspViewSigFn src decls d None)
+    (if (let (Some d) d)
+      (if (== (nodeTag d) TAG_D_FN)
+        (lspViewSigFn src decls d None)
+        {
+          (let c (lspViewFindCtor decls head 0))
+          (if (nodeSame c nilNode)
+            0
+            (lspViewSigCtor c))
+        })
       {
         (let c (lspViewFindCtor decls head 0))
         (if (nodeSame c nilNode)
@@ -10571,18 +10579,23 @@
       (let units r.units)
       {
         (let d (lspFindImported allDecls head (- (vecLen allDecls) 1)))
-        (if (if (! (nodeSame d nilNode))
-          (== (nodeTag d) TAG_D_FN)
-          false)
-          {
-            (let u (lspUnitOf units (nodeModule d)))
-            (if (< u 0)
-              0
-              {
-                (let unit (vecGet units u))
-                (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
-              })
-          }
+        (if (let (Some d) d)
+          (if (== (nodeTag d) TAG_D_FN)
+            {
+              (let u (lspUnitOf units (nodeModule d)))
+              (if (< u 0)
+                0
+                {
+                  (let unit (vecGet units u))
+                  (lspViewSigFn (unitSrc unit) allDecls d (unitName unit))
+                })
+            }
+            {
+              (let c (lspViewFindCtor allDecls head 1))
+              (if (nodeSame c nilNode)
+                0
+                (lspViewSigCtor c))
+            })
           {
             (let c (lspViewFindCtor allDecls head 1))
             (if (nodeSame c nilNode)
@@ -10668,11 +10681,12 @@
           (vecPush ends (strBuilderLen label))
         })
       (strBuilderPush label ")")
-      (if (! (nodeSame sig nilNode))
+      (if (let (Some sig) sig)
         {
           (strBuilderPush label " : ")
           (strBuilderPush label (lspSigType dsrc sig))
-        })
+        }
+        ())
       (if (let (Some name) origin)
         (if (> (strLen name) 0)
           {
@@ -10686,13 +10700,13 @@
 ; The paragraph above the declaration, read where hover reads it: at
 ; the `::` when the `fn` has one, because that is where this language
 ; puts the comment, and at the `fn` itself otherwise.
-(pub :: lspViewSigDoc (-> String (Vec ASTNode) ASTNode ASTNode String))
+(pub :: lspViewSigDoc (-> String (Vec ASTNode) ASTNode (Option ASTNode) String))
 (pub fn (lspViewSigDoc dsrc ddecls d sig)
   {
     (let at
-      (if (nodeSame sig nilNode)
-        d
-        sig))
+      (if (let (Some sig) sig)
+        sig
+        d))
     (if (== (nodeSpan at) 0)
       ""
       {
@@ -13649,12 +13663,13 @@
                   (let sig (lspFindSig allDecls (nodeAName decl) (- (vecLen allDecls) 1)))
                   {
                     (jsonArrPush edits (lspFixTextEdit hsrc hix (+ o 1) "pub "))
-                    (if (! (nodeSame sig nilNode))
+                    (if (let (Some sig) sig)
                       {
                         (let so (lspFormStart hsrc (spanStart (nodeSpan sig))))
                         (if (! (strEq (lspViewHeadAt hsrc so) "pub"))
                           (jsonArrPush edits (lspFixTextEdit hsrc hix (+ so 1) "pub ")))
-                      })
+                      }
+                      ())
                     (vecPush seen key)
                     (jsonArrPush out
                       (lspFixActionJson
@@ -14168,13 +14183,15 @@
     parameter
     {
       (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-      (if (&& (! (nodeSame d nilNode)) (== (nodeTag d) TAG_D_FN))
-        {
-          (let sig (lspFindSig decls w (- (vecLen decls) 1)))
-          (if (nodeSame sig nilNode)
-            nilNode
-            (lspArrowResult (nodeTyChild sig)))
-        }
+      (if (let (Some d) d)
+        (if (== (nodeTag d) TAG_D_FN)
+          {
+            (let sig (lspFindSig decls w (- (vecLen decls) 1)))
+            (if (let (Some sig) sig)
+              (lspArrowResult (nodeTyChild sig))
+              nilNode)
+          }
+          nilNode)
         nilNode)
     }))
 
@@ -14205,8 +14222,9 @@
                     (if (! (< k 0))
                       {
                         (let sig (lspFindSig decls (nodeAName d) (- (vecLen decls) 1)))
-                        (if (! (nodeSame sig nilNode))
-                          (set found (nthParamTy (nodeTyChild sig) k)))
+                        (if (let (Some sig) sig)
+                          (set found (nthParamTy (nodeTyChild sig) k))
+                          ())
                       })
                   })
               })
@@ -14508,13 +14526,15 @@
             given
             {
               (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-              (if (&& (! (nodeSame d nilNode)) (== (nodeTag d) TAG_D_FN))
-                {
-                  (let sig (lspFindSig allDecls (nodeAName d) (- (vecLen allDecls) 1)))
-                  (if (nodeSame sig nilNode)
-                    nilNode
-                    (lspArrowResult (nodeTyChild sig)))
-                }
+              (if (let (Some d) d)
+                (if (== (nodeTag d) TAG_D_FN)
+                  {
+                    (let sig (lspFindSig allDecls (nodeAName d) (- (vecLen allDecls) 1)))
+                    (if (let (Some sig) sig)
+                      (lspArrowResult (nodeTyChild sig))
+                      nilNode)
+                  }
+                  nilNode)
                 nilNode)
             }))
         (if (nodeSame t nilNode)

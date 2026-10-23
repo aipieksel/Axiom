@@ -1,0 +1,93 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: request (-> String String String Int String ()))
+;@axiom:effect(io)
+(fn (request title source peer offset uri)
+  {
+    (println "SOURCE {title}")
+    (let uris (vecPush vecNew uri))
+    (let texts (vecPush vecNew source))
+    (let meta (vecPush (vecPush vecNew 1) 1))
+    (if (> (strLen peer) 0)
+      {
+        (vecPush uris "file:///tmp/axiom-query-fixtures/Peer.ax")
+        (vecPush texts peer)
+        (vecPush meta 1)
+        (vecPush meta 1)
+      })
+    (let workspace (lspWorkspaceNew uris texts meta))
+    (let params (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (println (jsonWrite (lspDefinition workspace source uri params "")))
+    (println (jsonWrite (lspDeclaration workspace source uri params "")))
+    (println (jsonWrite (lspHover workspace source uri params "")))
+    (println (jsonWrite (lspSignatureHelp workspace source uri params)))
+    (let hierarchy (lspPrepareCallHierarchy source uri params))
+    (println (jsonWrite hierarchy))
+    (if (> (jsonArrLen hierarchy) 0)
+      {
+        (let calls (jsonObjPut jsonObj "item" (jsonArrGet hierarchy 0)))
+        (println (jsonWrite (lspIncomingCalls workspace calls uris texts)))
+        (println (jsonWrite (lspOutgoingCalls workspace calls uris texts)))
+      }
+      {
+        (println "NO_INCOMING")
+        (println "NO_OUTGOING")
+      })
+    (println
+      (jsonWrite
+        (lspInlayHints workspace source uri
+          (jsonObjPut jsonObj "range"
+            (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+              (lspPos source (strLen source)))))))
+  })
+
+(:: report (-> String String String ()))
+;@axiom:effect(io)
+(fn (report title source needle)
+  (request title source ""
+    (match (strFind source needle 0)
+      ((None) 0)
+      ((Some offset) offset))
+    "file:///tmp/axiom-query-fixtures/Main.ax"))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (report "empty" "" "")
+    (report "signed"
+      ";; docs\n(:: twice (-> Int Int))\n(fn (twice x) (+ x x))\n(fn (use) (twice 1))" "twice 1")
+    (report "unsigned" "(fn (twice x) (+ x x))\n(fn (use) (twice 1))" "twice 1")
+    (report "declaration" ";; docs\n(:: twice (-> Int Int))\n(fn (twice x) (+ x x))" "twice x")
+    (report "signature-only" "(:: twice (-> Int Int))" "twice")
+    (report "shadow" "(:: twice (-> Int Int))\n(fn (twice x) x)\n(fn (use twice) (twice 1))"
+      "twice 1")
+    (report "missing" "(fn (use) missing)" "missing")
+    (report "recovered" "(:: twice (-> Int Int))\n(fn (twice x) x)\n(fn (use) (twice 1)" "twice 1")
+    (report "duplicate"
+      "(:: same Int)\n(fn (same) 1)\n(:: same String)\n(fn (same) \"last\")\n(fn (use) same)"
+      "same)")
+    (report "poison-signature" "(:: strange Missing)\n(fn (strange) 1)\n(fn (use) strange)"
+      "strange)")
+    (let imported "(import Peer)\n(fn (use) (twice 1))")
+    (let peer ";; imported docs\n(pub :: twice (-> Int Int))\n(pub fn (twice x) (+ x x))")
+    (let off
+      (match (strFind imported "twice" 0)
+        ((None) __indexTrap)
+        ((Some n) n)))
+    (request "imported" imported peer off "file:///tmp/axiom-query-fixtures/Main.ax")
+    (let own "(import Peer)\n(:: twice Int)\n(fn (twice) 7)\n(fn (use) twice)")
+    (let ownOff
+      (match (strFind own "twice)" 0)
+        ((None) __indexTrap)
+        ((Some n) n)))
+    (request "own-shadows-import" own peer ownOff "file:///tmp/axiom-query-fixtures/Main.ax")
+    0
+  })
