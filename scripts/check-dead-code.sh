@@ -513,9 +513,7 @@ echo
 echo "--- 6. global initializer boundaries and observable roots ---"
 cat > "$work/graph.ax" <<'PROBE'
 (import codegen)
-(import raw)
 (import IO)
-(import Mem)
 (import Vec)
 (import Str)
 
@@ -534,7 +532,6 @@ cat > "$work/graph.ax" <<'PROBE'
 
 (:: main ())
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (fn (main)
   {
     (let lines (vecPush vecNew "declare void @external()"))
@@ -601,9 +598,9 @@ cat > "$work/graph.ax" <<'PROBE'
     (vecPush lines "  ret i64 0")
     (vecPush lines "}")
     (let cg newCG)
-    (memSetWord cg 0 lines)
+    (set cg.lines lines)
     (pruneDeadDefs cg)
-    (let out (as (memGetWord cg 0) (Vec String)))
+    (let out cg.lines)
     (if cgStaticlib
       (println (== (vecLen out) (vecLen lines)))
       {
@@ -646,10 +643,10 @@ cat > "$work/graph.ax" <<'PROBE'
         ; target-specific entry
         (println (! (has out "define i64 @_start() {")))
         (let bare newCG)
-        (memSetWord bare 0 lines)
-        (memSetWord bare 26 7)
+        (set bare.lines lines)
+        (set bare.target 7)
         (pruneDeadDefs bare)
-        (println (has (as (memGetWord bare 0) (Vec String)) "define i64 @_start() {"))
+        (println (has bare.lines "define i64 @_start() {"))
       })
   })
 PROBE
