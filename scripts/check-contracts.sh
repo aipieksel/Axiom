@@ -115,6 +115,8 @@ python3 tests/selfhost/emitter-signature-types.py --axiom "$axc"
 python3 tests/selfhost/emitter-lambda-type-options.py --axiom "$axc"
 python3 tests/selfhost/lsp-field-query-options.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/lsp-hierarchy-query-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/lsp-assist-query-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/typecheck-entry-source-options.py --axiom "$axc"
 python3 tests/selfhost/emitter-signature-flags.py --axiom "$axc"
 python3 tests/selfhost/checker-axtag-owners.py --axiom "$axc" --negative-controls
 python3 tests/tools/compiler-tag-consumers.py --axiom "$axc"

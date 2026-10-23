@@ -331,13 +331,16 @@ echo "--- 1. user-level cast count does not grow ---"
 # live-owner/count or value observations, two erased-table ablation casts,
 # and one refused source-forging cast. Eight obsolete metadata-probe casts
 # leave, so the exact tracked user-level census remains 1482.
+# Four lookup/predicate fixtures read live owners' reference counts to
+# check retirement. These MM-VAL-23 observations keep their typed owner
+# alive; no application conversion or production erasure is introduced.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1482 ]; then
-  ok "user-level (cast count $cast_count <= 1482)"
+elif [ "$cast_count" -le 1486 ]; then
+  ok "user-level (cast count $cast_count <= 1486)"
 else
-  bad "user-level (cast count $cast_count > 1482): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1486): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -538,7 +541,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # signature and editor queries measure 281 to 278 reference erasures.
 # Counted source indexes and required diagnostic Strings remove eighteen
 # more reference erasures: 278 to 260 under the same compiler.
-erasure_pin=260
+# Builtin recognition and optional entry-source access remove eleven
+# further reference erasures: 260 to 249 under the same compiler.
+erasure_pin=249
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
