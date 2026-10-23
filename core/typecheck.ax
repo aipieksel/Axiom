@@ -10196,12 +10196,11 @@
   {
     (let txt (axtagContent t))
     (if (let (Some op) (strFindByte txt 40 0))
-      {
-        (let cl (axtagCloseAt txt))
-        (if (|| (>= cl (strLen txt)) (<= cl op))
+      (if (let (Some closing) (axtagCloseAt txt))
+        (if (<= closing op)
           ""
-          (strSlice txt (+ op 1) (- cl (+ op 1))))
-      }
+          (strSlice txt (+ op 1) (- closing (+ op 1))))
+        "")
       "")
   })
 
@@ -26842,12 +26841,11 @@
 (pub :: axtagListValue (-> String (Option Int) String))
 (pub fn (axtagListValue content opening)
   (if (let (Some op) opening)
-    {
-      (let cl (axtagCloseAt content))
-      (if (|| (< op 0) (|| (>= cl (strLen content)) (<= cl op)))
+    (if (let (Some closing) (axtagCloseAt content))
+      (if (|| (< op 0) (<= closing op))
         ""
-        (strSlice content (+ op 1) (- cl (+ op 1))))
-    }
+        (strSlice content (+ op 1) (- closing (+ op 1))))
+      "")
     ""))
 
 ; Split on `,`, trimming blanks, pushing each name once. A tag naming
@@ -29733,15 +29731,20 @@
         (if (let (Some opening) op)
           (strSlice content 0 opening)
           content))
+      ; This reader accepts text through the end of an unterminated tag.
+      (let valueEnd
+        (if (isSome op)
+          (match (axtagCloseAt content)
+            ((None) (strLen content))
+            ((Some closing) closing))
+          (strLen content)))
       (let val
         (if (let (Some opening) op)
-          (strSlice content (+ opening 1) (- (axtagCloseAt content) (+ opening 1)))
+          (strSlice content (+ opening 1) (- valueEnd (+ opening 1)))
           ""))
       (let trail
         (if (isSome op)
-          (strTrimBlanks
-            (strSlice content (+ (axtagCloseAt content) 1)
-              (- (strLen content) (+ (axtagCloseAt content) 1))))
+          (strTrimBlanks (strSlice content (+ valueEnd 1) (- (strLen content) (+ valueEnd 1))))
           ""))
       (if (> (strLen trail) 0)
         (emitDiag tc
@@ -30723,16 +30726,17 @@
         (Some
           "an unrecognised key is recorded and never checked, so the claim this looks like was not made. Fix the spelling, or namespace a key of your own, such as `;@axiom:my:KEY(...)`, so it cannot be mistaken for a claim")))))
 
-(pub :: axtagCloseAt (-> String Int))
+; The last closing delimiter at or before the cursor, when present.
+(pub :: axtagCloseAt (-> String (Option Int)))
 (pub fn (axtagCloseAt content)
   (axtagCloseFrom content (- (strLen content) 1)))
 
-(pub :: axtagCloseFrom (-> String Int Int))
+(pub :: axtagCloseFrom (-> String Int (Option Int)))
 (pub fn (axtagCloseFrom content i)
-  (if (< i 0)
-    (strLen content)
+  (if (|| (< i 0) (>= i (strLen content)))
+    None
     (if (== (strByte content i) 41)
-      i
+      (Some i)
       (axtagCloseFrom content (- i 1)))))
 
 ; ASCII case-insensitive equality, for matching `effect(console)`

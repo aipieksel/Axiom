@@ -18,7 +18,7 @@ def check(compiler, root, work, baseline=None):
     source = (snapshot / 'core/typecheck.ax').read_text()
     fixture = (root / 'tests/selfhost/typecheck-axtag-delimiters.axp').read_text()
     diagnostics = (root / 'tests/selfhost/typecheck-axtag-delimiter-diagnostics.axp').read_text()
-    expected = ''.join(f'{i} true\n' for i in range(1, 41))
+    expected = ''.join(f'{i} true\n' for i in range(1, 54))
     golden = json.loads((root / 'tests/selfhost/typecheck-axtag-delimiter-diagnostics.golden.json').read_text())
     report = {
         'builder': str(compiler),
@@ -67,9 +67,9 @@ def check(compiler, root, work, baseline=None):
     for level in (0, 2):
         assert native('positive-O' + str(level), level, source, fixture) == expected, level
         assert native('diagnostics-O' + str(level), level, source, diagnostics) == golden, level
-        report['configurations'].append({'opt': level, 'allocation_poison': True, 'cases': 40,
+        report['configurations'].append({'opt': level, 'allocation_poison': True, 'cases': 53,
                                          'diagnostic_cases': 14, 'diagnostic_bytes': len(golden.encode())})
-        print(f'ok   AXTAG delimiters: 40 cases and 14 exact diagnostic sources O{level}', flush=True)
+        print(f'ok   AXTAG delimiters: 53 cases and 14 exact diagnostic sources O{level}', flush=True)
 
     existing = (root / 'tests/selfhost/checker-axtag-owners.axp').read_text()
     assert native('existing-consumer', 0, source, existing) == ''.join(f'{i} true\n' for i in range(1, 43))
@@ -83,7 +83,10 @@ def check(compiler, root, work, baseline=None):
          '(strSlice content 0 opening)\n                  "")', {20}),
         ('drop-bare-isr', 'tagsHaveIsrIn', '(strSlice content 0 opening)\n                content)',
          '(strSlice content 0 opening)\n                "")', {25, 30}),
-        ('ignore-trailing-text', 'checkOneAxtag', '(isSome op)', 'false', {35, 38}),
+        ('ignore-trailing-text', 'checkOneAxtag', '(let trail\n        (if (isSome op)', '(let trail\n        (if false', {35, 38}),
+        ('lose-closing-zero', 'axtagCloseFrom', '(Some i)', '(if (== i 0) None (Some i))', {43, 46}),
+        ('invent-closing-zero', 'axtagCloseFrom', '    None', '    (Some 0)', {33, 41, 42, 48, 49, 53}),
+        ('lose-end-fallback', 'checkOneAxtag', '((None) (strLen content))', '((None) 0)', {33, 53}),
     ]
     for label, function, before, after, failures in controls:
         start = source.index('(pub fn (' + function + ' ')
@@ -92,7 +95,7 @@ def check(compiler, root, work, baseline=None):
         assert body.count(before) == 1, (label, 'mutation anchor changed')
         changed = source[:start] + body.replace(before, after) + source[end:]
         rows = native(label, 0, changed, fixture).splitlines()
-        assert len(rows) == 40, (label, rows)
+        assert len(rows) == 53, (label, rows)
         observed = set()
         for i, row in enumerate(rows, 1):
             assert row in (f'{i} true', f'{i} false'), (label, row)
@@ -107,6 +110,8 @@ def check(compiler, root, work, baseline=None):
         ('raw-delimiter', '(strLen (axtagListValue "key(value)" 3))', 'AX3004'),
         ('wrong-payload', '(strLen (axtagListValue "key(value)" (Some "3")))', 'AX3004'),
         ('missing-none', '(match (strFindByte "key" 40 0) ((Some opening) (strLen (axtagListValue "key" (Some opening)))))', 'AX3005'),
+        ('raw-closing', '(axtagCloseAt "key(value)")', 'AX3004'),
+        ('closing-missing-none', '(match (axtagCloseAt "key(value)") ((Some closing) closing))', 'AX3005'),
     ]:
         path = work / (label + '.ax')
         path.write_text('(import typecheck)\n(import Str)\n(import Vec)\n(:: bad Int)\n(fn (bad) ' + expression + ')\n')
