@@ -1,0 +1,146 @@
+; Appended to format.ax by the runner so private declaration queries stay private.
+(import IO)
+(import Fmt)
+(import Sys)
+
+(:: declSay (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (declSay index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: declTextIs (-> (Option String) String Bool))
+(fn (declTextIs result expected)
+  (match result
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: declQuery (-> String Bool (Option String)))
+(fn (declQuery src name)
+  (match (readForms src (fsToksVec (fscan src)))
+    ((None) None)
+    ((Some forms)
+      (if (== (vecLen forms) 1)
+        (if name
+          (fpDeclName src (vecGet forms 0))
+          (fpDeclHead src (vecGet forms 0)))
+        None)
+    )))
+
+(:: declIndexIs (-> (Option Int) Int Bool))
+(fn (declIndexIs result expected)
+  (match result
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: declAnchor (-> String (Option Int)))
+(fn (declAnchor src)
+  (match (readForms src (fsToksVec (fscan src)))
+    ((None) None)
+    ((Some forms) (Some (fpDeclAnchor src (vecGet forms 0))))))
+
+(:: declReturnedName (Option String))
+(fn (declReturnedName)
+  (declQuery (strDup "(fn (owned) 42)") true))
+
+(:: declBorrowOnly (-> String Bool))
+(fn (declBorrowOnly src)
+  (declTextIs (declQuery src true) "borrowed"))
+
+(:: declFormatBorrow (-> String Bool))
+(fn (declFormatBorrow src)
+  {
+    (let result (fmtFormat src))
+    (&& (== result.ok 1) (> (strLen result.text) 0))
+  })
+
+(:: declStringCount (-> String Int))
+;@axiom:effect(unsafe)
+(fn (declStringCount value)
+  (__load64 (as value Int) -2))
+
+(:: declDirectBad (-> String Bool Int))
+(fn (declDirectBad src macro)
+  (match (readForms src (fsToksVec (fscan src)))
+    ((None) 1)
+    ((Some forms)
+      {
+        (let out mkFOut)
+        (let printer (mkFPr src (lineStarts src) (mkFCq vecNew) out))
+        (if macro
+          (fpDeclMacro printer (vecGet forms 0))
+          (fpDecl printer (vecGet forms 0)))
+        out.bad
+      }
+    )))
+
+(:: declChecks Int)
+;@axiom:effect(io)
+(fn (declChecks)
+  {
+    (declSay 1 (isNone (declQuery "()" false)))
+    (declSay 2 (isNone (declQuery "(pub)" false)))
+    (declSay 3 (isNone (declQuery "(() 42)" false)))
+    (declSay 4 (declTextIs (declQuery "(fn (f) 42)" false) "fn"))
+    (declSay 5 (declTextIs (declQuery "(pub fn (f) 42)" false) "fn"))
+    (declSay 6 (declTextIs (declQuery "(:: f Int)" false) "::"))
+    (declSay 7 (isNone (declQuery "(Lib::make 42)" false)))
+    (declSay 8 (declTextIs (declQuery "(\"\" 42)" false) "\"\""))
+    (declSay 9 (declTextIs (declQuery "(fn (f x) x)" true) "f"))
+    (declSay 10 (declTextIs (declQuery "(pub :: f Int)" true) "f"))
+    (declSay 11 (declTextIs (declQuery "(define f 42)" true) "f"))
+    (declSay 12 (isNone (declQuery "(import IO)" true)))
+    (declSay 13 (isNone (declQuery "(macro (m x) x)" true)))
+    (declSay 14 (isNone (declQuery "(fn () 42)" true)))
+    (declSay 15 (isNone (declQuery "(fn (\"\") 42)" true)))
+    (declSay 16 (isNone (declQuery "(::)" true)))
+    (declSay 17 (isNone (declQuery "(Lib::make 42)" true)))
+    (let empty (mkFNode FN_ATOM (mkFTok FT_IDENT 2 2) vecNew 2 2))
+    (let emptyHead (mkFNode FN_PAREN (mkFTok FT_LPAREN 2 2) (vecPush vecNew empty) 2 2))
+    (declSay 18 (declTextIs (fpDeclHead "::" emptyHead) ""))
+    (let signature (mkFNode FN_ATOM (mkFTok FT_DCOLON 0 2) vecNew 0 2))
+    (let emptyName
+      (mkFNode FN_PAREN (mkFTok FT_LPAREN 0 0) (vecPush (vecPush vecNew signature) empty) 0 2))
+    (declSay 19 (declTextIs (fpDeclName "::" emptyName) ""))
+    (declSay 20 (! (fpDeclNamesStick None None)))
+    (declSay 21 (! (fpDeclNamesStick (Some "") (Some ""))))
+    (declSay 22 (! (fpDeclNamesStick (Some "f") None)))
+    (declSay 23 (! (fpDeclNamesStick None (Some "f"))))
+    (declSay 24 (fpDeclNamesStick (Some "f") (Some "f")))
+    (declSay 25 (! (fpDeclNamesStick (Some "f") (Some "g"))))
+    (declSay 26 (! (fpDeclHeadIs None "")))
+    (declSay 27 (fpDeclHeadIs (Some "") ""))
+    (declSay 28 (declTextIs declReturnedName "owned"))
+    (let source (strDup "(fn (borrowed) 42)"))
+    (let count (declStringCount source))
+    (declSay 29 (declBorrowOnly source))
+    (declSay 30 (== (declStringCount source) count))
+    (declSay 31 (declIndexIs (declAnchor "(fn (f) 42)") 5))
+    (declSay 32 (declIndexIs (declAnchor "(pub fn (f) 42)") 9))
+    (declSay 33 (declIndexIs (declAnchor "(Lib::make 42)") 11))
+    (declSay 34 (declIndexIs (declAnchor "(fn)") 0))
+    (declSay 35 (== (declDirectBad "(Lib::make 42)" false) 0))
+    (declSay 36 (== (declDirectBad "(Lib::make)" false) 0))
+    (declSay 37 (== (declDirectBad "(macro m ((m x) (fn (x) 42)))" true) 0))
+    (declSay 38 (== (declDirectBad "(() m ((m x) 42))" true) 1))
+    (let formatSource (strDup "(:: f Int)\n(fn (f) 42)\n"))
+    (let formatCount (declStringCount formatSource))
+    (declSay 39 (declFormatBorrow formatSource))
+    (declSay 40 (== (declStringCount formatSource) formatCount))
+    0
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if (strEq (sysArg 1) "format")
+    {
+      (let result (fmtFormat (sysArg 2)))
+      (println (fmtInt result.ok))
+      (writeStr stdout result.text)
+      0
+    }
+    declChecks))

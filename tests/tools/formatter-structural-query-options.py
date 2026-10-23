@@ -31,7 +31,7 @@ def run(compiler, root, work):
               'source_sha256': digest(module), 'fixture_sha256': digest(fixture),
               'golden_sha256': digest(golden_path),
               'configurations': [], 'controls': [], 'refusals': [], 'format_cases': [],
-              'remaining': ['fnText/fnHeadText/fpDeclHead/fpDeclName text absence',
+              'remaining': ['fnText/fnHeadText text absence',
                             'flat-layout String failure protocols and FRes tagged status/text'],
               'limits': ['Host O0/O2 allocation-poison probes; CI runs the complete suite.',
                          'No raw AST, ownership inference or renderer algorithm changes.']}

@@ -4662,14 +4662,37 @@
     1
     0))
 
-(:: fpDeclHead (-> String FNode String))
+(:: fpDeclHead (-> String FNode (Option String)))
 (fn (fpDeclHead src n)
   {
     (let b (fpDeclBase src n))
     (if (> (fnLen n) b)
-      (fnText src (fnKid n b))
-      "")
+      {
+        (let head (fnKid n b))
+        (if (== (fnKind head) FN_ATOM)
+          (Some (ftText src (fnTok head)))
+          None)
+      }
+      None)
   })
+
+; A missing atom head is distinct from a present empty token.
+(:: fpDeclHeadIs (-> (Option String) String Bool))
+(fn (fpDeclHeadIs head expected)
+  (match head
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+; Only nonempty, present declaration names join a signature to its function.
+(:: fpDeclNamesStick (-> (Option String) (Option String) Bool))
+(fn (fpDeclNamesStick previous current)
+  (match previous
+    ((None) false)
+    ((Some name)
+      (match current
+        ((None) false)
+        ((Some next) (&& (!= (strLen name) 0) (strEq name next))))
+    )))
 
 (:: fpIsDeclHead (-> String Bool))
 (fn (fpIsDeclHead h)
@@ -4712,9 +4735,10 @@
       (fnStart n)
       {
         (let x (fnKid n (+ b 1)))
-        (if (|| (strEq h "fn")
-              (|| (strEq h "define")
-                (|| (strEq h "macro") (|| (strEq h "trait") (strEq h "impl")))))
+        (if (|| (fpDeclHeadIs h "fn")
+              (|| (fpDeclHeadIs h "define")
+                (|| (fpDeclHeadIs h "macro")
+                  (|| (fpDeclHeadIs h "trait") (fpDeclHeadIs h "impl")))))
           (if (&& (== (fnKind x) FN_PAREN) (> (fnLen x) 0))
             (fnStart (fnKid x 0))
             (fnStart x))
@@ -4725,35 +4749,39 @@
 ; The declared name for blank-line grouping: the `::` name, or
 ; the `fn`/`define` name inside the head paren or bare. Anything
 ; else - imports, macro invocations, nameless shapes - answers
-; `""` and never sticks to a neighbour.
-(:: fpDeclName (-> String FNode String))
+; None and never sticks to a neighbour. A present empty identifier
+; remains Some empty, and also does not join declarations.
+(:: fpDeclName (-> String FNode (Option String)))
 (fn (fpDeclName src n)
   {
     (let b (fpDeclBase src n))
-    (let h (fpDeclHead src n))
-    (if (strEq h "::")
-      (if (> (fnLen n) (+ b 1))
-        {
-          (let x (fnKid n (+ b 1)))
-          (if (fpIsIdentAtom x)
-            (fnText src x)
-            "")
-        }
-        "")
-      (if (|| (strEq h "fn") (strEq h "define"))
-        (if (> (fnLen n) (+ b 1))
-          {
-            (let x (fnKid n (+ b 1)))
-            (if (== (fnKind x) FN_PAREN)
-              (if (&& (> (fnLen x) 0) (fpIsIdentAtom (fnKid x 0)))
-                (fnText src (fnKid x 0))
-                "")
+    (match (fpDeclHead src n)
+      ((None) None)
+      ((Some h)
+        (if (strEq h "::")
+          (if (> (fnLen n) (+ b 1))
+            {
+              (let x (fnKid n (+ b 1)))
               (if (fpIsIdentAtom x)
-                (fnText src x)
-                ""))
-          }
-          "")
-        ""))
+                (Some (ftText src (fnTok x)))
+                None)
+            }
+            None)
+          (if (|| (strEq h "fn") (strEq h "define"))
+            (if (> (fnLen n) (+ b 1))
+              {
+                (let x (fnKid n (+ b 1)))
+                (if (== (fnKind x) FN_PAREN)
+                  (if (&& (> (fnLen x) 0) (fpIsIdentAtom (fnKid x 0)))
+                    (Some (ftText src (fnTok (fnKid x 0))))
+                    None)
+                  (if (fpIsIdentAtom x)
+                    (Some (ftText src (fnTok x)))
+                    None))
+              }
+              None)
+            None))
+      ))
   })
 
 ; `pub ` as spelled: inside the paren, before the keyword.
@@ -5797,125 +5825,135 @@
   ; compiling file into a refused one. A formatter region it does not
   ; understand is copied, not normalised; comments inside the template
   ; survive for the same reason.
-  {
-    (let src p.src)
-    (let b (fpDeclBase src n))
-    (if (&& (>= (fnLen n) (+ b 3))
-          (&& (fpIsIdentAtom (fnKid n (+ b 1))) (== (fnKind (fnKid n (+ b 2))) FN_PAREN)))
+  (match (fpDeclHead p.src n)
+    ((None) (fpBad p))
+    ((Some head)
       {
-        (let tail (fpExprElems n (+ b 2)))
-        (if (< (vecLen tail) 1)
-          (fpBad p)
-          ; EVERY rule, verbatim and in order (MAC-LANG-14): a
-          ; rule-form macro is a list of rules now, and printing
-          ; only the first would delete the others from a file the
-          ; formatter claims to round-trip. Rules after the first
-          ; are laid out one per line at the macro's own indent,
-          ; which is the shape the corpus writes them in.
+        (let src p.src)
+        (let b (fpDeclBase src n))
+        (if (&& (>= (fnLen n) (+ b 3))
+              (&& (fpIsIdentAtom (fnKid n (+ b 1))) (== (fnKind (fnKid n (+ b 2))) FN_PAREN)))
           {
-            (let mut ri 0)
-            {
-              (fpP p "(")
-              (fpVis p n)
-              (fpP p (concat (fpDeclHead src n) " "))
-              (fpP p (fnText src (fnKid n (+ b 1))))
-              (while (< ri (vecLen tail))
+            (let tail (fpExprElems n (+ b 2)))
+            (if (< (vecLen tail) 1)
+              (fpBad p)
+              ; EVERY rule, verbatim and in order (MAC-LANG-14): a
+              ; rule-form macro is a list of rules now, and printing
+              ; only the first would delete the others from a file the
+              ; formatter claims to round-trip. Rules after the first
+              ; are laid out one per line at the macro's own indent,
+              ; which is the shape the corpus writes them in.
+              {
+                (let mut ri 0)
                 {
-                  (let rule (vecGet tail ri))
-                  {
-                    (if (== ri 0)
+                  (fpP p "(")
+                  (fpVis p n)
+                  (fpP p (concat head " "))
+                  (fpP p (fnText src (fnKid n (+ b 1))))
+                  (while (< ri (vecLen tail))
+                    {
+                      (let rule (vecGet tail ri))
+                      {
+                        (if (== ri 0)
+                          (fpP p " ")
+                          (fpP p "\n  "))
+                        (fpP p (strSlice src (fnStart rule) (- (fnEnd rule) (fnStart rule))))
+                        (set ri (+ ri 1))
+                      }
+                    })
+                  (fpP p ")")
+                }
+              })
+          }
+          {
+            (let tmpl (fpExprElems n (+ b 2)))
+            (if (|| (< (fnLen n) (+ b 3))
+                  (|| (!= (vecLen tmpl) 1)
+                    (|| (!= (fnKind (fnKid n (+ b 1))) FN_PAREN)
+                      (|| (< (fnLen (fnKid n (+ b 1))) 1)
+                        (if (fpIsIdentAtom (fnKid (fnKid n (+ b 1)) 0))
+                          false
+                          true)))))
+              (fpBad p)
+              {
+                (let hd (fnKid n (+ b 1)))
+                (let mut i 1)
+                {
+                  (fpP p "(")
+                  (fpVis p n)
+                  (fpP p "macro (")
+                  (fpP p (fnText src (fnKid hd 0)))
+                  (while (< i (fnLen hd))
+                    {
                       (fpP p " ")
-                      (fpP p "\n  "))
-                    (fpP p (strSlice src (fnStart rule) (- (fnEnd rule) (fnStart rule))))
-                    (set ri (+ ri 1))
-                  }
-                })
-              (fpP p ")")
-            }
+                      (set i (fpPatVecAt p (fnKids hd) i))
+                    })
+                  (fpP p ") ")
+                  (fpExpr p (vecGet tmpl 0))
+                  (fpP p ")")
+                }
+              })
           })
       }
-      {
-        (let tmpl (fpExprElems n (+ b 2)))
-        (if (|| (< (fnLen n) (+ b 3))
-              (|| (!= (vecLen tmpl) 1)
-                (|| (!= (fnKind (fnKid n (+ b 1))) FN_PAREN)
-                  (|| (< (fnLen (fnKid n (+ b 1))) 1)
-                    (if (fpIsIdentAtom (fnKid (fnKid n (+ b 1)) 0))
-                      false
-                      true)))))
-          (fpBad p)
-          {
-            (let hd (fnKid n (+ b 1)))
-            (let mut i 1)
-            {
-              (fpP p "(")
-              (fpVis p n)
-              (fpP p "macro (")
-              (fpP p (fnText src (fnKid hd 0)))
-              (while (< i (fnLen hd))
-                {
-                  (fpP p " ")
-                  (set i (fpPatVecAt p (fnKids hd) i))
-                })
-              (fpP p ") ")
-              (fpExpr p (vecGet tmpl 0))
-              (fpP p ")")
-            }
-          })
-      })
-  })
+    )))
+
+; Qualified heads have no atom text and still print as macro invocations.
+(:: fpDeclInvocation (-> FPr FNode ()))
+(fn (fpDeclInvocation p n)
+  (if (&& (== (fnKind n) FN_PAREN) (== (fnLen n) 1))
+    {
+      (fpP p "(")
+      (fpExpr p (fnKid n 0))
+      (fpP p ")")
+    }
+    (fpExpr p n)))
 
 (:: fpDecl (-> FPr FNode ()))
 (fn (fpDecl p n)
-  {
-    (let h (fpDeclHead p.src n))
-    (if (strEq h "import")
-      (fpDeclImport p n)
-      (if (strEq h "define")
-        (fpBad p)
-        (if (strEq h "fn")
-          (fpDeclFn p n)
-          (if (strEq h "::")
-            (fpDeclSig p n)
-            (if (strEq h "data")
-              (fpDeclData p n)
-              (if (strEq h "newtype")
-                (fpDeclNewtype p n)
-                (if (strEq h "struct")
-                  (fpDeclStruct p n)
-                  (if (strEq h "type")
-                    (fpDeclType p n)
-                    (if (strEq h "subtype")
-                      (fpDeclSubtype p n)
-                      (if (fpIsRemovedDeclHead h)
-                        ; A REMOVED declaration keyword: refused, not
-                        ; printed. `fpIsRefusedHead` is this rule in
-                        ; expression position; this is the declaration
-                        ; half, and it arrived four commits late.
-                        (fpBad p)
-                        (if (strEq h "effect")
-                          (fpDeclEffect p n)
-                          (if (strEq h "extern")
-                            (fpDeclExtern p n)
-                            (if (strEq h "macro")
-                              (fpDeclMacro p n)
-                              ; Any other head is a DECLARATION MACRO INVOCATION (the parser's
-                              ; TAG_D_MACROCALL), printed through the expression printer -
-                              ; which already normalises spacing and glues qualified names -
-                              ; because an invocation IS call-shaped. A singleton `(m)` keeps
-                              ; its parens here:
-                              ; `fpApp`'s singleton unwrap is correct in expression
-                              ; position - `(x)` IS `x` - but a bare `m` at top
-                              ; level is not a declaration at all, so unwrapping
-                              ; would print a file `check` refuses.
-                              (if (&& (== (fnKind n) FN_PAREN) (== (fnLen n) 1))
-                                {
-                                  (fpP p "(")
-                                  (fpExpr p (fnKid n 0))
-                                  (fpP p ")")
-                                }
-                                (fpExpr p n)))))))))))))))
-  })
+  (match (fpDeclHead p.src n)
+    ((None) (fpDeclInvocation p n))
+    ((Some h)
+      (if (strEq h "import")
+        (fpDeclImport p n)
+        (if (strEq h "define")
+          (fpBad p)
+          (if (strEq h "fn")
+            (fpDeclFn p n)
+            (if (strEq h "::")
+              (fpDeclSig p n)
+              (if (strEq h "data")
+                (fpDeclData p n)
+                (if (strEq h "newtype")
+                  (fpDeclNewtype p n)
+                  (if (strEq h "struct")
+                    (fpDeclStruct p n)
+                    (if (strEq h "type")
+                      (fpDeclType p n)
+                      (if (strEq h "subtype")
+                        (fpDeclSubtype p n)
+                        (if (fpIsRemovedDeclHead h)
+                          ; A REMOVED declaration keyword: refused, not
+                          ; printed. `fpIsRefusedHead` is this rule in
+                          ; expression position; this is the declaration
+                          ; half, and it arrived four commits late.
+                          (fpBad p)
+                          (if (strEq h "effect")
+                            (fpDeclEffect p n)
+                            (if (strEq h "extern")
+                              (fpDeclExtern p n)
+                              (if (strEq h "macro")
+                                (fpDeclMacro p n)
+                                ; Any other head is a DECLARATION MACRO INVOCATION (the parser's
+                                ; TAG_D_MACROCALL), printed through the expression printer -
+                                ; which already normalises spacing and glues qualified names -
+                                ; because an invocation IS call-shaped. A singleton `(m)` keeps
+                                ; its parens here:
+                                ; `fpApp`'s singleton unwrap is correct in expression
+                                ; position - `(x)` IS `x` - but a bare `m` at top
+                                ; level is not a declaration at all, so unwrapping
+                                ; would print a file `check` refuses.
+                                (fpDeclInvocation p n))))))))))))))
+    )))
 
 ; An AXTAG line, reconstructed the way stage0's parser splits it: the
 ; key up to the first `(`, the value to the LAST `)`. An unclosed paren
@@ -6032,17 +6070,20 @@
                   (foSetBad o)
                   {
                     (let h (fpDeclHead src f))
-                    (if (|| (fpIsDeclHead h)
+                    (if (||
+                          (match h
+                            ((None) false)
+                            ((Some text) (fpIsDeclHead text)))
                           (&& (> (fnLen f) (fpDeclBase src f))
                             {
                               (let hk (fnKid f (fpDeclBase src f)))
                               (|| (fpIsIdentAtom hk) (== (fnKind hk) FN_QUAL))
                             }))
                       {
-                        (if (&& (strEq h "import")
+                        (if (&& (fpDeclHeadIs h "import")
                               (&& (> (vecLen declNodes) 0)
                                 (!
-                                  (strEq
+                                  (fpDeclHeadIs
                                     (fpDeclHead src (vecGet declNodes (- (vecLen declNodes) 1)))
                                     "import"))))
                           (foSetBad o))
@@ -6059,8 +6100,8 @@
           (foSetBad o))
         {
           (let mut j 0)
-          (let mut prevHead "")
-          (let mut prevName "")
+          (let mut prevHead (:: None (Option String)))
+          (let mut prevName (:: None (Option String)))
           (while (< j (vecLen declNodes))
             {
               (let f (vecGet declNodes j))
@@ -6070,10 +6111,9 @@
                 {
                   (fpEmitDecl p
                     (if (|| (== j 0)
-                          (|| (&& (strEq prevHead "import") (strEq h "import"))
-                            (&& (strEq prevHead "::")
-                              (&& (strEq h "fn")
-                                (&& (!= (strLen prevName) 0) (strEq prevName nm))))))
+                          (|| (&& (fpDeclHeadIs prevHead "import") (fpDeclHeadIs h "import"))
+                            (&& (fpDeclHeadIs prevHead "::")
+                              (&& (fpDeclHeadIs h "fn") (fpDeclNamesStick prevName nm)))))
                       1
                       0)
                     (vecGet declTags j) f)
