@@ -620,39 +620,41 @@
 ; Lower every argument, left to right, onto `out`. Answers false the
 ; moment one of them leaves the subset - and the caller then refuses
 ; the whole function, so the half-lowered instructions already in the
-; block are discarded with it.
+; block are discarded with it. A register of 0 is a real argument.
 (:: mLowArgs (-> MLC (Vec MBind) Nodes Int Ints Bool))
 (fn (mLowArgs lc env args i out)
   (if (>= i (vecLen args))
     true
     {
       (let r (mLower lc env (vecGet args i)))
-      (if (< r 0)
-        false
+      (if (let (Some reg) r)
         {
-          (vecPush out r)
+          (vecPush out reg)
           (mLowArgs lc env args (+ i 1) out)
-        })
+        }
+        false)
     }))
 
-; Lower one expression. Answers the register holding its value, or a
-; NEGATIVE number when the expression is outside the subset. Every
-; caller checks; nothing here answers a register it did not define.
-(pub :: mLower (-> MLC (Vec MBind) ASTNode Int))
+; Lower one expression. Answers `(Some r)`, the register holding its
+; value, or `None` when the expression is outside the subset.
+; Register 0 is a real register. Every caller matches; nothing here
+; answers a register it did not define.
+(pub :: mLower (-> MLC (Vec MBind) ASTNode (Option Int)))
 (pub fn (mLower lc env e)
   {
     (let t (nodeTag e))
     (if (== t TAG_E_INT)
-      (mlcEmit lc
-        (MInst
-          :op MO_CONST
-          :dst (mlcFresh lc)
-          :a (nodeA e)
-          :b 0
-          :name ""
-          :args vecNew
-          :tgt 0
-          :alt 0))
+      (Some
+        (mlcEmit lc
+          (MInst
+            :op MO_CONST
+            :dst (mlcFresh lc)
+            :a (nodeA e)
+            :b 0
+            :name ""
+            :args vecNew
+            :tgt 0
+            :alt 0)))
       (if (== t TAG_E_VAR)
         ; A name the environment does not hold is a global - a
         ; nullary function, a constant, an imported binding - and
@@ -668,22 +670,32 @@
         ; to the extent the checker lets one stand - reads the same
         ; register on both paths.
         (if (let (Some binding) (mEnvFind env (nodeAName e)))
-          binding.reg
+          (Some binding.reg)
           (if (strEq (nodeAName e) "true")
-            (mlcEmit lc
-              (MInst :op MO_CONST :dst (mlcFresh lc) :a 1 :b 0 :name "" :args vecNew :tgt 0 :alt 0))
-            (if (strEq (nodeAName e) "false")
+            (Some
               (mlcEmit lc
                 (MInst
                   :op MO_CONST
                   :dst (mlcFresh lc)
-                  :a 0
+                  :a 1
                   :b 0
                   :name ""
                   :args vecNew
                   :tgt 0
-                  :alt 0))
-              (- 0 1))))
+                  :alt 0)))
+            (if (strEq (nodeAName e) "false")
+              (Some
+                (mlcEmit lc
+                  (MInst
+                    :op MO_CONST
+                    :dst (mlcFresh lc)
+                    :a 0
+                    :b 0
+                    :name ""
+                    :args vecNew
+                    :tgt 0
+                    :alt 0)))
+              None)))
         (if (== t TAG_E_LET)
           (mLowerLet lc env e 0)
           (if (== t TAG_E_LETM)
@@ -695,10 +707,10 @@
                 (if (== t TAG_E_SET)
                   (mLowerSet lc env e)
                   (if (== t TAG_E_BEGIN)
-                    (mLowerSeq lc env (nodeAChildren e) 0 (- 0 1))
+                    (mLowerSeq lc env (nodeAChildren e) 0 None)
                     (if (== t TAG_E_APP)
                       (mLowerApp lc env e)
-                      (- 0 1))))))))))
+                      None)))))))))
   })
 
 ; `TAG_E_LET` binds exactly one name per node (parser.ax builds it
@@ -713,15 +725,14 @@
 ; when it names an outer `mut` - while the body's stores to the
 ; `let`'s own name (a `mut` re-stored) die with it, or a use past
 ; the scope would read a register no live binding answers.
-(:: mLowerLet (-> MLC (Vec MBind) ASTNode Int Int))
+(:: mLowerLet (-> MLC (Vec MBind) ASTNode Int (Option Int)))
 (fn (mLowerLet lc env e mut)
   {
     (let rv (mLower lc env (nodeBChild e)))
     (let base (vecLen env))
-    (if (< rv 0)
-      (- 0 1)
+    (if (let (Some reg) rv)
       {
-        (vecPush env (MBind :name (nodeAName e) :reg rv :isMut mut))
+        (vecPush env (MBind :name (nodeAName e) :reg reg :isMut mut))
         {
           (let rb (mLower lc env (nodeCChild e)))
           {
@@ -729,7 +740,8 @@
             rb
           }
         }
-      })
+      }
+      None)
   })
 
 ; `set` stores by REBINDING: the value lowers, a fresh binding for
@@ -744,23 +756,23 @@
 ; past the join with a register the other arm never defines - the
 ; dominance violation, refused at the store rather than reported at
 ; the use.
-(:: mLowerSet (-> MLC (Vec MBind) ASTNode Int))
+(:: mLowerSet (-> MLC (Vec MBind) ASTNode (Option Int)))
 (fn (mLowerSet lc env e)
   (if (!= lc.cond 0)
-    (- 0 1)
+    None
     (if (let (Some binding) (mEnvFind env (nodeAName e)))
       (if (== binding.isMut 0)
-        (- 0 1)
+        None
         {
           (let rv (mLower lc env (nodeBChild e)))
-          (if (< rv 0)
-            (- 0 1)
+          (if (let (Some reg) rv)
             {
-              (vecPush env (MBind :name (nodeAName e) :reg rv :isMut 1))
-              rv
-            })
+              (vecPush env (MBind :name (nodeAName e) :reg reg :isMut 1))
+              (Some reg)
+            }
+            None)
         })
-      (- 0 1))))
+      None)))
 
 ; The loop-carried set: every `mut` binding in scope at the loop's
 ; entry, innermost shadowing outermost. Scanned from the END so the
@@ -849,7 +861,7 @@
 ; `cur` through its own blocks first, and the loop's branches land
 ; wherever it stopped, which is why a nested conditional composes
 ; instead of needing its own case.
-(pub :: mLowerWhile (-> MLC (Vec MBind) ASTNode Int))
+(pub :: mLowerWhile (-> MLC (Vec MBind) ASTNode (Option Int)))
 (pub fn (mLowerWhile lc env e)
   {
     (let names vecNew)
@@ -877,8 +889,7 @@
               (mRebind env names ph 0)
               {
                 (let rc (mLower lc env (nodeAChild e)))
-                (if (< rc 0)
-                  (- 0 1)
+                (if (let (Some creg) rc)
                   {
                     ; The header's own parameters, ALIASED rather than
                     ; copied: no rule mutates a block's parameter list
@@ -889,7 +900,7 @@
                       (MInst
                         :op MT_CONDBR
                         :dst (- 0 1)
-                        :a rc
+                        :a creg
                         :b 0
                         :name ""
                         :args ph
@@ -898,9 +909,8 @@
                     (set lc.cur bd)
                     (mRebind env names pd 0)
                     {
-                      (let bodyVal (mLowerSeq lc env (nodeBChildren e) 0 (- 0 1)))
-                      (if (< bodyVal 0)
-                        (- 0 1)
+                      (let bodyVal (mLowerSeq lc env (nodeBChildren e) 0 None))
+                      (if (let (Some _) bodyVal)
                         (if (let (Some backRegs) (mCurRegs env names 0 vecNew))
                           {
                             (mlcTerm lc
@@ -916,20 +926,23 @@
                             (set lc.cur bx)
                             (mEnvTrunc env base)
                             (mRebind env names px 0)
-                            (mlcEmit lc
-                              (MInst
-                                :op MO_CONST
-                                :dst (mlcFresh lc)
-                                :a 0
-                                :b 0
-                                :name ""
-                                :args vecNew
-                                :tgt 0
-                                :alt 0))
+                            (Some
+                              (mlcEmit lc
+                                (MInst
+                                  :op MO_CONST
+                                  :dst (mlcFresh lc)
+                                  :a 0
+                                  :b 0
+                                  :name ""
+                                  :args vecNew
+                                  :tgt 0
+                                  :alt 0)))
                           }
-                          (- 0 1)))
+                          None)
+                        None)
                     }
-                  })
+                  }
+                  None)
               }
             }
           }
@@ -946,12 +959,11 @@
 ;
 ; Each arm terminates `lc.cur` - the block the arm ENDED in - rather
 ; than the block it started in.
-(pub :: mLowerIf (-> MLC (Vec MBind) ASTNode Int))
+(pub :: mLowerIf (-> MLC (Vec MBind) ASTNode (Option Int)))
 (pub fn (mLowerIf lc env e)
   {
     (let rc (mLower lc env (nodeAChild e)))
-    (if (< rc 0)
-      (- 0 1)
+    (if (let (Some creg) rc)
       {
         (let bt (mlcBlock lc vecNew))
         (let bf (mlcBlock lc vecNew))
@@ -964,7 +976,7 @@
               (MInst
                 :op MT_CONDBR
                 :dst (- 0 1)
-                :a rc
+                :a creg
                 :b 0
                 :name ""
                 :args vecNew
@@ -977,9 +989,8 @@
             ; an arm as well as above one.
             (set lc.cond 1)
             {
-              (let r1 (mLower lc env (nodeBChild e)))
-              (if (< r1 0)
-                (- 0 1)
+              (let r1opt (mLower lc env (nodeBChild e)))
+              (if (let (Some r1) r1opt)
                 {
                   (mlcTerm lc
                     (MInst
@@ -993,9 +1004,8 @@
                       :alt 0))
                   (set lc.cur bf)
                   {
-                    (let r2 (mLower lc env (nodeCChild e)))
-                    (if (< r2 0)
-                      (- 0 1)
+                    (let r2opt (mLower lc env (nodeCChild e)))
+                    (if (let (Some r2) r2opt)
                       {
                         (mlcTerm lc
                           (MInst
@@ -1009,30 +1019,29 @@
                             :alt 0))
                         (set lc.cond outer)
                         (set lc.cur bj)
-                        pj
-                      })
+                        (Some pj)
+                      }
+                      None)
                   }
-                })
+                }
+                None)
             }
           }
         }
-      })
+      }
+      None)
   })
 
-; A `begin` is its elements in order, answering the last. An EMPTY
-; one has no value to answer, so it refuses rather than inventing a
-; zero - `last` starts negative and that is the answer if the loop
-; never runs.
-(:: mLowerSeq (-> MLC (Vec MBind) (Vec ASTNode) Int Int Int))
+; A `begin` is its elements in order, answering the last one. An
+; empty `begin` has no value: `last` starts as `None`, and that is
+; the answer when the walk never runs.
+(:: mLowerSeq (-> MLC (Vec MBind) (Vec ASTNode) Int (Option Int) (Option Int)))
 (fn (mLowerSeq lc env v i last)
   (if (>= i (vecLen v))
     last
-    {
-      (let r (mLower lc env (vecGet v i)))
-      (if (< r 0)
-        (- 0 1)
-        (mLowerSeq lc env v (+ i 1) r))
-    }))
+    (if (let (Some reg) (mLower lc env (vecGet v i)))
+      (mLowerSeq lc env v (+ i 1) (Some reg))
+      None)))
 
 ; An application is one of exactly two things here: a binary operator
 ; on two lowered arguments, or a direct call of a TOP-LEVEL function.
@@ -1234,12 +1243,12 @@
     }
     0))
 
-(pub :: mLowerApp (-> MLC (Vec MBind) ASTNode Int))
+(pub :: mLowerApp (-> MLC (Vec MBind) ASTNode (Option Int)))
 (pub fn (mLowerApp lc env e)
   {
     (let hd (mSpineHead e))
     (if (|| (!= (nodeTag hd) TAG_E_VAR) (!= (nodeC hd) 0))
-      (- 0 1)
+      None
       ; `cast` erases: the walk evaluates the value and answers it
       ; with no instruction (`dispatchCall`: a no-op at the i64
       ; level), so the lowering answers the value's register and
@@ -1261,11 +1270,11 @@
         (let out vecNew)
         (if (&& (strEq nm "cast") (== (vecLen args) 2))
           (if (let (Some _) (mEnvFind env nm))
-            (- 0 1)
+            None
             {
               (let dst (vecGet args 0))
               (if (&& (== (nodeTag dst) TAG_E_VAR) (strEq (nodeAName dst) "Float"))
-                (- 0 1)
+                None
                 (mLower lc env (vecGet args 1)))
             })
           ; `&&` and `||` dispatch on the HEAD, before any argument
@@ -1292,32 +1301,34 @@
                       ; guards to the emitter is how a trap gets dropped.
                       (mLowerDivGuard lc bop (vecGet out 0) (vecGet out 1))
                       (mLowerShiftGuard lc bop (vecGet out 1))
+                      (Some
+                        (mlcEmit lc
+                          (MInst
+                            :op MO_BIN
+                            :dst (mlcFresh lc)
+                            :a (vecGet out 0)
+                            :b (vecGet out 1)
+                            :name bop
+                            :args vecNew
+                            :tgt 0
+                            :alt 0)))
+                    }
+                    None)
+                  (if (let (Some _) (mEnvFind env nm))
+                    None
+                    (Some
                       (mlcEmit lc
                         (MInst
-                          :op MO_BIN
+                          :op MO_CALL
                           :dst (mlcFresh lc)
-                          :a (vecGet out 0)
-                          :b (vecGet out 1)
-                          :name bop
-                          :args vecNew
+                          :a 0
+                          :b 0
+                          :name nm
+                          :args out
                           :tgt 0
-                          :alt 0))
-                    }
-                    (- 0 1))
-                  (if (let (Some _) (mEnvFind env nm))
-                    (- 0 1)
-                    (mlcEmit lc
-                      (MInst
-                        :op MO_CALL
-                        :dst (mlcFresh lc)
-                        :a 0
-                        :b 0
-                        :name nm
-                        :args out
-                        :tgt 0
-                        :alt 0))))
+                          :alt 0)))))
               }
-              (- 0 1))))
+              None)))
       })
   })
 
@@ -1330,14 +1341,13 @@
 ; application or a checker error, and refuses like the binop path.
 ; Block discipline is `mLowerIf`'s: the join exists before either
 ; arm is lowered, and each arm terminates the block it ENDED in.
-(pub :: mLowerAndOr (-> MLC (Vec MBind) String Nodes Int))
+(pub :: mLowerAndOr (-> MLC (Vec MBind) String Nodes (Option Int)))
 (pub fn (mLowerAndOr lc env nm args)
   (if (!= (vecLen args) 2)
-    (- 0 1)
+    None
     {
-      (let ra (mLower lc env (vecGet args 0)))
-      (if (< ra 0)
-        (- 0 1)
+      (let raopt (mLower lc env (vecGet args 0)))
+      (if (let (Some ra) raopt)
         {
           (let isAnd (strEq nm "&&"))
           (let brhs (mlcBlock lc vecNew))
@@ -1370,9 +1380,8 @@
               ; not, and lowers with the flag as it arrived.
               (set lc.cond 1)
               {
-                (let rb (mLower lc env (vecGet args 1)))
-                (if (< rb 0)
-                  (- 0 1)
+                (let rbopt (mLower lc env (vecGet args 1)))
+                (if (let (Some rb) rbopt)
                   {
                     (let zero
                       (mlcEmit lc
@@ -1436,15 +1445,17 @@
                               :alt 0))
                           (set lc.cond outer)
                           (set lc.cur bj)
-                          pj
+                          (Some pj)
                         }
                       }
                     }
-                  })
+                  }
+                  None)
               }
             }
           }
-        })
+        }
+        None)
     }))
 
 (:: mBindParams (-> MLC (Vec MBind) Strings Int Ints Int))
@@ -1482,11 +1493,10 @@
             (mBindParams lc env (nodeBNames d) 0 pregs)
             {
               (let r (mLower lc env (nodeCChild d)))
-              (if (< r 0)
-                None
+              (if (let (Some reg) r)
                 {
                   (mlcTerm lc
-                    (MInst :op MT_RET :dst (- 0 1) :a r :b 0 :name "" :args vecNew :tgt 0 :alt 0))
+                    (MInst :op MT_RET :dst (- 0 1) :a reg :b 0 :name "" :args vecNew :tgt 0 :alt 0))
                   (Some
                     (MFunc
                       :name (nodeAName d)
@@ -1494,7 +1504,8 @@
                       :pnames (nodeBNames d)
                       :blocks lc.blocks
                       :nreg lc.nreg))
-                })
+                }
+                None)
             }
           }
         }

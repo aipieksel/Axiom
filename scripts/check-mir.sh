@@ -414,8 +414,8 @@ elif which == "4":
     # register is defined once; the only fault is a definition in a
     # block that does not dominate the use. Scoped to `mLowerIf` by the
     # function head: the `&&`/`||` desugar ends its join the same way.
-    pat = re.compile(r"(\(pub fn \(mLowerIf[\s\S]*?\(set lc\.cur bj\)\s+)pj")
-    rep = r"\g<1>r1"
+    pat = re.compile(r"(\(pub fn \(mLowerIf[\s\S]*?\(set lc\.cur bj\)\s+)\(Some pj\)")
+    rep = r"\g<1>(Some r1)"
 elif which == "5":
     # The cast erasure, removed: a conversion refuses instead of
     # answering its value's register. The goldens and the differential
@@ -423,7 +423,7 @@ elif which == "5":
     # produced. Scoped to `mLowerApp` by the function head: the
     # `&&`/`||` desugar lowers its right-hand side through the same call.
     pat = re.compile(r"(\(pub fn \(mLowerApp[\s\S]*?)\(mLower\s+lc\s+env\s+\(vecGet\s+args\s+1\)\)")
-    rep = r"\g<1>(- 0 1)"
+    rep = r"\g<1>None"
 elif which == "6":
     # `true` lowered as 0: well-formed IR with the wrong meaning, like
     # ablation 1, for the constant an operand swap cannot reach.
