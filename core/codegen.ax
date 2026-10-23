@@ -416,7 +416,7 @@
   (effOps : (Vec EffEnt))
   (mut curModule : (Option String))
   (dataTyNames : (Vec String))
-  (mut curDeclNode : ASTNode)
+  (mut curDeclNode : (Option ASTNode))
   (mut sigIntern : (Option InternState))
   (mut sigById : (Vec FSig))
   (mut bareIntern : (Option InternState))
@@ -584,7 +584,7 @@
         :effOps vecNew
         :curModule (None)
         :dataTyNames vecNew
-        :curDeclNode nilNode
+        :curDeclNode None
         :sigIntern (None)
         :sigById vecNew
         :bareIntern (None)
@@ -1139,15 +1139,22 @@
     c.dataTyNames
   })
 
-; Word 36: the declaration being emitted, or `nilNode`.
-(:: cgCurDecl (-> CG ASTNode))
+; The declaration being emitted, when a declaration is active.
+(:: cgCurDecl (-> CG (Option ASTNode)))
 (fn (cgCurDecl cg)
   {
     (let c cg)
     c.curDeclNode
   })
 
-(:: cgSetCurDecl (-> CG ASTNode CG))
+; Packed evidence stamps encode an absent owner as nilNode.
+(:: cgDeclarationMatches (-> CG ASTNode Bool))
+(fn (cgDeclarationMatches cg owner)
+  (match (cgCurDecl cg)
+    ((None) (nodeSame owner nilNode))
+    ((Some declaration) (nodeSame owner declaration))))
+
+(:: cgSetCurDecl (-> CG (Option ASTNode) CG))
 (fn (cgSetCurDecl cg d)
   {
     (let c cg)
@@ -2514,7 +2521,7 @@
   {
     (inferOwnershipRounds cg decls)
     (cgSetModule cg (None))
-    (cgSetCurDecl cg nilNode)
+    (cgSetCurDecl cg None)
   })
 
 ; The rounds: one full pass, then worklist rounds over the caller
@@ -2586,7 +2593,7 @@
     0
     {
       (let _m (cgSetDeclModule cg d))
-      (let _d (cgSetCurDecl cg d))
+      (let _d (cgSetCurDecl cg (Some d)))
       (let eFound (findFSigCg cg (nodeAName d)))
       (if (let (Some e) eFound)
         (if (== (fsigOwned e) 0)
@@ -2961,7 +2968,7 @@
   {
     (inferFlowsRounds cg decls)
     (cgSetModule cg (None))
-    (cgSetCurDecl cg nilNode)
+    (cgSetCurDecl cg None)
   })
 
 ; The rounds: one full pass, then worklist rounds over the caller
@@ -3030,7 +3037,7 @@
     0
     {
       (let _m (cgSetDeclModule cg d))
-      (let _d (cgSetCurDecl cg d))
+      (let _d (cgSetCurDecl cg (Some d)))
       (let eFound (findFSigCg cg (nodeAName d)))
       (if (let (Some e) eFound)
         {
@@ -3506,8 +3513,7 @@
     0
     {
       (let d (cgCurDecl cg))
-      (if (nodeSame d nilNode)
-        (paramBit i)
+      (if (let (Some d) d)
         (if (|| (!= (vecLen params) (vecLen (nodeBNames d)))
               (if (strEq (as (vecGet params i) String) (as (vecGet (nodeBNames d) i) String))
                 false
@@ -3520,7 +3526,8 @@
                 (| (wordBit i) (ownerBit i))
                 (paramBit i))
               (paramBit i))
-          }))
+          })
+        (paramBit i))
     }))
 
 (pub :: flowMaskApp (-> CG ASTNode Names FlowEnv Int))
@@ -4461,18 +4468,20 @@
 (pub fn (selfSlotParks cg e hd n_ params env cell)
   {
     (let d (cgCurDecl cg))
-    (if (|| (nodeSame d nilNode) (!= (nodeTag hd) TAG_E_VAR))
-      0
-      (if (if (strEq (mangledForCg cg (nodeAName hd)) (nodeAName d))
-        false
-        true)
+    (if (let (Some d) d)
+      (if (!= (nodeTag hd) TAG_E_VAR)
         0
-        {
-          (let enFound (findFSigCg cg (nodeAName d)))
-          (if (let (Some en) enFound)
-            (selfSlotParksFrom cg e (fsigTy en) n_ params env cell 0)
-            0)
-        }))
+        (if (if (strEq (mangledForCg cg (nodeAName hd)) (nodeAName d))
+          false
+          true)
+          0
+          {
+            (let enFound (findFSigCg cg (nodeAName d)))
+            (if (let (Some en) enFound)
+              (selfSlotParksFrom cg e (fsigTy en) n_ params env cell 0)
+              0)
+          }))
+      0)
   })
 
 (pub :: selfSlotParksFrom (-> CG ASTNode (Option ASTNode) Int Names FlowEnv Int Int Int))
@@ -4670,8 +4679,7 @@
     0
     {
       (let d (cgCurDecl cg))
-      (if (nodeSame d nilNode)
-        0
+      (if (let (Some d) d)
         (if (|| (!= (vecLen params) (vecLen (nodeBNames d)))
               (if (strEq (as (vecGet params i) String) (as (vecGet (nodeBNames d) i) String))
                 false
@@ -4690,15 +4698,15 @@
                   0)
                 0)
               0)
-          }))
+          })
+        0)
     }))
 
 (pub :: paramClassOf (-> CG Names Int Int))
 (pub fn (paramClassOf cg params i)
   {
     (let d (cgCurDecl cg))
-    (if (nodeSame d nilNode)
-      2
+    (if (let (Some d) d)
       (if (!= (vecLen params) (vecLen (nodeBNames d)))
         2
         {
@@ -4706,7 +4714,8 @@
           (if (let (Some e) eFound)
             (parameterTypeClass cg (signatureParamTy (fsigTy e) i))
             2)
-        }))
+        })
+      2)
   })
 
 (pub :: lamCaptureFrom (-> ASTNode FlowEnv Int Int))
@@ -4968,7 +4977,7 @@
     nilNode
     (if (!= (nodeTag stamp) TAG_EVSTAMP)
       nilNode
-      (if (nodeSame (nodeAChild stamp) (cgCurDecl cg))
+      (if (cgDeclarationMatches cg (nodeAChild stamp))
         stamp
         nilNode))))
 
@@ -19499,7 +19508,7 @@
     ; definition must agree with.
     {
       (let _ (cgSetDeclModule cg node))
-      (let _e (cgSetCurDecl cg node))
+      (let _e (cgSetCurDecl cg (Some node)))
       {
         (let cgD
           (if (== (pairNamesHas (pairNames cg) (nodeAName node)) 1)
@@ -19518,7 +19527,7 @@
           (let cgP cgD)
           {
             (cgSetModule cgP (None))
-            (cgSetCurDecl cgP nilNode)
+            (cgSetCurDecl cgP None)
             (cgSetTailRetain cgP vecNew)
             cgP
           }
@@ -20092,8 +20101,7 @@
       0)
     {
       (let d (cgCurDecl cg))
-      (if (nodeSame d nilNode)
-        0
+      (if (let (Some d) d)
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
@@ -20101,7 +20109,8 @@
               1
               0)
             0)
-        })
+        }
+        0)
     }))
 
 ; Parameter i's evidence bit when its declared type is one of the
@@ -20119,8 +20128,7 @@
     None
     {
       (let d (cgCurDecl cg))
-      (if (nodeSame d nilNode)
-        None
+      (if (let (Some d) d)
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
@@ -20140,7 +20148,8 @@
                   })
                 None))
             None)
-        })
+        }
+        None)
     }))
 
 ; The entry retain, once per reference parameter, before the loop
@@ -20341,28 +20350,28 @@
   ; cleared, and read through it the mask was 0 at every `ret`
   {
     (let d (cgCurDecl cg))
-    (if (nodeSame d nilNode)
-      0
+    (if (let (Some d) d)
       {
         (let eFound (findFSigCg cg (nodeAName d)))
         (if (let (Some e) eFound)
           (fsigStash e)
           0)
-      })
+      }
+      0)
   })
 
 (pub :: curFnRetMask (-> CG Int))
 (pub fn (curFnRetMask cg)
   {
     (let d (cgCurDecl cg))
-    (if (nodeSame d nilNode)
-      0
+    (if (let (Some d) d)
       {
         (let eFound (findFSigCg cg (nodeAName d)))
         (if (let (Some e) eFound)
           (fsigRet e)
           0)
-      })
+      }
+      0)
   })
 
 (pub :: releasePending (-> CG Strings Int CG))
@@ -22679,7 +22688,7 @@
           (let stamp (nodeBinderTyChild node))
           (if (if (nodeSame stamp nilNode)
             false
-            (&& (== (nodeTag stamp) TAG_EVSTAMP) (nodeSame (nodeCChild stamp) (cgCurDecl out))))
+            (&& (== (nodeTag stamp) TAG_EVSTAMP) (cgDeclarationMatches out (nodeCChild stamp))))
             (cgSetResultFloat out (tyIsBareFloat (tyResolve (nodeAChild stamp))))
             out)
         }
@@ -27818,7 +27827,7 @@
         (if (== (nodeTag d) TAG_D_FN)
           {
             (let _m (cgSetDeclModule cg d))
-            (let _d (cgSetCurDecl cg d))
+            (let _d (cgSetCurDecl cg (Some d)))
             (let eFound (findFSigCg cg (nodeAName d)))
             (if (let (Some e) eFound)
               {
@@ -30899,7 +30908,7 @@
                   (if (if (nodeSame st nilNode)
                     true
                     (|| (!= (nodeTag st) TAG_EVSTAMP)
-                      (! (nodeSame (nodeCChild st) (cgCurDecl cg)))))
+                      (! (cgDeclarationMatches cg (nodeCChild st)))))
                     0
                     ; A class the stamp could not give when the call was
                     ; checked may have been decided by a pin later in the
@@ -30951,7 +30960,7 @@
                         (if (if (nodeSame st nilNode)
                           true
                           (|| (!= (nodeTag st) TAG_EVSTAMP)
-                            (! (nodeSame (nodeCChild st) (cgCurDecl cg)))))
+                            (! (cgDeclarationMatches cg (nodeCChild st)))))
                           0
                           (if (== (fldClass cg (pinnedTy (nodeAChild st) 64)) 0)
                             1
@@ -30990,8 +30999,7 @@
     None
     {
       (let d (cgCurDecl cg))
-      (if (nodeSame d nilNode)
-        None
+      (if (let (Some d) d)
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
@@ -31007,7 +31015,8 @@
                 }
               })
             None)
-        })
+        }
+        None)
     }))
 
 ; `t` followed through its pins: an instantiation placeholder (`_iN`)
@@ -33937,13 +33946,13 @@
     1
     {
       (let d (cgCurDecl cg))
-      (if (nodeSame d nilNode)
-        0
+      (if (let (Some d) d)
         (if (&& (== (fnResultClass cg (nodeAName d)) 2)
               (&& (== (valueOwnedRef cg scrutExpr) 1)
                 (== (escapesViaBinders cg (nodeBChildren node) 0 0 (binderSummary node)) 0)))
           1
-          0))
+          0)
+        0)
     }))
 
 ; Does a lambda's capture of `name` take a share of its own? The
@@ -34028,7 +34037,7 @@
         (let w
           (if (if (nodeSame t nilNode)
             false
-            (&& (== (nodeTag t) TAG_EVSTAMP) (nodeSame (nodeCChild t) (cgCurDecl cg))))
+            (&& (== (nodeTag t) TAG_EVSTAMP) (cgDeclarationMatches cg (nodeCChild t))))
             (nodeB t)
             0))
         {
@@ -34036,7 +34045,7 @@
           {
             (vecPush vs w)
             {
-              (let cgW (emitEvWordVal cg (nodeBuildEvstampCallPlain (cgCurDecl cg) vs vecNew)))
+              (let cgW (emitEvWordVal cg (nodeBuildEvstampCallOptional (cgCurDecl cg) vs vecNew)))
               {
                 (let r (regStr (allocReg cgW)))
                 {
@@ -34120,7 +34129,7 @@
                   (let cell regionNew)
                   {
                     (cgSetFlowIdentities cg (Some ids))
-                    (cgSetCurDecl cg d)
+                    (cgSetCurDecl cg (Some d))
                     (cgSetDeclModule cg d)
                     (flowStashes cg (nodeCChild d) ps vecNew cell)
                     {

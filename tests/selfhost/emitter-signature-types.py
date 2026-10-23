@@ -17,7 +17,7 @@ BRIDGE = '''
 (pub :: probeSignatureParam (-> (Option ASTNode) Int (Option ASTNode)))
 (pub fn (probeSignatureParam ty i) (signatureParamTy ty i))
 (pub :: probeSignatureContext (-> CG ASTNode CG))
-(pub fn (probeSignatureContext cg decl) (cgSetCurDecl cg decl))
+(pub fn (probeSignatureContext cg decl) (cgSetCurDecl cg (Some decl)))
 (pub :: probeRequireSignature (-> FSig ASTNode))
 ;@axiom:effect(io)
 (pub fn (probeRequireSignature entry) (requireSignatureResult entry))

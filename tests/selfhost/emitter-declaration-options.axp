@@ -1,0 +1,207 @@
+; Optional declaration contexts keep packed evidence owner identity explicit.
+(import codegen)
+(import parser)
+(import typecheck)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found expected)
+  (match found
+    ((None) false)
+    ((Some value) (nodeSame value expected))))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs found expected)
+  (match found
+    ((None) false)
+    ((Some value) (== value expected))))
+
+(:: signature (-> String ASTNode Int FSig))
+(fn (signature name ty arity)
+  (FSig
+    :name name
+    :nameLen (strLen name)
+    :flags None
+    :sigTy (Some ty)
+    :takesEv 1
+    :owned 1
+    :arity arity
+    :stash 5
+    :ret 9
+    :consume 0
+    :transfer 0
+    :callers 0
+    :writes 0))
+
+(:: retireContext (-> ASTNode Int))
+(fn (retireContext declaration)
+  {
+    (let cg newCG)
+    (probeDeclarationSet cg (Some declaration))
+    17
+  })
+
+(:: returnedDeclaration (Option ASTNode))
+(fn (returnedDeclaration)
+  {
+    (let cg newCG)
+    (probeDeclarationSet cg (Some (nodeBuildDFn "returned" vecNew (mkEInt 0) 0)))
+    (probeDeclarationGet cg)
+  })
+
+(:: contextChecks ())
+;@axiom:effect(io)
+(fn (contextChecks)
+  {
+    (let cg newCG)
+    (let declaration (nodeBuildDFn "Probe" vecNew (mkEInt 0) 0))
+    (let other (nodeBuildDFn "Probe" vecNew (mkEInt 0) 0))
+    (say 1 (isNone (probeDeclarationGet cg)))
+    (say 2 (probeDeclarationMatches cg nilNode))
+    (say 3 (! (probeDeclarationMatches cg declaration)))
+    (probeDeclarationSet cg (Some declaration))
+    (say 4 (same (probeDeclarationGet cg) declaration))
+    (say 5 (probeDeclarationMatches cg declaration))
+    (say 6 (! (probeDeclarationMatches cg nilNode)))
+    (say 7 (! (probeDeclarationMatches cg other)))
+    (let empty (nodeBuildDFn "" vecNew (mkEInt 0) 0))
+    (probeDeclarationSet cg (Some empty))
+    (say 8 (same (probeDeclarationGet cg) empty))
+    (say 9 (probeDeclarationMatches cg empty))
+    (probeDeclarationSet cg None)
+    (say 10 (isNone (probeDeclarationGet cg)))
+    (let words (:: (vecPush vecNew 7) Ints))
+    (let env (:: vecNew TypeEnv))
+    (let absent (nodeBuildEvstampCallOptional None words env))
+    (let present (nodeBuildEvstampCallOptional (Some declaration) words env))
+    (say 11 (nodeSame (evStampOk cg absent) absent))
+    (say 12 (nodeSame (evStampOk cg present) nilNode))
+    (probeDeclarationSet cg (Some declaration))
+    (say 13 (nodeSame (evStampOk cg present) present))
+    (say 14 (nodeSame (evStampOk cg absent) nilNode))
+    (probeDeclarationSet cg (Some other))
+    (say 15 (nodeSame (evStampOk cg present) nilNode))
+    (say 16 (nodeSame (evStampOk cg nilNode) nilNode))
+    (say 17 (nodeSame (evStampOk cg (mkEInt 0)) nilNode))
+    (let poison mkTErr)
+    (probeDeclarationSet cg (Some poison))
+    (say 18 (same (probeDeclarationGet cg) poison))
+    (say 19 (probeDeclarationMatches cg poison))
+    (probeDeclarationSet cg None)
+    (say 20 (probeDeclarationMatches cg nilNode))
+  })
+
+(:: queryChecks ())
+;@axiom:effect(io)
+(fn (queryChecks)
+  {
+    (let cg newCG)
+    (let params (:: (vecPush (vecPush vecNew "x") "y") Names))
+    (let declaration (nodeBuildDFn "Probe" params (mkEInt 0) 0))
+    (set cg.floatSigs (vecPush vecNew
+                        (signature "Probe" (mkTArr mkIntTy (mkTArr mkStringTy mkIntTy)) 2)))
+    (say 21 (== (paramClassOf cg params 0) 2))
+    (say 22 (== (paramIsHandle cg params 1) 0))
+    (say 23 (== (curParamRefClass cg 1) 0))
+    (say 24 (&& (== (curFnStashMask cg) 0) (== (curFnRetMask cg) 0)))
+    (say 25 (isNone (curParamEvBit cg 0)))
+    (say 26 (isNone (curSigVarBit cg "a")))
+    (probeDeclarationSet cg (Some declaration))
+    (say 27 (== (paramClassOf cg params 0) 0))
+    (say 28 (== (paramClassOf cg params 1) 2))
+    (say 29 (== (paramIsHandle cg params 1) 1))
+    (say 30 (== (curParamRefClass cg 1) 1))
+    (say 31 (&& (== (curFnStashMask cg) 5) (== (curFnRetMask cg) 9)))
+    (say 32 (== (paramFlowBit cg params 0) (| (wordBit 0) (ownerBit 0))))
+    (let a (mkTVar "a"))
+    (set cg.floatSigs (vecPush vecNew (signature "Probe" (mkTArr a a) 1)))
+    (say 33 (indexIs (curParamEvBit cg 0) 0))
+    (say 34 (indexIs (curSigVarBit cg "a") 0))
+    (say 35 (isNone (curSigVarBit cg "missing")))
+    (probeDeclarationSet cg None)
+    (say 36 (&& (isNone (curParamEvBit cg 0)) (isNone (curSigVarBit cg "a"))))
+  })
+
+(:: resultChecks ())
+;@axiom:effect(io)
+(fn (resultChecks)
+  {
+    (let cg newCG)
+    (let declaration (nodeBuildDFn "Owner" vecNew (mkEInt 0) 0))
+    (let a (mkTVar "a"))
+    (set cg.floatSigs (vecPush vecNew (signature "identity" (mkTArr a a) 1)))
+    (let call (mkEApp (mkEVar "identity") (mkEInt 42)))
+    (setNodeBinderTyChild call (nodeBuildEvstampResultOptional mkStringTy 2 (Some declaration)))
+    (probeDeclarationSet cg (Some declaration))
+    (say 37 (== (tyvarResultClass cg call) 2))
+    (probeDeclarationSet cg None)
+    (say 38 (== (tyvarResultClass cg call) 0))
+    (setNodeBinderTyChild call (nodeBuildEvstampResultOptional mkStringTy 2 None))
+    (say 39 (== (tyvarResultClass cg call) 2))
+    (setNodeBinderTyChild call (nodeBuildEvstampResultOptional mkIntTy 0 None))
+    (say 40 (== (tyvarResultScalar cg call) 1))
+    (probeDeclarationSet cg (Some declaration))
+    (say 41 (== (tyvarResultScalar cg call) 0))
+    (setNodeBinderTyChild call (nodeBuildEvstampResultOptional mkIntTy 0 (Some declaration)))
+    (say 42 (== (tyvarResultScalar cg call) 1))
+    (setNodeBinderTyChild call nilNode)
+    (say 43 (== (tyvarResultClass cg call) 0))
+    (say 44 (== (tyvarResultScalar cg call) 0))
+  })
+
+(:: ownershipChecks ())
+;@axiom:effect(io)
+(fn (ownershipChecks)
+  {
+    (let declaration (nodeBuildDFn "owned" vecNew (mkEInt 0) 0))
+    (let before (count declaration))
+    (say 45 (== (retireContext declaration) 17))
+    (say 46 (== (count declaration) before))
+    (let cg newCG)
+    (probeDeclarationSet cg (Some declaration))
+    (say 47 (== (count declaration) (+ before 1)))
+    (probeDeclarationSet cg (Some declaration))
+    (say 48 (== (count declaration) (+ before 1)))
+    (probeDeclarationSet cg None)
+    (say 49 (== (count declaration) before))
+    (say 50
+      (match returnedDeclaration
+        ((None) false)
+        ((Some declaration) (strEq (nodeAName declaration) "returned"))))
+    (let saved (Some declaration))
+    (probeDeclarationSet cg saved)
+    (probeDeclarationSet cg None)
+    (probeDeclarationSet cg saved)
+    (say 51 (same (probeDeclarationGet cg) declaration))
+    (probeDeclarationSet cg None)
+    (say 52 (isNone (probeDeclarationGet cg)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (contextChecks)
+    (queryChecks)
+    (resultChecks)
+    (ownershipChecks)
+    0
+  })
