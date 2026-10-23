@@ -1,0 +1,147 @@
+; Exact keyword recognition preserves spelling, type shape and input ownership.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import lsp)
+(import Str)
+(import Vec)
+(import Err)
+(import IO)
+(import Cereal)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: known (-> String Bool))
+(fn (known name)
+  (typeKeywordKnown name))
+
+(:: shares (-> a Int))
+;@axiom:effect(unsafe)
+(fn (shares value)
+  (__load64 (as value Int) -2))
+
+(:: parsed (-> String ASTNode))
+(fn (parsed source)
+  (match (parseType (lex source) 0)
+    ((ParseSuccess value after) value)
+    ((ParseFailed error) __indexTrap)))
+
+(:: zeroArity (-> (Option Int) Bool))
+(fn (zeroArity answer)
+  (match answer
+    ((None) false)
+    ((Some n) (== n 0))))
+
+(:: knownCase (-> TC String Bool))
+(fn (knownCase checker name)
+  {
+    (let atom (parsed name))
+    (let inferred (typeNameToType name))
+    (&& (known name)
+      (&& (lspThBuiltin name)
+        (&& (== (nodeTag atom) TAG_T_CON)
+          (&& (strEq (nodeAName atom) name)
+            (&& (strEq (nodeAName inferred) name)
+              (&& (== (tyConKnown checker name) 1)
+                (&& (== (tyConAmbiguous checker name) 0)
+                  (&& (isNone (tcAliasFind checker name))
+                    (zeroArity (tyDeclaredArity checker name))))))))))
+  })
+
+(:: temporaryType ASTNode)
+(fn (temporaryType)
+  (typeNameToType (strDup "String")))
+
+(:: temporaryParsed ASTNode)
+(fn (temporaryParsed)
+  (parsed (strDup "UInt16")))
+
+(:: report (-> String String ()))
+;@axiom:effect(io)
+(fn (report file source)
+  {
+    (let tokens (lex source))
+    (let units
+      (vecPush vecNew (CUnit2 :file file :src source :name None :imports vecNew :library false)))
+    (match (parseModuleWith tokens (scanAxtags source))
+      ((ParseFailed error)
+        (writeStr stdout
+          (renderDiagsUnits (vecPush vecNew (parseErrDiag tokens (ParseFailed error) source))
+            units))
+      )
+      ((ParseSuccess declarations after)
+        {
+          (let checker (checkModuleTcTyped declarations declarations units))
+          (writeStr stdout (renderDiagsUnits (tcOutVec checker) units))
+        }
+      ))
+  })
+
+(:: hierarchy (-> String ()))
+;@axiom:effect(io)
+(fn (hierarchy name)
+  {
+    (let source (concat "(:: item " (concat name ")\n")))
+    (let position (jsonObjPut (jsonObjPut jsonObj "line" (jsonNum 0)) "character" (jsonNum 9)))
+    (let params (jsonObjPut jsonObj "position" position))
+    (let workspace (lspWorkspaceNew vecNew vecNew vecNew))
+    (println
+      (jsonWrite (lspPrepareTypeHierarchy workspace source "file:///keyword-probe.ax" params)))
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let checker (tcNew vecNew vecNew vecNew))
+    (let names
+      (strSplit
+        "Int Int8 Int16 Int32 UInt8 UInt16 UInt32 UInt64 Float Bool Char String Foreign Handle Spawn"
+        32))
+    (let mut index 1)
+    (for spelling in names
+      {
+        (let name (strDup spelling))
+        (let before (shares name))
+        (let good (knownCase checker name))
+        (say index (&& good (== (shares name) before)))
+        (set index (+ index 1))
+      })
+    (let rejected
+      (vecPush
+        (strSplit
+          "int INT Int64 UInt UInt128 Int0 Int128 Boolean StringX FoReIgN Option Link Vec Linear"
+          32)
+        ""))
+    (for spelling in rejected
+      {
+        (let name (strDup spelling))
+        (let before (shares name))
+        (say index (&& (! (known name)) (== (shares name) before)))
+        (set index (+ index 1))
+      })
+    (say 31
+      (match (parseType (lex "(Int Bool)") 0)
+        ((ParseFailed error) (strEq error.code "AX2004"))
+        ((ParseSuccess value after) false)))
+    (say 32
+      (match (parseType (lex "(Maybe Int)") 0)
+        ((ParseFailed error) false)
+        ((ParseSuccess value after) (== (nodeTag value) TAG_T_CON))))
+    (say 33 (== (nodeTag (typeNameToType "value")) TAG_T_VAR))
+    (say 34 (strEq (nodeAName temporaryType) "String"))
+    (say 35 (strEq (nodeAName temporaryParsed) "UInt16"))
+    (say 36 (! (lspThBuiltin "Int64")))
+    (say 37 (lspThBuiltin "Linear"))
+    (say 38 (! (known "String ")))
+    (report "unknown-width.ax" "(:: value Int64)\n(fn (value) 0)\n")
+    (report "reserved-type.ax" "(data Foreign (Forged))\n")
+    (report "lower-width.ax" "(:: value uint16)\n(fn (value) 0)\n")
+    (hierarchy "UInt16")
+    (hierarchy "Unknown")
+  })

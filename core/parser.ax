@@ -3863,19 +3863,20 @@
       0)
   })
 
-(pub :: typeKeywordCanon (-> String String))
-;@axiom:effect(unsafe)
-(pub fn (typeKeywordCanon n)
+(pub :: typeKeywordKnown (-> String Bool))
+; Recognition preserves the spelling; it never constructs or canonicalises a name.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub fn (typeKeywordKnown n)
   (if (> (integerTypeCode n) 0)
-    n
+    true
     (if (strEq n "Float")
-      "Float"
+      true
       (if (strEq n "Bool")
-        "Bool"
+        true
         (if (strEq n "Char")
-          "Char"
+          true
           (if (strEq n "String")
-            "String"
+            true
             ; `Foreign` - an opaque foreign pointer (docs/ffi.md, MM-FFI-5
             ; requirement 1: "foreign memory be a DISTINCT TYPE from Int").
             ; A builtin rather than a declared type because the two readers that
@@ -3883,13 +3884,13 @@
             ; user-declarable name could be shadowed by a `data Foreign` that
             ; the emitter would then treat as a counted block.
             (if (strEq n "Foreign")
-              "Foreign"
+              true
               ; `Handle` - an Axiom block of the FOREIGN FORM holding a Rust
               ; value and its destructor (docs/ffi.md): a counted REFERENCE,
               ; unlike `Foreign`, so the Rust value dies when its last Axiom
               ; holder does. A builtin for the reason `Foreign` is.
               (if (strEq n "Handle")
-                "Handle"
+                true
                 ; `Spawn` - what a spawn primitive answers and a
                 ; join takes (docs/memory-model.md MM-PAR-8): one
                 ; machine word, a slot in the runtime's handle
@@ -3898,8 +3899,8 @@
                 ; types the primitives, and the emitter, which
                 ; must never count one, have to agree about it.
                 (if (strEq n "Spawn")
-                  "Spawn"
-                  (as 0 String))))))))))
+                  true
+                  false)))))))))
 
 (pub :: lexStartsLower (-> String Int))
 (pub fn (lexStartsLower s)
@@ -3997,9 +3998,9 @@
             (if (strEq s "linear")
               (pErrRemoved pos "linear")
               {
-                (let canon (typeKeywordCanon s))
-                (if (!= (as canon Int) 0)
-                  (pOk (mkTCon canon vecNew) (advance pos))
+                (let known (typeKeywordKnown s))
+                (if known
+                  (pOk (mkTCon s vecNew) (advance pos))
                   (if (== (lexStartsLower s) 1)
                     ; A lowercase name in type position is a type
                     ; VARIABLE, and there is no such thing as an unknown
@@ -4081,7 +4082,7 @@
         (if (&& (peekIs tokens pos TK_IDENT)
               (|| (peekIs tokens (parseDottedChain tokens (advance pos) vecNew) TK_DOUBLE_COLON)
                 (&& (identStartsUpper tokens pos)
-                  (== (as (typeKeywordCanon (tokenLexeme (vecGet tokens pos))) Int) 0))))
+                  (! (typeKeywordKnown (tokenLexeme (vecGet tokens pos)))))))
           ; Type application: (Maybe Int), (Vec Float). A keyword head -
           ; (Int Bool) - is NOT an application; it falls through to the
           ; tuple loop, stage0's rule. A qualified head - (Mod::T U) -

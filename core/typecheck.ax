@@ -1139,7 +1139,7 @@
 ; emitter keyed float arithmetic on `Float` alone, which is the
 ; split-brain MM-VAL-4b measured - the checker called them floats, the
 ; emitter emitted integer `add` on double bit patterns. The names are
-; refused now (`typeKeywordCanon`), and this list matches the emitter's
+; refused now (`typeKeywordKnown`), and this list matches the emitter's
 ; one-name rule by construction.
 (pub :: tyIsFloatTy (-> ASTNode Int))
 (pub fn (tyIsFloatTy t)
@@ -6945,7 +6945,7 @@
 
 (:: tyNominalName (-> TC String String))
 (fn (tyNominalName tc name)
-  (if (|| (!= (as (typeKeywordCanon name) Int) 0) (isSome (modOf name)))
+  (if (|| (typeKeywordKnown name) (isSome (modOf name)))
     name
     (if (== (tySourceAmbiguous tc name) 1)
       name
@@ -7344,7 +7344,7 @@
 ; definer" and let it through.
 (pub :: tyConAmbiguous (-> TC String Int))
 (pub fn (tyConAmbiguous tc name)
-  (if (!= (as (typeKeywordCanon name) Int) 0)
+  (if (typeKeywordKnown name)
     0
     (if (== (tyMultiDecl tc TY_ANY name) 0)
       0
@@ -8150,7 +8150,7 @@
 ; Type constructors named in a SIGNATURE.
 ;
 ; `parseTypeAtom` turns every capitalised name that is not one of
-; `typeKeywordCanon`'s primitives into a bare `TAG_T_CON`, and nothing
+; `typeKeywordKnown`'s primitives into a bare `TAG_T_CON`, and nothing
 ; ever asked whether it named anything (`parser.ax:1261-1266`). So
 ;
 ;   (:: g (-> Nonexistent Int))
@@ -8176,7 +8176,7 @@
 ; ------------------------------------------------------------------
 (pub :: tcAliasFind (-> TC String (Option ASTNode)))
 (pub fn (tcAliasFind tc name)
-  (if (!= (as (typeKeywordCanon name) Int) 0)
+  (if (typeKeywordKnown name)
     None
     (if (let (Some alias) (tyFindSyntax tc TY_ALIAS name 0))
       (if (isSome (modOf name))
@@ -8252,7 +8252,7 @@
 ; type.
 (pub :: tyConKnown (-> TC String Int))
 (pub fn (tyConKnown tc name)
-  (if (!= (as (typeKeywordCanon name) Int) 0)
+  (if (typeKeywordKnown name)
     1
     (if (== (tyIdxHas tc TY_ANY name) 1)
       1
@@ -8903,8 +8903,7 @@
           (if (== (as record.tyvars Int) 0)
             0
             (vecLen record.tyvars)))
-        (if (|| (!= (as (typeKeywordCanon name) Int) 0)
-              (isSome (tyFindSyntax tc TY_SUBTYPE name 0)))
+        (if (|| (typeKeywordKnown name) (isSome (tyFindSyntax tc TY_SUBTYPE name 0)))
           (Some 0)
           None)))))
 
@@ -16795,14 +16794,11 @@
 
 (pub :: typeNameToType (-> String ASTNode))
 (pub fn (typeNameToType n)
-  {
-    (let canon (typeKeywordCanon n))
-    (if (!= (as canon Int) 0)
-      (mkTCon canon vecNew)
-      (if (== (lexStartsLower n) 1)
-        (mkTVar n)
-        (mkTCon n vecNew)))
-  })
+  (if (typeKeywordKnown n)
+    (mkTCon n vecNew)
+    (if (== (lexStartsLower n) 1)
+      (mkTVar n)
+      (mkTCon n vecNew))))
 
 ; Saturation, once per spine at its root. A frame-local head is a
 ; function VALUE applied stepwise - not measurable. A resolved
@@ -26192,8 +26188,7 @@
 (pub :: checkBuiltinTypeDefinition (-> TC ASTNode Int))
 (pub fn (checkBuiltinTypeDefinition tc d)
   (if (&& (== (declNamespace (nodeTag d)) NS_TYPE)
-        (|| (!= (as (typeKeywordCanon (nodeAName d)) Int) 0)
-          (sizedTyIn (nodeAName d) "Vec Option Link")))
+        (|| (typeKeywordKnown (nodeAName d)) (sizedTyIn (nodeAName d) "Vec Option Link")))
     (emitDiag tc
       (mkDiag SEV_ERROR "AX3006" "duplicate-definition" (nodeSpan d)
         (concat "cannot redefine built-in type `" (concat (nodeAName d) "`")) None
