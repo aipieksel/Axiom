@@ -69,11 +69,11 @@
 ; Running a native tool.
 ; ------------------------------------------------------------------
 ; Run `tool` with the arguments in `args`, a Vec of Str, answering the
-; child's exit code, or a negative errno if it could not be started.
+; child's exit code in Ok, or the operating-system failure in Err.
 ;
 ; `argv[0]` is the tool's own name, which the kernel does not supply and
 ; which several tools read back out of their own argv.
-(pub :: runTool (-> String Strings Int))
+(pub :: runTool (-> String Strings (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -86,24 +86,25 @@
         (memSetWord v 0 (strCStr (strDup tool)))
         (fillArgv v args 0 n)
         (memSetWord v (+ n 1) 0)
-        ; The stdlib boundary. `sysRunPath` answers a `Result` - `Err`
-        ; is the spawn failing, the tool never ran - and it is collapsed
-        ; here onto THE CONTRACT EVERY CALLER TESTS: a NEGATED ERRNO
-        ; when the tool could not be started, the child's own code
-        ; otherwise.
-        ;
-        ; Not `127`, the shell's "command not found": every caller here
-        ; distinguishes the two cases BY SIGN. `(if (< rc 0)` above
-        ; `opt` prints "not found on PATH; building without mid-level
-        ; optimisation" and CONTINUES, while any non-zero non-negative
-        ; rc fails the build, so a positive code would make a missing
-        ; `opt` fatal. `check-driver.sh` pins it.
-        (match (sysRunPath tool v sysEnvp)
-          ((Ok code) code)
-          ((Err e) (- 0 (errCode e))))
+        ; Preserve the Sys boundary: Ok carries the numeric child status,
+        ; including 128+signal; Err carries launch or wait failure.
+        (sysRunPath tool v sysEnvp)
       }
     }
   })
+
+; A completed tool succeeds only when its numeric exit status is zero.
+(pub :: toolSucceeded (-> (Result Int Error) Bool))
+(pub fn (toolSucceeded outcome)
+  (match outcome
+    ((Ok code) (== code 0))
+    ((Err _) false)))
+
+(:: toolFailureMessage (-> (Result Int Error) String String String))
+(fn (toolFailureMessage outcome unavailable failed)
+  (match outcome
+    ((Ok _) failed)
+    ((Err _) unavailable)))
 
 (pub :: fillArgv (-> Int Strings Int Int Int))
 (pub fn (fillArgv v args i n)
@@ -185,15 +186,19 @@
           })
         {
           (let rc (runTool "opt" args))
-          (if (< rc 0)
-            {
-              (writeStderrStr
-                "warning: `opt` not found on PATH; building without mid-level optimisation (deeply recursive code may exhaust the stack)\n")
-              (Ok llPath)
-            }
-            (if (!= rc 0)
-              (Err rc)
-              (Ok outPath)))
+          (match rc
+            ((Err _)
+              {
+                (writeStderrStr
+                  "warning: `opt` not found on PATH; building without mid-level optimisation (deeply recursive code may exhaust the stack)\n")
+                (Ok llPath)
+              }
+            )
+            ((Ok code)
+              (if (!= code 0)
+                (Err code)
+                (Ok outPath))
+            ))
         }
       }
     }))
@@ -489,7 +494,7 @@
 ; is llc's own text and AX4003, as before.
 ; ------------------------------------------------------------------
 ; `runTool` with the tool's standard error written to `errPath`.
-(pub :: runToolErrTo (-> String Strings String Int))
+(pub :: runToolErrTo (-> String Strings String (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -502,9 +507,7 @@
         (memSetWord v 0 (strCStr (strDup tool)))
         (fillArgv v args 0 n)
         (memSetWord v (+ n 1) 0)
-        (match (sysRunPathErrTo tool v sysEnvp errPath)
-          ((Ok code) code)
-          ((Err e) (- 0 (errCode e))))
+        (sysRunPathErrTo tool v sysEnvp errPath)
       }
     }
   })
@@ -900,10 +903,10 @@
 
 ; A failed llc: AX3117 at each template line it names when every error
 ; names one, else its own report and AX4003.
-(pub :: llcFailed (-> String String Int Int))
+(pub :: llcFailed (-> String String (Result Int Error) Int))
 ;@axiom:effect(io)
 (pub fn (llcFailed ir errPath rc)
-  (if (< rc 0)
+  (if (isErr rc)
     (toolFailDiag "could not run `llc`"
       "install LLVM and put `llc` on PATH; `--emit-llvm` keeps the IR so the step can be run by hand")
     {
@@ -979,7 +982,7 @@
         })
       {
         (let rc (runToolErrTo "llc" llcArgs (concat objPath ".llc-err")))
-        (if (!= rc 0)
+        (if (! (toolSucceeded rc))
           (llcFailed ir (concat objPath ".llc-err") rc)
           {
             (llcPassOn (concat objPath ".llc-err"))
@@ -1023,11 +1026,9 @@
                         {
                           (let rcw (runTool "lld-link" linkArgsW))
                           (windowsRemoveLibs implibs 0)
-                          (if (!= rcw 0)
+                          (if (! (toolSucceeded rcw))
                             (toolFailDiag
-                              (if (< rcw 0)
-                                "could not run `lld-link`"
-                                "lld-link failed")
+                              (toolFailureMessage rcw "could not run `lld-link`" "lld-link failed")
                               (concat (concat "lld-link links a " winTarget)
                                 " executable; it ships with LLVM's lld (`brew install lld`, `apt-get install lld`, choco's llvm) - put it on PATH"))
                             0)
@@ -1066,11 +1067,9 @@
                           (let rcl (runTool "ld.lld" ldArgs))
                           {
                             (unwrapOr (removeFile ldPath) 0)
-                            (if (!= rcl 0)
+                            (if (! (toolSucceeded rcl))
                               (toolFailDiag
-                                (if (< rcl 0)
-                                  "could not run `ld.lld`"
-                                  "ld.lld failed")
+                                (toolFailureMessage rcl "could not run `ld.lld`" "ld.lld failed")
                                 "ld.lld links a baremetal-aarch64 executable; it ships with LLVM's lld (`brew install llvm`, `apt-get install lld`) - put it on PATH")
                               0)
                           }
@@ -1098,11 +1097,8 @@
                       (unwrapOr (removeFile outPath) 0)
                       {
                         (let rc3 (runTool "ar" arArgs))
-                        (if (!= rc3 0)
-                          (toolFailDiag
-                            (if (< rc3 0)
-                              "could not run `ar`"
-                              "ar failed")
+                        (if (! (toolSucceeded rc3))
+                          (toolFailDiag (toolFailureMessage rc3 "could not run `ar`" "ar failed")
                             "`ar` writes the static archive; put it on PATH (it ships with every C toolchain)")
                           0)
                       }
@@ -1136,11 +1132,8 @@
                       })
                     {
                       (let rc2 (runTool "cc" ccArgs))
-                      (if (!= rc2 0)
-                        (toolFailDiag
-                          (if (< rc2 0)
-                            "could not run `cc`"
-                            "cc failed")
+                      (if (! (toolSucceeded rc2))
+                        (toolFailDiag (toolFailureMessage rc2 "could not run `cc`" "cc failed")
                           "a C compiler drives the link step; put `cc` on PATH")
                         0)
                     }
@@ -1195,14 +1188,20 @@
           (let module (crateModuleName dir pkg))
           {
             (if (fileExists (concat dir "src"))
-              (refreshBindings dir stem module))
+              {
+                (let _ (refreshBindings dir stem module))
+                ()
+              })
             ; A cargo staticlib is `lib<stem>.a` on every host this
             ; driver runs on - the `.lib` spelling belongs to the import
             ; libraries a WINDOWS LINK consumes, and `--crate` for a
             ; Windows target is not a thing yet (docs/ffi.md has no
             ; Windows story) - so the archive is looked for as `.a`.
             (if (! (libExistsIn (crateTargetDirs dir) stem 0 false))
-              (buildCrate dir pkg))
+              {
+                (let _ (buildCrate dir pkg))
+                ()
+              })
             0
           }
         })
@@ -1224,8 +1223,8 @@
 ; Regenerate the module when `axiom-bindgen --check` finds it stale or
 ; absent. Exit 2 from `--check` is "no such file" as well as a usage
 ; error, so a missing module regenerates; a bindgen that is not on
-; PATH answers below zero and nothing is written.
-(pub :: refreshBindings (-> String String String Int))
+; PATH answers Err and nothing is written.
+(pub :: refreshBindings (-> String String String (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -1251,8 +1250,8 @@
         })
       {
         (let rc (runToolQuiet "axiom-bindgen" checkArgs))
-        (if (|| (< rc 0) (== rc 0))
-          0
+        (if (|| (isErr rc) (toolSucceeded rc))
+          (Ok 0)
           {
             (let genArgs
               {
@@ -1279,7 +1278,7 @@
     }
   })
 
-(pub :: buildCrate (-> String String Int))
+(pub :: buildCrate (-> String String (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -1306,7 +1305,7 @@
 ; `runTool` for a probe whose exit status is the whole answer. The
 ; tool is asked to be quiet by flag (`--quiet` rides in `args`): the
 ; driver redirects no descriptor, so a tool that talks anyway is heard.
-(pub :: runToolQuiet (-> String Strings Int))
+(pub :: runToolQuiet (-> String Strings (Result Int Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -2053,10 +2052,10 @@
         (vecPush args libPath)
         (let rc (runTool "llvm-dlltool" args))
         (unwrapOr (removeFile defPath) 0)
-        (if (== rc 0)
+        (if (toolSucceeded rc)
           (Ok libPath)
           (Err
-            (if (< rc 0)
+            (if (isErr rc)
               (concat
                 "could not run `llvm-dlltool`, which makes the import libraries; it ships with LLVM - put it on PATH, or put a `"
                 (concat dll ".lib` on a `--link-search` directory"))
@@ -2797,9 +2796,9 @@
         })
       {
         (let splitRc (runTool "llvm-split" sargs))
-        (if (< splitRc 0)
+        (if (isErr splitRc)
           SplitUnavailable
-          (if (!= splitRc 0)
+          (if (! (toolSucceeded splitRc))
             {
               (splitCleanup stem jobs 0)
               (SplitFinished
@@ -2836,13 +2835,11 @@
                       (let rc2 (runTool "cc" ccArgs))
                       {
                         (splitCleanup stem jobs 0)
-                        (if (!= rc2 0)
+                        (if (! (toolSucceeded rc2))
                           (SplitFinished
                             (Err
                               (toolFailDiag
-                                (if (< rc2 0)
-                                  "could not run `cc`"
-                                  "cc failed")
+                                (toolFailureMessage rc2 "could not run `cc`" "cc failed")
                                 "a C compiler drives the link step; put `cc` on PATH")))
                           (SplitFinished (Ok ())))
                       }

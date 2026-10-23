@@ -156,9 +156,9 @@ def check(compiler, root, work, baseline):
         print(f'ok   optimiser outcomes: {len(outcomes)} exact argv/status/output/cleanup cases O{level}', flush=True)
     if not baseline:
         variants = [
-            ('failure-treated-as-success', '(Err rc)\n              (Ok outPath)', '(Ok llPath)\n              (Ok outPath)', ('failed7', 'build-failed')),
-            ('child-status-erased', '(Err rc)\n              (Ok outPath)', '(Err 1)\n              (Ok outPath)', ('failed7', 'failed19')),
-            ('missing-fallback-lost', '(Ok llPath)\n            }', '(Err 1)\n            }', ('missing-optimiser', 'build-fallback')),
+            ('failure-treated-as-success', '(Err code)\n                (Ok outPath)', '(Ok llPath)\n                (Ok outPath)', ('failed7', 'build-failed')),
+            ('child-status-erased', '(Err code)\n                (Ok outPath)', '(Err 1)\n                (Ok outPath)', ('failed7', 'failed19')),
+            ('missing-fallback-lost', '(Ok llPath)\n              }', '(Err 1)\n              }', ('missing-optimiser', 'build-fallback')),
         ]
         for label, before, after, required in variants:
             altered = modules(label, replace_once(driver, before, after, label))

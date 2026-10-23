@@ -1,0 +1,71 @@
+(import core)
+(import driver)
+(import main (probeFetchClone probeFetchDiscard fetchUrls))
+(import repl (replEval))
+(import IO)
+(import Err)
+(import Str)
+(import Vec)
+(import Sys)
+
+(:: show (-> (Result Int Int) ()))
+;@axiom:effect(io)
+(fn (show result)
+  (match result
+    ((Ok code) (println "ok {code}"))
+    ((Err code) (println "err {code}"))))
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  {
+    (let mode (sysArg 1))
+    (match mode
+      ("run" (show (probeRunTool (sysArg 2) (argsOf3 "" "space value" "$(touch forbidden);*"))))
+      ("quiet" (show (probeRunQuiet (sysArg 2) (argsOf3 "--quiet" "" "literal;*"))))
+      ("redirect" (show (probeRunErrTo (sysArg 2) vecNew (sysArg 3))))
+      ("bindings" (show (probeBindings "crate/" "demo" "Demo")))
+      ("crate" (show (probeCrate "crate/" "demo")))
+      ("prepare"
+        {
+          (let status (prepareCrate "crate/"))
+          (println "status {status}")
+        }
+      )
+      ("clone" (show (probeFetchClone "url;literal" "clone dest")))
+      ("discard" (show (probeFetchDiscard "clone dest")))
+      ("fetch"
+        {
+          (let status (fetchUrls (vecPush vecNew "https://example.invalid/repo") "project/" 0))
+          (println "status {status}")
+        }
+      )
+      ("assemble"
+        {
+          (let target (sysArg 2))
+          (let status
+            (assembleAndLink "" "input.ll" "output.o" "output" 0 vecNew
+              (if (strEq target "windows")
+                "windows-x86_64"
+                "")
+              (strEq target "baremetal")))
+          (println "status {status}")
+        }
+      )
+      ("implib"
+        (match (windowsImportLibFor "output.o" "windows-x86_64" "kernel32"
+                 (vecPush vecNew "ExitProcess"))
+          ((Ok path) (println "ok {path}"))
+          ((Err message) (println "err {message}")))
+      )
+      ("repl"
+        {
+          (let _ (replEval "; fixture IR\n"))
+          ()
+        }
+      )
+      (_ (println "unknown")))
+    0
+  })

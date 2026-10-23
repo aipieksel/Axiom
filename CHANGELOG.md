@@ -16,6 +16,11 @@ its changelog too.
 
 ## Unreleased
 
+- Native-tool results preserve operating-system errors separately from
+  child exit codes throughout the driver, package fetching and REPL.
+  Missing-tool fallback, diagnostics and cleanup keep their existing policies.
+  Tested by `tests/tools/driver-run-tool-results.py`.
+
 - Parallel code generation refuses a failed child launch before linking.
   It waits every launched child before removing split files, even after
   another child fails, and preserves the earliest failing part.

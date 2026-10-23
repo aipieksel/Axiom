@@ -1,0 +1,97 @@
+(import driver (runTool))
+(import Vec)
+(import Sys)
+(import Str)
+(import Path)
+(import IO)
+(import Err)
+(import Fmt)
+
+(:: save (-> String String ()))
+;@axiom:effect(io)
+(fn (save path text)
+  {
+    (let _ (writeFile path text))
+    ()
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(fn (main)
+  {
+    (let tool (pathBase (sysArg 0)))
+    (let mode (sysEnv "AXIOM_TEST_RUN_MODE"))
+    (if (strEq tool "expr")
+      (if (strEq mode "repl-text")
+        {
+          (writeStr stdout "value from child\n")
+          (sysExitWith 0)
+        }
+        (if (strEq mode "repl-signal")
+          {
+            (let _ (sysKill sysPid 9))
+            ()
+          }
+          (sysExitWith 7))))
+    (let selected (strEq tool (sysEnv "AXIOM_TEST_RUN_TOOL")))
+    (let log (strBuilderNew))
+    (for i in 0..sysArgc
+      (strBuilderPush log (concat (fmtInt i) (concat ":" (concat (sysArg i) "\n")))))
+    (let _ (appendFile (pathJoin (sysEnv "AXIOM_TEST_LOG") "tools.log") (strBuilderFinish log)))
+    (if (&& selected (strEq mode "signal9"))
+      {
+        (let _ (sysKill sysPid 9))
+        ()
+      })
+    (if (&& selected (strEq mode "text"))
+      {
+        (writeStr stdout "child stdout\n")
+        (writeStr stderr "child stderr\n")
+      })
+    (if (strEq tool "git")
+      {
+        (let _ (makeDir (sysArg 3)))
+        (save (pathJoin (sysArg 3) "partial") "partial\n")
+      })
+    (if (strEq tool "rm")
+      {
+        (let _ (removeFile (pathJoin (sysArg 2) "partial")))
+        (let _ (removeDir (sysArg 2)))
+        ()
+      })
+    (let mut output "")
+    (for i in 1..sysArgc
+      {
+        (let arg (sysArg i))
+        (if (&& (< (+ i 1) sysArgc) (|| (strEq arg "-o") (strEq arg "-l")))
+          (set output (sysArg (+ i 1))))
+        (if (strStartsWith arg "/out:")
+          (set output (strSlice arg 5 (- (strLen arg) 5))))
+      })
+    (if (strEq tool "ar")
+      (set output (sysArg 2)))
+    (if (&& (! (strEq output "")) (! (strEq tool "axiom-bindgen")))
+      (if (&& (strEq tool "cc") (strStartsWith mode "repl-"))
+        {
+          (let _ (runTool "/bin/cp" (vecPush (vecPush vecNew (sysEnv "AXIOM_TEST_CHILD")) output)))
+          ()
+        }
+        (save output (concat tool " output\n"))))
+    (if (&& (strEq tool "axiom-bindgen") selected)
+      (if (strEq (sysArg 7) "--check")
+        (if (strEq mode "stale")
+          2
+          (if (strEq mode "genfail")
+            2
+            0))
+        (if (strEq mode "genfail")
+          19
+          0))
+      (if (&& selected (strEq mode "fail7"))
+        7
+        (if (&& selected (strEq mode "fail127"))
+          127
+          0)))
+  })

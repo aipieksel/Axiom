@@ -54,7 +54,7 @@ def check(compiler, root, work):
                   'OS spawn/wait/signal contracts are trusted boundaries; no inference or ARC algorithm is reviewed.',
                   'All successful launches receive a wait; a wait error is retained as failure, not represented as successful reaping.',
                   'The fixture drains any uncollected children after its observations, including negative controls.',
-                  'runTool still exposes its existing signed status protocol outside this bounded launch/wait closure.',
+                  'The synchronous runTool result is separate from this split launch/wait closure.',
               ]}
 
     def modules(label, source=driver):
