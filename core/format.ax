@@ -995,24 +995,24 @@
 
 ; An atom's source text, and the head atom's text for a group - the two
 ; questions the printer asks constantly.
-(:: fnText (-> String FNode String))
+(:: fnText (-> String FNode (Option String)))
 (fn (fnText src n)
   (if (== (fnKind n) FN_ATOM)
-    (ftText src (fnTok n))
-    ""))
+    (Some (ftText src (fnTok n)))
+    None))
 
-(:: fnHeadText (-> String FNode String))
+(:: fnHeadText (-> String FNode (Option String)))
 (fn (fnHeadText src n)
-  (if (== (fnKind n) FN_PAREN)
-    (if (> (fnLen n) 0)
-      {
-        (let h (fnKid n 0))
-        (if (== (fnKind h) FN_ATOM)
-          (ftText src (fnTok h))
-          "")
-      }
-      "")
-    ""))
+  (if (&& (== (fnKind n) FN_PAREN) (> (fnLen n) 0))
+    (fnText src (fnKid n 0))
+    None))
+
+; Equality preserves absence separately from a present empty atom.
+(:: fnTextMatches (-> (Option String) String Bool))
+(fn (fnTextMatches result expected)
+  (match result
+    ((None) false)
+    ((Some text) (strEq text expected))))
 
 ; The reader's result: a node and the token position just past it. A
 ; read answers `None` on a syntax the reader cannot pair up - an
@@ -1752,7 +1752,9 @@
             true
             (if (== (fnKind n) FN_BRACK)
               (allSimple src n 0)
-              (if (isKeywordHead (fnHeadText src n))
+              (if (match (fnHeadText src n)
+                ((None) false)
+                ((Some head) (isKeywordHead head)))
                 false
                 (allSimple src n 0)))))))))
 
@@ -1836,6 +1838,13 @@
     (foPush p.out s)
     p
   })
+
+; A required suffix must be an atom; absence marks the trial bad.
+(:: fpEmitAtomText (-> FPr FNode ()))
+(fn (fpEmitAtomText p node)
+  (match (fnText p.src node)
+    ((None) (fpBad p))
+    ((Some text) (fpP p text))))
 
 (:: fpByte (-> FPr Int ()))
 (fn (fpByte p b)
@@ -2258,7 +2267,7 @@
     (let src p.src)
     (if (== k FN_ATOM)
       (if (== (ftKind (fnTok n)) FT_IDENT)
-        (fpP p (fnText src n))
+        (fpP p (ftText src (fnTok n)))
         (fpBad p))
       (if (|| (== k FN_FIELD) (== k FN_QUAL))
         {
@@ -2276,7 +2285,7 @@
             (if (== k FN_FIELD)
               "."
               "::"))
-          (fpP p (fnText src (fnKid n 1)))
+          (fpEmitAtomText p (fnKid n 1))
         }
         (fpBad p)))
   })
@@ -2392,7 +2401,8 @@
 ; expression, and the surrounding block supplies its lexical scope.
 (:: fpIsLocalLet (-> String FNode Bool))
 (fn (fpIsLocalLet src n)
-  (&& (strEq (fnHeadText src n) "let") (&& (> (fnLen n) 1) (== (fnKind (fnKid n 1)) FN_ATOM))))
+  (&& (fnTextMatches (fnHeadText src n) "let")
+    (&& (> (fnLen n) 1) (== (fnKind (fnKid n 1)) FN_ATOM))))
 
 (:: fpLocalLet (-> FPr FNode ()))
 (fn (fpLocalLet p n)
@@ -2424,7 +2434,7 @@
                           (if mutable
                             "(let mut "
                             "(let "))
-                        (fpP p (fnText src name))
+                        (fpP p (ftText src (fnTok name)))
                         (if (&& (> (strLen flat) 0)
                               (&& (! (fqAnyWithin p.q (fnStart n) (fnEnd value)))
                                 (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) (+ 1 p.suffixWidth))
@@ -2649,7 +2659,7 @@
 ; prints on one line, its pattern as a match arm's would.
 (pub :: fpIfTest (-> FPr FNode ()))
 (pub fn (fpIfTest p n)
-  (if (&& (== (fnKind n) FN_PAREN) (&& (== (fnLen n) 3) (strEq (fnHeadText p.src n) "let")))
+  (if (&& (== (fnKind n) FN_PAREN) (&& (== (fnLen n) 3) (fnTextMatches (fnHeadText p.src n) "let")))
     {
       (fpP p "(let ")
       (fpPat p (fnKid n 1))
@@ -3094,12 +3104,16 @@
       false
       {
         (let h (fnHeadText src n))
-        (if (isKeywordHead h)
+        (if (match h
+          ((None) false)
+          ((Some head) (isKeywordHead head)))
           false
           ; A refused head stays whole, so `((consume 1) 2)` reaches
           ; the refusal in `fpExpr` instead of being spliced past it
           ; into `(consume 1 2)`.
-          (if (fpIsRefusedHead h)
+          (if (match h
+            ((None) false)
+            ((Some head) (fpIsRefusedHead head)))
             false
             {
               (let elems (fpExprElems n 0))
@@ -3376,7 +3390,7 @@
         (while (< i (vecLen elems))
           {
             (fpP p " :")
-            (fpP p (fnText p.src (vecGet elems (+ i 1))))
+            (fpP p (ftText p.src (fnTok (vecGet elems (+ i 1)))))
             (fpP p " ")
             (fpExpr p (vecGet elems (+ i 2)))
             (set i (+ i 3))
@@ -3440,7 +3454,7 @@
                                 (let mark out.nl)
                                 {
                                   (fpP p ":")
-                                  (fpP p (fnText src name))
+                                  (fpP p (ftText src (fnTok name)))
                                   (if (&& (> (strLen flat) 0)
                                         (&& (! (fqAnyWithin p.q (fnStart colon) (fnStart value)))
                                           (<=
@@ -3655,7 +3669,7 @@
         (let tk (ftKind (fnTok n)))
         (if (== tk FT_IDENT)
           {
-            (let t (fnText src n))
+            (let t (ftText src (fnTok n)))
             (if (isFOperChar (strByte src (fnStart n)))
               ; Any other operator run is a name to this compiler's
               ; parser, so it prints as itself. `check` resolves it
@@ -3694,7 +3708,7 @@
               {
                 (fpExpr p base)
                 (fpP p ".")
-                (fpP p (fnText src (fnKid n 1)))
+                (fpEmitAtomText p (fnKid n 1))
               }
               (fpBad p))
           }
@@ -3708,7 +3722,7 @@
             {
               (fpQualLeft p (fnKid n 0))
               (fpP p "::")
-              (fpP p (fnText src (fnKid n 1)))
+              (fpEmitAtomText p (fnKid n 1))
             }
             (if (== k FN_PREFIX)
               ; All four prefix markers are refused: stage0 refuses each
@@ -3777,39 +3791,41 @@
                     (fpP p "()")
                     {
                       (let h (fnHeadText src n))
-                      (if (strEq h "lambda")
+                      (if (fnTextMatches h "lambda")
                         (fpLambda p n)
-                        (if (strEq h "let")
+                        (if (fnTextMatches h "let")
                           (fpBad p)
-                          (if (strEq h "if")
+                          (if (fnTextMatches h "if")
                             (fpIf p n)
-                            (if (|| (strEq h "while") (strEq h "region"))
-                              (if (strEq h "region")
+                            (if (|| (fnTextMatches h "while") (fnTextMatches h "region"))
+                              (if (fnTextMatches h "region")
                                 (fpRegion p n)
                                 (fpWhile p n))
-                              (if (|| (strEq h "for") (strEq h "asm"))
-                                (if (strEq h "for")
+                              (if (|| (fnTextMatches h "for") (fnTextMatches h "asm"))
+                                (if (fnTextMatches h "for")
                                   (fpFor p n)
                                   (fpAsm p n))
-                                (if (strEq h "parallel")
+                                (if (fnTextMatches h "parallel")
                                   (fpParallel p n)
-                                  (if (strEq h "set")
+                                  (if (fnTextMatches h "set")
                                     (fpSet p n)
                                     ; `cond` is AX2004: no arm prints one.
                                     ; A `(cond ...)` reaches `fpIsRefusedHead`
                                     ; below, like `consume` and `begin`.
-                                    (if (strEq h "match")
+                                    (if (fnTextMatches h "match")
                                       (fpMatch p n)
-                                      (if (strEq h "handle")
+                                      (if (fnTextMatches h "handle")
                                         (fpHandle p n)
                                         ; `consume`, `begin` and now `cond` are the
                                         ; identifier heads `parseInner` refuses by
                                         ; name (AX2004), so the printer refuses
                                         ; them with it rather than emit output
                                         ; `check` cannot read.
-                                        (if (fpIsRefusedHead h)
+                                        (if (match h
+                                          ((None) false)
+                                          ((Some head) (fpIsRefusedHead head)))
                                           (fpBad p)
-                                          (if (strEq h "sizeof")
+                                          (if (fnTextMatches h "sizeof")
                                             (if (== (fnLen n) 2)
                                               {
                                                 (fpP p "(sizeof")
@@ -3817,7 +3833,7 @@
                                                 (fpP p ")")
                                               }
                                               (fpBad p))
-                                            (if (strEq h "alignof")
+                                            (if (fnTextMatches h "alignof")
                                               (if (== (fnLen n) 2)
                                                 {
                                                   (fpP p "(alignof")
@@ -3825,9 +3841,9 @@
                                                   (fpP p ")")
                                                 }
                                                 (fpBad p))
-                                              (if (strEq h "as")
+                                              (if (fnTextMatches h "as")
                                                 (fpTypedExpr p n "as")
-                                                (if (strEq h "::")
+                                                (if (fnTextMatches h "::")
                                                   (fpTypedExpr p n "::")
                                                   ; Any other identifier head is an
                                                   ; application, as `parseInner` falls
@@ -3927,7 +3943,7 @@
       (if (|| (== mode 3) (== mode 4))
         (fpFieldItem p n mode)
         (if (fpIsIdentAtom n)
-          (fpP p (fnText p.src n))
+          (fpP p (ftText p.src (fnTok n)))
           (fpBad p))))))
 
 (:: fpListItemSuffix (-> FPr FNode Int Int ()))
@@ -4175,7 +4191,7 @@
           {
             (let last (fpTypeUnwrap (vecGet elems (- (vecLen elems) 1))))
             (if (&& (== (fnKind last) FN_PAREN)
-                  (&& (> (fnLen last) 0) (strEq (fnHeadText p.src last) "->")))
+                  (&& (> (fnLen last) 0) (fnTextMatches (fnHeadText p.src last) "->")))
               (if (< (fnLen last) 3)
                 {
                   (fpBad p)
@@ -4222,7 +4238,7 @@
     (let k (fnKind n))
     (if (== k FN_ATOM)
       (if (== (ftKind (fnTok n)) FT_IDENT)
-        (fpP p (fnText p.src n))
+        (fpP p (ftText p.src (fnTok n)))
         (fpBad p))
       (if (== k FN_BRACK)
         (if (== (fnLen n) 1)
@@ -4237,13 +4253,13 @@
             (fpP p "()")
             {
               (let h (fnHeadText p.src n))
-              (if (strEq h "->")
+              (if (fnTextMatches h "->")
                 (fpArrow p n)
-                (if (strEq h "*")
+                (if (fnTextMatches h "*")
                   (if (== (fnLen n) 2)
                     (fpList p n (fnKids n) 0 "(" ")")
                     (fpBad p))
-                  (if (strEq h "linear")
+                  (if (fnTextMatches h "linear")
                     (if (== (fnLen n) 2)
                       (fpList p n (fnKids n) 0 "(" ")")
                       (fpBad p))
@@ -4261,7 +4277,7 @@
             {
               (fpQualLeft p (fnKid n 0))
               (fpP p "::")
-              (fpP p (fnText p.src (fnKid n 1)))
+              (fpEmitAtomText p (fnKid n 1))
             }
             (fpBad p)))))
   })
@@ -4310,7 +4326,7 @@
 (:: fpIsAtomText (-> String FNode String Bool))
 (fn (fpIsAtomText src n t)
   (if (== (fnKind n) FN_ATOM)
-    (strEq (fnText src n) t)
+    (strEq (ftText src (fnTok n)) t)
     false))
 
 ; How many kids one pattern occupies at position `i` of vec `v`: two
@@ -4419,7 +4435,8 @@
 ; A named-field pattern group's fields: `(Name { w = p, h })`.
 (:: fpPatNamed (-> FPr FNode FNode ()))
 (fn (fpPatNamed p name brace)
-  (fpList p brace (fpNamedFields p brace 1) 3 (concat (concat "(" (fnText p.src name)) " {") "})"))
+  (fpList p brace (fpNamedFields p brace 1) 3
+    (concat (concat "(" (ftText p.src (fnTok name))) " {") "})"))
 
 ; Canonical field nodes keep their name and complete pattern span.
 (:: fpNamedFields (-> FPr FNode Int (Vec FNode)))
@@ -4485,7 +4502,7 @@
         0
         1))
     {
-      (fpP p (fnText p.src name))
+      (fpP p (ftText p.src (fnTok name)))
       (fpP p
         (if (== mode 4)
           " :"
@@ -4536,7 +4553,7 @@
           ; pattern as anywhere else: a parameter or a `let` binder
           ; spelled `*` shadows the operator in its scope. A lone `-`
           ; is scanned as its own kind, and binds the same way.
-          (fpP p (fnText src n))
+          (fpP p (ftText src (fnTok n)))
           (if (== tk FT_INT)
             (fpInt p (fnStart n) (fnEnd n))
             (if (== tk FT_FLOAT)
@@ -4620,31 +4637,33 @@
                     0
                     {
                       (let h (fnHeadText src n))
-                      (if (|| (strEq h "let") (|| (strEq h "lambda") (strEq h "fn")))
+                      (if (|| (fnTextMatches h "let")
+                            (|| (fnTextMatches h "lambda") (fnTextMatches h "fn")))
                         (if (fpIsLocalLet src n)
                           (fnStart n)
                           (if (> (fnLen n) 2)
                             (fpAnchor src (fnKid n 2))
                             0))
-                        (if (strEq h "parallel")
+                        (if (fnTextMatches h "parallel")
                           (if (> (fnLen n) 3)
                             (fpAnchor src (fnKid n 3))
                             0)
-                          (if (|| (strEq h "if")
-                                (|| (strEq h "while")
-                                  (|| (strEq h "for")
-                                    (|| (strEq h "region")
-                                      (|| (strEq h "match")
-                                        (|| (strEq h "handle")
-                                          (|| (strEq h "consume") (strEq h "::"))))))))
+                          (if (|| (fnTextMatches h "if")
+                                (|| (fnTextMatches h "while")
+                                  (|| (fnTextMatches h "for")
+                                    (|| (fnTextMatches h "region")
+                                      (|| (fnTextMatches h "match")
+                                        (|| (fnTextMatches h "handle")
+                                          (|| (fnTextMatches h "consume")
+                                            (fnTextMatches h "::"))))))))
                             (if (> (fnLen n) 1)
                               (fpAnchor src (fnKid n 1))
                               0)
-                            (if (strEq h "as")
+                            (if (fnTextMatches h "as")
                               (fnStart (fnKid n 0))
-                              (if (|| (strEq h "sizeof") (strEq h "alignof"))
+                              (if (|| (fnTextMatches h "sizeof") (fnTextMatches h "alignof"))
                                 (fnStart (fnKid n 0))
-                                (if (|| (strEq h "set") (strEq h "struct"))
+                                (if (|| (fnTextMatches h "set") (fnTextMatches h "struct"))
                                   (if (> (fnLen n) 1)
                                     (fnStart (fnKid n 1))
                                     0)
@@ -4936,7 +4955,7 @@
         {
           (let brace (fnKid con 1))
           (fpList p brace (fpNamedFields p brace 0) 4
-            (concat (concat "(" (fnText src (fnKid con 0))) " { ") " })")
+            (concat (concat "(" (ftText src (fnTok (fnKid con 0)))) " { ") " })")
         }
         (fpList p con (fnKids con) 0 "(" ")")))
   })
@@ -4970,7 +4989,7 @@
           (fpP p "(")
           (fpVis p n)
           (fpP p "data ")
-          (fpP p (fnText src (fnKid n (+ b 1))))
+          (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
           (fpTyvars p n (+ b 2) tvEnd 0 1)
           ; A `deriving` clause POISONS the file instead of
           ; printing: the compiler refuses the clause (AX2004,
@@ -5074,13 +5093,13 @@
             (fpP p "(")
             (fpVis p n)
             (fpP p "data ")
-            (fpP p (fnText src (fnKid n (+ b 1))))
+            (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
             (fpTyvars p n (+ b 2) tvEnd 0 0)
             (fpP p "\n")
             (foPushIndent o)
             (foEmitIndent o)
             (fpP p "(")
-            (fpP p (fnText src (fnKid n (+ tvEnd 1))))
+            (fpP p (ftText src (fnTok (fnKid n (+ tvEnd 1)))))
             (fpP p " ")
             (fpType p (fnKid n (+ tvEnd 2)))
             (fpP p ")")
@@ -5149,13 +5168,13 @@
             (fpP p "(")
             (fpVis p n)
             (fpP p "struct ")
-            (fpP p (fnText src (fnKid n (+ b 1))))
+            (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
             {
               (let mut k (+ b 2))
               (while (< k mEnd)
                 {
                   (fpP p " ")
-                  (fpP p (fnText src (fnKid n k)))
+                  (fpP p (ftText src (fnTok (fnKid n k))))
                   (set k (+ k 1))
                 })
             }
@@ -5242,7 +5261,7 @@
                                     (if (== fb 1)
                                       "(mut "
                                       "("))
-                                  (fpP p (fnText src (fnKid f fb)))
+                                  (fpP p (ftText src (fnTok (fnKid f fb))))
                                   (if (== (fnLen f) (+ fb 3))
                                     {
                                       (fpP p " : ")
@@ -5312,7 +5331,7 @@
             (fpP p "(")
             (fpVis p n)
             (fpP p "type ")
-            (fpP p (fnText src (fnKid n (+ b 1))))
+            (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
             (fpTyvars p n (+ b 2) tvEnd 0 2)
             (fpTypeAfter p (fnKid n target) 1)
             (fpP p ")")
@@ -5355,7 +5374,7 @@
             (fpP p "(")
             (fpVis p n)
             (fpP p "subtype ")
-            (fpP p (fnText src (fnKid n (+ b 1))))
+            (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
             (fpP p " is ")
             (fpType p (fnKid n (+ b 3)))
             (fpP p " range ")
@@ -5390,7 +5409,7 @@
         (fpP p "(")
         (fpVis p n)
         (fpP p ":: ")
-        (fpP p (fnText src (fnKid n (+ b 1))))
+        (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
         (fpTypeAfter p (fnKid n (+ b 2)) 1)
         (fpP p ")")
       })
@@ -5511,12 +5530,12 @@
 (:: fpImportPath (-> FPr FNode ()))
 (fn (fpImportPath p path)
   (if (fpIsIdentAtom path)
-    (fpP p (fnText p.src path))
+    (fpP p (ftText p.src (fnTok path)))
     (if (== (fnKind path) FN_FIELD)
       {
         (fpImportPath p (fnKid path 0))
         (fpP p ".")
-        (fpP p (fnText p.src (fnKid path 1)))
+        (fpEmitAtomText p (fnKid path 1))
       }
       (fpBad p))))
 
@@ -5535,7 +5554,7 @@
       (while (< j (fnLen grp))
         (if (fpIsIdentAtom (fnKid grp j))
           {
-            (let t (fnText src (fnKid grp j)))
+            (let t (ftText src (fnTok (fnKid grp j))))
             {
               (if (> j 0)
                 (fpP p " ")
@@ -5583,7 +5602,7 @@
           (fpP p "(")
           (fpVis p n)
           (fpP p "extern ")
-          (fpP p (fnText src (fnKid n (+ b 1))))
+          (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
           (if (< i (fnLen n))
             (foPushIndent o)
             o)
@@ -5659,7 +5678,7 @@
     (let flat (fpExternFlat p it))
     {
       (fpP p "(")
-      (fpP p (fnText p.src (fnKid it 0)))
+      (fpP p (ftText p.src (fnTok (fnKid it 0))))
       (fpP p " ::")
       (if (&& (> (strLen flat) 0) (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) suffix) fmtWidth))
         {
@@ -5735,7 +5754,7 @@
           (fpP p "(")
           (fpVis p n)
           (fpP p "effect ")
-          (fpP p (fnText src (fnKid n (+ b 1))))
+          (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
           (if (< i (fnLen n))
             (foPushIndent o)
             o)
@@ -5779,7 +5798,7 @@
                       (fpP p "\n")
                       (foEmitIndent o)
                       (fpP p "(")
-                      (fpP p (fnText src (fnKid op 0)))
+                      (fpP p (ftText src (fnTok (fnKid op 0))))
                       (if (== (fnLen op) 3)
                         {
                           (fpP p " :: ")
@@ -5849,7 +5868,7 @@
                   (fpP p "(")
                   (fpVis p n)
                   (fpP p (concat head " "))
-                  (fpP p (fnText src (fnKid n (+ b 1))))
+                  (fpP p (ftText src (fnTok (fnKid n (+ b 1)))))
                   (while (< ri (vecLen tail))
                     {
                       (let rule (vecGet tail ri))
@@ -5882,7 +5901,7 @@
                   (fpP p "(")
                   (fpVis p n)
                   (fpP p "macro (")
-                  (fpP p (fnText src (fnKid hd 0)))
+                  (fpP p (ftText src (fnTok (fnKid hd 0))))
                   (while (< i (fnLen hd))
                     {
                       (fpP p " ")

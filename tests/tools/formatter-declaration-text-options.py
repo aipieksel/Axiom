@@ -33,8 +33,7 @@ def run(compiler, root, work):
                              'A qualified macro head has no atom text and still prints as an invocation.',
                              'Only matching present nonempty names join a signature to a function.',
                              'Returned name text survives its source; queries and formatting borrow the source.'],
-              'remaining': ['fnText/fnHeadText text absence',
-                            'flat-layout failure String APIs and FRes tagged status/text'],
+              'remaining': ['flat-layout failure String APIs and FRes tagged status/text'],
               'limits': ['Host O0/O2 allocation-poison probes; CI runs complete target and formatter suites.',
                          'Synthetic empty FTok ranges test the owning FNode API; scanning does not produce empty identifiers.']}
 
