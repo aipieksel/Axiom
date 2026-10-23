@@ -12,7 +12,7 @@ import tempfile
 def check(compiler, root, work):
     source = (root / 'core/expand.ax').read_text()
     fixture = root / 'tests/tools/expander-asm-operand-index-options.axp'
-    expected = ''.join(f'{i} true\n' for i in range(1, 28))
+    expected = ''.join(f'{i} true\n' for i in range(1, 36))
     env = dict(os.environ, AXIOM_STDLIB=str(root / 'stdlib'))
     report = {'builder_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
               'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
@@ -47,8 +47,8 @@ def check(compiler, root, work):
 
     for level in (0, 2):
         build_run('positive-O' + str(level), source, level)
-        report['configurations'].append({'optimization': level, 'poison': True, 'cases': 27})
-        print(f'ok   operand indexes: 27 outcomes O{level} poison', flush=True)
+        report['configurations'].append({'optimization': level, 'poison': True, 'cases': 35})
+        print(f'ok   operand indexes: 35 outcomes O{level} poison', flush=True)
 
     diagnostic_files = ('1044-inline-asm', '1280-inline-asm-forms', '1281-asm-operand-unused')
     def diagnostics(native, expected_equal):
@@ -98,10 +98,16 @@ def check(compiler, root, work):
         '(if (&& (== (vecGet used i) 0) (== (strLen p.reg) 0))\n        (Some i)',
         '(if (&& (== (vecGet used i) 0) (== (strLen p.reg) 0))\n        None',
         'unused-present-erased')
+    no_first_out = replace_in_function(
+        source, 'expAsmFirstOut',
+        '(if (&& (expAsmOutKind p.kind) (|| any (== (strLen p.reg) 0)))\n        (Some i)',
+        '(if (&& (expAsmOutKind p.kind) (|| any (== (strLen p.reg) 0)))\n        None',
+        'first-out-present-erased')
     for label, text in [('missing-forged', missing), ('present-erased', no_index),
                         ('negative-start-unchecked', bad_start),
                         ('name-present-erased', no_name), ('answer-present-erased', no_answer),
-                        ('unused-present-erased', no_unused)]:
+                        ('unused-present-erased', no_unused),
+                        ('first-out-present-erased', no_first_out)]:
         result = build_run(label, text, 0, False)
         report['controls'].append({'name': label, 'returncode': result.returncode,
                                    'changed_output': result.stdout != expected})
@@ -135,6 +141,7 @@ def check(compiler, root, work):
         ('raw-name-index', '(:: bad Int) (fn (bad) (expAsmNameAt vecNew "x" 0))', 'AX3004'),
         ('raw-answered-index', '(:: bad Int) (fn (bad) (expAsmAnswered vecNew 0 0))', 'AX3004'),
         ('raw-unused-index', '(:: bad Int) (fn (bad) (expAsmFirstUnused vecNew vecNew 0))', 'AX3004'),
+        ('raw-first-out-index', '(:: bad Int) (fn (bad) (expAsmFirstOut vecNew true 0))', 'AX3004'),
         ('missing-none', '(:: bad Int) (fn (bad) (match (expAsmOpAt vecNew "x" 0) ((Some index) index)))', 'AX3005'),
         ('missing-some', '(:: bad Int) (fn (bad) (match (expAsmOpAt vecNew "x" 0) ((None) 0)))', 'AX3005'),
     ):

@@ -5549,15 +5549,15 @@
     }))
 
 ; The first output with no register of its own, or the first output at
-; all when `any` is set; -1 when there is none.
-(pub :: expAsmFirstOut (-> (Vec AsmOp) Bool Int Int))
+; all when `any` is set; None when there is none.
+(pub :: expAsmFirstOut (-> (Vec AsmOp) Bool Int (Option Int)))
 (pub fn (expAsmFirstOut ops any i)
-  (if (>= i (vecLen ops))
-    (- 0 1)
+  (if (|| (< i 0) (>= i (vecLen ops)))
+    None
     {
       (let p (vecGet ops i))
       (if (&& (expAsmOutKind p.kind) (|| any (== (strLen p.reg) 0)))
-        i
+        (Some i)
         (expAsmFirstOut ops any (+ i 1)))
     }))
 
@@ -5583,7 +5583,10 @@
     (let keeps (expAsmOptNode opts optNodes "preserves_flags"))
     (let att (expAsmOptNode opts optNodes "att_syntax"))
     (let intel (expAsmOptNode opts optNodes "intel_syntax"))
-    (let bare (expAsmFirstOut ops false 0))
+    (let bare
+      (if (> (vecLen abis) 0)
+        (expAsmFirstOut ops false 0)
+        None))
     (if (let (Some secondIndex) second)
       {
         (let p (vecGet ops secondIndex))
@@ -5616,11 +5619,14 @@
                   (expAsmOptsBad env (nodeSpan pure)
                     "`pure` needs `nomem` or `readonly` beside it, to say whether the instructions read memory")
                   (if (&& (! (nodeSame noret nilNode)) (> nOut 0))
-                    {
-                      (let p (vecGet ops (expAsmFirstOut ops true 0)))
-                      (expAsmOptsBad env (nodeSpan p.node)
-                        "a `noreturn` block never finishes, so it has no outputs")
-                    }
+                    (if (let (Some firstIndex) (expAsmFirstOut ops true 0))
+                      {
+                        (let p (vecGet ops firstIndex))
+                        (expAsmOptsBad env (nodeSpan p.node)
+                          "a `noreturn` block never finishes, so it has no outputs")
+                      }
+                      (expAsmOptsBad env (nodeSpan noret)
+                        "a `noreturn` block never finishes, so it has no outputs"))
                     (if (&& (! (nodeSame nomem nilNode)) (isSome (expAsmNameAt clobs "memory" 0)))
                       (expAsmOptsBad env (nodeSpan nomem)
                         "`nomem` says the instructions touch no memory, and the arm clobbers `memory`; keep the one that is true")
@@ -5629,9 +5635,9 @@
                               (isSome (expAsmNameAt clobs "flags" 0))))
                         (expAsmOptsBad env (nodeSpan keeps)
                           "`preserves_flags` says the instructions leave the flags alone, and the arm clobbers them; keep the one that is true")
-                        (if (&& (> (vecLen abis) 0) (>= bare 0))
+                        (if (let (Some bareIndex) bare)
                           {
-                            (let p (vecGet ops bare))
+                            (let p (vecGet ops bareIndex))
                             (expAsmOptsBad env (nodeSpan p.node)
                               (concat
                                 (concat
