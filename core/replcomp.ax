@@ -803,26 +803,23 @@
 ; with no highlight and no detail line instead of taking the process
 ; down - and it is idempotent, so the renderers can normalise
 ; independently and still agree with each other.
-(pub :: replComplSelOf (-> (Vec ReplCand) Int Int))
+(pub :: replComplSelOf (-> (Vec ReplCand) (Option Int) (Option Int)))
 (pub fn (replComplSelOf cands sel)
-  (if (>= sel (vecLen cands))
-    (- 0 1)
-    (if (< sel 0)
-      (- 0 1)
-      sel)))
+  (if (let (Some index) sel)
+    (if (&& (>= index 0) (< index (vecLen cands)))
+      (Some index)
+      None)
+    None))
 
 ; The first candidate index the page holding `sel` starts at.
-(pub :: replComplPageBase (-> (Vec ReplCand) Int Int Int))
+(pub :: replComplPageBase (-> (Vec ReplCand) (Option Int) Int Int))
 (pub fn (replComplPageBase cands sel0 width)
-  {
-    (let sel (replComplSelOf cands sel0))
-    (if (< sel 0)
-      0
-      (* (/ sel (replComplPageSize cands width)) (replComplPageSize cands width)))
-  })
+  (if (let (Some sel) (replComplSelOf cands sel0))
+    (* (/ sel (replComplPageSize cands width)) (replComplPageSize cands width))
+    0))
 
 ; How many candidates that page actually shows.
-(pub :: replComplPageCount (-> (Vec ReplCand) Int Int Int))
+(pub :: replComplPageCount (-> (Vec ReplCand) (Option Int) Int Int))
 (pub fn (replComplPageCount cands sel width)
   {
     (let base (replComplPageBase cands sel width))
@@ -859,7 +856,7 @@
 ; only the picture is missing, and it was going to be an unreadable
 ; picture.
 ; ------------------------------------------------------------------
-(pub :: replComplMaxLine (-> (Vec ReplCand) Int Int Int))
+(pub :: replComplMaxLine (-> (Vec ReplCand) (Option Int) Int Int))
 (pub fn (replComplMaxLine cands sel0 width)
   {
     (let sel (replComplSelOf cands sel0))
@@ -881,9 +878,9 @@
               (if (> ml m)
                 (set m ml))
             })
-          (if (>= sel 0)
+          (if (let (Some selected) sel)
             {
-              (let dl (visLen (replComplDetailText (vecGet cands sel))))
+              (let dl (visLen (replComplDetailText (vecGet cands selected))))
               (if (> dl m)
                 (set m dl))
             })
@@ -893,7 +890,7 @@
     }
   })
 
-(pub :: replComplFits (-> (Vec ReplCand) Int Int Bool))
+(pub :: replComplFits (-> (Vec ReplCand) (Option Int) Int Bool))
 (pub fn (replComplFits cands sel width)
   (<= (replComplMaxLine cands sel width) (replComplWidthOf width)))
 
@@ -906,7 +903,7 @@
 ; the screen. `scripts/check-replcomp.sh` asserts this equals the
 ; newline count of `replComplMenu`'s output for every case it
 ; renders, which is what keeps the two arithmetics one.
-(pub :: replComplRows (-> (Vec ReplCand) Int Int Int))
+(pub :: replComplRows (-> (Vec ReplCand) (Option Int) Int Int))
 (pub fn (replComplRows cands sel0 width)
   {
     (let sel (replComplSelOf cands sel0))
@@ -925,23 +922,25 @@
               (if (> (vecLen cands) shown)
                 1
                 0))
-            (if (>= sel 0)
-              1
-              0))
+            (match sel
+              ((Some _) 1)
+              ((None) 0)))
         }
       })
   })
 
 ; One grid row: the gutter, then one padded, painted label per
 ; column, column-major so the list reads DOWN like `ls`.
-(pub :: replComplRow (-> (Vec ReplCand) Int Int Int Int Int Int String))
+(pub :: replComplRow (-> (Vec ReplCand) (Option Int) Int Int Int Int Int String))
 (pub fn (replComplRow cands sel base shown cols grid r)
   {
     (let line (strBuilderNew))
     {
       (strBuilderPush line
-        (if (== sel (+ base r))
-          (paint REPL_ACCENT "> ")
+        (if (let (Some selected) sel)
+          (if (== selected (+ base r))
+            (paint REPL_ACCENT "> ")
+            "  ")
           "  "))
       (for c in 0..cols
         {
@@ -974,11 +973,11 @@
 
 ; The whole block printed below the input line.
 ;
-; `sel` is -1 while nothing is selected. When it is not, the block
+; `sel` is None while nothing is selected. When it is Some, the block
 ; ends with one line naming the selected candidate and its detail -
 ; a type for a session name, a module for an imported one - which is
 ; where a type is shown without a column of them crowding the grid.
-(pub :: replComplMenu (-> (Vec ReplCand) Int Int String))
+(pub :: replComplMenu (-> (Vec ReplCand) (Option Int) Int String))
 (pub fn (replComplMenu cands sel0 width)
   {
     (let sel (replComplSelOf cands sel0))
@@ -1003,8 +1002,8 @@
                   (paint REPL_MUTED (replComplMoreText base shown (vecLen cands))))
                 (strBuilderPushByte out 10)
               })
-            (if (>= sel 0)
-              (strBuilderPush out (replComplDetailLine (vecGet cands sel))))
+            (if (let (Some selected) sel)
+              (strBuilderPush out (replComplDetailLine (vecGet cands selected))))
             (strBuilderFinish out)
           }
         }
@@ -1063,7 +1062,7 @@
 ;   start  where the replaceable region begins
 ;   typed  the prefix as the user typed it, for Escape
 ;   cands  the candidate vector this cycle walks
-;   sel    -1 before anything is selected, else the index
+;   sel    None before anything is selected, else Some index
 ;   rows   how many terminal rows the printed menu occupies, 0 for
 ;          none - a count rather than a flag, because the editor has
 ;          to erase exactly that many
@@ -1072,7 +1071,7 @@
   (start : Int)
   (typed : String)
   (cands : (Vec ReplCand))
-  (sel : Int)
+  (sel : (Option Int))
   (rows : Int))
 
 (pub :: stStart (-> ComplSt Int))
@@ -1087,7 +1086,7 @@
 (pub fn (stCands s)
   s.cands)
 
-(pub :: stSel (-> ComplSt Int))
+(pub :: stSel (-> ComplSt (Option Int)))
 (pub fn (stSel s)
   s.sel)
 
@@ -1206,8 +1205,8 @@
                   ; next Tab lists; no regather is needed, because
                   ; every candidate still starts with the LCP.
                   (replComplAnswer (replComplSplice buf start cur lcp) (+ start (strLen lcp)) "" 0
-                    (Some (ComplSt :start start :typed prefix :cands cands :sel (- 0 1) :rows 0)))
-                  (replComplShow buf cur start prefix cands (- 0 1) width))
+                    (Some (ComplSt :start start :typed prefix :cands cands :sel None :rows 0)))
+                  (replComplShow buf cur start prefix cands None width))
               }))
         })
     }
@@ -1216,7 +1215,7 @@
 ; Render the menu for `sel` and answer it, without touching the
 ; buffer. The one place a menu's text and its row count are produced,
 ; so they cannot disagree.
-(pub :: replComplShow (-> String Int Int String (Vec ReplCand) Int Int TabAnswer))
+(pub :: replComplShow (-> String Int Int String (Vec ReplCand) (Option Int) Int TabAnswer))
 (pub fn (replComplShow buf cur start typed cands sel width)
   {
     (let menu (replComplMenu cands sel width))
@@ -1232,22 +1231,22 @@
     (let start (stStart st))
     (if (== (stRows st) 0)
       ; The extend has happened; this Tab lists.
-      (replComplShow buf cur start (stTyped st) cands (- 0 1) width)
+      (replComplShow buf cur start (stTyped st) cands None width)
       {
         (let n (vecLen cands))
         {
           (let sel
-            (if (< (stSel st) 0)
+            (if (let (Some selected) (stSel st))
+              (% (+ (+ selected dir) n) n)
               (if (< dir 0)
                 (- n 1)
-                0)
-              (% (+ (+ (stSel st) dir) n) n)))
+                0)))
           {
             (let label (rcLabel (vecGet cands sel)))
             {
               (let r
                 (replComplShow (replComplSplice buf start cur label) (+ start (strLen label)) start
-                  (stTyped st) cands sel width))
+                  (stTyped st) cands (Some sel) width))
               r
             }
           }

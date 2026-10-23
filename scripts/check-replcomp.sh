@@ -139,8 +139,8 @@ subs = {'matcher': ('(pub fn (replComplOffer out seen label origin tag detail pr
  'fits': ('(pub fn (replComplFits cands sel width)\n'
           '  (<= (replComplMaxLine cands sel width) (replComplWidthOf width)))',
           '(pub fn (replComplFits cands sel width)\n  true)'),
- 'selrange': ('(pub fn (replComplSelOf cands sel)\n  (if (>= sel (vecLen cands))',
-              '(pub fn (replComplSelOf cands sel)\n  (if false'),
+ 'selrange': ('(pub fn (replComplSelOf cands sel)\n  (if (let (Some index) sel)\n    (if (&& (>= index 0) (< index (vecLen cands)))',
+              '(pub fn (replComplSelOf cands sel)\n  (if (let (Some index) sel)\n    (if true'),
  'width': ('    (let menu (replComplMenu cands sel width))\n'
            '    (let rows (replComplRows cands sel width))',
            '    (let menu (replComplMenu cands sel 80))\n'
@@ -666,6 +666,15 @@ then
   note "every escape the menu emits is style.ax's, paired, and wraps a whole lexeme"
 else
   bad "the menu's escape stream is outside style.ax's alphabet or unpaired"
+fi
+
+if [[ -z "${AXIOM_ABLATE:-}" ]]; then
+  checks=$((checks + 1))
+  if python3 "$repo_root/tests/replcomp/selection-options.py" --axiom "$axiom"; then
+    note "optional selection, bounds, refusals and effective controls"
+  else
+    bad "optional selection, bounds, refusals or effective controls"
+  fi
 fi
 
 echo
