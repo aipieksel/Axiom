@@ -139,19 +139,19 @@
   {
     {
       (let bi
-        (if (hasFlagAnywhere cmd "--builtins")
+        (if (hasFlagAnywhere (Some cmd) "--builtins")
           1
           0))
       (let mir
-        (if (hasFlagAnywhere cmd "--mir")
+        (if (hasFlagAnywhere (Some cmd) "--mir")
           1
           0))
-      (if (hasFlagAnywhere cmd "--axir")
+      (if (hasFlagAnywhere (Some cmd) "--axir")
         (replOut (axirRender tc bi mir (targetArg hostTarget)))
         {
           (let axsym
             (symbolsRenderGens tc bi gens
-              (if (hasFlagAnywhere cmd "--calls")
+              (if (hasFlagAnywhere (Some cmd) "--calls")
                 1
                 0)
               mir))
@@ -977,23 +977,33 @@
       ; so `axiom run prog.ax -V` forwards `-V` to the program.
       (if (hasFlagAnywhere first "--help")
         {
-          (replOut (helpForCommand first))
+          (replOut
+            (match first
+              ((None) usageText)
+              ((Some name) (helpForCommand name))))
           (sysExitWith 0)
         }
         (if (hasFlagAnywhere first "-h")
           {
-            (replOut (helpForCommand first))
+            (replOut
+              (match first
+                ((None) usageText)
+                ((Some name) (helpForCommand name))))
             (sysExitWith 0)
           }))
-      (if (strEq first "symbols")
-        symbolsCheckFormat)
-      (if (> (strLen first) 0)
-        (runSubcommand first)
-        ; No subcommand and no operand: print the usage rather than a
-        ; complaint about a file nobody named.
-        (if (< (positionalIndex 1) 0)
-          (die usageText 1)
-          rejectUnknownCommand))
+      (match first
+        ((Some command)
+          {
+            (if (strEq command "symbols")
+              symbolsCheckFormat)
+            (runSubcommand command)
+          }
+        )
+        ((None)
+          (if (isNone (positionalIndex 1))
+            (die usageText 1)
+            rejectUnknownCommand)
+        ))
     }
   })
 
@@ -1675,41 +1685,45 @@
       (match (flagValue "--filter" 1)
         ((None) "")
         ((Some value) value)))
-    (if (== (strLen target) 0)
-      (die "error: test needs a file or a directory\n" 1)
-      (if (isDir target)
-        {
-          (let files (testFilesIn target))
-          (if (== (vecLen files) 0)
-            (die (concat "error: no `.ax` file in " (concat target "\n")) 1)
+    (match target
+      ((None) (die "error: test needs a file or a directory\n" 1))
+      ((Some target)
+        (if (== (strLen target) 0)
+          (die "error: test needs a file or a directory\n" 1)
+          (if (isDir target)
             {
-              (let n (vecLen files))
-              (let jobs (testJobs))
-              (let mut bad 0)
-              {
-                (if (|| (<= jobs 1) (== n 1))
-                  (for i in 0..n
-                    {
-                      (let f (vecGetStr files i))
-                      {
-                        (replOut (concat "== " (concat f " ==\n")))
-                        (if (!= (testRunFile f filter) 0)
-                          (set bad (+ bad 1)))
-                      }
-                    })
-                  (set bad (testRunFilesParallel files filter jobs)))
-                (replOut
-                  (concat "\n"
-                    (concat (fmtInt n)
-                      (concat " file(s), "
-                        (concat (fmtInt bad) (concat " with a failing test" "\n"))))))
-                (if (> bad 0)
-                  1
-                  0)
-              }
-            })
-        }
-        (testRunFile target filter)))
+              (let files (testFilesIn target))
+              (if (== (vecLen files) 0)
+                (die (concat "error: no `.ax` file in " (concat target "\n")) 1)
+                {
+                  (let n (vecLen files))
+                  (let jobs (testJobs))
+                  (let mut bad 0)
+                  {
+                    (if (|| (<= jobs 1) (== n 1))
+                      (for i in 0..n
+                        {
+                          (let f (vecGetStr files i))
+                          {
+                            (replOut (concat "== " (concat f " ==\n")))
+                            (if (!= (testRunFile f filter) 0)
+                              (set bad (+ bad 1)))
+                          }
+                        })
+                      (set bad (testRunFilesParallel files filter jobs)))
+                    (replOut
+                      (concat "\n"
+                        (concat (fmtInt n)
+                          (concat " file(s), "
+                            (concat (fmtInt bad) (concat " with a failing test" "\n"))))))
+                    (if (> bad 0)
+                      1
+                      0)
+                  }
+                })
+            }
+            (testRunFile target filter)))
+      ))
   })
 
 ; A first operand that is no subcommand is an unknown command: exit 2,
@@ -1721,17 +1735,19 @@
 (pub fn (rejectUnknownCommand)
   {
     (let i (positionalIndex 1))
-    (if (< i 0)
-      0
-      {
-        (let w (sysArg i))
-        (let near (nearestSubcommand (sysArg i)))
-        (usageError
-          (concat (concat "error: unknown command `" (concat w "`\n"))
-            (if (== (strLen near) 0)
-              "       to compile a file, use `axiom emit-llvm FILE [--target TARGET]`, `axiom run FILE` or `axiom build FILE`\n"
-              (concat "       did you mean `" (concat near "`?\n")))))
-      })
+    (match i
+      ((None) 0)
+      ((Some i)
+        {
+          (let w (sysArg i))
+          (let near (nearestSubcommand (sysArg i)))
+          (usageError
+            (concat (concat "error: unknown command `" (concat w "`\n"))
+              (if (== (strLen near) 0)
+                "       to compile a file, use `axiom emit-llvm FILE [--target TARGET]`, `axiom run FILE` or `axiom build FILE`\n"
+                (concat "       did you mean `" (concat near "`?\n")))))
+        }
+      ))
   })
 
 ; `axiom new NAME`: start a project.
@@ -1747,24 +1763,30 @@
 (pub fn (newProjectCmd)
   {
     (let p1 (positionalIndex operandStart))
-    (if (< p1 0)
-      (usageError "error: `axiom new` needs a project name\n")
-      {
-        (let p2 (positionalIndex (+ p1 1)))
-        (if (>= p2 0)
-          (usageError
-            (concat "error: `axiom new` takes one project name, but `"
-              (concat (sysArg p2) "` was also given\n")))
-          {
-            (let name (sysArg p1))
-            (if (pkgNameOk name)
-              (newProject name)
+    (match p1
+      ((None) (usageError "error: `axiom new` needs a project name\n"))
+      ((Some p1)
+        {
+          (let p2 (positionalIndex (+ p1 1)))
+          (match p2
+            ((None)
+              {
+                (let name (sysArg p1))
+                (if (pkgNameOk name)
+                  (newProject name)
+                  (usageError
+                    (concat "error: `"
+                      (concat name
+                        "` is not a package name\n       A package name is letters, digits, `.`, `-` and `_`, and is neither `.` nor `..`.\n"))))
+              }
+            )
+            ((Some p2)
               (usageError
-                (concat "error: `"
-                  (concat name
-                    "` is not a package name\n       A package name is letters, digits, `.`, `-` and `_`, and is neither `.` nor `..`.\n"))))
-          })
-      })
+                (concat "error: `axiom new` takes one project name, but `"
+                  (concat (sysArg p2) "` was also given\n")))
+            ))
+        }
+      ))
   })
 
 (pub :: newProject (-> String Int))
@@ -1862,22 +1884,26 @@
 (pub fn (fetchCmd)
   {
     (let p (positionalIndex operandStart))
-    (if (>= p 0)
-      (usageError
-        (concat "error: `axiom fetch` takes no operands, but `"
-          (concat (sysArg p) "` was given\n")))
-      {
-        (let mf (pkgFindManifest ""))
-        (if (== (strLen mf) 0)
-          (die "error: no axiom.pkg at or above the working directory\n" 1)
-          {
-            (let text (unwrapOr (readFile mf) ""))
+    (match p
+      ((None)
+        {
+          (let mf (pkgFindManifest ""))
+          (if (== (strLen mf) 0)
+            (die "error: no axiom.pkg at or above the working directory\n" 1)
             {
-              (pkgCheckLines text mf)
-              (fetchUrls (pkgFetchUrls text) (pathDir mf) 0)
-            }
-          })
-      })
+              (let text (unwrapOr (readFile mf) ""))
+              {
+                (pkgCheckLines text mf)
+                (fetchUrls (pkgFetchUrls text) (pathDir mf) 0)
+              }
+            })
+        }
+      )
+      ((Some p)
+        (usageError
+          (concat "error: `axiom fetch` takes no operands, but `"
+            (concat (sysArg p) "` was given\n")))
+      ))
   })
 
 ; THE CLONE IS TRANSACTIONAL. This created the checkout directory
@@ -2060,9 +2086,13 @@
         (let topic (positionalFrom operandStart))
         {
           (replOut
-            (if (isSubcommand topic)
-              (helpForCommand topic)
-              usageText))
+            (match topic
+              ((None) usageText)
+              ((Some name)
+                (if (isSubcommand name)
+                  (helpForCommand name)
+                  usageText)
+              )))
           0
         }
       }
@@ -2229,13 +2259,13 @@
                         {
                           (let ir
                             (compileFile inp (targetArg hostTarget) 1
-                              (if (hasFlagAnywhere cmd "--emit-staticlib")
+                              (if (hasFlagAnywhere (Some cmd) "--emit-staticlib")
                                 0
                                 1)))
                           {
                             (let rc
                               (buildToExecutable ir outp (optLevelArg (pathDir inp))
-                                (if (hasFlagAnywhere cmd "--emit-llvm")
+                                (if (hasFlagAnywhere (Some cmd) "--emit-llvm")
                                   1
                                   0)
                                 (effectiveLinkArgs ir (pathDir inp) linkArgsOf)))
@@ -2251,7 +2281,7 @@
                               ; `run` inherited them onto stdout in front of the
                               ; program's own output.
                               {
-                                (if (hasFlagAnywhere cmd "--emit-llvm")
+                                (if (hasFlagAnywhere (Some cmd) "--emit-llvm")
                                   (replOut (concat "LLVM IR written to " (concat outp ".ll\n"))))
                                 (replOut (concat "Build successful: " (concat outp "\n")))
                                 0
@@ -2428,49 +2458,63 @@
                     ; code AS TYPED, before normalisation.
                     {
                       (let code (positionalFrom operandStart))
-                      (if (|| (hasFlagAnywhere cmd "--list") (== (strLen code) 0))
-                        {
-                          (replOut explainListColored)
-                          (if (&& (== (strLen code) 0)
-                                (if (hasFlagAnywhere cmd "--list")
-                                  false
-                                  true))
-                            (replOut "\nUsage: axiom explain <CODE>\n"))
-                          0
-                        }
-                        ; A word of the language answers from the
-                        ; lexicon when no diagnostic code matches:
-                        ; `axiom explain let`, and `axiom explain
-                        ; @restrict` for an AXTAG key.
-                        {
-                          (let text (explainText (explainNormalize code)))
-                          (if (== (strLen text) 0)
+                      (match code
+                        ((None)
+                          {
+                            (replOut explainListColored)
+                            (if (&& true
+                                  (if (hasFlagAnywhere (Some cmd) "--list")
+                                    false
+                                    true))
+                              (replOut "\nUsage: axiom explain <CODE>\n"))
+                            0
+                          }
+                        )
+                        ((Some code)
+                          (if (|| (hasFlagAnywhere (Some cmd) "--list") (== (strLen code) 0))
                             {
-                              (let lex (explainLexicon code))
-                              (if (== (strLen lex) 0)
+                              (replOut explainListColored)
+                              (if (&& (== (strLen code) 0)
+                                    (if (hasFlagAnywhere (Some cmd) "--list")
+                                      false
+                                      true))
+                                (replOut "\nUsage: axiom explain <CODE>\n"))
+                              0
+                            }
+                            ; A word of the language answers from the
+                            ; lexicon when no diagnostic code matches:
+                            ; `axiom explain let`, and `axiom explain
+                            ; @restrict` for an AXTAG key.
+                            {
+                              (let text (explainText (explainNormalize code)))
+                              (if (== (strLen text) 0)
                                 {
-                                  (writeStderrStr
-                                    (concat "error: unknown diagnostic code or word '"
-                                      (concat code "'\n")))
-                                  (writeStderrStr
-                                    "run `axiom explain --list` to see all known codes, or name a keyword, type, effect or `@tag`\n")
-                                  (sysExitWith 1)
-                                  1
+                                  (let lex (explainLexicon code))
+                                  (if (== (strLen lex) 0)
+                                    {
+                                      (writeStderrStr
+                                        (concat "error: unknown diagnostic code or word '"
+                                          (concat code "'\n")))
+                                      (writeStderrStr
+                                        "run `axiom explain --list` to see all known codes, or name a keyword, type, effect or `@tag`\n")
+                                      (sysExitWith 1)
+                                      1
+                                    }
+                                    {
+                                      (replOut lex)
+                                      0
+                                    })
                                 }
                                 {
-                                  (replOut lex)
+                                  (replOut text)
                                   0
                                 })
-                            }
-                            {
-                              (replOut text)
-                              0
                             })
-                        })
+                        ))
                     }
                     (if (strEq cmd "repl")
                       (replMain
-                        (if (hasFlagAnywhere cmd "--no-banner")
+                        (if (hasFlagAnywhere (Some cmd) "--no-banner")
                           1
                           0))
                       (if (strEq cmd "lsp")
@@ -2660,7 +2704,6 @@
 (pub fn (inputOperand)
   {
     (let supplied (flagValue "--input" 1))
-    ; An empty flag path follows the positional/default policy, as before.
     (let selected
       (match supplied
         ((None) None)
@@ -2673,19 +2716,19 @@
     (let extra
       (if (isSome selected)
         p
-        (if (< p 0)
-          p
-          (positionalIndex (+ p 1)))))
-    (if (>= extra 0)
+        (match p
+          ((None) None)
+          ((Some index) (positionalIndex (+ index 1))))))
+    (if (let (Some index) extra)
       (usageError
         (concat "error: unexpected operand `"
-          (concat (sysArg extra) "`: this command reads one input file\n"))))
+          (concat (sysArg index) "`: this command reads one input file\n"))))
     (match selected
       ((Some value) (Some value))
       ((None)
-        (if (< p 0)
-          None
-          (Some (sysArg p)))
+        (match p
+          ((None) None)
+          ((Some index) (Some (sysArg index))))
       ))
   })
 
@@ -2722,14 +2765,11 @@
 (pub :: runInputOperand (Option String))
 ;@axiom:effect(io)
 (pub fn (runInputOperand)
-  (if (runManifestMode)
+  (if runManifestMode
     manifestEntry
-    {
-      (let p (positionalIndex operandStart))
-      (if (< p 0)
-        (flagValue "--input" 1)
-        (Some (sysArg p)))
-    }))
+    (match (positionalIndex operandStart)
+      ((None) (flagValue "--input" 1))
+      ((Some index) (Some (sysArg index))))))
 
 ; Manifest mode: no `--input`, and no bare operand outside `--`'s
 ; reach. A bare operand anywhere before `--` - or with no `--` at
@@ -2745,15 +2785,13 @@
         ((Some value) (> (strLen value) 0))))
     (if explicit
       false
-      {
-        (let p (positionalIndex operandStart))
-        (if (< p 0)
-          true
-          {
-            (let dd (dashDashIndex operandStart))
-            (&& (>= dd 0) (> p dd))
-          })
-      })
+      (match (positionalIndex operandStart)
+        ((None) true)
+        ((Some p)
+          (match (dashDashIndex operandStart)
+            ((None) false)
+            ((Some dd) (> p dd)))
+        )))
   })
 
 ; argv for the program `run` spawns: its own name, then every argument
@@ -2780,15 +2818,20 @@
   {
     (let dd (dashDashIndex operandStart))
     (let p (positionalIndex operandStart))
-    (let first (+ (positionalIndex operandStart) 1))
     (let n sysArgc)
     {
       (let extra
-        (if (< p 0)
-          n
-          (if (&& (>= dd 0) (> p dd))
-            (+ dd 1)
-            first)))
+        (match p
+          ((None) n)
+          ((Some index)
+            (match dd
+              ((None) (+ index 1))
+              ((Some separator)
+                (if (> index separator)
+                  (+ separator 1)
+                  (+ index 1))
+              ))
+          )))
       {
         (let v (memAlloc (* (+ (- n extra) 2) 8)))
         {

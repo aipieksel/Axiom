@@ -3147,7 +3147,7 @@
     }))
 
 ; The INDEX of the first argument at or after `from` that is not a flag
-; and is not the value of one, or -1.
+; and is not the value of one, or None.
 ;
 ; Global flags may precede the subcommand, because stage0's are accepted
 ; anywhere and the gates rely on it: `check-cross-targets.sh` invokes
@@ -3230,11 +3230,11 @@
 (pub fn (looksLikeFlag a)
   (&& (strStartsWith a "-") (> (strLen a) 1)))
 
-(pub :: positionalIndex (-> Int Int))
+(pub :: positionalIndex (-> Int (Option Int)))
 ;@axiom:effect(io)
 (pub fn (positionalIndex from)
-  (if (>= from sysArgc)
-    (- 0 1)
+  (if (|| (< from 0) (>= from sysArgc))
+    None
     {
       (let a (sysArg from))
       (if (strEq a "--")
@@ -3245,8 +3245,8 @@
         ; file` - a separator the usage text documents and the
         ; operand scan did not implement.
         (if (< (+ from 1) sysArgc)
-          (+ from 1)
-          (- 0 1))
+          (Some (+ from 1))
+          None)
         (if (strStartsWith a "-")
           ; A flag carries its value with `=`, or takes the next
           ; argument, or takes none at all - and only the flag's name
@@ -3265,63 +3265,55 @@
                       2
                       1)))
               )))
-          from))
+          (Some from)))
     }))
 
-(pub :: positionalFrom (-> Int String))
+(pub :: positionalFrom (-> Int (Option String)))
 ;@axiom:effect(io)
 (pub fn (positionalFrom from)
-  {
-    (let i (positionalIndex from))
-    (if (< i 0)
-      ""
-      (sysArg i))
-  })
+  (match (positionalIndex from)
+    ((None) None)
+    ((Some i) (Some (sysArg i)))))
 
-; The subcommand this invocation names, or "".
+; The candidate command index, or None when no operand is present.
 ;
 ; argv[1] is consulted directly first so that `--version` - a flag by
 ; spelling and a subcommand by meaning - is not skipped as a flag by the
 ; scan below it.
-(pub :: subcommandIndex Int)
+(pub :: subcommandIndex (Option Int))
 ;@axiom:effect(io)
 (pub fn (subcommandIndex)
-  {
-    (let a1
-      (if (> sysArgc 1)
-        (sysArg 1)
-        ""))
-    (if (isSubcommand a1)
-      1
+  (if (> sysArgc 1)
+    (if (isSubcommand (sysArg 1))
+      (Some 1)
       (positionalIndex 1))
-  })
+    None))
 
-(pub :: subcommandName String)
+(pub :: subcommandName (Option String))
 ;@axiom:effect(io)
 (pub fn (subcommandName)
-  {
-    (let i subcommandIndex)
-    (if (< i 0)
-      ""
+  (match subcommandIndex
+    ((None) None)
+    ((Some i)
       {
         (let a (sysArg i))
         (if (isSubcommand a)
-          a
-          "")
-      })
-  })
+          (Some a)
+          None)
+      }
+    )))
 
-; The index of `--` at or after `from`, or -1. The end-of-options
+; The index of `--` at or after `from`, or None. The end-of-options
 ; marker is what lets `run` in manifest mode tell program arguments
 ; from compiler operands: everything after it belongs to the program
 ; whether it begins with a dash or not.
-(pub :: dashDashIndex (-> Int Int))
+(pub :: dashDashIndex (-> Int (Option Int)))
 ;@axiom:effect(io)
 (pub fn (dashDashIndex from)
-  (if (>= from sysArgc)
-    (- 0 1)
+  (if (|| (< from 0) (>= from sysArgc))
+    None
     (if (strEq (sysArg from) "--")
-      from
+      (Some from)
       (dashDashIndex (+ from 1)))))
 
 ; Where a subcommand's own operands begin - one past the subcommand,
@@ -3331,7 +3323,10 @@
 (pub :: operandStart Int)
 ;@axiom:effect(io)
 (pub fn (operandStart)
-  (+ subcommandIndex 1))
+  (match subcommandIndex
+    ; The no-command argv scan starts at index zero, as before.
+    ((None) 0)
+    ((Some index) (+ index 1))))
 
 ; The optimisation level, refusing a value it cannot honour.
 ;
@@ -3545,12 +3540,12 @@
 ; After `run`'s own file operand every argument belongs to the PROGRAM,
 ; so the scan stops there: `axiom run prog.ax --help` asks prog.ax for
 ; its help, not this compiler for its own.
-(pub :: hasFlagAnywhere (-> String String Bool))
+(pub :: hasFlagAnywhere (-> (Option String) String Bool))
 ;@axiom:effect(io)
 (pub fn (hasFlagAnywhere cmd want)
   (hasFlagAnywhereFrom cmd want 1 0))
 
-(pub :: hasFlagAnywhereFrom (-> String String Int Int Bool))
+(pub :: hasFlagAnywhereFrom (-> (Option String) String Int Int Bool))
 ;@axiom:effect(io)
 (pub fn (hasFlagAnywhereFrom cmd want i endOpts)
   (if (>= i sysArgc)
@@ -3564,7 +3559,13 @@
                 false
                 true))
           (hasFlagAnywhereFrom cmd want (+ i 1)
-            (if (&& (strEq cmd "run") (> i subcommandIndex))
+            (if (&&
+                  (match cmd
+                    ((None) false)
+                    ((Some name) (strEq name "run")))
+                  (match subcommandIndex
+                    ((None) (>= i 0))
+                    ((Some command) (> i command))))
               1
               endOpts))
           {
@@ -3588,13 +3589,18 @@
 ;
 ; Answers 0 for a well-formed invocation; a bad one never returns,
 ; because there is nothing a caller could do with the news.
-(pub :: checkArgs (-> String Int))
+(pub :: checkArgs (-> (Option String) Int))
 ;@axiom:effect(io)
 (pub fn (checkArgs cmd)
   {
     (checkArgsFrom cmd 1 0)
     (if (hasFlagAnywhere cmd "--obfuscate")
-      (if (! (|| (strEq cmd "build") (|| (strEq cmd "run") (strEq cmd "emit-llvm"))))
+      (if (!
+            (match cmd
+              ((None) false)
+              ((Some name)
+                (|| (strEq name "build") (|| (strEq name "run") (strEq name "emit-llvm")))
+              )))
         (usageError "error: --obfuscate is supported by build, run and emit-llvm\n")
         (if (hasFlagAnywhere cmd "--emit-staticlib")
           (usageError
@@ -3602,7 +3608,7 @@
     0
   })
 
-(pub :: checkArgsFrom (-> String Int Int Int))
+(pub :: checkArgsFrom (-> (Option String) Int Int Int))
 ;@axiom:effect(io)
 (pub fn (checkArgsFrom cmd i endOpts)
   (if (>= i sysArgc)
@@ -3622,7 +3628,13 @@
                 false
                 true))
           (checkArgsFrom cmd (+ i 1)
-            (if (&& (strEq cmd "run") (> i subcommandIndex))
+            (if (&&
+                  (match cmd
+                    ((None) false)
+                    ((Some name) (strEq name "run")))
+                  (match subcommandIndex
+                    ((None) (>= i 0))
+                    ((Some command) (> i command))))
               1
               endOpts))
           {
