@@ -49,8 +49,11 @@
 # What it asserts:
 #   A1  Every supported target's IR carries the four chunk lines, and
 #       the keep helper the two grain lines, at 1 MiB and 64 KiB.
-#   A2  `1048576` appears in `codegen.ax` once, in the table. A second
-#       spelling is a target that cannot move its own chunk size.
+#   A2  The chunk size `1048576` appears in `codegen.ax` once, in the
+#       table. The reservation floor is the same digits at one other
+#       site, and it is not a chunk size: moving the table must not
+#       move it. Any further spelling is a target that cannot move
+#       its own chunk size.
 #   A3  The minimal program imports nothing but the platform's own
 #       startup set and makes exactly ten distinct syscalls. On
 #       Mach-O its size is inside the 24 KiB flash budget; on ELF and
@@ -471,20 +474,25 @@ else
 fi
 
 # ---------------------------------------------------------------------
-echo "== A2. the chunk size has exactly one spelling in the source =="
+echo "== A2. the chunk size has one spelling, and the reservation floor is the other =="
 # ---------------------------------------------------------------------
 checks=$((checks + 1))
 # Comment lines are not spellings: the paragraph above the table names
-# the number too. The check is about a second place the emitter could
-# take the value from, so it counts only lines that are not comments.
-n_lit=$(grep -v '^[[:space:]]*;' "$src_root/core/codegen.ax" | grep -c '1048576' || true)
-if [[ "$n_lit" != "1" ]]; then
-  bad "\`1048576\` appears $n_lit times in codegen.ax; it must appear once, in
-     targetArenaChunkBytes. A second spelling is a target that cannot move its
-     own chunk size, which is what 4.1 exists to remove:"
-  grep -n '1048576' "$src_root/core/codegen.ax" | grep -v ':[[:space:]]*;' | head -5 | sed 's/^/       /'
+# the number too. The chunk size lives in `targetArenaChunkBytes`.
+# MM-ALLOC-26's reservation floor is the same 1 MiB, written once at
+# the eligibility test, and a target-table edit must not move it.
+# Any other non-comment spelling is a second chunk size.
+code_lits="$(grep -n '1048576' "$src_root/core/codegen.ax" | grep -v ':[[:space:]]*;' || true)"
+n_lit=$(printf '%s\n' "$code_lits" | grep -c '1048576' || true)
+n_table=$(printf '%s\n' "$code_lits" | grep -c 'targetArenaChunkBytes\|    1048576))' || true)
+n_floor=$(printf '%s\n' "$code_lits" | grep -c 'icmp uge i64 %sz0, 1048576' || true)
+if [[ "$n_lit" == "2" && "$n_table" == "1" && "$n_floor" == "1" ]]; then
+  note "\`1048576\` is the chunk size in the target table and the reservation floor"
 else
-  note "\`1048576\` is written once, in the target table"
+  bad "\`1048576\` appears $n_lit times in codegen.ax; want the target table once
+     and the reservation floor once. Another spelling is a target that cannot
+     move its own chunk size, which is what 4.1 exists to remove:"
+  printf '%s\n' "$code_lits" | head -8 | sed 's/^/       /'
 fi
 
 # ---------------------------------------------------------------------

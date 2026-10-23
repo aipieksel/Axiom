@@ -315,13 +315,20 @@ echo "--- 1. user-level cast count does not grow ---"
 # Each header observation keeps its live typed owner in scope.
 # The strict optional Try-state fixture adds one live-owner reference-count
 # observation; its typed owner remains in scope during the header read.
+# In-place vector growth adds seven subjects. `vecReserveExactly` writes
+# the capacity word of the live vector through `(as v Int)`, the same
+# header store `vecPop` and `vecClear` already use for the length, and
+# the vector stays the typed owner. `tests/stdlib/1002-vec-in-place-growth.ax`
+# reads that header and a child's count, and retains a live handle twice.
+# `tests/stdlib/1003-named-vector-return.ax` reads the returned element's
+# count word while its owner is still in scope.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1470 ]; then
-  ok "user-level (cast count $cast_count <= 1470)"
+elif [ "$cast_count" -le 1477 ]; then
+  ok "user-level (cast count $cast_count <= 1477)"
 else
-  bad "user-level (cast count $cast_count > 1470): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1477): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"

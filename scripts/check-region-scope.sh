@@ -19,8 +19,9 @@
 # rule for a refusal: show what accepting the program does.
 #
 #   1. NO REGION FORM, NO REGION CELL. A leaf program with no imports
-#      emits no mark cell. The positive controls emit two nested regions
-#      at each width: three words without owners and four with owners.
+#      emits no mark cell. Two nested regions are three words when
+#      neither owners nor reservations are on, and four when either is
+#      (MM-RGN-1, MM-ALLOC-26). An owner import turns the registry on.
 #      The compiler itself imports Task, whose taskSpawn has a region,
 #      so it is no longer a negative witness for this property.
 #
@@ -115,10 +116,12 @@ else
   fi
 fi
 
-# One program, two nested regions, emitted twice. With no import
-# nothing makes an owner, so the registry is off and each cell is three
-# words. Importing IO brings `File`, an owner, so the registry is on
-# and each cell is four.
+# One program, two nested regions. With no import nothing makes an
+# owner, so `@__axiom_res_seq` stays absent. Reservations still widen
+# each cell to four words and emit `@__axiom_reserve_seq`. Without
+# reservations the cell stays three words. Importing IO brings `File`,
+# an owner, so the registry is on and each cell is four.
+RESERVE='^@__axiom_reserve_seq = '
 two_regions() {  # <name> <import line> <width: 3|4> <registry: 0|1>
   local name="$1" import="$2" width="$3" want_reg="$4"
   local word want_cell other_cell cells others reg resets
@@ -149,7 +152,35 @@ two_regions() {  # <name> <import line> <width: 3|4> <registry: 0|1>
     bad "two nested regions emitted $cells $word-word and $others other-width cell(s), wanted 2 and 0 - the grep above is not measuring the cell"
   fi
 }
-two_regions two3 "" 3 0
+# No owner import. The width follows the reservation counter the
+# emitter actually wrote, which is what picks the fourth word.
+{
+  name=twoplain
+  printf '(:: main Int)\n\n(fn (main) (region a (region b 0)))\n' > "$work/$name.ax"
+  checks=$((checks + 1))
+  if ! "$axc" emit-llvm "$work/$name.ax" -o "$work/$name.ll" >"$work/$name.log" 2>&1; then
+    bad "could not emit the two-region probe without an owner import"
+    sed 's/^/     /' "$work/$name.log" | head -20
+  else
+    c3=$(grep -c "$CELL3" "$work/$name.ll" || true)
+    c4=$(grep -c "$CELL4" "$work/$name.ll" || true)
+    reg=$(grep -c "$REGISTRY" "$work/$name.ll" || true)
+    reserve=$(grep -c "$RESERVE" "$work/$name.ll" || true)
+    resets=$(grep -c 'call i64 @__axiom_arena_reset_fn' "$work/$name.ll" || true)
+    if [[ "$reserve" -gt 0 ]]; then
+      word=four; cells=$c4; others=$c3
+    else
+      word=three; cells=$c3; others=$c4
+    fi
+    if [[ "$reg" -ne 0 ]]; then
+      bad "the no-owner probe has the owner registry on"
+    elif [[ "$cells" -eq 2 && "$others" -eq 0 ]]; then
+      ok "two nested regions, owner registry off, reservations $(onoff "$reserve"): 2 $word-word cells, $resets reset calls in the module"
+    else
+      bad "two nested regions emitted $cells $word-word and $others other-width cell(s), wanted 2 and 0 - the grep above is not measuring the cell"
+    fi
+  fi
+}
 two_regions two4 "(import IO)" 4 1
 
 # ---------------------------------------------------------------

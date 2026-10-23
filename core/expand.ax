@@ -161,6 +161,9 @@
 ;            same additive-numbering reason as word 19.
 ;   words 31-32 — struct-name interner and typed declaration buckets,
 ;            built after declaration macros finish, before bodies expand.
+;   optNames — the functions whose signature result is `Option`,
+;            collected once so `?` does not scan every declaration
+;            again for each function.
 ; ------------------------------------------------------------------
 (pub struct MEnv
   (macros : Nodes)
@@ -196,7 +199,8 @@
   (mut deferHits : Int)
   (structNames : InternState)
   (structBuckets : NodesRows)
-  (mut carrier : Int))
+  (mut carrier : Int)
+  (optNames : Strings))
 
 ; The two budgets on the OUTPUT, which the parser's
 ; own AX2005 guard cannot see: it measures the source,
@@ -7269,20 +7273,26 @@
 ; The enclosing function's signature chooses the carrier. `Option`
 ; propagates with `Some` and `None`. Anything else, including a lambda
 ; whose type is not written yet, propagates with `Ok` and `Err`.
-(:: qmFnReturnsOption (-> MEnv String Bool))
-(fn (qmFnReturnsOption env name)
-  (qmSigOption env.decls name 0))
+; The names are collected once. Looking each function up by scanning
+; every declaration made expansion quadratic in the module.
+(:: qmOptionNames (-> (Vec ASTNode) Strings))
+(fn (qmOptionNames decls)
+  (qmOptionNamesFrom decls 0 vecNew))
 
-(:: qmSigOption (-> (Vec ASTNode) String Int Bool))
-(fn (qmSigOption decls name i)
+(:: qmOptionNamesFrom (-> (Vec ASTNode) Int Strings Strings))
+(fn (qmOptionNamesFrom decls i out)
   (if (>= i (vecLen decls))
-    false
+    out
     {
       (let d (vecGet decls i))
-      (if (&& (== (nodeTag d) TAG_D_SIG) (strEq (nodeAName d) name))
-        (qmTyOption (qmArrowResult (nodeTyChild d)))
-        (qmSigOption decls name (+ i 1)))
+      (if (&& (== (nodeTag d) TAG_D_SIG) (qmTyOption (qmArrowResult (nodeTyChild d))))
+        (vecPush out (nodeAName d)))
+      (qmOptionNamesFrom decls (+ i 1) out)
     }))
+
+(:: qmFnReturnsOption (-> MEnv String Bool))
+(fn (qmFnReturnsOption env name)
+  (== (strVecHas env.optNames name) 1))
 
 (:: qmArrowResult (-> ASTNode ASTNode))
 (fn (qmArrowResult t)
@@ -9174,7 +9184,8 @@
         :deferHits 0
         :structNames internNewTyped
         :structBuckets vecNew
-        :carrier 0))
+        :carrier 0
+        :optNames (qmOptionNames decls)))
     {
       (expCheckMacros env 0)
       (expCheckDeclNames decls env 0)

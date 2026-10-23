@@ -849,8 +849,14 @@ def ablate(kind, source, target):
         m = function_body(text, "axiom_release")
         body = replace_once(m.group(1), "  %stat = icmp slt i64 %c, 0", "  %stat = icmp eq i64 %c, -1", kind)
     elif kind == "reset":
-        # no slab scrub on reset
-        m = function_body(text, "__axiom_arena_reset_fn")
+        # no slab scrub on reset. Reservations keep the scrub in
+        # __axiom_arena_reset_impl; the wrapper __axiom_arena_reset_fn
+        # only forwards. A target without reservations keeps the scrub
+        # in __axiom_arena_reset_fn itself.
+        name = ("__axiom_arena_reset_impl"
+                if "define internal i64 @__axiom_arena_reset_impl(" in text
+                else "__axiom_arena_reset_fn")
+        m = function_body(text, name)
         body, n = re.subn(r"  br label %slabclear\nslabclear:.*?br i1 %sdone, label %resetbody, label %slabclear\n",
                           "  br label %resetbody\n", m.group(1), flags=re.S)
         if n != 1:
