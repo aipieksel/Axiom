@@ -1,0 +1,40 @@
+; The original and migrated source produce identical match fix metadata.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: renderMatch (-> String ()))
+;@axiom:effect(io)
+(fn (renderMatch source)
+  {
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "trivia.ax" :src source :name None :imports vecNew :library false)))
+    (let tc (tcNew vecNew vecNew units))
+    (let scrutinee (mkEVarAt "x" (mkSpan 7 8)))
+    (let arm (nodeBuildMArm (nodeBuildPCon0 "None" 0 0 (mkSpan 12 16)) (mkEInt 0) 0 0))
+    (let arms (vecPush vecNew arm))
+    (let matrix (vecPush vecNew (vecPush vecNew (nodeAChild arm))))
+    (let d (mkDiagBase 0 "AX3005" "non-exhaustive-match" (mkSpan 7 8) "probe" None))
+    (matchFixHelps tc d arms (mkTCon "Option" (vecPush vecNew mkIntTy)) scrutinee matrix
+      (vecPush vecNew "Some"))
+    (println (renderDiag d source "trivia.ax" units))
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (renderMatch "(match x\n ((None) 0))")
+    (renderMatch "(match x\n ((None) 0) ; misleading )\n)")
+    (renderMatch "(match x\n ((None) 0) #| outer #| ) |# end |# )")
+    (renderMatch "(match x\n ((None) 0)")
+    (renderMatch "(match x\n ((None) 0) ; missing )")
+    (renderMatch "(match x\n ((None) 0) #| missing )")
+    (renderMatch "(match x\n ((None) 0) \")\")")
+    (renderMatch "(match x\n ((None) 0) next)")
+  })

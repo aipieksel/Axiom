@@ -24963,15 +24963,15 @@
       })))
 
 ; The first byte at or after `i` that is neither whitespace nor a
-; comment, or -1 when only those remain.
-(pub :: skipTrivia (-> String Int Int))
+; comment, or None when the cursor is invalid or only trivia remains.
+(pub :: skipTrivia (-> String Int (Option Int)))
 (pub fn (skipTrivia src i)
   {
     (let n (strLen src))
     (let mut k i)
     (let mut go 1)
     {
-      (while (&& (== go 1) (< k n))
+      (while (&& (== go 1) (&& (>= k 0) (< k n)))
         {
           (let ch (strByte src k))
           (if (|| (== ch 32) (|| (== ch 9) (|| (== ch 10) (== ch 13))))
@@ -24982,9 +24982,9 @@
                 (set k (skipBlockComment src (+ k 2) n))
                 (set go 0))))
         })
-      (if (< k n)
-        k
-        (- 0 1))
+      (if (&& (>= k 0) (< k n))
+        (Some k)
+        None)
     }
   })
 
@@ -25141,13 +25141,11 @@
         (scrutFormEnd src scrut)
         (armFormEnd src (vecGet arms (- (vecLen arms) 1)))))
     (if (let (Some end) anchor)
-      {
-        ; skipTrivia retains its lower-level exhausted-input cursor.
-        (let next (skipTrivia src end))
-        (if (&& (>= next 0) (== (strByte src next) 41))
+      (if (let (Some next) (skipTrivia src end))
+        (if (== (strByte src next) 41)
           (Some next)
           None)
-      }
+        None)
       None)
   })
 
