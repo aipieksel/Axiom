@@ -312,16 +312,16 @@
 ; the bare half. Maps are parallel Vecs with linear lookup: a module
 ; has tens of declarations, not thousands.
 ; ------------------------------------------------------------------
-(pub :: saIdx (-> Strings String Int))
+(pub :: saIdx (-> Strings String (Option Int)))
 (pub fn (saIdx names key)
   {
     (let mut i 0)
-    (let mut hit (- 0 1))
+    (let mut hit (:: None (Option Int)))
     {
       (while (< i (vecLen names))
         {
-          (if (&& (< hit 0) (strEq (vecGetStr names i) key))
-            (set hit i))
+          (if (&& (isNone hit) (strEq (vecGetStr names i) key))
+            (set hit (Some i)))
           (set i (+ i 1))
         })
       hit
@@ -331,26 +331,27 @@
 ; Insert-or-overwrite (stage0's `insert`).
 (:: saPut (-> Strings (Vec a) String a Int))
 (fn (saPut names vals key val)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
+  (match (saIdx names key)
+    ((None)
       {
         (vecPush names key)
         (vecPush vals val)
         0
       }
+    )
+    ((Some i)
       {
         (vecSet vals i val)
         0
-      })
-  })
+      }
+    )))
 
 ; Insert only when absent, with the one lookup `saPut` makes. The NID
 ; variants use it for a signature, which names a function only when no
 ; `fn` does (AN-41).
 (pub :: saPutIfAbsent (-> Strings (Vec a) String a Int))
 (pub fn (saPutIfAbsent names vals key val)
-  (if (< (saIdx names key) 0)
+  (if (isNone (saIdx names key))
     {
       (vecPush names key)
       (vecPush vals val)
@@ -361,7 +362,7 @@
 ; Insert-if-absent (stage0's `or_insert`).
 (:: saPutSoft (-> Strings (Vec a) String a Int))
 (fn (saPutSoft names vals key val)
-  (if (< (saIdx names key) 0)
+  (if (isNone (saIdx names key))
     {
       (vecPush names key)
       (vecPush vals val)
@@ -375,25 +376,26 @@
 ; `vecSet`s into a value Vec that has no such slot yet.
 (pub :: saPut2 (-> Strings (Vec a) (Vec b) String a b Int))
 (pub fn (saPut2 names v1 v2 key a b)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
+  (match (saIdx names key)
+    ((None)
       {
         (vecPush names key)
         (vecPush v1 a)
         (vecPush v2 b)
         0
       }
+    )
+    ((Some i)
       {
         (vecSet v1 i a)
         (vecSet v2 i b)
         0
-      })
-  })
+      }
+    )))
 
 (:: saPutSoft2 (-> Strings (Vec a) (Vec b) String a b Int))
 (fn (saPutSoft2 names v1 v2 key a b)
-  (if (< (saIdx names key) 0)
+  (if (isNone (saIdx names key))
     {
       (vecPush names key)
       (vecPush v1 a)
@@ -402,48 +404,32 @@
     }
     0))
 
-(:: saGet (-> Strings Ints String Int))
-(fn (saGet names vals key)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
-      0
-      (vecGet vals i))
-  })
-
 ; Missing keys are None. Some retains the stored vector, including an
 ; empty one; lookup does not copy or mutate the parser's collections.
 (:: saGetVec (-> Strings (Vec Ints) String (Option Ints)))
 (fn (saGetVec names vals key)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
-      None
-      (Some (vecGet vals i)))
-  })
+  (match (saIdx names key)
+    ((None) None)
+    ((Some i) (Some (vecGet vals i)))))
 
 (pub :: saGetNames (-> Strings (Vec Names) String (Option Names)))
 (pub fn (saGetNames names vals key)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
-      None
-      (Some (vecGet vals i)))
-  })
+  (match (saIdx names key)
+    ((None) None)
+    ((Some i) (Some (vecGet vals i)))))
 
 (pub :: saGetNode (-> Strings Nodes String (Option ASTNode)))
 (pub fn (saGetNode names vals key)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
-      None
+  (match (saIdx names key)
+    ((None) None)
+    ((Some i)
       {
         (let node (vecGet vals i))
         (if (nodeSame node nilNode)
           None
           (Some node))
-      })
-  })
+      }
+    )))
 
 ; Byte-wise ascending insertion sort, in place: stage0's effect list
 ; arrives sorted (probed: `Beta,zeta`), and byte order is what Rust's
@@ -984,10 +970,9 @@
 ; slots (nIx, sIx, uIx), or "" when the name has no recorded span.
 (pub :: smLocReal (-> SymMaps Int Int Int String Units String))
 (pub fn (smLocReal sm nIx sIx uIx key units)
-  {
-    (let i (saIdx (smNameMap sm nIx) key))
-    (if (< i 0)
-      ""
+  (match (saIdx (smNameMap sm nIx) key)
+    ((None) "")
+    ((Some i)
       {
         (let sp (vecGet (smSpanMap sm sIx) i))
         (if (== sp 0)
@@ -996,19 +981,16 @@
             (let unit (vecGet units (vecGet (smUnitMap sm uIx) i)))
             (concat (unitFile unit) (concat ":" (fmtSpan (unitSrc unit) sp)))
           })
-      })
-  })
+      }
+    )))
 
 ; The nid for `key`, or "" for a name with no recorded declaration
 ; (builtins, effect operations).
 (pub :: smNidFor (-> SymMaps String String))
 (pub fn (smNidFor sm key)
-  {
-    (let i (saIdx sm.nidN key))
-    (if (< i 0)
-      ""
-      (symNid (vecGetStr sm.nidV i) (bareOf key)))
-  })
+  (match (saIdx sm.nidN key)
+    ((None) "")
+    ((Some i) (symNid (vecGetStr sm.nidV i) (bareOf key)))))
 
 ; The AXTAG metas for `key`, pushed in source order.
 ;

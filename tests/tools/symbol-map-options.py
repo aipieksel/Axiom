@@ -16,12 +16,9 @@ BRIDGE = '''
 '''
 
 NAMES_GETTER = '''(pub fn (saGetNames names vals key)
-  {
-    (let i (saIdx names key))
-    (if (< i 0)
-      None
-      (Some (vecGet vals i)))
-  })'''
+  (match (saIdx names key)
+    ((None) None)
+    ((Some i) (Some (vecGet vals i)))))'''
 
 
 def check(compiler, root, work):
