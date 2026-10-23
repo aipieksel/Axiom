@@ -1,0 +1,123 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found node)
+  (match found
+    ((None) false)
+    ((Some actual) (nodeSame node actual))))
+
+(:: stampModule (-> ASTNode String ASTNode))
+(fn (stampModule node module)
+  {
+    (writeNodeText node 8 module)
+    node
+  })
+
+(:: params (-> String String Int))
+(fn (params uri name)
+  (jsonObjPut jsonObj "item"
+    (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "name" (jsonStr name))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: retire (-> Nodes ()))
+(fn (retire nodes)
+  {
+    (let found (lspThFindType nodes "Box" (- (vecLen nodes) 1)))
+    (isSome found)
+    ()
+  })
+
+(:: escaped (Option ASTNode))
+(fn (escaped)
+  (lspThFindType (vecPush vecNew (nodeBuildDStruct (strDup "escaped") vecNew vecNew (mkSpan 0 7)))
+    "escaped" 0))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (isNone (lspThFindType vecNew "Box" -1)))
+    (say 2 (isNone (lspThFindImportedType vecNew "Box" -1)))
+    (let first (nodeBuildDStruct "Box" vecNew vecNew (mkSpan 0 3)))
+    (let last (nodeBuildDStruct "Box" vecNew vecNew (mkSpan 8 11)))
+    (let noSpan (nodeBuildDStruct "Box" vecNew vecNew 0))
+    (let pair (vecPush (vecPush vecNew first) last))
+    (say 3 (same (lspThFindType pair "Box" 1) last))
+    (say 4 (same (lspThFindType pair "Box" 0) first))
+    (say 5 (same (lspThFindType (vecPush pair noSpan) "Box" 2) last))
+    (say 6 (isNone (lspThFindType pair "absent" 1)))
+    (say 7 (isNone (lspThFindImportedType pair "Box" 1)))
+    (let imported (stampModule (nodeBuildDStruct "Peer$Box" vecNew vecNew (mkSpan 12 15)) "Peer"))
+    (say 8 (same (lspThFindImportedType (vecPush vecNew imported) "Box" 0) imported))
+    (say 9 (isNone (lspThFindType (vecPush vecNew imported) "Box" 0)))
+    (let emptyModule (stampModule (nodeBuildDStruct "Box" vecNew vecNew (mkSpan 16 19)) ""))
+    (say 10 (same (lspThFindImportedType (vecPush vecNew emptyModule) "Box" 0) emptyModule))
+    (let poison mkTErr)
+    (let alias (nodeBuildDAlias "Broken" poison vecNew (mkSpan 0 6)))
+    (say 11 (same (lspThFindType (vecPush vecNew alias) "Broken" 0) alias))
+    (let fnDecl (mkDFnAt "Box" vecNew (mkEInt 1) (mkSpan 20 23)))
+    (say 12 (same (lspThFindType (vecPush (vecPush vecNew first) fnDecl) "Box" 1) first))
+    (let uri "file:///tmp/axiom-hierarchy-fixtures/Main.ax")
+    (let source "(struct Box (field : Int))\n(fn (value) 1)")
+    (let uris (vecPush vecNew uri))
+    (let texts (vecPush vecNew source))
+    (say 13
+      (match (lspThSubject (params uri "Int") uris texts)
+        ((None) false)
+        ((Some subject) (isNone subject.decl))))
+    (say 14
+      (match (lspThSubject (params uri "Box") uris texts)
+        ((None) false)
+        ((Some subject)
+          (match subject.decl
+            ((None) false)
+            ((Some d) (strEq (nodeAName d) "Box")))
+        )))
+    (say 15 (isNone (lspThSubject (params uri "missing") uris texts)))
+    (say 16 (isNone (lspThSubject (params "absent.ax" "Box") uris texts)))
+    (say 17
+      (match (lspChSubject (params uri "value") uris texts)
+        ((None) false)
+        ((Some subject) (isSome subject.decl))))
+    (say 18 (isNone (lspChSubject (params uri "Box") uris texts)))
+    (say 19 (isNone (lspThSubject (params uri "") uris texts)))
+    (let before (count last))
+    (retire pair)
+    (say 20 (== (count last) before))
+    (let held (lspThFindType pair "Box" 1))
+    (say 21 (== (count last) (+ before 1)))
+    (let child escaped)
+    (for i in 0..16
+      (strDup "hierarchy owns its lookup result"))
+    (say 22
+      (match child
+        ((None) false)
+        ((Some d) (strEq (nodeAName d) "escaped"))))
+    (say 23
+      (match (lspThFindType (vecPush vecNew alias) "Broken" 0)
+        ((None) false)
+        ((Some d) (nodeSame (nodeBChild d) poison))))
+    (let importedNoSpan (stampModule (nodeBuildDStruct "Other$Box" vecNew vecNew 0) "Other"))
+    (say 24
+      (same (lspThFindImportedType (vecPush (vecPush vecNew imported) importedNoSpan) "Box" 1)
+        imported))
+    (let subject (LspHierSubject :uri uri :name "Int" :src source :decls vecNew :decl None))
+    (say 25 (isNone subject.decl))
+    0
+  })

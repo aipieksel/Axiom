@@ -1,0 +1,55 @@
+(import core)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: request (-> String String String String String ()))
+;@axiom:effect(io)
+(fn (request title source peer needle name)
+  {
+    (println "SOURCE {title}")
+    (let uri "file:///tmp/axiom-hierarchy-fixtures/Main.ax")
+    (let uris (vecPush vecNew uri))
+    (let texts (vecPush vecNew source))
+    (let meta (vecPush (vecPush vecNew 1) 1))
+    (if (> (strLen peer) 0)
+      {
+        (vecPush uris "file:///tmp/axiom-hierarchy-fixtures/Peer.ax")
+        (vecPush texts peer)
+        (vecPush meta 1)
+        (vecPush meta 1)
+      })
+    (let workspace (lspWorkspaceNew uris texts meta))
+    (let offset
+      (match (strFind source needle 0)
+        ((None) 0)
+        ((Some n) n)))
+    (let prepare (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (let params
+      (jsonObjPut jsonObj "item"
+        (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "name" (jsonStr name))))
+    (println (jsonWrite (lspPrepareTypeHierarchy workspace source uri prepare)))
+    (println (jsonWrite (lspSupertypes workspace params uris texts)))
+    (println (jsonWrite (lspSubtypes params uris texts)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (request "empty" "" "" "" "Int")
+    (request "struct" "(struct Box (field : Int))\n(:: value Box)" "" "Box)" "Box")
+    (request "builtin"
+      "(subtype Positive is Int range 1 .. 10)\n(subtype Tiny is Int range 0 .. 1)" "" "Int" "Int")
+    (request "subtype" "(subtype Positive is Int range 1 .. 10)\n(:: value Positive)" ""
+      "Positive)" "Positive")
+    (request "missing" "(struct Box (field : Int))\n(:: value Missing)" "" "Missing" "Missing")
+    (request "imported" "(import Peer)\n(:: value Box)" "(pub struct Box (field : Int))" "Box"
+      "Box")
+    (request "alias" "(type Alias Int)\n(:: value Alias)" "" "Alias)" "Alias")
+    (request "recovered" "(subtype Positive is Int range 1 .. 10)\n(:: value Positive" ""
+      "Positive" "Positive")
+    0
+  })

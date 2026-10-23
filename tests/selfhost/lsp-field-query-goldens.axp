@@ -1,0 +1,70 @@
+(import core)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: request (-> String String String String ()))
+;@axiom:effect(io)
+(fn (request title source peer needle)
+  {
+    (println "SOURCE {title}")
+    (let uri "file:///tmp/axiom-field-fixtures/Main.ax")
+    (let uris (vecPush vecNew uri))
+    (let texts (vecPush vecNew source))
+    (let meta (vecPush (vecPush vecNew 1) 1))
+    (if (> (strLen peer) 0)
+      {
+        (vecPush uris "file:///tmp/axiom-field-fixtures/Peer.ax")
+        (vecPush texts peer)
+        (vecPush meta 1)
+        (vecPush meta 1)
+      })
+    (let workspace (lspWorkspaceNew uris texts meta))
+    (let offset
+      (match (strFind source needle 0)
+        ((None) 0)
+        ((Some n) n)))
+    (let params (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (println (jsonWrite (lspDefinition workspace source uri params "")))
+    (println (jsonWrite (lspTypeDefinition workspace source uri params)))
+    (println (jsonWrite (lspHover workspace source uri params "")))
+    (println (jsonWrite (lspSignatureHelp workspace source uri params)))
+    (println
+      (jsonWrite
+        (lspInlayHints workspace source uri
+          (jsonObjPut jsonObj "range"
+            (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+              (lspPos source (strLen source)))))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (request "empty" "" "" "")
+    (request "field-declaration" "(struct Box (field : Int))" "" "field")
+    (request "field-use"
+      "(struct Box (field : Int))\n(fn (read) { (let box (Box :field 1)) box.field })" "" "field }")
+    (request "unknown-field"
+      "(struct Box (field : Int))\n(fn (read) { (let box (Box :field 1)) box.missing })" ""
+      "missing")
+    (request "ctor-first" "(data Shape (Circle Int) (Point))\n(fn (use) (Circle 2))" "" "Circle 2")
+    (request "ctor-nullary" "(data Shape (Circle Int) (Point))\n(fn (use) Point)" "" "Point)")
+    (request "ctor-missing" "(data Shape (Circle Int))\n(fn (use) Missing)" "" "Missing")
+    (request "duplicate-ctor"
+      "(data First (Make Int))\n(data Last (Make String))\n(fn (use) (Make 1))" "" "Make 1")
+    (request "type-local"
+      "(struct Box (field : Int))\n(:: read (-> Box Int))\n(fn (read box) box.field)" "" "Box Int")
+    (request "type-poison"
+      "(struct Box (field : Missing))\n(fn (read) { (let box (Box :field 1)) box.field })" ""
+      "field }")
+    (request "recovered" "(data Shape (Circle Int))\n(fn (use) (Circle 2)" "" "Circle 2")
+    (request "imported-ctor" "(import Peer)\n(fn (use) (Circle 2))"
+      "(pub data Shape (Circle Int) (Point))" "Circle 2")
+    (request "imported-type" "(import Peer)\n(:: read (-> Shape Int))\n(fn (read x) 1)"
+      "(pub data Shape (Circle Int) (Point))" "Shape Int")
+    0
+  })
