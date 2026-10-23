@@ -1,0 +1,127 @@
+; Expander indexes keep their typed interner owner across growth and lookup.
+(import core)
+(import lexer)
+(import parser)
+(import expand)
+(import Intern)
+(import Vec)
+(import Str)
+(import IO)
+(import Fmt)
+(import Mem)
+
+(:: environment (-> Diags Units Nodes InternState MEnv))
+(fn (environment diagnostics units declarations owner)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames owner
+    :structBuckets vecNew))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+; Observe the live count while the owning value remains in scope.
+(:: countOf (-> a Int))
+;@axiom:effect(unsafe)
+(fn (countOf value)
+  (__load64 (as value Int) -2))
+
+(:: retireEnvironment (-> InternState Int))
+(fn (retireEnvironment owner)
+  {
+    (let env (environment vecNew vecNew vecNew owner))
+    (internCap (internWordOf env.structNames))
+  })
+
+(:: declared (-> String Nodes))
+(fn (declared source)
+  (match (parseModule (lex source))
+    ((ParseSuccess nodes position) nodes)
+    ((ParseFailed error) __indexTrap)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let owner internNewTyped)
+    (let before (countOf owner))
+    (retireEnvironment owner)
+    (say 1 (== (countOf owner) before))
+    (let declarations (declared "(struct Empty) (struct Pair (left : Int))"))
+    (let env (environment vecNew vecNew declarations owner))
+    (say 2 (== (countOf owner) (+ before 1)))
+    (expIndexStructDecls env)
+    (say 3 (== (vecLen env.structBuckets) 2))
+    (say 4
+      (match (internFind (internWordOf owner) "Empty")
+        ((None) false)
+        ((Some id) (== id 0))))
+    (say 5
+      (match (internFind (internWordOf owner) "Pair")
+        ((None) false)
+        ((Some id) (== id 1))))
+    (say 6 (isNone (internFind (internWordOf owner) "absent")))
+    (say 7
+      (match (expNamedStructDecl env (mkEVar "Pair"))
+        ((ExpStructFound node) (strEq (nodeAName node) "Pair"))
+        ((ExpStructMissing) false)
+        ((ExpStructAmbiguous) false)))
+    (say 8
+      (match (expNamedStructDecl env (mkEVar "Missing"))
+        ((ExpStructFound node) false)
+        ((ExpStructMissing) true)
+        ((ExpStructAmbiguous) false)))
+    (let cap (internCap (internWordOf owner)))
+    (for i in 0..100
+      (internIntern (internWordOf env.structNames) (concat "growth" (fmtInt i))))
+    (say 9 (> (internCap (internWordOf owner)) cap))
+    (say 10
+      (match (internFind (internWordOf owner) "Pair")
+        ((None) false)
+        ((Some id) (== id 1))))
+    (say 11
+      (match (internFind (internWordOf env.structNames) "growth99")
+        ((None) false)
+        ((Some id) (== id 101))))
+    (say 12 (== (internCap (internWordOf env.structNames)) (internCap (internWordOf owner))))
+    (let kept env.structNames)
+    (say 13 (== (countOf owner) (+ before 2)))
+    (say 14 (== (internCap (internWordOf kept)) (internCap (internWordOf owner))))
+    0
+  })
