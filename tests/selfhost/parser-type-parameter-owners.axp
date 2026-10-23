@@ -1,0 +1,118 @@
+(import core)
+(import lexer)
+(import parser)
+(import frontpack)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: namesOf (-> ASTNode (Option Names)))
+(fn (namesOf node)
+  (if (== (nodeTy node) 0)
+    None
+    (Some (nodeTyNames node))))
+
+(:: parsedNames (-> String (Option Names)))
+(fn (parsedNames source)
+  (match (parseModule (lex source))
+    ((ParseFailed error) None)
+    ((ParseSuccess declarations after)
+      (if (== (vecLen declarations) 0)
+        None
+        (namesOf (vecGet declarations 0)))
+    )))
+
+(:: namesAre (-> (Option Names) Names Bool))
+(fn (namesAre found expected)
+  (match found
+    ((None) false)
+    ((Some names)
+      {
+        (let mut good (== (vecLen names) (vecLen expected)))
+        (let mut i 0)
+        (while (&& good (< i (vecLen names)))
+          {
+            (set good (strEq (vecGet names i) (vecGet expected i)))
+            (set i (+ i 1))
+          })
+        good
+      }
+    )))
+
+(:: ownsNames (-> ASTNode Bool))
+;@axiom:effect(unsafe)
+(fn (ownsNames node)
+  (!= (& (__load64 (- (as node Int) 8) 0) (<< 1 22)) 0))
+
+(:: roundTrip (-> String String Bool))
+(fn (roundTrip source wanted)
+  (match (frontParse source)
+    ((None) false)
+    ((Some parsed)
+      (match (frontDecode (frontEncode parsed))
+        ((None) false)
+        ((Some decoded)
+          (if (== (vecLen decoded.decls) 0)
+            false
+            (namesAre (namesOf (vecGet decoded.decls 0)) (vecPush vecNew wanted)))
+        ))
+    )))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (namesAre (parsedNames "(data Plain (Plain))") vecNew))
+    (say 2 (namesAre (parsedNames "(data Empty () (Empty))") vecNew))
+    (say 3 (namesAre (parsedNames "(data Box (a) (Box a))") (vecPush vecNew "a")))
+    (say 4 (namesAre (parsedNames "(data Pair a b (Pair a b))") (vecPush (vecPush vecNew "a") "b")))
+    (say 5 (isNone (parsedNames "(data")))
+    (say 6 (isNone (namesOf (mkDDataAt "Missing" vecNew 0))))
+    (say 7 (isNone (parsedNames "(struct Plain (value : Int))")))
+    (say 8 (pResFailed (parseModule (lex "(struct Empty () (value : Int))"))))
+    (say 9 (namesAre (parsedNames "(struct Box (a) (value : a))") (vecPush vecNew "a")))
+    (let names (:: (vecPush vecNew (strDup "owned")) Names))
+    (let before (count names))
+    (let held (parseConstructors (lex ")") 0 "Held" 0 vecNew names))
+    (let heldOwns (== (count names) (+ before 1)))
+    (say 10
+      (match held
+        ((ParseFailed error) false)
+        ((ParseSuccess declaration after) (ownsNames declaration))))
+    (say 11 heldOwns)
+    (say 12 (pResOk held))
+    (say 13
+      (match held
+        ((ParseFailed error) false)
+        ((ParseSuccess declaration after) (namesAre (namesOf declaration) names))))
+    (let empty (:: vecNew Names))
+    (let emptyBefore (count empty))
+    (let heldEmpty (parseConstructors (lex ")") 0 "Empty" 0 vecNew empty))
+    (say 14 (== (count empty) (+ emptyBefore 1)))
+    (say 15
+      (match heldEmpty
+        ((ParseFailed error) false)
+        ((ParseSuccess declaration after) (namesAre (namesOf declaration) vecNew))))
+    (say 16 (roundTrip "(data Box (a) (Box a))" "a"))
+    (say 17 (roundTrip "(struct Box (a) (value : a))" "a"))
+    (say 18
+      (namesAre (parsedNames (strDup "(data Escaped (parameter) (Escaped parameter))"))
+        (vecPush vecNew "parameter")))
+    (let bounded (mkDDataAt "Bounded" vecNew 0))
+    (let boundedBefore (count names))
+    (writeNodeNames bounded 6 names)
+    (say 19 (== (count names) (+ boundedBefore 1)))
+    (writeNodeNames bounded 6 (:: vecNew Names))
+    (say 20 (== (count names) boundedBefore))
+    0
+  })
