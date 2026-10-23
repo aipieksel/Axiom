@@ -1058,16 +1058,16 @@
 ; expander - but a duplicate parameter is now AX3020, so the rule is
 ; unobservable on any program that compiles.
 ; ------------------------------------------------------------------
-(pub :: expParamIndex (-> Names String Int))
+(pub :: expParamIndex (-> Names String (Option Int)))
 (pub fn (expParamIndex params name)
   (expParamIndexFrom params name (- (vecLen params) 1)))
 
-(pub :: expParamIndexFrom (-> Names String Int Int))
+(pub :: expParamIndexFrom (-> Names String Int (Option Int)))
 (pub fn (expParamIndexFrom params name i)
   (if (< i 0)
-    (- 0 1)
+    None
     (if (strEq (vecGetStr params i) name)
-      i
+      (Some i)
       (expParamIndexFrom params name (- i 1)))))
 
 ; ------------------------------------------------------------------
@@ -1114,10 +1114,11 @@
 (pub :: expBinderParam (-> String Names (Vec ASTNode) MEnv Int String))
 ;@axiom:effect(unsafe)
 (pub fn (expBinderParam name params args env isp)
-  {
-    (let idx (expParamIndex params name))
-    (if (< idx 0)
+  (match (expParamIndex params name)
+    ((None)
       (as 0 String)
+    )
+    ((Some idx)
       {
         (let a (vecGet args idx))
         (if (== (nodeTag a) TAG_E_VAR)
@@ -1130,8 +1131,8 @@
                 "a `let`, `lambda` or pattern binder is a NAME, so a parameter standing in one can only be given a name - this is the same rule `set` targets follow (AX3022)"))
             name
           })
-      })
-  })
+      }
+    )))
 
 ; ------------------------------------------------------------------
 ; Pattern binders.
@@ -1665,10 +1666,9 @@
     (let foundFor (expForLookup env s))
     (if (let (Some fe) foundFor)
       (Some fe)
-      {
-        (let idx (expParamIndex params s))
-        (if (< idx 0)
-          (Some s)
+      (match (expParamIndex params s)
+        ((None) (Some s))
+        ((Some idx)
           {
             (let a (vecGet args idx))
             (if (== (nodeTag a) TAG_E_VAR)
@@ -1680,8 +1680,8 @@
                   "pass a plain name in this argument position" (expMacMod env))
                 None
               })
-          })
-      })
+          }
+        )))
   })
 
 ; The same resolution from a query argument's NODE rather than its
@@ -2861,12 +2861,9 @@
 (pub fn (expFmtArgNode a params args)
   (if (!= (nodeTag a) TAG_E_VAR)
     a
-    {
-      (let idx (expParamIndex params (nodeAName a)))
-      (if (< idx 0)
-        a
-        (vecGet args idx))
-    }))
+    (match (expParamIndex params (nodeAName a))
+      ((None) a)
+      ((Some idx) (vecGet args idx)))))
 
 ; The end of the hole opened at `i`: the offset of its closing `}`,
 ; or `n` when there is none. Scanned rather than assumed, because a
@@ -3719,7 +3716,7 @@
 ; ------------------------------------------------------------------
 (pub :: expWarnNamePos (-> Names String Int MEnv Int String String Int))
 (pub fn (expWarnNamePos params name forShielded env isp position help)
-  (if (< (expParamIndex params name) 0)
+  (if (isNone (expParamIndex params name))
     0
     (if (&& (== forShielded 1)
           (if (let (Some _) (expForLookup env name))
@@ -3747,7 +3744,7 @@
     (as 0 String)
     {
       (let e (vecGet effs i))
-      (if (&& (== (nodeTag e) TAG_E_VAR) (>= (expParamIndex params (nodeAName e)) 0))
+      (if (&& (== (nodeTag e) TAG_E_VAR) (isSome (expParamIndex params (nodeAName e))))
         (nodeAName e)
         (expHandleParamName effs params (+ i 1)))
     }))
@@ -3808,9 +3805,8 @@
                       binding.spelling
                       fe)
                     isp)
-                  {
-                    (let idx (expParamIndex params (nodeAName tpl)))
-                    (if (< idx 0)
+                  (match (expParamIndex params (nodeAName tpl))
+                    ((None)
                       ; A `syntax/`-spelled name that survived
                       ; the lookups above is a query this
                       ; vocabulary does not answer, or one
@@ -3866,8 +3862,8 @@
                                 (setNodeDefScope v)
                               })
                           }))
-                      (vecGet args idx))
-                  })
+                    )
+                    ((Some idx) (vecGet args idx))))
               })
           }
           (if (== tag TAG_E_APP)
@@ -4092,10 +4088,9 @@
     (let template (expScResolveTpl env name))
     (if (let (Some binding) template)
       binding.spelling
-      {
-        (let idx (expParamIndex params name))
-        (if (< idx 0)
-          (expQualify env name)
+      (match (expParamIndex params name)
+        ((None) (expQualify env name))
+        ((Some idx)
           {
             (let a (vecGet args idx))
             (if (== (nodeTag a) TAG_E_VAR)
@@ -4114,8 +4109,8 @@
                 ; the whole node, whose span 0 then suppresses cascades.
                 (as 0 String)
               })
-          })
-      })
+          }
+        )))
   })
 
 (pub :: substVec (-> (Vec ASTNode) Names (Vec ASTNode) MEnv Int (Vec ASTNode)))
@@ -7847,7 +7842,7 @@
               (let ns (expUniqueNames fixed))
               (let reps (expUniqueNames (expRuleBindersOf (vecGet (expRulePats r) k) vecNew)))
               (for n in 0..(vecLen reps)
-                (if (>= (expParamIndex ns (vecGetStr reps n)) 0)
+                (if (isSome (expParamIndex ns (vecGetStr reps n)))
                   (expEmit env
                     (mkDiagNote SEV_ERROR "AX3020" "macro-duplicate-parameter" (nodeSpan mac)
                       (concat (concat (concat "macro `" (nodeAName mac)) "` binds the parameter `")
@@ -7864,7 +7859,7 @@
   {
     (let out vecNew)
     (for i in 0..(vecLen ns)
-      (if (< (expParamIndex out (vecGetStr ns i)) 0)
+      (if (isNone (expParamIndex out (vecGetStr ns i)))
         (vecPush out (vecGetStr ns i))))
     out
   })
@@ -8305,7 +8300,7 @@
         (if (== tag TAG_D_DATA)
           (expCtorBindingKey (nodeBChildren d) d name 0)
           (if (|| (== tag TAG_D_EFFECT) (== tag TAG_D_EXTERN))
-            (if (>= (expParamIndex (nodeBNames d) name) 0)
+            (if (isSome (expParamIndex (nodeBNames d) name))
               (concat "D:" (expBindingName d name))
               "")
             ""))))
@@ -8554,16 +8549,15 @@
         ; name are not.
         (if (strEq (nodeAName p) "_")
           1
-          {
-            (let prior (expParamIndex names (nodeAName p)))
-            (if (>= prior 0)
-              (expSyntaxSame (vecGet vals prior) a)
+          (match (expParamIndex names (nodeAName p))
+            ((Some prior) (expSyntaxSame (vecGet vals prior) a))
+            ((None)
               {
                 (vecPush names (nodeAName p))
                 (vecPush vals a)
                 1
-              })
-          }))
+              }
+            ))))
       (if (== pt TAG_E_INT)
         (if (&& (== (nodeTag a) TAG_E_INT) (== (as (nodeA a) Int) (as (nodeA p) Int)))
           1
@@ -8828,15 +8822,14 @@
 (pub fn (expNestAppend binders accs names vals i)
   (if (>= i (vecLen binders))
     1
-    {
-      (let at (expParamIndex names (vecGetStr binders i)))
-      (if (< at 0)
-        0
+    (match (expParamIndex names (vecGetStr binders i))
+      ((None) 0)
+      ((Some at)
         {
           (vecPush (vecGet accs i) (vecGet vals at))
           (expNestAppend binders accs names vals (+ i 1))
-        })
-    }))
+        }
+      ))))
 
 ; Accumulators into `SeqBind`s, in binder order.
 (pub :: expSealSeqs (-> Names NodesRows SeqBinds Int Int))
@@ -9120,7 +9113,9 @@
     (if (>= i (vecLen ps))
       0
       {
-        (if (!= (expParamIndex ps (vecGetStr ps i)) i)
+        (if (match (expParamIndex ps (vecGetStr ps i))
+          ((None) false)
+          ((Some at) (!= at i)))
           (expEmit env
             (mkDiagNote SEV_ERROR "AX3020" "macro-duplicate-parameter" (nodeSpan mac)
               (concat (concat (concat "macro `" (nodeAName mac)) "` declares the parameter `")
@@ -10060,10 +10055,9 @@
       (let foundFor (expForLookup env s))
       (if (let (Some fe) foundFor)
         (Some fe)
-        {
-          (let idx (expParamIndex params s))
-          (if (< idx 0)
-            (Some s)
+        (match (expParamIndex params s)
+          ((None) (Some s))
+          ((Some idx)
             {
               (let a (vecGet args idx))
               (if (== (nodeTag a) TAG_E_VAR)
@@ -10078,8 +10072,8 @@
                       "the parameter stands in a NAME position of the template - a declaration head or a parameter list - and only an identifier can be a name"))
                   None
                 })
-            })
-        })
+            }
+          )))
     }))
 
 (pub :: expSubstNames (-> Names Names Nodes MEnv Int (Option Names)))
@@ -10252,17 +10246,16 @@
 ; only the declaration node itself.
 (pub :: expNameSpan (-> String Names (Vec ASTNode) Int))
 (pub fn (expNameSpan s params args)
-  {
-    (let idx (expParamIndex params s))
-    (if (< idx 0)
-      0
+  (match (expParamIndex params s)
+    ((None) 0)
+    ((Some idx)
       {
         (let a (vecGet args idx))
         (if (&& (== (nodeTag a) TAG_E_VAR) (!= (nodeSpan a) 0))
           (nodeSpan a)
           0)
-      })
-  })
+      }
+    )))
 
 ; One template declaration instantiated. fn and :: are the v1 surface;
 ; a nested TAG_D_MACROCALL re-tags for the next round; the default arm
@@ -11814,7 +11807,7 @@
         false
         (if (let (Some _) iteration)
           true
-          (>= (expParamIndex params name) 0)))
+          (isSome (expParamIndex params name))))
     }))
 
 (pub :: expSubstCall (-> ASTNode ASTNode (Vec ASTNode) Names (Vec ASTNode) MEnv Int ASTNode))
