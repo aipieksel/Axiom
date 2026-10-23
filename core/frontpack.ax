@@ -240,19 +240,51 @@
       0
     }))
 
-(:: frontPutRecord (-> FrontWriter Int String Int Int))
-(fn (frontPutRecord out value shape depth)
+; R and L retain their existing packet field order. No in-memory mixed
+; word record is constructed or inspected to encode these owning products.
+(:: frontPutMacroRules (-> FrontWriter MacroRules Int Int))
+(fn (frontPutMacroRules out rules depth)
   {
-    (let record (frontVector value))
-    (if (!= (vecLen record) (strLen shape))
+    (if (> depth 512)
       (set out.good false)
       {
-        (let mut i 0)
-        (while (&& out.good (< i (vecLen record)))
-          {
-            (frontPutValue out (vecGet record i) (strByte shape i) (+ depth 1))
-            (set i (+ i 1))
-          })
+        (frontPutWord out (vecLen rules))
+        (for i in 0..(vecLen rules)
+          (frontPutMacroRule out (vecGet rules i) (+ depth 1)))
+        0
+      })
+    0
+  })
+
+(:: frontPutMacroRule (-> FrontWriter MacroRule Int Int))
+(fn (frontPutMacroRule out rule depth)
+  {
+    (if (> depth 512)
+      (set out.good false)
+      {
+        (frontPutValue out (as rule.params Int) 83 (+ depth 1))
+        (frontPutValue out (as rule.declarations Int) 78 (+ depth 1))
+        (frontPutValue out (as rule.patterns Int) 78 (+ depth 1))
+        (frontPutValue out (as rule.spellings Int) 83 (+ depth 1))
+        (frontPutValue out (as rule.repeats Int) 87 (+ depth 1))
+        (frontPutMacroLiterals out rule.literals (+ depth 1))
+        (match rule.expression
+          ((None) (frontPutWord out (- 0 1)))
+          ((Some expression)
+            (frontPutValue out (as expression Int) 110 (+ depth 1))
+          ))
+      })
+    0
+  })
+
+(:: frontPutMacroLiterals (-> FrontWriter MacroLiterals Int Int))
+(fn (frontPutMacroLiterals out literals depth)
+  {
+    (if (> depth 512)
+      (set out.good false)
+      {
+        (frontPutValue out (as literals.declared Int) 83 (+ depth 1))
+        (frontPutValue out (as literals.used Int) 83 (+ depth 1))
       })
     0
   })
@@ -302,7 +334,13 @@
                   (let payload (nodeWireWord value field))
                   (if (&& (== kind 119) (! (frontRawValid tag field payload)))
                     (set out.good false))
-                  (frontPutValue out payload kind (+ depth 1))
+                  (if (== kind 82)
+                    (match (nodeMacroRules value)
+                      ((None)
+                        (set out.good false)
+                      )
+                      ((Some rules) (frontPutMacroRules out rules (+ depth 1))))
+                    (frontPutValue out payload kind (+ depth 1)))
                 })
               (set field (+ field 1))
             })
@@ -334,9 +372,6 @@
                 (frontPutWord out (| (<< start 32) end)))
             })
         )
-        (82 (frontPutVector out value 114 depth))
-        (114 (frontPutRecord out value "SNNSWLn" depth))
-        (76 (frontPutRecord out value "SS" depth))
         (65 (frontPutVector out value 97 depth))
         (97
           {
@@ -460,18 +495,135 @@
         }))
   })
 
-(:: frontGetRecord (-> FrontReader String Int Int))
-(fn (frontGetRecord input shape depth)
+; Every field of an R/L record is required except its expression.
+; Null or malformed required vectors refuse the packet before expansion.
+(:: frontGetMacroNames (-> FrontReader Int (Option Names)))
+(fn (frontGetMacroNames input depth)
+  (if (> depth 512)
+    None
+    {
+      (let names (frontGetItems input depth frontGetText))
+      (if (|| (! input.good) (== (as names Int) 0))
+        None
+        {
+          (let mut good true)
+          (for i in 0..(vecLen names)
+            (if (== (as (vecGet names i) Int) 0)
+              (set good false)))
+          (if good
+            (Some names)
+            None)
+        })
+    }))
+
+(:: frontGetMacroNodes (-> FrontReader Int (Option Nodes)))
+(fn (frontGetMacroNodes input depth)
+  (if (> depth 512)
+    None
+    {
+      (let nodes (frontGetItems input depth frontGetChild))
+      (if (|| (! input.good) (== (as nodes Int) 0))
+        None
+        {
+          (let mut good true)
+          (for i in 0..(vecLen nodes)
+            (if (nodeSame (vecGet nodes i) nilNode)
+              (set good false)))
+          (if good
+            (Some nodes)
+            None)
+        })
+    }))
+
+(:: frontGetMacroWords (-> FrontReader (Option Ints)))
+(fn (frontGetMacroWords input)
   {
-    (let record (vecWithCapacity (strLen shape)))
-    (let mut i 0)
-    (while (&& input.good (< i (strLen shape)))
+    (let count (frontGetWord input))
+    (if (&& input.good (&& (>= count 0) (<= count (/ (- (strLen input.bytes) input.pos) 8))))
       {
-        (vecPush record (frontGetValue input (strByte shape i) (+ depth 1)))
-        (set i (+ i 1))
-      })
-    (__retainref record)
-    (as record Int)
+        (let values (:: (vecWithCapacity count) Ints))
+        (for i in 0..count
+          (vecPush values (frontGetWord input)))
+        (Some values)
+      }
+      None)
+  })
+
+(:: frontGetMacroLiterals (-> FrontReader Int (Option MacroLiterals)))
+(fn (frontGetMacroLiterals input depth)
+  (if (> depth 512)
+    None
+    (if (let (Some declared) (frontGetMacroNames input (+ depth 1)))
+      (if (let (Some used) (frontGetMacroNames input (+ depth 1)))
+        (Some (MacroLiterals :declared declared :used used))
+        None)
+      None)))
+
+(:: frontGetMacroRule (-> FrontReader Int (Option MacroRule)))
+(fn (frontGetMacroRule input depth)
+  (if (> depth 512)
+    None
+    (if (let (Some params) (frontGetMacroNames input (+ depth 1)))
+      (if (let (Some declarations) (frontGetMacroNodes input (+ depth 1)))
+        (if (let (Some patterns) (frontGetMacroNodes input (+ depth 1)))
+          (if (let (Some spellings) (frontGetMacroNames input (+ depth 1)))
+            (if (let (Some repeats) (frontGetMacroWords input))
+              (if (let (Some literals) (frontGetMacroLiterals input (+ depth 1)))
+                {
+                  (let expression (frontGetNode input (+ depth 1)))
+                  (let count (vecLen patterns))
+                  (let mut good
+                    (&& input.good
+                      (&& (== (vecLen params) count)
+                        (&& (== (vecLen spellings) count) (== (vecLen repeats) count)))))
+                  (for i in 0..(vecLen repeats)
+                    (if (! (|| (== (vecGet repeats i) 0) (== (vecGet repeats i) 1)))
+                      (set good false)))
+                  (if good
+                    (Some
+                      (MacroRule
+                        :params params
+                        :declarations declarations
+                        :patterns patterns
+                        :spellings spellings
+                        :repeats repeats
+                        :literals literals
+                        :expression
+                          (if (nodeSame expression nilNode)
+                            None
+                            (Some expression))))
+                    None)
+                }
+                None)
+              None)
+            None)
+          None)
+        None)
+      None)))
+
+(:: frontGetMacroRules (-> FrontReader Int (Option MacroRules)))
+(fn (frontGetMacroRules input depth)
+  {
+    (let count (frontGetWord input))
+    (if (&& (<= depth 512)
+          (&& input.good (&& (>= count 0) (<= count (/ (- (strLen input.bytes) input.pos) 64)))))
+      {
+        (let rules (:: (vecWithCapacity count) MacroRules))
+        (let mut i 0)
+        (while (&& input.good (< i count))
+          {
+            (match (frontGetMacroRule input (+ depth 1))
+              ((None)
+                (set input.good false)
+              )
+              ((Some rule) (vecPush rules rule)))
+            (set i (+ i 1))
+          })
+        (if input.good
+          (Some rules)
+          None)
+      }
+      None)
   })
 
 (:: frontGetNode (-> FrontReader Int ASTNode))
@@ -518,10 +670,19 @@
                                     115))))
                           (set input.good false))
                       })
-                    (let payload (frontGetValue input kind (+ depth 1)))
-                    (if (|| (== payload 0) (&& (== kind 119) (! (frontRawValid tag field payload))))
-                      (set input.good false))
-                    (nodeWireStore node field payload (!= kind 119))
+                    (if (== kind 82)
+                      (match (frontGetMacroRules input (+ depth 1))
+                        ((None)
+                          (set input.good false)
+                        )
+                        ((Some rules) (writeNodeMacroRules node rules)))
+                      {
+                        (let payload (frontGetValue input kind (+ depth 1)))
+                        (if (|| (== payload 0)
+                              (&& (== kind 119) (! (frontRawValid tag field payload))))
+                          (set input.good false))
+                        (nodeWireStore node field payload (!= kind 119))
+                      })
                   })
                 (set field (+ field 1))
               })
@@ -584,9 +745,6 @@
             })
         }
       )
-      (82 (frontGetVector input 114 depth))
-      (114 (frontGetRecord input "SNNSWLn" depth))
-      (76 (frontGetRecord input "SS" depth))
       (65 (frontGetVector input 97 depth))
       (97
         {
@@ -729,10 +887,7 @@
     (let tokens (lex source))
     (if (isSome (lexErrDiag tokens source))
       None
-      {
-        (let parsed (parseModuleWith tokens (scanAxtags source)))
-        (if (pResFailed parsed)
-          None
-          (Some (FrontParsed :source source :decls (pResNodes parsed))))
-      })
+      (match (parseModuleWith tokens (scanAxtags source))
+        ((ParseFailed _) None)
+        ((ParseSuccess declarations _) (Some (FrontParsed :source source :decls declarations)))))
   })

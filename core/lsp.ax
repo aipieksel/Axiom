@@ -16146,10 +16146,8 @@
 
 ; A macro in either of its two spellings: the head-list form `(macro
 ; (name p...) body)` when word 3 holds a template expression, else the
-; rule form, one rule per line, read from word 9 as `parseDeclMacro`
-; stored it - each rule's slot 0 its parameter names, slot 1 its
-; template declarations and slot 6 its template expression, one of the
-; two shown.
+; rule form, one owning rule per line, with its parameter names and
+; declaration or expression template.
 (pub :: lspRenderMacro (-> ASTNode Int String))
 (pub fn (lspRenderMacro d ind)
   (if (!= (nodeC d) 0)
@@ -16158,14 +16156,15 @@
         (concat (lspParamsOf (nodeBNames d)) ")\n"))
       (concat (lspPad (+ ind 2)) (concat (lspRenderExpr (nodeCChild d) (+ ind 2)) ")")))
     {
-      (let rules (nodeFieldNamesRows d))
+      (let rules
+        (match (nodeMacroRules d)
+          ((None) vecNew)
+          ((Some rules) rules)))
       (let parts vecNew)
       (let mut i 0)
       {
         (vecPush parts (concat (concat (lspPubOf d) "macro ") (lspRenderName (nodeAName d))))
-        (while (if (== (as rules Int) 0)
-          false
-          (< i (vecLen rules)))
+        (while (< i (vecLen rules))
           {
             (vecPush parts
               (concat
@@ -16177,7 +16176,9 @@
                 (if (> (vecLen (ruleDeclsAt rules i)) 0)
                   (lspRenderDeclLines (ruleDeclsAt rules i) (+ ind 4))
                   (concat (concat "\n" (lspPad (+ ind 4)))
-                    (lspRenderExpr (ruleExprAt rules i) (+ ind 4))))
+                    (match (ruleExprAt rules i)
+                      ((None) "(syntax/unrenderable 0)")
+                      ((Some template) (lspRenderExpr template (+ ind 4))))))
                 ")"))
             (set i (+ i 1))
           })

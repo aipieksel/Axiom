@@ -1,0 +1,294 @@
+; Macro products keep typed owners across parser, syntax and packet handoffs.
+(import core)
+(import lexer)
+(import parser)
+(import expand)
+(import frontpack)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: rulesOf (-> String (Option MacroRules)))
+(fn (rulesOf source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) None)
+    ((ParseSuccess declarations _)
+      (if (== (vecLen declarations) 0)
+        None
+        (nodeMacroRules (vecGet declarations 0)))
+    )))
+
+(:: firstRule (-> String (Option MacroRule)))
+(fn (firstRule source)
+  (match (rulesOf source)
+    ((None) None)
+    ((Some rules)
+      (if (== (vecLen rules) 0)
+        None
+        (Some (vecGet rules 0)))
+    )))
+
+(:: choice (-> String Nodes (Option ExpMatch)))
+(fn (choice source arguments)
+  (match (parseModule (lex source))
+    ((ParseFailed _) None)
+    ((ParseSuccess declarations _)
+      (if (== (vecLen declarations) 0)
+        None
+        (match (nodeMacroRules (vecGet declarations 0))
+          ((None) None)
+          ((Some rules) (expRuleForForms rules arguments 0 (expMatchCtx declarations 0 0)))))
+    )))
+
+(:: record (-> String (Option ASTNode) MacroRule))
+(fn (record payload expression)
+  (MacroRule
+    :params (vecPush vecNew payload)
+    :declarations vecNew
+    :patterns (vecPush vecNew (mkEVar payload))
+    :spellings (vecPush vecNew payload)
+    :repeats (vecPush vecNew 0)
+    :literals (MacroLiterals :declared (vecPush vecNew payload) :used (vecPush vecNew payload))
+    :expression expression))
+
+(:: escapedRules (-> String (Option MacroRules)))
+(fn (escapedRules payload)
+  {
+    (let node (mkDMacroAt "owned" vecNew nilNode 0))
+    (writeNodeMacroRules node (vecPush vecNew (record payload (Some (mkEVar payload)))))
+    (nodeMacroRules node)
+  })
+
+(:: escapedProduct (-> String (Option MacroRules)))
+(fn (escapedProduct payload)
+  (Some (vecPush vecNew (record payload (Some (mkEVar payload))))))
+
+(:: duringRules (-> String Int))
+(fn (duringRules payload)
+  (match (escapedProduct payload)
+    ((None) 0)
+    ((Some rules)
+      (if (== (vecLen rules) 1)
+        (count payload)
+        0)
+    )))
+
+(:: packetRoundtrip (-> String Bool))
+(fn (packetRoundtrip source)
+  (match (frontParse source)
+    ((None) false)
+    ((Some original)
+      {
+        (let packet (frontEncode original))
+        (match (frontDecode packet)
+          ((None) false)
+          ((Some copied) (strEq packet (frontEncode copied))))
+      }
+    )))
+
+(:: decodedAfterPacket (-> String (Option MacroRules)))
+(fn (decodedAfterPacket source)
+  (match (frontParse source)
+    ((None) None)
+    ((Some original)
+      (match (frontDecode (frontEncode original))
+        ((None) None)
+        ((Some copied)
+          (if (== (vecLen copied.decls) 0)
+            None
+            (nodeMacroRules (vecGet copied.decls 0)))
+        ))
+    )))
+
+(:: malformed (-> Int Bool))
+(fn (malformed mode)
+  {
+    (let valid (record "item" (Some (mkEInt 1))))
+    (let rule
+      (MacroRule
+        :params valid.params
+        :declarations valid.declarations
+        :patterns valid.patterns
+        :spellings
+          (if (== mode 0)
+            vecNew
+            valid.spellings)
+        :repeats
+          (if (== mode 1)
+            (vecPush vecNew 2)
+            valid.repeats)
+        :literals valid.literals
+        :expression valid.expression))
+    (let node (mkDMacroAt "bad" valid.params nilNode 0))
+    (writeNodeMacroRules node (vecPush vecNew rule))
+    (isNone (frontDecode (frontEncode (FrontParsed :source "" :decls (vecPush vecNew node)))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let head (mkDMacroAt "head" vecNew (mkEInt 1) 0))
+    (say 1 (isNone (nodeMacroRules head)))
+    (let empty (:: vecNew MacroRules))
+    (let node (mkDMacroAt "empty" vecNew nilNode 0))
+    (writeNodeMacroRules node empty)
+    (say 2
+      (match (nodeMacroRules node)
+        ((None) false)
+        ((Some rules) (== (vecLen rules) 0))))
+    (say 3 (isNone (rulesOf "(macro (head value) value)")))
+    (say 4 (isNone (rulesOf "(macro missing")))
+    (let source "(macro expr ((expr item) (+ item 1)))")
+    (say 5
+      (match (rulesOf source)
+        ((None) false)
+        ((Some rules) (== (vecLen rules) 1))))
+    (say 6
+      (match (firstRule source)
+        ((None) false)
+        ((Some rule) (&& (== (vecLen rule.params) 1) (strEq (vecGet rule.params 0) "item")))))
+    (say 7
+      (match (firstRule source)
+        ((None) false)
+        ((Some rule)
+          (&& (== (vecLen rule.patterns) 1) (strEq (nodeAName (vecGet rule.patterns 0)) "item"))
+        )))
+    (say 8
+      (match (firstRule source)
+        ((None) false)
+        ((Some rule) (&& (== (vecLen rule.spellings) 1) (strEq (vecGet rule.spellings 0) "item")))))
+    (say 9
+      (match (firstRule source)
+        ((None) false)
+        ((Some rule) (&& (== (vecLen rule.repeats) 1) (== (vecGet rule.repeats 0) 0)))))
+    (say 10
+      (match (firstRule source)
+        ((None) false)
+        ((Some rule) (isSome rule.expression))))
+    (say 11
+      (match (firstRule source)
+        ((None) false)
+        ((Some rule) (== (vecLen rule.declarations) 0))))
+    (say 12
+      (match (firstRule "(macro decl ((decl name) (:: name Int) (fn (name) 42)))")
+        ((None) false)
+        ((Some rule) (&& (isNone rule.expression) (== (vecLen rule.declarations) 2)))))
+    (say 13
+      (match (firstRule "(macro dual ((dual item) (callee item)))")
+        ((None) false)
+        ((Some rule) (&& (isSome rule.expression) (== (vecLen rule.declarations) 1)))))
+    (let literal "(macro lit (literals key) ((lit key value) value))")
+    (say 14
+      (match (firstRule literal)
+        ((None) false)
+        ((Some rule)
+          (&& (== (vecLen rule.literals.declared) 1)
+            (strEq (vecGet rule.literals.declared 0) "key"))
+        )))
+    (say 15
+      (match (firstRule literal)
+        ((None) false)
+        ((Some rule)
+          (&& (== (vecLen rule.literals.used) 1) (strEq (vecGet rule.literals.used 0) "key"))
+        )))
+    (say 16
+      (match (firstRule literal)
+        ((None) false)
+        ((Some rule) (&& (== (vecLen rule.params) 2) (strEq (vecGet rule.params 0) "syntax/pat")))))
+    (say 17
+      (match (choice literal (vecPush (vecPush vecNew (mkEVar "key")) (mkEInt 42)))
+        ((None) false)
+        ((Some found) (&& (== (vecLen found.values) 1) (== (nodeA (vecGet found.values 0)) 42)))))
+    (say 18 (isNone (choice literal (vecPush (vecPush vecNew (mkEVar "other")) (mkEInt 42)))))
+    (say 19
+      (match (choice "(macro seq ((seq values ...) (sum values ...)))" vecNew)
+        ((None) false)
+        ((Some found)
+          (match (expSeqLookup found.sequences "values")
+            ((None) false)
+            ((Some forms) (== (vecLen forms) 0)))
+        )))
+    (say 20
+      (match (choice "(macro first ((first 1) 41) ((first other) 42))" (vecPush vecNew (mkEInt 1)))
+        ((None) false)
+        ((Some found)
+          (match found.rule.expression
+            ((None) false)
+            ((Some expression) (== (nodeA expression) 41)))
+        )))
+    (let payload (strDup "retained-field"))
+    (let before (count payload))
+    (say 21 (> (duringRules payload) before))
+    (say 22 (== (count payload) before))
+    (say 23
+      (match (escapedRules (strDup "outlived-node"))
+        ((None) false)
+        ((Some rules)
+          (if (== (vecLen rules) 1)
+            {
+              (let rule (vecGet rules 0))
+              (strEq (vecGet rule.literals.used 0) "outlived-node")
+            }
+            false)
+        )))
+    (let poison mkTErr)
+    (say 24
+      (match (expRuleExpr (record "poison" (Some poison)))
+        ((None) false)
+        ((Some expression) (nodeSame expression poison))))
+    (say 25 (isNone (expRuleExpr (record "absent" None))))
+    (say 26 (packetRoundtrip source))
+    (say 27 (packetRoundtrip literal))
+    (say 28 (packetRoundtrip "(macro decl ((decl name) (:: name Int) (fn (name) 42)))"))
+    (say 29 (packetRoundtrip "(macro dual ((dual item) (callee item)))"))
+    (say 30
+      (match (decodedAfterPacket source)
+        ((None) false)
+        ((Some rules)
+          (if (== (vecLen rules) 1)
+            {
+              (let rule (vecGet rules 0))
+              (strEq (vecGet rule.params 0) "item")
+            }
+            false)
+        )))
+    (say 31 (malformed 0))
+    (say 32 (malformed 1))
+    (let truncated
+      (match (frontParse source)
+        ((None) "")
+        ((Some parsed) (frontEncode parsed))))
+    (let mut allMissing true)
+    (for cut in 0..(/ (strLen truncated) 8)
+      (if (isSome (frontDecode (strSlice truncated 0 (* cut 8))))
+        (set allMissing false)))
+    (say 33 allMissing)
+    (say 34 (isNone (frontDecode (concat truncated "trailing"))))
+    (say 35 (isNone (frontParse "(macro broken ((broken value)))")))
+    (say 36
+      (match (frontDecode (frontEncode (FrontParsed :source "" :decls (vecPush vecNew node))))
+        ((None) false)
+        ((Some copied)
+          (match (nodeMacroRules (vecGet copied.decls 0))
+            ((None) false)
+            ((Some rules) (== (vecLen rules) 0)))
+        )))
+    (say 37 macroPacketDepthProbe)
+    0
+  })

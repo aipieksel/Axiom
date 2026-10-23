@@ -61,16 +61,15 @@
 
 (:: selected (-> String Nodes (Option ExpMatch)))
 (fn (selected source arguments)
-  {
-    (let parsed (parseModule (lex source)))
-    (if (pResOk parsed)
-      {
-        (let declarations (pResNodes parsed))
-        (let macro (vecGet declarations 0))
-        (expRuleForForms (nodeFieldNamesRows macro) arguments 0 (expMatchCtx declarations 0 0))
-      }
-      None)
-  })
+  (match (parseModule (lex source))
+    ((ParseFailed _) None)
+    ((ParseSuccess declarations _)
+      (if (== (vecLen declarations) 0)
+        None
+        (match (nodeMacroRules (vecGet declarations 0))
+          ((None) None)
+          ((Some rules) (expRuleForForms rules arguments 0 (expMatchCtx declarations 0 0)))))
+    )))
 
 (:: sequenceLength (-> SeqBinds String Int Bool))
 (fn (sequenceLength bindings name want)
@@ -87,11 +86,10 @@
 (:: evaluatesExpansion (-> String Int Bool))
 ;@axiom:effect(io)
 (fn (evaluatesExpansion source want)
-  {
-    (let parsed (parseModule (lex source)))
-    (if (pResOk parsed)
+  (match (parseModule (lex source))
+    ((ParseFailed _) false)
+    ((ParseSuccess declarations _)
       {
-        (let declarations (pResNodes parsed))
         (let diagnostics (:: vecNew Diags))
         (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
         (if (== (countErrorDiags diagnostics) 0)
@@ -103,8 +101,7 @@
           }
           false)
       }
-      false)
-  })
+    )))
 
 (:: main Int)
 ;@axiom:effect(io)

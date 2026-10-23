@@ -6494,21 +6494,25 @@
 ; gets in a position none of its rules can fill.
 (pub :: expMacHasExprRule (-> ASTNode Bool))
 (pub fn (expMacHasExprRule mac)
-  (expRulesHaveExpr (nodeFieldNamesRows mac) 0))
+  (match (nodeMacroRules mac)
+    ((None) false)
+    ((Some rules) (expRulesHaveExpr rules 0))))
 
 (pub :: expMacHasDeclRule (-> ASTNode Bool))
 (pub fn (expMacHasDeclRule mac)
-  (expRulesHaveDecls (nodeFieldNamesRows mac) 0))
+  (match (nodeMacroRules mac)
+    ((None) false)
+    ((Some rules) (expRulesHaveDecls rules 0))))
 
-(pub :: expRulesHaveExpr (-> IntRows Int Bool))
+(pub :: expRulesHaveExpr (-> MacroRules Int Bool))
 (pub fn (expRulesHaveExpr rules i)
   (if (>= i (vecLen rules))
     false
-    (if (! (nodeSame (expRuleExpr (vecGet rules i)) nilNode))
+    (if (isSome (expRuleExpr (vecGet rules i)))
       true
       (expRulesHaveExpr rules (+ i 1)))))
 
-(pub :: expRulesHaveDecls (-> IntRows Int Bool))
+(pub :: expRulesHaveDecls (-> MacroRules Int Bool))
 (pub fn (expRulesHaveDecls rules i)
   (if (>= i (vecLen rules))
     false
@@ -6516,11 +6520,10 @@
       true
       (expRulesHaveDecls rules (+ i 1)))))
 
-; A rule's expression template, or 0 when its template is only
-; declarations (slot 6, `parseMacroRules`).
-(pub :: expRuleExpr (-> Ints ASTNode))
+; A declaration-only rule has no expression template.
+(pub :: expRuleExpr (-> MacroRule (Option ASTNode)))
 (pub fn (expRuleExpr r)
-  (packedNodeAt r 6))
+  r.expression)
 
 ; A rule-form macro invoked in expression position, with `args`: the
 ; first rule whose pattern matches is instantiated, and it must have an
@@ -6528,41 +6531,49 @@
 ; has always drawn, before any rule is tried.
 (pub :: expandRuleApp (-> ASTNode String Nodes MEnv ScopeBinds Int ASTNode))
 (pub fn (expandRuleApp mac name args env bs isp)
-  (if (expMacHasExprRule mac)
-    {
-      (let m
-        (expRuleForForms (nodeFieldNamesRows mac) (expCaptureVec args env bs) 0
-          (expMatchCtx (expDeclsVec env) env.site (nodeModule mac))))
-      (if (let (Some m) m)
-        (if (nodeSame (expRuleExpr (expMatchOf m)) nilNode)
+  {
+    (let rules
+      (match (nodeMacroRules mac)
+        ((None) vecNew)
+        ((Some rules) rules)))
+    (if (expMacHasExprRule mac)
+      {
+        (let m
+          (expRuleForForms rules (expCaptureVec args env bs) 0
+            (expMatchCtx (expDeclsVec env) env.site (nodeModule mac))))
+        (if (let (Some m) m)
+          (match (expRuleExpr (expMatchOf m))
+            ((None)
+              {
+                (expEmit env
+                  (expMarkUnit env
+                    (mkDiagNote SEV_ERROR "AX3027" "declaration-macro" isp
+                      (concat (concat "the rule of macro `" name)
+                        "` that matches here generates declarations, so it can't stand in expression position")
+                      0 0
+                      "invoke it at top level, or give the macro an earlier rule for this shape whose template is one expression"
+                      "each rule's template is declarations or one expression, and where the macro is invoked picks which it needs (macro-system.md MAC-LANG-14)")
+                    env.declmod))
+                (mkEInt 0)
+              }
+            )
+            ((Some template) (expandExprRuleInstantiate mac template m env bs isp)))
           {
-            (expEmit env
-              (expMarkUnit env
-                (mkDiagNote SEV_ERROR "AX3027" "declaration-macro" isp
-                  (concat (concat "the rule of macro `" name)
-                    "` that matches here generates declarations, so it can't stand in expression position")
-                  0 0
-                  "invoke it at top level, or give the macro an earlier rule for this shape whose template is one expression"
-                  "each rule's template is declarations or one expression, and where the macro is invoked picks which it needs (macro-system.md MAC-LANG-14)")
-                env.declmod))
+            (expNoRuleDiag env name (expRuleShapes rules name 0 "") isp)
             (mkEInt 0)
-          }
-          (expandExprRuleInstantiate mac m env bs isp))
-        {
-          (expNoRuleDiag env name (expRuleShapes (nodeFieldNamesRows mac) name 0 "") isp)
-          (mkEInt 0)
-        })
-    }
-    {
-      (expEmit env
-        (expMarkUnit env
-          (mkDiagNote SEV_ERROR "AX3027" "declaration-macro" isp
-            (concat (concat "declaration macro `" name) "` invoked in expression position") 0 0
-            "every rule of this macro generates declarations; invoke it at top level"
-            "an expression position needs a value, and each rule's template here is declarations (macro-system.md MAC-CAP-8)")
-          env.declmod))
-      (mkEInt 0)
-    }))
+          })
+      }
+      {
+        (expEmit env
+          (expMarkUnit env
+            (mkDiagNote SEV_ERROR "AX3027" "declaration-macro" isp
+              (concat (concat "declaration macro `" name) "` invoked in expression position") 0 0
+              "every rule of this macro generates declarations; invoke it at top level"
+              "an expression position needs a value, and each rule's template here is declarations (macro-system.md MAC-CAP-8)")
+            env.declmod))
+        (mkEInt 0)
+      })
+  })
 
 (pub :: expandMacroApp (-> ASTNode ASTNode ASTNode MEnv ScopeBinds ASTNode))
 (pub fn (expandMacroApp e head mac env bs)
@@ -6696,8 +6707,8 @@
 ; so a template invoking another macro expands too. Sequences ride
 ; on env word 20, exactly as declaration instantiation does, and the
 ; iteration stack starts empty for the same reason.
-(pub :: expandExprRuleInstantiate (-> ASTNode ExpMatch MEnv ScopeBinds Int ASTNode))
-(pub fn (expandExprRuleInstantiate mac m env bs isp)
+(pub :: expandExprRuleInstantiate (-> ASTNode ASTNode ExpMatch MEnv ScopeBinds Int ASTNode))
+(pub fn (expandExprRuleInstantiate mac template m env bs isp)
   {
     (let d (+ (expDepth env) 1))
     (if (> d expDepthLimit)
@@ -6730,8 +6741,7 @@
         (let _setfors (set env.forstack vecNew))
         (let _setseqs (set env.seqbinds (expMatchSeqs m)))
         {
-          (let body
-            (substTpl (expRuleExpr (expMatchOf m)) (expMatchNames m) (expMatchVals m) env isp))
+          (let body (substTpl template (expMatchNames m) (expMatchVals m) env isp))
           {
             (expSetMacMod env prevMod)
             (set env.forstack prevFors)
@@ -7475,10 +7485,9 @@
 ; both one form and a sequence, so it remains AX3020.
 (pub :: expCheckRuleParams (-> ASTNode MEnv Int Int))
 (pub fn (expCheckRuleParams mac env i)
-  {
-    (let rules (nodeFieldNamesRows mac))
-    (if (== (as rules Int) 0)
-      0
+  (match (nodeMacroRules mac)
+    ((None) 0)
+    ((Some rules)
       (if (>= i (vecLen rules))
         0
         {
@@ -7501,10 +7510,10 @@
                       "a pattern binder may constrain several forms at one depth; one form and a sequence need separate names"))))
             })
           (expCheckRuleParams mac env (+ i 1))
-        }))
-  })
+        })
+    )))
 
-(pub :: expUniqueNames (-> Ints Names))
+(pub :: expUniqueNames (-> Names Names))
 (pub fn (expUniqueNames ns)
   {
     (let out vecNew)
@@ -7536,10 +7545,9 @@
 ; you is one whose expansion nobody can predict.
 (pub :: expCheckRuleEllipsis (-> ASTNode MEnv Int Int))
 (pub fn (expCheckRuleEllipsis mac env i)
-  {
-    (let rules (nodeFieldNamesRows mac))
-    (if (== (as rules Int) 0)
-      0
+  (match (nodeMacroRules mac)
+    ((None) 0)
+    ((Some rules)
       (if (>= i (vecLen rules))
         0
         {
@@ -7569,8 +7577,8 @@
                 "keep one repeating element per rule; the arguments a second one would take are the ones the first already took"
                 "a repeating element absorbs every argument left after the fixed ones (macro-system.md MAC-LANG-16), so a second has nothing defined to absorb and where the split fell would be the expander's guess")))
           (expCheckRuleEllipsis mac env (+ i 1))
-        }))
-  })
+        })
+    )))
 
 ; A literal no pattern spells is dead text - and the likeliest
 ; reading is a typo for a name the patterns spell, in which case
@@ -7580,10 +7588,9 @@
 ; UNION across rules: a literal spelled in any rule is live.
 (pub :: expCheckRuleLiterals (-> ASTNode MEnv Int))
 (pub fn (expCheckRuleLiterals mac env)
-  {
-    (let rules (nodeFieldNamesRows mac))
-    (if (== (as rules Int) 0)
-      0
+  (match (nodeMacroRules mac)
+    ((None) 0)
+    ((Some rules)
       (if (== (vecLen rules) 0)
         0
         {
@@ -7592,24 +7599,20 @@
             (expCollectUsed rules union 0)
             (expCheckLiteralsUsed mac rules union env)
           }
-        }))
-  })
+        })
+    )))
 
-(pub :: expCollectUsed (-> IntRows Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: expCollectUsed (-> MacroRules Names Int Int))
 (pub fn (expCollectUsed rules union i)
   (if (>= i (vecLen rules))
     0
     {
-      (let r (as (vecGet rules i) (Vec Int)))
-      {
-        (if (>= (vecLen r) 6)
-          (expCollectUsedVec (as (vecGet (as (vecGet r 5) (Vec Int)) 1) (Vec Int)) union 0))
-        (expCollectUsed rules union (+ i 1))
-      }
+      (let rule (vecGet rules i))
+      (expCollectUsedVec rule.literals.used union 0)
+      (expCollectUsed rules union (+ i 1))
     }))
 
-(pub :: expCollectUsedVec (-> Ints Ints Int Int))
+(pub :: expCollectUsedVec (-> Names Names Int Int))
 (pub fn (expCollectUsedVec used union i)
   (if (>= i (vecLen used))
     0
@@ -7619,18 +7622,16 @@
       (expCollectUsedVec used union (+ i 1))
     }))
 
-(pub :: expCheckLiteralsUsed (-> ASTNode IntRows Ints MEnv Int))
-;@axiom:effect(unsafe)
+(pub :: expCheckLiteralsUsed (-> ASTNode MacroRules Names MEnv Int))
 (pub fn (expCheckLiteralsUsed mac rules union env)
-  {
-    (let r0 (as (vecGet rules 0) (Vec Int)))
-    (if (< (vecLen r0) 6)
-      0
-      (expCheckLiteralsUsedIn mac (as (vecGet (as (vecGet r0 5) (Vec Int)) 0) (Vec Int)) union env
-        0))
-  })
+  (if (== (vecLen rules) 0)
+    0
+    {
+      (let rule (vecGet rules 0))
+      (expCheckLiteralsUsedIn mac rule.literals.declared union env 0)
+    }))
 
-(pub :: expCheckLiteralsUsedIn (-> ASTNode Ints Ints MEnv Int Int))
+(pub :: expCheckLiteralsUsedIn (-> ASTNode Names Names MEnv Int Int))
 (pub fn (expCheckLiteralsUsedIn mac lits union env i)
   (if (>= i (vecLen lits))
     0
@@ -7664,10 +7665,9 @@
 
 (pub :: expCheckRuleArities (-> ASTNode MEnv Int Int))
 (pub fn (expCheckRuleArities mac env i)
-  {
-    (let rules (nodeFieldNamesRows mac))
-    (if (== (as rules Int) 0)
-      0
+  (match (nodeMacroRules mac)
+    ((None) 0)
+    ((Some rules)
       (if (>= i (vecLen rules))
         0
         {
@@ -7697,8 +7697,8 @@
           ; `macro-duplicate-parameter` on the second is a
           ; machine-readable field that is simply wrong.
           (expCheckRuleArities mac env (+ i 1))
-        }))
-  })
+        })
+    )))
 
 ; The index of an earlier IRREFUTABLE rule that takes every
 ; invocation rule `i` could take, or -1.
@@ -7708,7 +7708,7 @@
 ; everything from there up, so it starves any later rule whose own
 ; floor is at least as high - which is how `(m a ...)` first makes
 ; every rule after it dead.
-(pub :: expShadowingRule (-> IntRows Int Int Int))
+(pub :: expShadowingRule (-> MacroRules Int Int Int))
 (pub fn (expShadowingRule rules i j)
   (if (>= j i)
     (- 0 1)
@@ -7755,50 +7755,45 @@
 ; (MAC-LANG-14).
 (pub :: expCheckTplKinds (-> ASTNode MEnv Int Int))
 (pub fn (expCheckTplKinds mac env i)
-  {
-    (let rules (nodeFieldNamesRows mac))
-    (if (== (as rules Int) 0)
-      0
+  (match (nodeMacroRules mac)
+    ((None) 0)
+    ((Some rules)
       (if (>= i (vecLen rules))
         0
         {
           (expCheckTplKindVec mac (expRuleTpl (vecGet rules i)) env 0)
           (expCheckTplKinds mac env (+ i 1))
-        }))
-  })
+        })
+    )))
 
 ; The template half of a rule, named rather than indexed at every site.
-(pub :: expRuleTpl (-> Ints (Vec ASTNode)))
+(pub :: expRuleTpl (-> MacroRule Nodes))
 (pub fn (expRuleTpl r)
-  (ruleDeclsAt (vecPush vecNew r) 0))
+  r.declarations)
 
-; Slots 2 and 3, appended by `parseMacroPatList` (MAC-LANG-15): the
-; pattern NODE per top-level element, and that element's source
-; spelling. Slot 0 still holds one name per element, so its length is
-; still the arity and every reader that only ever wanted the arity is
-; unchanged.
-(pub :: expRulePats (-> Ints Nodes))
+; One pattern and source spelling per top-level element (MAC-LANG-15).
+(pub :: expRulePats (-> MacroRule Nodes))
 (pub fn (expRulePats r)
-  (vecGetVec r 2))
+  r.patterns)
 
-(pub :: expRuleSpells (-> Ints Strings))
+(pub :: expRuleSpells (-> MacroRule Names))
 (pub fn (expRuleSpells r)
-  (vecGetVec r 3))
+  r.spellings)
 
-; Slot 4 (MAC-LANG-16): 1 where the element repeats, 0 where it does
+; Repeat flags (MAC-LANG-16): 1 where the element repeats, 0 where it does
 ; not. A rule with a repeating element matches a RANGE of arities
 ; rather than one, which is why `expRuleForForms` stopped comparing
 ; lengths and started asking this.
-(pub :: expRuleReps (-> Ints Ints))
+(pub :: expRuleReps (-> MacroRule Ints))
 (pub fn (expRuleReps r)
-  (vecGetVec r 4))
+  r.repeats)
 
 ; The index of the rule's repeating element, or -1. v1 admits ONE, and
 ; `expCheckRuleEllipsis` refuses the rest: with two, "the remaining
 ; arguments" stops having an answer - `(m a ... b ...)` can split its
 ; arguments anywhere, and a macro system that picks for you is a macro
 ; system whose expansion nobody can predict.
-(pub :: expRepIndex (-> Ints Int))
+(pub :: expRepIndex (-> MacroRule Int))
 (pub fn (expRepIndex r)
   (expRepIndexFrom (expRuleReps r) 0))
 
@@ -8338,12 +8333,12 @@
 
 ; One successful rule owns every binding collected by matching it.
 (pub struct ExpMatch
-  (rule : Ints)
+  (rule : MacroRule)
   (names : Names)
   (values : Nodes)
   (sequences : SeqBinds))
 
-(pub :: expMatchOf (-> ExpMatch Ints))
+(pub :: expMatchOf (-> ExpMatch MacroRule))
 (pub fn (expMatchOf matched)
   matched.rule)
 
@@ -8359,7 +8354,7 @@
 ; pattern matches wins. Arity is now a pre-filter rather than the
 ; selector - a rule whose element count differs cannot match, and
 ; skipping it is cheaper than walking it.
-(pub :: expRuleForForms (-> IntRows Nodes Int ExpMatchContext (Option ExpMatch)))
+(pub :: expRuleForForms (-> MacroRules Nodes Int ExpMatchContext (Option ExpMatch)))
 (pub fn (expRuleForForms rules args i lctx)
   (if (>= i (vecLen rules))
     None
@@ -8387,7 +8382,7 @@
 ; repeating element if there is one. The elements BEFORE it match one
 ; argument each; the element itself absorbs every argument left, as a
 ; SEQUENCE binding rather than a value binding.
-(pub :: expMatchRuleAt (-> Ints Nodes Names Nodes SeqBinds ExpMatchContext Int))
+(pub :: expMatchRuleAt (-> MacroRule Nodes Names Nodes SeqBinds ExpMatchContext Int))
 (pub fn (expMatchRuleAt r args names vals seqs lctx)
   {
     (let ps (expRulePats r))
@@ -8552,7 +8547,7 @@
 ; matches every invocation of its arity, so any later rule of that
 ; arity is unreachable - which is the narrowed form of the refusal
 ; `MAC-LANG-14` shipped when arity was the whole selector.
-(pub :: expRuleIrrefutable (-> Ints Int))
+(pub :: expRuleIrrefutable (-> MacroRule Int))
 (pub fn (expRuleIrrefutable r)
   (if (== (expPatsIrrefutable (expRulePats r) 0) 0)
     0
@@ -8579,7 +8574,7 @@
 ; parenthesised form per rule, named after the macro, joined by
 ; " or ". This replaces a list of arities, which could only ever say
 ; how many arguments and never which shape.
-(pub :: expRuleShapes (-> IntRows String Int String String))
+(pub :: expRuleShapes (-> MacroRules String Int String String))
 (pub fn (expRuleShapes rules name i acc)
   (if (>= i (vecLen rules))
     acc
@@ -8591,7 +8586,7 @@
           (concat (concat acc " or ") one))
       })))
 
-(pub :: expOneShape (-> Ints String String))
+(pub :: expOneShape (-> MacroRule String String))
 (pub fn (expOneShape r name)
   (concat (expShapeElems (expRuleSpells r) 0 (concat "(" name)) ")"))
 
@@ -8609,7 +8604,7 @@
 ; skips the spine HEAD - correct there, where the head is a
 ; constructor, and wrong here, where `(nm T)` binds `nm` as much as it
 ; binds `T`.
-(pub :: expRuleBinders (-> Nodes Int Ints Ints))
+(pub :: expRuleBinders (-> Nodes Int Names Names))
 (pub fn (expRuleBinders ps i acc)
   (if (>= i (vecLen ps))
     acc
@@ -8618,7 +8613,7 @@
       (expRuleBinders ps (+ i 1) acc)
     }))
 
-(pub :: expRuleBindersOf (-> ASTNode Ints Ints))
+(pub :: expRuleBindersOf (-> ASTNode Names Names))
 (pub fn (expRuleBindersOf p acc)
   ; A literal binds nothing: a reserved spelling never allocates a
   ; parameter slot, or the name would collide with a binder of the
@@ -8629,7 +8624,7 @@
       (if (strEq (nodeAName p) "_")
         acc
         {
-          (vecPush acc (nodeA p))
+          (vecPush acc (nodeAName p))
           acc
         })
       (if (== (nodeTag p) TAG_E_APP)
@@ -9064,7 +9059,10 @@
                   "an expression template is one expression; a declaration position needs declarations (macro-system.md MAC-CAP-8)")
                 {
                   (let m
-                    (expRuleForForms (nodeFieldNamesRows mac)
+                    (expRuleForForms
+                      (match (nodeMacroRules mac)
+                        ((None) vecNew)
+                        ((Some rules) rules))
                       (expCaptureVec (nodeBChildren d) env vecNew) 0
                       (expMatchCtx decls (nodeModule d) (nodeModule mac))))
                   (if (let (Some m) m)
@@ -9077,7 +9075,11 @@
                       (expInstantiateDecl entryDecls decls env d mac m))
                     {
                       (expNoRuleDiag env (expSrcSpelling (nodeAName d))
-                        (expRuleShapes (nodeFieldNamesRows mac) (expSrcSpelling (nodeAName d)) 0 "")
+                        (expRuleShapes
+                          (match (nodeMacroRules mac)
+                            ((None) vecNew)
+                            ((Some rules) rules))
+                          (expSrcSpelling (nodeAName d)) 0 "")
                         (nodeSpan d))
                       (writeNodeWord d 3 1)
                       0

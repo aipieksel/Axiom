@@ -5083,30 +5083,16 @@
 ; reserved) becomes `syntax/literal ` plus the spelling - note the
 ; SPACE, which no lexed identifier contains. Answers the rewritten
 ; pattern and name vectors with the used set beside them; the rule
-; record carries all three (slots 2 and 0 rewritten, slot 5 the
-; `[lits used]` pair the unused check reads).
-(pub :: rewriteRuleLits (-> Nodes Names Names Ints))
+; record retains all three, with the used names beside the declared
+; literals for the unused-literal check.
+(pub :: rewriteRuleLits (-> Nodes Names Names MacroPatternRewrite))
 (pub fn (rewriteRuleLits pats names lits)
   {
     (let used vecNew)
-    {
-      (let pats2 nodesNew)
-      {
-        (let names2 vecNew)
-        {
-          (rewriteRuleLitsIn pats names lits used pats2 names2 0)
-          {
-            (let out vecNew)
-            {
-              (vecPush out (as pats2 Int))
-              (vecPush out (as names2 Int))
-              (vecPush out (as used Int))
-              out
-            }
-          }
-        }
-      }
-    }
+    (let pats2 nodesNew)
+    (let names2 vecNew)
+    (rewriteRuleLitsIn pats names lits used pats2 names2 0)
+    (MacroPatternRewrite :patterns pats2 :names names2 :used used)
   })
 
 (pub :: rewriteRuleLitsIn (-> Nodes Names Names Names Nodes Names Int Int))
@@ -5342,11 +5328,13 @@
                     (|| (kwEq h "region")
                       (|| (kwEq h "parallel") (|| (kwEq h "asm") (kwEq h "as"))))))))))))))
 
-; The expression template of rule `i` of `rules`, or 0 when the rule's
-; template is only declarations (slot 6, `parseMacroRules`).
-(pub :: ruleExprAt (-> IntRows Int ASTNode))
+; A declaration-only rule has no expression template.
+(pub :: ruleExprAt (-> MacroRules Int (Option ASTNode)))
 (pub fn (ruleExprAt rules i)
-  (packedNodeAt (vecGet rules i) 6))
+  {
+    (let rule (vecGet rules i))
+    rule.expression
+  })
 
 (pub :: parseTplDecls (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseTplDecls tokens pos acc)
@@ -7662,7 +7650,9 @@
   ; macros hold no rules at all (word 9 == 0, which the callee returns
   ; at once).
   (if (== (nodeTag d) TAG_D_MACRO)
-    (attachAxtagsRules (nodeFieldNamesWords d) 0 axtags cur)
+    (match (nodeMacroRules d)
+      ((None) cur)
+      ((Some rules) (attachAxtagsRules rules 0 axtags cur)))
     (if (&& (== (nodeTag d) TAG_D_STRUCT) (!= (nodeB d) 0))
       (attachAxtagsFields (nodeBChildren d) 0 axtags cur)
       cur)))
@@ -7698,17 +7688,12 @@
 ; not support, and the second drew AX3042 with no edit anywhere that
 ; could satisfy it.
 ;
-; The rules are at word 9 and each rule's template vector at index 1 -
-; `expRuleTpl`'s slot, and the wire format `parseMacroRules` documents
-; as fixed at 0 and 1.
-(pub :: attachAxtagsRules (-> Ints Int (Vec AxtagEnt) Int Int))
+; Each owning rule retains the declaration templates that receive tags.
+(pub :: attachAxtagsRules (-> MacroRules Int (Vec AxtagEnt) Int Int))
 (pub fn (attachAxtagsRules rules i axtags cur)
-  (if (== (as rules Int) 0)
+  (if (>= i (vecLen rules))
     cur
-    (if (>= i (vecLen rules))
-      cur
-      (attachAxtagsRules rules (+ i 1) axtags
-        (attachAxtags (vecGet (vecGetVec rules i) 1) 0 axtags cur)))))
+    (attachAxtagsRules rules (+ i 1) axtags (attachAxtags (ruleDeclsAt rules i) 0 axtags cur))))
 
 ; The index one past the last tag whose offset precedes `limit`.
 (pub :: axtagsUpto (-> (Vec AxtagEnt) Int Int Int))
@@ -8155,14 +8140,18 @@
       dst
     }))
 
-(pub :: writeNodeValueWords (-> ASTNode Int (Vec (Vec Int)) Int))
-(pub fn (writeNodeValueWords n index value)
-  (nodeStore n index value true))
+(pub :: writeNodeMacroRules (-> ASTNode MacroRules Int))
+(pub fn (writeNodeMacroRules node rules)
+  (nodeStore node 9 rules true))
 
-(pub :: nodeFieldNamesRows (-> ASTNode (Vec (Vec Int))))
+; A head-list macro has no rules. A present empty rule vector remains
+; present so packet and tool consumers can distinguish the two states.
+(pub :: nodeMacroRules (-> ASTNode (Option MacroRules)))
 ;@axiom:effect(unsafe)
-(pub fn (nodeFieldNamesRows node)
-  (as (nodeWord node 9) (Vec (Vec Int))))
+(pub fn (nodeMacroRules node)
+  (if (== (nodeWord node 9) 0)
+    None
+    (Some (as (nodeWord node 9) MacroRules))))
 
 (pub :: nodeBuildFieldOffset (-> Int Int ASTNode))
 (pub fn (nodeBuildFieldOffset index floating)
@@ -8252,15 +8241,19 @@
 (pub fn (nodeWireStore node index ownedWord reference)
   (nodeStore node index ownedWord reference))
 
-(pub :: ruleParamsAt (-> IntRows Int Names))
-;@axiom:effect(unsafe)
+(pub :: ruleParamsAt (-> MacroRules Int Names))
 (pub fn (ruleParamsAt rules index)
-  (as (vecGet (vecGet rules index) 0) Names))
+  {
+    (let rule (vecGet rules index))
+    rule.params
+  })
 
-(pub :: ruleDeclsAt (-> IntRows Int Nodes))
-;@axiom:effect(unsafe)
+(pub :: ruleDeclsAt (-> MacroRules Int Nodes))
 (pub fn (ruleDeclsAt rules index)
-  (as (vecGet (vecGet rules index) 1) Nodes))
+  {
+    (let rule (vecGet rules index))
+    rule.declarations
+  })
 
 (pub :: pResultRules (-> Int IntRows))
 (pub fn (pResultRules result)

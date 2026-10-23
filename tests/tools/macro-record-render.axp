@@ -1,0 +1,33 @@
+; Editor macro rendering is stable across typed packet reconstruction.
+(import frontpack)
+(import lsp)
+(import core)
+(import Vec)
+(import IO)
+
+(:: render (-> String ()))
+;@axiom:effect(io)
+(fn (render source)
+  (match (frontParse source)
+    ((None) (println "parse failed"))
+    ((Some parsed)
+      {
+        (println (lspRenderMacro (vecGet parsed.decls 0) 0))
+        (match (frontDecode (frontEncode parsed))
+          ((None) (println "decode failed"))
+          ((Some copied) (println (lspRenderMacro (vecGet copied.decls 0) 0))))
+      }
+    )))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (render "(macro (head value) value)")
+    (render "(macro expr ((expr value) (+ value 1)))")
+    (render "(macro dual ((dual value) (callee value)))")
+    (render "(macro decl ((decl name) (:: name Int) (fn (name) 42)))")
+    (render
+      "(macro literal (literals key) ((literal key item) item) ((literal (f arg) rest ...) (+ arg 1)))")
+    0
+  })

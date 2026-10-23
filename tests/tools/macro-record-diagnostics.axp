@@ -1,0 +1,41 @@
+; Macro carrier changes preserve definition and invocation diagnostic order.
+(import core)
+(import frontpack)
+(import expand)
+(import diag)
+(import Vec)
+(import IO)
+
+(:: dump (-> String ()))
+;@axiom:effect(io)
+(fn (dump source)
+  (match (frontParse source)
+    ((None) (println "parse failed"))
+    ((Some parsed)
+      {
+        (let diagnostics (:: vecNew Diags))
+        (let units
+          (vecPush vecNew
+            (CUnit2
+              :file "macro-record-diagnostics.ax"
+              :src source
+              :name None
+              :imports vecNew
+              :library false)))
+        (expandProgram parsed.decls parsed.decls diagnostics vecNew units vecNew vecNew vecNew)
+        (writeStr stdout (renderDiagsUnits diagnostics units))
+      }
+    )))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (dump "(macro unused (literals dead) ((unused item) item))")
+    (dump "(macro repeats ((repeats first ... second ...) (+ first second)))")
+    (dump "(macro shadow ((shadow value) value) ((shadow 1) 2))")
+    (dump
+      "(macro mixed ((mixed 1) (:: one Int) (fn (one) 1)) ((mixed value) (+ value 1)))\n(:: main Int) (fn (main) (mixed 1))")
+    (dump "(macro only ((only 1) 42))\n(:: main Int) (fn (main) (only 2))")
+    0
+  })
