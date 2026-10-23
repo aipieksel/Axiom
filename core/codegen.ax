@@ -28065,12 +28065,11 @@
 ; An OWNED temporary handed to a call is released once the call has
 ; returned: the callee borrowed it (event 1), every store it could
 ; make took a share (events 5/6, MM-LIFE-2g), and a callee that
-; answers it answers a retained share (event 2). Only a callee whose
-; declared result class is known - a word or a reference - gets this;
-; a function answering a type variable retains nothing on the way
-; out, and keeps today's leak. The head reaching here is a global
-; with a signature (`emitPlainCall` is past the primitive, local and
-; constructor dispatch), or an unsigned one, which answers -1.
+; answers it answers a retained share (event 2). A type-variable
+; result also permits this when its contract transfers an owned
+; share. The head reaching here is a global with a signature
+; (`emitPlainCall` is past the primitive, local and constructor
+; dispatch), or an unsigned one, which answers -1.
 (pub :: releaseOwnedArgs (-> CG String Nodes Strings Int CG))
 (pub fn (releaseOwnedArgs cg fnName args regs i)
   (if (>= i (vecLen args))
@@ -28191,22 +28190,23 @@
 ; caller's to hand back) - and an immediate (`Nil`) or a static
 ; literal has nothing to give back.
 ;
-; A callee whose result is a type variable gets this only for a LENT
-; argument the result is not taken from: the share is the caller's
-; own, taken at evaluation, so handing it back after the call is
-; exact. An owned temporary there keeps its leak, and one the result
-; may be taken from is `borrowedFromOwnedArg`'s.
+; A callee whose result is a type variable may transfer an owned
+; share under its trusted transfer contract. Such a result stays live
+; after the caller gives back its argument share, including when the
+; result came from that argument. A borrowed result still needs
+; `borrowedFromOwnedArg`'s protection before its holder is released.
 (pub :: argOwnedRelease (-> CG String Nodes Int Int))
 (pub fn (argOwnedRelease cg fnName args i)
   {
     (let cls (fnResultClass cg fnName))
+    (let transfers (&& (== cls 1) (== (fsigTransfer cg fnName) 1)))
     ; A lent argument's share guards it against the callee writing
     ; over the place it was lent from. A callee that writes nothing
     ; (`fnMayWrite`) cannot, so the argument stays borrowed.
     (let lentShared
       (&& (== (fnMayWrite cg fnName) 1)
         (|| (!= (lendClass cg (vecGet args i)) 0) (!= (fieldArgClass cg (vecGet args i)) 0))))
-    (if (|| (== cls 0) (|| (== cls 2) (&& (== cls 1) lentShared)))
+    (if (|| (== cls 0) (|| (== cls 2) (&& (== cls 1) (|| lentShared transfers))))
       (if (&&
             (|| (== (valueOwnedRef cg (vecGet args i)) 1)
               (|| lentShared (!= (transferClass cg (vecGet args i)) 0)))
@@ -28214,7 +28214,7 @@
               (&& (== (isNullaryConNode cg (vecGet args i)) 0)
                 (&& (== (& (fnCallStashMask cg fnName args) (| (paramBit i) (ownerBit i))) 0)
                   (&& (== (& (fnConsumeMask cg fnName) (| (paramBit i) (ownerBit i))) 0)
-                    (|| (== cls 2) (== (& (fnRetMask cg fnName) (anyBit i)) 0)))))))
+                    (|| (== cls 2) (|| transfers (== (& (fnRetMask cg fnName) (anyBit i)) 0))))))))
         1
         0)
       0)

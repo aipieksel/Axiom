@@ -1,6 +1,7 @@
 (import Str)
 (import Vec)
 (import IO)
+(import Mem)
 
 (struct Entry
   (value : String))
@@ -192,6 +193,74 @@
 (fn (scalarTemporary)
   (vecGet (vecPush vecNew 42) 0))
 
+(:: retirePushedPop (-> (Vec Entry) String Int))
+(fn (retirePushedPop rows value)
+  {
+    (let row (vecPop (vecPush rows (Entry :value value))))
+    (if (&& (== (count row) 1) (strEq row.value value))
+      17
+      0)
+  })
+
+(:: retireNestedPop (-> (Vec Entry) String Int))
+(fn (retireNestedPop rows value)
+  {
+    (let row (vecPop (vecPush vecNew (vecPop (vecPush rows (Entry :value value))))))
+    (if (&& (== (count row) 1) (strEq row.value value))
+      17
+      0)
+  })
+
+(:: markedHolder (-> (Vec Entry) (Vec Int) String (Vec Entry)))
+(fn (markedHolder rows events value)
+  {
+    (vecPush events 1)
+    (vecPush rows (Entry :value value))
+  })
+
+(:: retireMarkedPop (-> (Vec Entry) (Vec Int) String Int))
+(fn (retireMarkedPop rows events value)
+  {
+    (let row (vecPop (markedHolder rows events value)))
+    (vecPush events 2)
+    (if (strEq row.value value)
+      17
+      0)
+  })
+
+(:: popScalar (-> Int Int))
+(fn (popScalar n)
+  (vecPop (vecPush vecNew n)))
+
+(:: held Int)
+(fn (held)
+  {
+    (let stats memStats)
+    stats.heldBytes
+  })
+
+(:: popLoop (-> Int Int))
+(fn (popLoop n)
+  {
+    (let mut i 0)
+    (let mut total 0)
+    (while (< i n)
+      {
+        (set total (+ total (popScalar i)))
+        (set i (+ i 1))
+      })
+    total
+  })
+
+(:: retireTwoPopped (-> String Int))
+(fn (retireTwoPopped value)
+  {
+    (let row (vecPop (vecPush (vecPush vecNew (Entry :value value)) (Entry :value value))))
+    (if (strEq row.value value)
+      17
+      0)
+  })
+
 (:: main ())
 ;@axiom:effect(io)
 (fn (main)
@@ -267,4 +336,32 @@
     (say 42 (== (genericPop 42) 42))
     (say 43 (== (genericPop 0) 0))
     (say 44 (== (genericPop -17) -17))
+    (let rows vecNew)
+    (let beforeRows (count rows))
+    (let beforePushedValue (count value))
+    (say 45 (== (retirePushedPop rows value) 17))
+    (say 46 (== (count rows) beforeRows))
+    (say 47 (== (count value) beforePushedValue))
+    (say 48 (== (vecLen rows) 0))
+    (let beforeNestedRows (count rows))
+    (let beforeNestedValue (count value))
+    (say 49 (== (retireNestedPop rows value) 17))
+    (say 50 (== (count rows) beforeNestedRows))
+    (say 51 (== (count value) beforeNestedValue))
+    (let events vecNew)
+    (let beforeMarkedRows (count rows))
+    (let beforeMarkedValue (count value))
+    (say 52 (== (retireMarkedPop rows events value) 17))
+    (say 53 (&& (== (vecLen events) 2) (&& (== (vecGet events 0) 1) (== (vecGet events 1) 2))))
+    (say 54 (== (count rows) beforeMarkedRows))
+    (say 55 (== (count value) beforeMarkedValue))
+    (popLoop 2000)
+    (let beforeLoop held)
+    (let total (popLoop 2000))
+    (let afterLoop held)
+    (say 56 (== total 1999000))
+    (say 57 (== afterLoop beforeLoop))
+    (let beforeTwo (count value))
+    (say 58 (== (retireTwoPopped value) 17))
+    (say 59 (== (count value) beforeTwo))
   })

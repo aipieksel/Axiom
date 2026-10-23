@@ -15,8 +15,8 @@ SUPPORT = runpy.run_path(str(Path(__file__).with_name('emitter-line-buffer.py'))
 run_checked = SUPPORT['run_checked']
 check_output = SUPPORT['check_output']
 emitted_function = SUPPORT['emitted_function']
-EXPECTED = [f'{i} true' for i in range(1, 45)]
-POP = re.compile(r'(%[^ ]+) = call i64 @Vec\$vecPop\([^\n]+\)')
+EXPECTED = [f'{i} true' for i in range(1, 60)]
+POP = re.compile(r'(%[^ ]+) = call i64 @Vec\$vecPop\(i64 (%[^,]+),[^\n]+\)')
 GET = re.compile(r'(%[^ ]+) = call i64 @Vec\$vecGet\(i64 (%[^,]+),[^\n]+\)')
 
 
@@ -47,6 +47,20 @@ def transferred_calls(body):
     return calls[0]
 
 
+def transferred_holders(body, expected=1):
+    calls = list(POP.finditer(body))
+    if len(calls) != expected:
+        raise AssertionError('unexpected transferred-holder call count')
+    for call in calls:
+        owner = call[2]
+        release = f'call void @axiom_release(i64 {owner})'
+        if body.count(release) != 1:
+            raise AssertionError('the owned temporary holder must be released exactly once')
+        if body.index(release) <= call.end():
+            raise AssertionError('the holder must stay live until the transferring call returns')
+    return calls
+
+
 def borrowed_parameter(body):
     calls = list(GET.finditer(body))
     if len(calls) != 1 or calls[0][2] != '%rows':
@@ -74,12 +88,15 @@ def check(compiler, root, work, baseline=None):
             'Borrowed parameters still acquire a return share; non-tail use retains and retires its child.',
             'Generic reference evidence guards the protection retain; scalar values retain their numeric meaning.',
             'An explicit transferred result receives no duplicate tail retain; borrowed parameter returns still do.',
+            'An owned holder is released once after a transferring call returns; a borrowed holder is left to its owner.',
+            'Live holder and child counts balance, nested calls preserve ordering, and scalar-holder storage plateaus after warm-up.',
         ],
         'known_limits': [
             'These are focused native host tests with allocation poisoning, not global memory-soundness evidence.',
             'General generic-call retirement has a separate pre-existing retained share; cases 22-23 check value validity only.',
             'The independent strict comparison probe preserves those failing retirement cases; this test does not bless retained shares as intended behaviour.',
-            'Named-container retention and temporary-container reclamation for scalar or transferred results are outside this tail-result fix.',
+            'Named-container retention and scalar borrowed-result reclamation remain outside this transferred-result cleanup fix.',
+            'heldBytes is allocator storage including reusable blocks and overhead, not a live-object count; the loop compares warmed identical workloads.',
             'No held M5 code or lifetime traversal, fixpoint or enforcement algorithm is inspected or changed.',
             'The generated-IR runtime counterexample links through cc on POSIX; Windows runs positive native and structural counterexamples only.',
         ],
@@ -98,10 +115,10 @@ def check(compiler, root, work, baseline=None):
                 stdout=work / 'fmt.stdout', stderr=work / 'fmt.stderr')
     for level in (0, 2):
         native(compiler, f'positive-O{level}', level)
-        report['configurations'].append({'optimization': level, 'allocation_poisoning': True, 'cases': 44})
-        print(f'ok   temporary child return: 44 outcomes O{level} poison', flush=True)
+        report['configurations'].append({'optimization': level, 'allocation_poisoning': True, 'cases': 59})
+        print(f'ok   temporary child return: 59 outcomes O{level} poison', flush=True)
         if baseline:
-            failures = native(baseline, f'baseline-O{level}', level, {29, 31, 33, 37, 40, 41})
+            failures = native(baseline, f'baseline-O{level}', level, {46, 50, 54, 57, 59})
             report['baseline'].append({'optimization': level, 'failed_cases': sorted(failures),
                                        'builder': str(baseline)})
             print(f'ok   unchanged baseline O{level} exposes cases {sorted(failures)}', flush=True)
@@ -117,6 +134,13 @@ def check(compiler, root, work, baseline=None):
     borrowed_parameter(emitted_function(module, 'borrowed'))
     for name in ('ownedPop', 'ownedPopString', 'conditionalOwnedPop', 'matchOwnedPop', 'ownedParameter', 'genericPop'):
         transferred_calls(emitted_function(module, name))
+    for name, count in [('ownedPop', 1), ('ownedPopString', 1), ('popScalar', 1),
+                         ('retirePushedPop', 1), ('retireNestedPop', 2), ('retireMarkedPop', 1),
+                         ('retireTwoPopped', 1), ('genericPop', 1)]:
+        transferred_holders(emitted_function(module, name), count)
+    owned_parameter = emitted_function(module, 'ownedParameter')
+    if 'call void @axiom_release(i64 %rows)' in owned_parameter:
+        raise AssertionError('a borrowed holder must not spend its caller share')
     scalar = emitted_function(module, 'scalarTemporary')
     call = list(GET.finditer(scalar))
     if len(call) != 1 or f'@axiom_retain(i64 {call[0][1]})' in scalar:
@@ -152,6 +176,17 @@ def check(compiler, root, work, baseline=None):
     pop_duplicate = popped.replace(f'  ret i64 {pop_result}', pop_retain + f'  ret i64 {pop_result}', 1)
     rejected('duplicate-transferred-tail-retain', transferred_calls, pop_duplicate)
 
+    holder = emitted_function(module, 'retirePushedPop')
+    holder_call = transferred_holders(holder)[0]
+    holder_release = f'  call void @axiom_release(i64 {holder_call[2]})\n'
+    lost_holder = holder.replace(holder_release, '', 1)
+    rejected('missing-transferred-holder-release', transferred_holders, lost_holder)
+    early_holder = holder.replace(holder_release, '', 1).replace(
+        holder_call[0], holder_release.strip() + '\n  ' + holder_call[0], 1)
+    rejected('premature-transferred-holder-release', transferred_holders, early_holder)
+    rejected('duplicate-transferred-holder-release', transferred_holders,
+             holder.replace(holder_release, holder_release + holder_release, 1))
+
     # Only the extra-share mutation is executed. The missing/misordered
     # protection controls are rejected structurally before native execution.
     if sys.platform != 'win32':
@@ -182,8 +217,28 @@ def check(compiler, root, work, baseline=None):
         output = work / 'pop-mutant.stdout'
         run_checked([str(binary)], env=env, stdout=output, stderr=work / 'pop-mutant.stderr', timeout=30)
         failures = check_output(output, EXPECTED, required_failures={29})
-        report['counterexamples'][-1]['native_failed_cases'] = sorted(failures)
+        next(c for c in report['counterexamples'] if c['name'] == 'duplicate-transferred-tail-retain')['native_failed_cases'] = sorted(failures)
         print(f'ok   duplicate transferred retain native counterexample: cases {sorted(failures)} fail', flush=True)
+    if sys.platform != 'win32':
+        scalar_holder = emitted_function(module, 'popScalar')
+        scalar_call = transferred_holders(scalar_holder)[0]
+        scalar_release = f'  call void @axiom_release(i64 {scalar_call[2]})\n'
+        missing_scalar = scalar_holder.replace(scalar_release, '', 1)
+        changed = module.replace(holder, lost_holder, 1).replace(scalar_holder, missing_scalar, 1)
+        mutated = work / 'missing-transferred-holder-release.ll'
+        mutated.write_text(changed)
+        run_checked(['opt', '-passes=verify', '-disable-output', str(mutated)], env=env,
+                    stdout=work / 'holder-mutant.verify.stdout', stderr=work / 'holder-mutant.verify.stderr')
+        obj, binary = work / 'holder-mutant.o', work / 'holder-mutant'
+        run_checked(['llc', '-filetype=obj', '-relocation-model=pic', str(mutated), '-o', str(obj)], env=env,
+                    stdout=work / 'holder-mutant.llc.stdout', stderr=work / 'holder-mutant.llc.stderr')
+        run_checked(['cc', str(obj), '-o', str(binary)], env=env,
+                    stdout=work / 'holder-mutant.link.stdout', stderr=work / 'holder-mutant.link.stderr')
+        output = work / 'holder-mutant.stdout'
+        run_checked([str(binary)], env=env, stdout=output, stderr=work / 'holder-mutant.stderr', timeout=30)
+        failures = check_output(output, EXPECTED, required_failures={46, 57})
+        next(c for c in report['counterexamples'] if c['name'] == 'missing-transferred-holder-release')['native_failed_cases'] = sorted(failures)
+        print(f'ok   missing holder release native counterexample: cases {sorted(failures)} fail', flush=True)
     (work / 'temporary-return-report.json').write_text(json.dumps(report, indent=2) + '\n')
 
 
