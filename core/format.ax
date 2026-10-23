@@ -1146,7 +1146,7 @@
   })
 
 ; The index of the token that first takes tree depth past `limit`, or
-; -1 when nothing does. One walk answers both of the questions the
+; None when nothing does. One walk answers both of the questions the
 ; guard asks, as `nestOverflowTok` does.
 ;
 ; The saved depths are a stack rather than a counter because a closer
@@ -1159,16 +1159,16 @@
 ; reader reports on its own terms; depth is floored at 0 here rather
 ; than allowed to go negative, so a stray `)` early in a file cannot
 ; mask real depth after it.
-(:: fNestOverflow (-> (Vec FTok) Int Int))
+(:: fNestOverflow (-> (Vec FTok) Int (Option Int)))
 (fn (fNestOverflow toks limit)
   {
     (let mut i 0)
     (let mut d 0)
-    (let mut hit (- 0 1))
+    (let mut hit (:: None (Option Int)))
     (let st vecNew)
     (let n (vecLen toks))
     {
-      (while (&& (< i n) (< hit 0))
+      (while (&& (< i n) (isNone hit))
         {
           {
             (let k (ftKind (vecGet toks i)))
@@ -1185,7 +1185,7 @@
                   (set d (+ d 1)))))
           }
           (if (> d limit)
-            (set hit i))
+            (set hit (Some i)))
           (set i (+ i 1))
         })
       hit
@@ -1520,28 +1520,32 @@
           (let s (vecGetStr v i))
           {
             (let nl (strLastNewline s (- (strLen s) 1)))
-            (if (>= nl 0)
-              {
-                (set col (+ col (- (strLen s) (+ nl 1))))
-                (set go false)
-              }
-              {
-                (set col (+ col (strLen s)))
-                (set i (- i 1))
-              })
+            (match nl
+              ((None)
+                {
+                  (set col (+ col (strLen s)))
+                  (set i (- i 1))
+                }
+              )
+              ((Some offset)
+                {
+                  (set col (+ col (- (strLen s) (+ offset 1))))
+                  (set go false)
+                }
+              ))
           }
         })
       col
     }
   })
 
-; The offset of the last newline in `s` at or before `i`, or -1.
-(:: strLastNewline (-> String Int Int))
+; The offset of the last newline in `s` at or before `i`, when present.
+(:: strLastNewline (-> String Int (Option Int)))
 (fn (strLastNewline s i)
   (if (< i 0)
-    (- 0 1)
+    None
     (if (== (strByte s i) 10)
-      i
+      (Some i)
       (strLastNewline s (- i 1)))))
 
 ; Join the fragments: measure, allocate once, copy - the same shape
@@ -2194,49 +2198,49 @@
 
 ; The operator spellings stage0's parser turned into expression values
 ; (`parse_expr_at_depth`'s token list). `$` lexes as the `!` token and
-; prints as `!`. Any other operator run answers "", and the caller
+; prints as `!`. Any other operator run answers None, and the caller
 ; prints it as the name this compiler's parser reads it as.
-(:: fpOperSpelling (-> String String))
+(:: fpOperSpelling (-> String (Option String)))
 (fn (fpOperSpelling t)
   (if (strEq t "+")
-    t
+    (Some t)
     (if (strEq t "*")
-      t
+      (Some t)
       (if (strEq t "/")
-        t
+        (Some t)
         (if (strEq t "%")
-          t
+          (Some t)
           (if (strEq t "^")
-            t
+            (Some t)
             (if (strEq t "==")
-              t
+              (Some t)
               (if (strEq t "!=")
-                t
+                (Some t)
                 (if (strEq t "<")
-                  t
+                  (Some t)
                   (if (strEq t ">")
-                    t
+                    (Some t)
                     (if (strEq t "<=")
-                      t
+                      (Some t)
                       (if (strEq t ">=")
-                        t
+                        (Some t)
                         (if (strEq t "!")
-                          t
+                          (Some t)
                           (if (strEq t "&&")
-                            t
+                            (Some t)
                             (if (strEq t "||")
-                              t
+                              (Some t)
                               (if (strEq t "&")
-                                t
+                                (Some t)
                                 (if (strEq t "|")
-                                  t
+                                  (Some t)
                                   (if (strEq t "<<")
-                                    t
+                                    (Some t)
                                     (if (strEq t ">>")
-                                      t
+                                      (Some t)
                                       (if (strEq t "$")
-                                        "!"
-                                        ""))))))))))))))))))))
+                                        (Some "!")
+                                        None))))))))))))))))))))
 
 ; Use the compiler's signed decimal bound, including Int minimum.
 ; The formatter still owns its tokens and layout.
@@ -2449,23 +2453,23 @@
   })
 
 ; One binding pair, decomposed: `(x init)` or `(mut x init)`.
-; Answers the kid index where the init begins, or -1 on a shape the
+; Answers the kid index where the init begins, or None on a shape the
 ; parser refuses. The init may span two kids - a fused negative
 ; literal - so the caller validates it as ONE fused expression element,
 ; not one kid; `(x = init)`, which the parser refuses (AX2003), fails
 ; that validation and is refused here too.
-(:: fpBindInit (-> String FNode Int))
+(:: fpBindInit (-> String FNode (Option Int)))
 (fn (fpBindInit src b)
   (if (!= (fnKind b) FN_PAREN)
-    (- 0 1)
+    None
     {
       (let i1
         (if (&& (> (fnLen b) 0) (fpIsAtomText src (fnKid b 0) "mut"))
           2
           1))
       (if (>= i1 (fnLen b))
-        (- 0 1)
-        i1)
+        None
+        (Some i1))
     }))
 
 ; The single-binding spelling: the init inline when simple, broken
@@ -2475,44 +2479,40 @@
   {
     (let src p.src)
     (let o p.out)
-    (let initIx (fpBindInit p.src b))
-    (if (|| (< initIx 0)
-          (!=
-            (vecLen
-              (fpExprElems b
-                (if (< initIx 0)
-                  0
-                  initIx)))
-            1))
-      (fpBad p)
-      {
-        (let isMut (fpIsAtomText src (fnKid b 0) "mut"))
-        (let patIx
-          (if (fpIsAtomText src (fnKid b 0) "mut")
-            1
-            0))
-        {
-          (let init (vecGet (fpExprElems b initIx) 0))
+    (match (fpBindInit p.src b)
+      ((None) (fpBad p))
+      ((Some initIx)
+        (if (!= (vecLen (fpExprElems b initIx)) 1)
+          (fpBad p)
           {
-            (fpP p
-              (if isMut
-                "(mut "
-                "("))
-            (fpPat p (fnKid b patIx))
-            (fpP p " ")
-            (if (isSimpleForm src init)
-              (fpExprSuffix p init 2)
+            (let isMut (fpIsAtomText src (fnKid b 0) "mut"))
+            (let patIx
+              (if (fpIsAtomText src (fnKid b 0) "mut")
+                1
+                0))
+            {
+              (let init (vecGet (fpExprElems b initIx) 0))
               {
-                (fpP p "\n")
-                (foPushIndent o)
-                (foEmitIndent o)
-                (fpExprSuffix p init 2)
-                (foPopIndent o)
-              })
-            (fpP p ")")
-          }
-        }
-      })
+                (fpP p
+                  (if isMut
+                    "(mut "
+                    "("))
+                (fpPat p (fnKid b patIx))
+                (fpP p " ")
+                (if (isSimpleForm src init)
+                  (fpExprSuffix p init 2)
+                  {
+                    (fpP p "\n")
+                    (foPushIndent o)
+                    (foEmitIndent o)
+                    (fpExprSuffix p init 2)
+                    (foPopIndent o)
+                  })
+                (fpP p ")")
+              }
+            }
+          })
+      ))
   })
 
 ; A binding in the several-bindings spelling: always inline, with the
@@ -2522,44 +2522,40 @@
   {
     (let src p.src)
     (let o p.out)
-    (let initIx (fpBindInit p.src b))
-    (if (|| (< initIx 0)
-          (!=
-            (vecLen
-              (fpExprElems b
-                (if (< initIx 0)
-                  0
-                  initIx)))
-            1))
-      (fpBad p)
-      {
-        (let isMut (fpIsAtomText src (fnKid b 0) "mut"))
-        (let patIx
-          (if (fpIsAtomText src (fnKid b 0) "mut")
-            1
-            0))
-        {
-          (let init (vecGet (fpExprElems b initIx) 0))
+    (match (fpBindInit p.src b)
+      ((None) (fpBad p))
+      ((Some initIx)
+        (if (!= (vecLen (fpExprElems b initIx)) 1)
+          (fpBad p)
           {
-            (flushLeading src p.q o (fpAnchor src init))
+            (let isMut (fpIsAtomText src (fnKid b 0) "mut"))
+            (let patIx
+              (if (fpIsAtomText src (fnKid b 0) "mut")
+                1
+                0))
             {
-              (let mark o.nl)
+              (let init (vecGet (fpExprElems b initIx) 0))
               {
-                (foEmitIndent o)
-                (fpP p
-                  (if isMut
-                    "(mut "
-                    "("))
-                (fpPat p (fnKid b patIx))
-                (fpP p " ")
-                (fpExprSuffix p init 1)
-                (fpP p ")")
-                (flushTrailing src p.q o p.starts (fpAnchor src init) mark)
+                (flushLeading src p.q o (fpAnchor src init))
+                {
+                  (let mark o.nl)
+                  {
+                    (foEmitIndent o)
+                    (fpP p
+                      (if isMut
+                        "(mut "
+                        "("))
+                    (fpPat p (fnKid b patIx))
+                    (fpP p " ")
+                    (fpExprSuffix p init 1)
+                    (fpP p ")")
+                    (flushTrailing src p.q o p.starts (fpAnchor src init) mark)
+                  }
+                }
               }
             }
-          }
-        }
-      })
+          })
+      ))
   })
 
 (pub :: fpIf (-> FPr FNode ()))
@@ -3665,12 +3661,9 @@
               ; parser, so it prints as itself. `check` resolves it
               ; like any name, and a macro template, which `check`
               ; doesn't resolve until it expands, may hold one.
-              {
-                (let s (fpOperSpelling t))
-                (if (== (strLen s) 0)
-                  (fpP p t)
-                  (fpP p s))
-              }
+              (match (fpOperSpelling t)
+                ((None) (fpP p t))
+                ((Some spelling) (fpP p spelling)))
               ; A bare name prints as itself whatever it spells:
               ; `data`, `match` and `where` are identifiers here, not
               ; keywords - see `fpIsRefusedHead`, and the parity
@@ -6138,7 +6131,7 @@
         ; otherwise leaves empty: counting each `.name` link as a level,
         ; this walk refuses some files `check` accepts, and the driver
         ; says so with the code rather than a bare refusal.
-        (if (>= (fNestOverflow sc.toks parseMaxDepth) 0)
+        (if (isSome (fNestOverflow sc.toks parseMaxDepth))
           (FRes :ok 0 :text "AX2005")
           (if (let (Some forms) (readForms src sc.toks))
             {
