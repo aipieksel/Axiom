@@ -1905,8 +1905,9 @@ chunk.
 
 **MM-ALLOC-4a (H).** Chunks come from a raw inline-assembly `mmap`
 (`PROT_READ|PROT_WRITE`, `MAP_PRIVATE|MAP_ANON`, no address hint, no
-guard pages) and are **never unmapped**. `munmap` appears nowhere in
-the emitted runtime. The only reuse is the free list.
+guard pages). They remain mapped and can be reused from the chunk free
+list. Large-block reservations are unmapped on release or reset
+(`MM-ALLOC-26`).
 
 **MM-ALLOC-4c (H).** That is one of **two** backing strategies. Which
 one a program carries is decided at emission time by
@@ -2109,9 +2110,9 @@ bytes, for the calling thread's arena:
 
 | `k` | Count | What it covers |
 |---|---|---|
-| 0 | held | every byte of the active chunks the bump has handed out: live values, blocks waiting on a size-class list, dead blocks too large for one, unreachable cycles, and each chunk's header and abandoned tail |
+| 0 | held | active chunk bytes the bump has handed out, plus reserved payload capacities and their prefixes: live values, filed blocks, unreachable cycles, headers and abandoned tails |
 | 1 | filed | bytes, headers included, of the blocks on the size-class lists, which the next request of their class reuses |
-| 2 | mapped | every chunk byte mapped, active or on the chunk free list; chunks are never unmapped (`MM-ALLOC-4a`), so this only grows |
+| 2 | mapped | active and free chunk bytes, plus reserved payload capacities and their prefixes (`MM-ALLOC-26`); unused reservation address space is excluded |
 
 Any other `k` answers -1. Held less filed is the *backlog*: what an
 arena reset would give back and counting hasn't, which is where an
@@ -2182,29 +2183,42 @@ request rounding turns red (`scripts/check-runtime-model.sh`), and by
 the soak in `scripts/check-reclaim-soak.sh` section 2, whose ablation of
 the same rounding must see memory grow.
 
-**MM-ALLOC-26 (P). A large block of a megabyte or more lives in an
-address reservation of its own, and a vector grows inside it.** On a
-target whose chunks come from a syscall `mmap`, a large block up to
-128 GiB gets a reservation of eight times its capacity, at least
-64 MiB, and `vecReserveExactly` grows it by raising its capacity: no
-copy, and the data's address never changes. A reservation is charged
-for its block, not its address space, and a program that sets an arena
-cap reserves nothing.
+**MM-ALLOC-26 (H). Large vectors can grow inside an address reservation.**
+On a syscall-backed POSIX heap, a block from 1 MiB through 128 GiB
+receives a separate reservation when its mapping succeeds. The
+reservation is eight times its initial capacity, with a 64 MiB minimum.
+Size eligibility is checked before multiplication. Mapping refusal
+falls back to the ordinary allocator.
 
-Reservations sit on a list of their own, each numbered as it is made.
-A mark records the next number, and a reset unmaps every reservation
-numbered after it, wherever it is on the list, so a reservation freed
-between the mark and the reset leaves the mark valid. A block that a
-reset keeps (`MM-ALLOC-15`) keeps its reservation
-instead of being copied out of it.
+A vector grows within that reservation by extending its payload
+capacity. Its header, data address and existing element shares stay
+valid. Newly exposed bytes are kernel-zeroed. Growth beyond the
+reservation copies into another block. The reference-array length is
+updated on both paths, so destruction visits every owned element.
 
-Today a vector that outgrows its block allocates one twice the size
-and copies, and the old block goes to its size class's free list. A
-first version linked each reservation onto the active chunk list; a
-mark taken while a reservation headed that list was lost when the
-block was released, and the reset stopped with status 75.
-`tests/stdlib/996-vec-grow-large.ax` holds the answers growth must
-keep.
+Reservations have a separate list and share a creation counter with
+resource owners when that registry is present. The fourth mark word
+snapshots this counter. At the signed sequence limit, reservations use
+ordinary allocation; resource creation refuses with recoverable status 70
+before acquiring ownership. Reset unmaps newer reservations by number;
+release can remove a reservation without invalidating an older mark.
+With no cleanup pending, a newer unowned whole payload kept across
+reset retains its reservation. Reservation sources are copied before
+resource cleanup can run, so a
+callback can release or adopt the original safely. Owned sources also
+copy when no cleanup is pending. An older source is copied,
+preserving its existing owners. Partial payloads and interior slices
+are copied before a newer source is unmapped.
+
+Memory statistics charge the current payload capacity and its 64-byte
+prefix, excluding unused reserved address space. A released reservation
+is unmapped after its children are released and does not enter a free
+list. Capped heaps, fixed heaps, threaded programs and Windows retain
+the copying allocator. Raw pointers into a vector must still be
+refreshed after growth because the copying path can move its data.
+
+Tested by `tests/stdlib/1002-vec-in-place-growth.ax` and
+`scripts/check-vec-growth.py`.
 
 ### 3.2 What allocates
 
@@ -2222,7 +2236,7 @@ and their partial applications allocate closure records.
 | `Vec`, `Map`, `Intern` operations | library-level, over `rawAlloc` |
 | a `match`'s result | one scratch `alloca` per function, shared by every merge. A cell lives from the store at an arm's end to the load at the merge, with nothing between, so one slot serves nested and tail shapes alike |
 | a mixed-representation tag read | the same shared scratch `alloca` (`emitCondTagRead`), with its fall-through zero stored explicitly |
-| `__axiom_arena_mark` | a three-word cell, four with the owner registry (`MM-EXEC-20`) |
+| `__axiom_arena_mark` | a four-word cell with reservations or the owner registry (`MM-EXEC-20`), otherwise three |
 | `handle` on a declared effect | a two-word evidence record `{handler, previous}`; the form performs `Alloc` |
 
 **MM-ALLOC-9a (H).** An evidence record is released
@@ -2310,8 +2324,9 @@ rule's claim (`MM-ALLOC-4b`).
 
 A **mark** captures the whole allocator position in a cell: the bump
 pointer, the end, and the chunk the bump points into. In a module with
-the owner registry, a fourth word holds the registry's counter, so a
-reset can run the cleanup of the owners made since (`MM-EXEC-20`). A bump
+the owner registry or reservations, a fourth word holds their creation
+counter, so reset can reclaim newer owners and reservations
+(`MM-EXEC-20`, `MM-ALLOC-26`). A bump
 pointer alone means nothing once allocation has moved to another chunk.
 The cell is allocated *before* the position is read, so it sits below
 its own waterline. A reset therefore never reclaims its own mark, and
@@ -2337,7 +2352,9 @@ and would strand every chunk mapped after the mark. That leak measured
 Memory above the restored waterline keeps its contents until it is
 handed out again, and then `MM-ALLOC-6` scrubs it. This ordering is
 what lets a program read a value *after* the reset that reclaimed it,
-for exactly as long as it takes to copy it down.
+for exactly as long as it takes to copy it down. This read applies to
+ordinary chunk storage. Reservations are unmapped; carry their bytes
+across reset with the keep operation (`MM-ALLOC-26`).
 
 **MM-ALLOC-15 (H).** `__axiom_arena_reset_keeping` reclaims to the mark
 **and** carries one contiguous block across the reclaim in a single
@@ -2831,8 +2848,8 @@ make arbitrary `Int` addresses, foreign memory or raw reset calls safe.
 **MM-RGN-1 (H). A region is a lexical allocation scope.**
 `(region r EXPR)` binds the region name `r` over `EXPR`. On entry, the
 emitted code saves the current bump pointer, end and chunk in a stack
-cell, with the owner registry's counter as a fourth word where there is
-one (`MM-EXEC-20`). On normal return it resets the allocator to that
+cell, with the shared creation counter as a fourth word where owners or
+reservations are enabled (`MM-EXEC-20`, `MM-ALLOC-26`). On normal return it resets the allocator to that
 saved position and answers the body's scalar result.
 
 - Rebinding a live region name inside itself is refused (`AX3058`).

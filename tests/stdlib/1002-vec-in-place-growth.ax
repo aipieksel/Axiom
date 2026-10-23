@@ -1,0 +1,239 @@
+; Growth preserves handles, elements, ownership and arena marks.
+(import IO)
+(import Mem)
+(import Str)
+(import Vec)
+
+(:: fill (-> (Vec Int) Int Int))
+(fn (fill v n)
+  {
+    (let mut i (vecLen v))
+    (while (< i n)
+      {
+        (vecPush v i)
+        (set i (+ i 1))
+      })
+    (vecGet v (- n 1))
+  })
+
+(:: refs (-> String Int))
+(fn (refs child)
+  {
+    (let v (vecWithCapacity 131071))
+    (for i in 0..262145
+      (vecPush v child))
+    (let data (memGetWord (as v Int) 2))
+    (if (== (>> (memGetWord data -1) 16) (vecCap v))
+      (vecLen v)
+      0)
+  })
+
+(:: markedGrowth (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (markedGrowth cell)
+  {
+    (let v (vecWithCapacity 131072))
+    (__axiom_arena_mark_into cell)
+    (fill v 524289)
+    (memAlloc 2097152)
+    0
+  })
+
+(:: olderKeep Int)
+;@axiom:effect(unsafe)
+(fn (olderKeep)
+  {
+    (let p (memAlloc 1048576))
+    (__retain p)
+    (memSetWord p 0 789)
+    (let mark __axiom_arena_mark)
+    (let kept (__axiom_arena_reset_keeping mark p 1048576))
+    (if (== p kept)
+      1
+      {
+        (let count (memGetWord p -2))
+        (__retain kept)
+        (__release p)
+        (let bad
+          (if (&& (== count 1) (== (memGetWord kept 0) 789))
+            0
+            1))
+        (__release kept)
+        bad
+      })
+  })
+
+(:: dropSource (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (dropSource p)
+  {
+    (__release p)
+    0
+  })
+
+(:: cleanupOwner (-> Int Int))
+;@axiom:effect(unsafe)
+;@axiom:effect(io)
+(fn (cleanupOwner p)
+  {
+    (let h (__resource_new (lambda (x) (dropSource x)) p))
+    (__retain (as h Int))
+    0
+  })
+
+(:: adoptSource (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (adoptSource p)
+  {
+    (__retain p)
+    (__release p)
+    0
+  })
+
+(:: adoptingOwner (-> Int Int))
+;@axiom:effect(unsafe)
+;@axiom:effect(io)
+(fn (adoptingOwner p)
+  {
+    (let h (__resource_new (lambda (x) (adoptSource x)) p))
+    (__retain (as h Int))
+    0
+  })
+
+(:: cleanupKeep (-> Bool Bool Int))
+;@axiom:effect(unsafe)
+;@axiom:effect(io)
+(fn (cleanupKeep slice adopt)
+  {
+    (let mark __axiom_arena_mark)
+    (let p (memAlloc 1048576))
+    (if (! adopt)
+      (__retain p))
+    (memSetWord p 0 357)
+    (memSetWord p 131071 579)
+    (if adopt
+      (adoptingOwner p)
+      (cleanupOwner p))
+    (let kept
+      (if slice
+        (__axiom_arena_reset_keeping mark (+ p 1048568) 8)
+        (__axiom_arena_reset_keeping mark p 1048576)))
+    (let bad
+      (if (== (memGetWord kept 0)
+            (if slice
+              579
+              357))
+        0
+        1))
+    (__retain kept)
+    (__release kept)
+    bad
+  })
+
+(:: olderRawKeep Int)
+;@axiom:effect(unsafe)
+(fn (olderRawKeep)
+  {
+    (let p (memAlloc 1048576))
+    (let mark __axiom_arena_mark)
+    (let kept (__axiom_arena_reset_keeping mark p 1048576))
+    (if (== p kept)
+      1
+      {
+        (__retain p)
+        (__retain kept)
+        (__release p)
+        (__release kept)
+        0
+      })
+  })
+
+(:: marks Int)
+;@axiom:effect(unsafe)
+;@axiom:effect(io)
+(fn (marks)
+  {
+    (let cell (memAlloc 32))
+    (markedGrowth cell)
+    (__axiom_arena_reset cell)
+    (__axiom_arena_reset cell)
+    (let older (memAlloc 1048576))
+    (__retain older)
+    (let mark (__axiom_arena_mark))
+    (let newer (memAlloc 2097152))
+    (__retain newer)
+    (__release older)
+    (__release newer)
+    (__axiom_arena_reset mark)
+    (__axiom_arena_reset mark)
+    (let p (memAlloc 1048576))
+    (memSetWord p 0 123)
+    (memSetWord p 131071 456)
+    (let kept (__axiom_arena_reset_keeping mark p 1048576))
+    (let mut bad
+      (if (&& (== (memGetWord kept 0) 123) (== (memGetWord kept 131071) 456))
+        0
+        1))
+    (for i in 0..8
+      {
+        (let again (__axiom_arena_reset_keeping mark kept 1048576))
+        (if (!= (memGetWord again 131071) 456)
+          (set bad 1))
+      })
+    ; Keeping an interior slice must copy before unmapping its source.
+    (let slice (__axiom_arena_reset_keeping mark (+ kept 1048568) 8))
+    (if (!= (memGetWord slice 0) 456)
+      (set bad 1))
+    (__axiom_arena_reset mark)
+    (+
+      (+
+        (+ (+ (+ (+ bad olderKeep) olderRawKeep) (cleanupKeep false false))
+          (cleanupKeep true false))
+        (cleanupKeep false true))
+      (cleanupKeep true true))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let v (vecWithCapacity 0))
+    (let alias v)
+    (let mut bad 0)
+    (if (!= (fill v 524289) 524288)
+      (set bad (| bad 1)))
+    (if (!= (vecLen alias) 524289)
+      (set bad (| bad 2)))
+    (vecClear alias)
+    (if (!= (fill v 1024) 1023)
+      (set bad (| bad 4)))
+    (let child (strDup "owned"))
+    (let count (memGetWord (as child Int) -2))
+    (if (!= (refs child) 262145)
+      (set bad (| bad 8)))
+    (if (!= (memGetWord (as child Int) -2) count)
+      (set bad (| bad 16)))
+    (if (!= marks 0)
+      (set bad (| bad 32)))
+    (println bad)
+    bad
+  })
+
+; Raw observations are confined to this unsafe allocator probe.
+(:: memGetWord (-> Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memGetWord p i)
+  (__load64 p i))
+
+(:: memSetWord (-> Int Int Int Int))
+;@axiom:effect(unsafe)
+(fn (memSetWord p i v)
+  {
+    (__store64 p i v)
+    v
+  })
+
+(:: memAlloc (-> Int Int))
+;@axiom:effect(unsafe)
+(fn (memAlloc n)
+  (__alloc n))

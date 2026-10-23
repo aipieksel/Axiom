@@ -118,6 +118,13 @@ else
   bad "mapped and unmapped rows both read '$anchor' - this table proves nothing"
 fi
 
+# Reuse this compiler for the focused growth and allocator controls.
+if python3 "$repo_root/scripts/check-vec-growth.py" --axiom "$axc" --work "$work/growth"; then
+  ok "vector growth, ownership, reset and failure controls"
+else
+  bad "vector growth controls failed"
+fi
+
 echo
 if (( failed == 0 )); then
   echo "check-vec-field-shape: $checks checks - a Vec field is a mapped reference"

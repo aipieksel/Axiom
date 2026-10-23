@@ -234,6 +234,7 @@ platform_table_report() {
       else if (fn == "__axiom_program_stack_bytes" && $0 ~ /^  %rl = /) name = "getrlimit"
       else if (fn == "__axiom_stack_disarm" && $0 ~ /^  %off = /) name = "sigaltstack"
       else if (fn == "__axiom_stack_disarm" && $0 ~ /^  %unmapped = /) name = "munmap"
+      else if ((fn == "__axiom_unmap_reserved" || fn == "__axiom_reserved_reset") && $0 ~ /^  %unmapped = /) name = "munmap"
       else if (n == 7 && a[6] == "-1") {
         name = "mmap"
       } else if (n == 7 && a[2] == "2" && substr(a[3], 1, 1) == "%") {

@@ -288,7 +288,30 @@
     cap
     (vecGrownCap (* cap 2) need)))
 
-; Move `v`'s elements into a fresh block of exactly `newCap` elements.
+; A reserved large block can expose fresh kernel-zeroed pages without
+; moving its elements or their shares. Check the large sentinel before
+; reading the prefix, and validate bytes before rounding or adding.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(:: vecGrowsInPlace (-> Int Int Bool))
+(fn (vecGrowsInPlace old bytes)
+  (if (|| (< bytes 0) (> bytes 4611686018427387904))
+    false
+    (if (!= (& (>> (rawGetWord old -1) 1) 16383) 1)
+      false
+      (if (!= (rawGetWord old -3) -1)
+        false
+        {
+          (let need (& (+ bytes 15) -16))
+          (if (> need (- (rawGetWord old -8) 64))
+            false
+            {
+              (if (> need (rawGetWord old -4))
+                (rawSetWord old -4 need))
+              true
+            })
+        }))))
+
+; Extend a reserved data block, or move its elements to fresh storage.
 ;
 ; Only `len` elements are copied, not `cap`: the words past `len` are
 ; unreachable through `vecGet`, so copying them would be pure cost. The
@@ -296,8 +319,25 @@
 ; than whatever the arena last held there.
 ;@axiom:restrict(no-io,no-foreign)
 (:: vecReserveExactly (-> (Vec a) Int (Vec a)))
-;@axiom:effect(unsafe)
 (fn (vecReserveExactly v newCap)
+  (if (vecGrowsInPlace (vecData v) (vecBytes newCap))
+    {
+      (if (vecOwnsRefs v)
+        {
+          ; rawMarkArray requires a leaf; replacing the old length
+          ; matters when the capacity is not a power of two.
+          (rawMarkLeaf (vecData v))
+          (rawMarkArray (vecData v) newCap)
+        })
+      (rawSetWord (as v Int) 1 newCap)
+      v
+    }
+    (vecMoveTo v newCap)))
+
+;@axiom:restrict(no-io,no-foreign)
+(:: vecMoveTo (-> (Vec a) Int (Vec a)))
+;@axiom:effect(unsafe)
+(fn (vecMoveTo v newCap)
   {
     (let old (vecData v))
     (let bigger (rawAlloc (vecBytes newCap)))

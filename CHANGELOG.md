@@ -16,6 +16,14 @@ its changelog too.
 
 ## Unreleased
 
+- Add experimental large-vector growth inside separate address reservations on uncapped,
+  single-threaded POSIX heaps. Growth preserves element ownership and
+  falls back to copying when the reservation is full or unavailable.
+  At the signed sequence limit, a reservation uses the ordinary allocator
+  and resource creation returns status 70 before it takes a callback share.
+  Tested by `tests/stdlib/1002-vec-in-place-growth.ax` and
+  `scripts/check-vec-growth.py`.
+
 - A `word` struct can pack several fixed-width fields into its one
   word. The fields are `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`,
   `UInt16`, `UInt32`, `UInt64`, or a `Link` of width `UInt8`, `UInt16`

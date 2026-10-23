@@ -14728,6 +14728,12 @@
     (emitLine cg
       (concat "@__axiom_slabs = " (concat (cgMutGlobal cg) " [4143 x i64] zeroinitializer")))
     (emitLine cg "")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg (concat "@__axiom_reserved = " (concat (cgMutGlobal cg) " i64 0")))
+        (if (== (resRegistryOn cg) 0)
+          (emitLine cg (concat "@__axiom_reserve_seq = " (concat (cgMutGlobal cg) " i64 0"))))
+      })
     (emitLine cg "define i64 @axiom_alloc(i64 %size) #0 {")
     (emitLine cg "entry:")
     ; A zero-byte request keeps its MM-ALLOC-8b behavior exactly: the
@@ -14843,7 +14849,17 @@
     ; scrub wipes its old contents - link word included - and
     ; `wiped` rewrites the header. Zeroing (MM-ALLOC-6) is the same
     ; promise on the same path.
-    (emitLine cg "  br label %try_pop")
+    (if (reserveSupported cg)
+      {
+        ; Bound before multiplying: requests above 128 GiB retain the
+        ; ordinary refusal path, without reservation arithmetic overflow.
+        (emitLine cg "  %resmin = icmp uge i64 %sz0, 1048576")
+        (emitLine cg "  %resmax = icmp ule i64 %sz0, 137438953472")
+        (emitLine cg "  %resok = and i1 %resmin, %resmax")
+        (emitLine cg "  br i1 %resok, label %reserve, label %try_pop")
+        (emitReserveBlock cg)
+      }
+      (emitLine cg "  br label %try_pop"))
     (emitLine cg "try_pop:")
     (emitLine cg "  %slotp = getelementptr [4143 x i64], ptr @__axiom_slabs, i64 0, i64 %cls")
     (emitLine cg "  %shead = load i64, ptr %slotp")
@@ -15441,6 +15457,8 @@
     (emitLine cg "  ret void")
     (emitLine cg "}")
     (emitLine cg "")
+    (if (reserveSupported cg)
+      (emitReservedRuntime cg))
     (emitArenaHelpers cg)
     (emitBadMarkTrap cg)
     (emitLiveHandleTrap cg)
@@ -15970,6 +15988,22 @@
         (emitRuntimeExit cg "70")
         (emitLine cg "  unreachable")
         (emitLine cg "}")
+        (if (== (resRegistryOn cg) 1)
+          {
+            (emitLine cg
+              "@__axiom_res_full_msg = private unnamed_addr constant [40 x i8] c\"axiom: resource sequence limit exceeded\\0A\"")
+            (emitLine cg
+              (concat "define internal i64 @__axiom_resource_sequence_exhausted() "
+                (concat trapFnAttrs " {")))
+            (emitLine cg "entry:")
+            (emitLine cg "  call i64 @__axiom_recover_abort(i64 70)")
+            (emitLine cg "  %seqp = ptrtoint ptr @__axiom_res_full_msg to i64")
+            (emitRuntimeWrite cg "%seqp" "40")
+            (emitLine cg "  call void @__axiom_backtrace()")
+            (emitRuntimeExit cg "70")
+            (emitLine cg "  unreachable")
+            (emitLine cg "}")
+          })
         cg
       }
     }
@@ -18033,7 +18067,7 @@
     ; the registry's counter, so the reset knows which owners are newer
     ; (`emitResourceRegistry`).
     (emitLine cg
-      (if (== (resRegistryOn cg) 1)
+      (if (|| (== (resRegistryOn cg) 1) (reserveSupported cg))
         "  %cell = call i64 @axiom_alloc(i64 32)"
         "  %cell = call i64 @axiom_alloc(i64 24)"))
     (emitLine cg "  %mark = call i64 @.axiom.arena.mark.into(i64 %cell)")
@@ -18060,10 +18094,26 @@
         (emitLine cg "  %p3 = inttoptr i64 %a3 to ptr")
         (emitLine cg "  store i64 %rseq, ptr %p3")
       })
+    (if (reserveSupported cg)
+      {
+        (emitLine cg (concat "  %vseq = load i64, ptr " (reserveSeqName cg)))
+        (emitLine cg "  %va3 = add i64 %cell, 24")
+        (emitLine cg "  %vp3 = inttoptr i64 %va3 to ptr")
+        (emitLine cg "  store i64 %vseq, ptr %vp3")
+      })
     (emitLine cg "  ret i64 %cell")
     (emitLine cg "}")
     (emitLine cg "")
-    (emitLine cg "define internal i64 @__axiom_arena_reset_fn(i64 %cell) #0 {")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "define internal i64 @__axiom_arena_reset_fn(i64 %cell) #0 {")
+        (emitLine cg "entry:")
+        (emitLine cg "  %r = call i64 @__axiom_arena_reset_impl(i64 %cell, i64 0)")
+        (emitLine cg "  ret i64 %r")
+        (emitLine cg "}")
+        (emitLine cg "define internal i64 @__axiom_arena_reset_impl(i64 %cell, i64 %keep) #0 {")
+      }
+      (emitLine cg "define internal i64 @__axiom_arena_reset_fn(i64 %cell) #0 {"))
     (emitLine cg "entry:")
     ; Owners made since the mark are cleaned up first, while every byte
     ; their callbacks read is still theirs (`emitResourceRegistry`).
@@ -18184,6 +18234,13 @@
     (emitLine cg "  store i64 %sbump, ptr @__axiom_bump")
     (emitLine cg "  store i64 %send, ptr @__axiom_bump_end")
     (emitLine cg "  store i64 %schunk, ptr @__axiom_chunk")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "  %va3 = add i64 %cell, 24")
+        (emitLine cg "  %vp3 = inttoptr i64 %va3 to ptr")
+        (emitLine cg "  %vfloor = load i64, ptr %vp3")
+        (emitLine cg "  call void @__axiom_reserved_reset(i64 %vfloor, i64 %keep)")
+      })
     (emitLine cg "  ret i64 0")
     (emitLine cg "}")
     (emitLine cg "")
@@ -18648,6 +18705,7 @@
 ; which are short - a chunk is a megabyte - and nothing on the
 ; allocation path pays for any of it but 1's counter, slab slot 0.
 (pub :: emitMemStatFn (-> CG CG))
+;@axiom:effect(io)
 (pub fn (emitMemStatFn cg)
   {
     (emitLine cg "define internal i64 @__axiom_mem_stat_fn(i64 %k) #0 {")
@@ -18686,7 +18744,13 @@
     (emitLine cg "  %he = load i64, ptr @__axiom_bump_end")
     (emitLine cg "  %hleft = sub i64 %he, %hb")
     (emitLine cg "  %hv = sub i64 %asum, %hleft")
-    (emitLine cg "  ret i64 %hv")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "  %rv = call i64 @__axiom_reserved_bytes()")
+        (emitLine cg "  %charged = add i64 %hv, %rv")
+        (emitLine cg "  ret i64 %charged")
+      }
+      (emitLine cg "  ret i64 %hv"))
     (emitLine cg "fchunks:")
     (emitLine cg "  %fhead = load i64, ptr @__axiom_free")
     (emitLine cg "  br label %floop")
@@ -18704,7 +18768,13 @@
     (emitLine cg "  %fnext = load i64, ptr %flinkp")
     (emitLine cg "  br label %floop")
     (emitLine cg "fout:")
-    (emitLine cg "  ret i64 %fsum")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "  %rv2 = call i64 @__axiom_reserved_bytes()")
+        (emitLine cg "  %charged2 = add i64 %fsum, %rv2")
+        (emitLine cg "  ret i64 %charged2")
+      }
+      (emitLine cg "  ret i64 %fsum"))
     (emitLine cg "}")
     (emitLine cg "")
     cg
@@ -18745,9 +18815,49 @@
   {
     (emitLine cg
       (concat "define internal i64 @__axiom_arena_reset_keeping_fn"
-        "(i64 %cell, i64 %src, i64 %bytes) #0 {"))
+        (if (reserveSupported cg)
+          "(i64 %cell, i64 %original, i64 %bytes) #0 {"
+          "(i64 %cell, i64 %src, i64 %bytes) #0 {")))
     (emitLine cg "entry:")
-    (emitLine cg "  %r = call i64 @__axiom_arena_reset_fn(i64 %cell)")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "  %sourceflooraddr = add i64 %cell, 24")
+        (emitLine cg "  %sourcefloorp = inttoptr i64 %sourceflooraddr to ptr")
+        (emitLine cg "  %sourcefloor = load i64, ptr %sourcefloorp")
+        (emitLine cg
+          "  %src = call i64 @__axiom_reserved_snapshot(i64 %original, i64 %bytes, i64 %sourcefloor)")
+        (emitLine cg "  %keep = call i64 @__axiom_reserved_source(i64 %src, i64 %bytes)")
+        (emitLine cg "  %r = call i64 @__axiom_arena_reset_impl(i64 %cell, i64 %keep)")
+        (emitLine cg "  %have = icmp ne i64 %keep, 0")
+        (emitLine cg "  %kp = inttoptr i64 %keep to ptr")
+        (emitLine cg "  %kdata = add i64 %keep, 64")
+        (emitLine cg "  br i1 %have, label %reserved, label %ordinary")
+        (emitLine cg "reserved:")
+        (emitLine cg "  %kcp = getelementptr i64, ptr %kp, i64 4")
+        (emitLine cg "  %kcap = load i64, ptr %kcp")
+        (emitLine cg "  %whole = icmp eq i64 %src, %kdata")
+        (emitLine cg "  %full = icmp eq i64 %bytes, %kcap")
+        ; A source older than the mark keeps its existing owners and
+        ; shape. Copy it as before; only reclaimed storage can move
+        ; into the kept block's count-zero leaf contract.
+        (emitLine cg "  %kseqp = getelementptr i64, ptr %kp, i64 2")
+        (emitLine cg "  %kseq = load i64, ptr %kseqp")
+        (emitLine cg "  %kflooraddr = add i64 %cell, 24")
+        (emitLine cg "  %kfloorp = inttoptr i64 %kflooraddr to ptr")
+        (emitLine cg "  %kfloor = load i64, ptr %kfloorp")
+        (emitLine cg "  %knew = icmp ugt i64 %kseq, %kfloor")
+        (emitLine cg "  %exactpayload = and i1 %whole, %full")
+        (emitLine cg "  %exactkeep = and i1 %exactpayload, %knew")
+        (emitLine cg "  br i1 %exactkeep, label %kept, label %ordinary")
+        (emitLine cg "kept:")
+        (emitLine cg "  %cntp = getelementptr i64, ptr %kp, i64 6")
+        (emitLine cg "  store i64 0, ptr %cntp")
+        (emitLine cg "  %shp = getelementptr i64, ptr %kp, i64 7")
+        (emitLine cg "  store i64 2, ptr %shp")
+        (emitLine cg "  ret i64 %src")
+        (emitLine cg "ordinary:")
+      }
+      (emitLine cg "  %r = call i64 @__axiom_arena_reset_fn(i64 %cell)"))
     (emitLine cg "  %sz0 = add i64 %bytes, 15")
     (emitLine cg "  %exact = and i64 %sz0, -16")
     ; The kept block is a counted block like any other: its 16-byte
@@ -18795,8 +18905,14 @@
     (emitLine cg "  %capacity = shl i64 1, %power")
     (emitLine cg "  br label %classready")
     (emitLine cg "classready:")
-    (emitLine cg "  %szr = phi i64 [ %exact, %entry ], [ %capacity, %largeclass ]")
-    (emitLine cg "  %keepcls = phi i64 [ 0, %entry ], [ %cls, %largeclass ]")
+    (emitLine cg
+      (if (reserveSupported cg)
+        "  %szr = phi i64 [ %exact, %ordinary ], [ %capacity, %largeclass ]"
+        "  %szr = phi i64 [ %exact, %entry ], [ %capacity, %largeclass ]"))
+    (emitLine cg
+      (if (reserveSupported cg)
+        "  %keepcls = phi i64 [ 0, %ordinary ], [ %cls, %largeclass ]"
+        "  %keepcls = phi i64 [ 0, %entry ], [ %cls, %largeclass ]"))
     (emitLine cg "  %overhead = select i1 %large, i64 32, i64 16")
     (emitLine cg "  %sz = add i64 %szr, %overhead")
     (emitLine cg "  %bump = load i64, ptr @__axiom_bump")
@@ -18936,6 +19052,22 @@
     (emitLine cg "  %i2 = add i64 %i, 1")
     (emitLine cg "  br label %loop")
     (emitLine cg "done:")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "  br i1 %have, label %sourcecheck, label %return")
+        (emitLine cg "sourcecheck:")
+        (emitLine cg "  %seqp = getelementptr i64, ptr %kp, i64 2")
+        (emitLine cg "  %seq = load i64, ptr %seqp")
+        (emitLine cg "  %flooraddr = add i64 %cell, 24")
+        (emitLine cg "  %floorp = inttoptr i64 %flooraddr to ptr")
+        (emitLine cg "  %floor = load i64, ptr %floorp")
+        (emitLine cg "  %newsource = icmp ugt i64 %seq, %floor")
+        (emitLine cg "  br i1 %newsource, label %sourcedrop, label %return")
+        (emitLine cg "sourcedrop:")
+        (emitLine cg "  call void @__axiom_unmap_reserved(i64 %kdata)")
+        (emitLine cg "  br label %return")
+        (emitLine cg "return:")
+      })
     (emitLine cg "  ret i64 %dst")
     (emitLine cg "oom:")
     (emitLine cg "  call i64 @__axiom_out_of_memory()")
@@ -32947,11 +33079,12 @@
   })
 
 (pub :: emitRegionCell (-> CG String CG))
+;@axiom:effect(io)
 (pub fn (emitRegionCell cg cell)
   {
     (let line
       (concat (concat "  " cell)
-        (if (== (resRegistryOn cg) 1)
+        (if (|| (== (resRegistryOn cg) 1) (reserveSupported cg))
           " = alloca i64, i64 4, align 16 ; axiom region mark"
           " = alloca i64, i64 3, align 16 ; axiom region mark")))
     (if (< (cgAllocaMark cg) 0)
@@ -32965,8 +33098,9 @@
 ; The owner registry's counter in a region's fourth cell word, so the
 ; region's reset cleans up the owners made inside it.
 (pub :: emitRegionSeq (-> CG String Int))
+;@axiom:effect(io)
 (pub fn (emitRegionSeq cg cell)
-  (if (== (resRegistryOn cg) 0)
+  (if (&& (== (resRegistryOn cg) 0) (! (reserveSupported cg)))
     0
     {
       (let p3 (regStr (allocReg cg)))
@@ -32974,7 +33108,7 @@
       {
         (emitLine cg
           (concat (concat "  " p3) (concat " = getelementptr i64, ptr " (concat cell ", i64 3"))))
-        (emitLine cg (concat (concat "  " v) " = load i64, ptr @__axiom_res_seq"))
+        (emitLine cg (concat (concat "  " v) (concat " = load i64, ptr " (reserveSeqName cg))))
         (emitLine cg (concat (concat "  store i64 " v) (concat ", ptr " p3)))
         0
       }
@@ -33314,6 +33448,18 @@
     (emitLine cg "}")
     (emitLine cg "define internal i64 @__axiom_resource_new(i64 %closure, i64 %value) #0 {")
     (emitLine cg "entry:")
+    ; Refuse before acquiring a callback share or allocating its owner.
+    ; The registry and reservations use one bounded, monotonic counter.
+    (if (== (resRegistryOn cg) 1)
+      {
+        (emitLine cg "  %sequence = load i64, ptr @__axiom_res_seq")
+        (emitLine cg "  %sequencefull = icmp uge i64 %sequence, 9223372036854775807")
+        (emitLine cg "  br i1 %sequencefull, label %sequence_exhausted, label %acquire")
+        (emitLine cg "sequence_exhausted:")
+        (emitLine cg "  call i64 @__axiom_resource_sequence_exhausted()")
+        (emitLine cg "  unreachable")
+        (emitLine cg "acquire:")
+      })
     (emitLine cg "  call void @axiom_retain(i64 %closure)")
     (emitLine cg
       (if (== (resRegistryOn cg) 1)
@@ -33992,9 +34138,21 @@
     (emitLine cg "  %cla = add i64 %h, -24")
     (emitLine cg "  %clp = inttoptr i64 %cla to ptr")
     (emitLine cg "  %cls = load i64, ptr %clp")
+    (if (reserveSupported cg)
+      {
+        (emitLine cg "  %reserved = icmp eq i64 %cls, -1")
+        (emitLine cg "  br i1 %reserved, label %unmap, label %file")
+        (emitLine cg "unmap:")
+        (emitLine cg "  call void @__axiom_unmap_reserved(i64 %h)")
+        (emitLine cg "  ret void")
+        (emitLine cg "file:")
+      })
     (emitLine cg "  %words = lshr i64 %cap, 3")
     (if (== (allocPoisonOn) 1)
-      (emitPoisonFill cg "pl" "%h" "%words" "entry"))
+      (emitPoisonFill cg "pl" "%h" "%words"
+        (if (reserveSupported cg)
+          "file"
+          "entry")))
     (emitLine cg "  %slot = getelementptr [4143 x i64], ptr @__axiom_slabs, i64 0, i64 %cls")
     (emitLine cg "  %old = load i64, ptr %slot")
     (emitLine cg "  %enc = sub i64 -2, %old")
@@ -34007,6 +34165,240 @@
     (emitLine cg "  %filed1 = add i64 %filed, %total")
     (emitLine cg "  store i64 %filed1, ptr @__axiom_slabs")
     (emitLine cg "  ret void")
+    (emitLine cg "}")
+    cg
+  })
+
+; Reservations and resource owners share a creation counter, so the
+; existing fourth mark word snapshots both lists. Capped, static and
+; threaded heaps keep the ordinary allocator. No primitive or mark ABI changes.
+(:: reserveSupported (-> CG Bool))
+;@axiom:effect(io)
+(fn (reserveSupported cg)
+  (&& (== (arenaStaticBytes (cgTarget cg)) 0)
+    (&& (== (targetUsesSyscallAsm (cgTarget cg)) 1)
+      (&& (! (arenaCapOn cg)) (== (cgThreadsFlag cg) 0)))))
+
+(:: reserveSeqName (-> CG String))
+(fn (reserveSeqName cg)
+  (if (== (resRegistryOn cg) 1)
+    "@__axiom_res_seq"
+    "@__axiom_reserve_seq"))
+
+(:: reserveMapFlags (-> Int Int))
+(fn (reserveMapFlags t)
+  (if (|| (== t 2) (== t 3))
+    (+ (targetMapFlags t) 16384)
+    (targetMapFlags t)))
+
+; A reservation has eight prefix words: mapping bytes, next, sequence,
+; spare, payload capacity, class -1, count, shape. The payload is aligned
+; to 16 bytes. Only its payload and prefix count towards held bytes.
+(:: emitReserveBlock (-> CG CG))
+(fn (emitReserveBlock cg)
+  {
+    (emitLine cg "reserve:")
+    (emitLine cg "  %rmul = shl i64 %sz0, 3")
+    (emitLine cg "  %rsmall = icmp ult i64 %rmul, 67108864")
+    (emitLine cg "  %rsz = select i1 %rsmall, i64 67108864, i64 %rmul")
+    (emitLine cg (concat "  %rseq = load i64, ptr " (reserveSeqName cg)))
+    (emitLine cg "  %rwrapped = icmp uge i64 %rseq, 9223372036854775807")
+    (emitLine cg "  br i1 %rwrapped, label %try_pop, label %rmap")
+    (emitLine cg "rmap:")
+    (emitLine cg
+      (concat "  %raddr = "
+        (parSys cg (fmtInt (targetMmapNum (cgTarget cg)))
+          (concat "i64 0, i64 %rsz, i64 3, i64 "
+            (concat (fmtInt (reserveMapFlags (cgTarget cg))) ", i64 -1, i64 0")))))
+    (emitLine cg "  %rfl = icmp ult i64 %raddr, 4096")
+    (emitLine cg "  %rfn = icmp ugt i64 %raddr, -4096")
+    (emitLine cg "  %rfail = or i1 %rfl, %rfn")
+    (emitLine cg "  br i1 %rfail, label %try_pop, label %rmapped")
+    (emitLine cg "rmapped:")
+    (emitLine cg "  %rbp = inttoptr i64 %raddr to ptr")
+    (emitLine cg "  store i64 %rsz, ptr %rbp")
+    (emitLine cg "  %rlp = getelementptr i64, ptr %rbp, i64 1")
+    (emitLine cg "  %rhead = load i64, ptr @__axiom_reserved")
+    (emitLine cg "  store i64 %rhead, ptr %rlp")
+    (emitLine cg "  %rsp = getelementptr i64, ptr %rbp, i64 2")
+    (emitLine cg "  %rsnext = add i64 %rseq, 1")
+    (emitLine cg "  store i64 %rsnext, ptr %rsp")
+    (emitLine cg (concat "  store i64 %rsnext, ptr " (reserveSeqName cg)))
+    (emitLine cg "  %rcp = getelementptr i64, ptr %rbp, i64 4")
+    (emitLine cg "  store i64 %sz0, ptr %rcp")
+    (emitLine cg "  %rclp = getelementptr i64, ptr %rbp, i64 5")
+    (emitLine cg "  store i64 -1, ptr %rclp")
+    (emitLine cg "  %rshp = getelementptr i64, ptr %rbp, i64 7")
+    (emitLine cg "  store i64 2, ptr %rshp")
+    (emitLine cg "  store i64 %raddr, ptr @__axiom_reserved")
+    (emitLine cg "  %ruser = add i64 %raddr, 64")
+    (emitLine cg "  ret i64 %ruser")
+    cg
+  })
+
+; Unlink by node identity, never by a mark's saved list head. Releasing
+; a node between a mark and reset cannot invalidate the mark.
+(:: emitReservedRuntime (-> CG CG))
+(fn (emitReservedRuntime cg)
+  {
+    (emitLine cg "define internal void @__axiom_unmap_reserved(i64 %h) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %base = add i64 %h, -64")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "scan:")
+    (emitLine cg "  %link = phi ptr [ @__axiom_reserved, %entry ], [ %nextp, %advance ]")
+    (emitLine cg "  %node = load i64, ptr %link")
+    (emitLine cg "  %done = icmp eq i64 %node, 0")
+    (emitLine cg "  br i1 %done, label %exit, label %test")
+    (emitLine cg "test:")
+    (emitLine cg "  %np = inttoptr i64 %node to ptr")
+    (emitLine cg "  %nextp = getelementptr i64, ptr %np, i64 1")
+    (emitLine cg "  %same = icmp eq i64 %node, %base")
+    (emitLine cg "  br i1 %same, label %unmap, label %advance")
+    (emitLine cg "advance:")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "unmap:")
+    (emitLine cg "  %next = load i64, ptr %nextp")
+    (emitLine cg "  store i64 %next, ptr %link")
+    (emitLine cg "  %size = load i64, ptr %np")
+    (emitStackSys cg "%unmapped" (targetMunmapNum (cgTarget cg))
+      "i64 %node, i64 %size, i64 0, i64 0, i64 0, i64 0")
+    (emitLine cg "  br label %exit")
+    (emitLine cg "exit:")
+    (emitLine cg "  ret void")
+    (emitLine cg "}")
+    (emitLine cg "define internal i64 @__axiom_reserved_source(i64 %src, i64 %bytes) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %head = load i64, ptr @__axiom_reserved")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "scan:")
+    (emitLine cg "  %node = phi i64 [ %head, %entry ], [ %next, %advance ]")
+    (emitLine cg "  %done = icmp eq i64 %node, 0")
+    (emitLine cg "  br i1 %done, label %absent, label %test")
+    (emitLine cg "test:")
+    (emitLine cg "  %np = inttoptr i64 %node to ptr")
+    (emitLine cg "  %cp = getelementptr i64, ptr %np, i64 4")
+    (emitLine cg "  %cap = load i64, ptr %cp")
+    (emitLine cg "  %data = add i64 %node, 64")
+    (emitLine cg "  %offset = sub i64 %src, %data")
+    (emitLine cg "  %within = icmp ult i64 %offset, %cap")
+    (emitLine cg "  %remaining = sub i64 %cap, %offset")
+    (emitLine cg "  %fits = icmp ule i64 %bytes, %remaining")
+    (emitLine cg "  %found = and i1 %within, %fits")
+    (emitLine cg "  br i1 %found, label %hit, label %advance")
+    (emitLine cg "advance:")
+    (emitLine cg "  %nextp = getelementptr i64, ptr %np, i64 1")
+    (emitLine cg "  %next = load i64, ptr %nextp")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "hit:")
+    (emitLine cg "  ret i64 %node")
+    (emitLine cg "absent:")
+    (emitLine cg "  ret i64 0")
+    (emitLine cg "}")
+    ; Cleanup callbacks may release an owned source before the reset
+    ; finishes. Snapshot its bytes first; the unowned copy cannot be
+    ; released by those callbacks and needs no recovery-time pin.
+    (emitLine cg
+      "define internal i64 @__axiom_reserved_snapshot(i64 %src, i64 %bytes, i64 %floor) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %base = call i64 @__axiom_reserved_source(i64 %src, i64 %bytes)")
+    (emitLine cg "  %found = icmp ne i64 %base, 0")
+    (emitLine cg "  br i1 %found, label %owned, label %unchanged")
+    (emitLine cg "owned:")
+    (emitLine cg "  %bp = inttoptr i64 %base to ptr")
+    (emitLine cg "  %cp = getelementptr i64, ptr %bp, i64 6")
+    (emitLine cg "  %count = load i64, ptr %cp")
+    (emitLine cg "  %live = icmp sgt i64 %count, 0")
+    (if (== (resRegistryOn cg) 1)
+      {
+        ; A callback can adopt and release even a count-zero source.
+        ; The newest owner's sequence bounds every possible callback.
+        (emitLine cg "  %rhead = load i64, ptr @__axiom_res_head")
+        (emitLine cg "  %rnone = icmp eq i64 %rhead, 0")
+        (emitLine cg "  br i1 %rnone, label %counted, label %resource")
+        (emitLine cg "resource:")
+        (emitLine cg "  %rp = inttoptr i64 %rhead to ptr")
+        (emitLine cg "  %rseqp = getelementptr i64, ptr %rp, i64 6")
+        (emitLine cg "  %rseq = load i64, ptr %rseqp")
+        (emitLine cg "  %cleanup = icmp sgt i64 %rseq, %floor")
+        (emitLine cg "  br i1 %cleanup, label %allocate, label %counted")
+        (emitLine cg "counted:")
+      })
+    (emitLine cg "  br i1 %live, label %allocate, label %unchanged")
+    (emitLine cg "allocate:")
+    (emitLine cg "  %copy = call i64 @axiom_alloc(i64 %bytes)")
+    (emitLine cg "  br label %loop")
+    (emitLine cg "loop:")
+    (emitLine cg "  %i = phi i64 [ 0, %allocate ], [ %next, %body ]")
+    (emitLine cg "  %more = icmp ult i64 %i, %bytes")
+    (emitLine cg "  br i1 %more, label %body, label %done")
+    (emitLine cg "body:")
+    (emitLine cg "  %sa = add i64 %src, %i")
+    (emitLine cg "  %sp = inttoptr i64 %sa to ptr")
+    (emitLine cg "  %byte = load i8, ptr %sp")
+    (emitLine cg "  %da = add i64 %copy, %i")
+    (emitLine cg "  %dp = inttoptr i64 %da to ptr")
+    (emitLine cg "  store i8 %byte, ptr %dp")
+    (emitLine cg "  %next = add i64 %i, 1")
+    (emitLine cg "  br label %loop")
+    (emitLine cg "done:")
+    (emitLine cg "  ret i64 %copy")
+    (emitLine cg "unchanged:")
+    (emitLine cg "  ret i64 %src")
+    (emitLine cg "}")
+    (emitLine cg "define internal void @__axiom_reserved_reset(i64 %floor, i64 %keep) #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "scan:")
+    (emitLine cg
+      "  %link = phi ptr [ @__axiom_reserved, %entry ], [ %nextp, %advance ], [ %link, %unmap ]")
+    (emitLine cg "  %node = load i64, ptr %link")
+    (emitLine cg "  %done = icmp eq i64 %node, 0")
+    (emitLine cg "  br i1 %done, label %exit, label %test")
+    (emitLine cg "test:")
+    (emitLine cg "  %np = inttoptr i64 %node to ptr")
+    (emitLine cg "  %nextp = getelementptr i64, ptr %np, i64 1")
+    (emitLine cg "  %seqp = getelementptr i64, ptr %np, i64 2")
+    (emitLine cg "  %seq = load i64, ptr %seqp")
+    (emitLine cg "  %new = icmp ugt i64 %seq, %floor")
+    (emitLine cg "  %preserved = icmp eq i64 %node, %keep")
+    (emitLine cg "  %discard = xor i1 %preserved, true")
+    (emitLine cg "  %reclaim = and i1 %new, %discard")
+    (emitLine cg "  br i1 %reclaim, label %unmap, label %advance")
+    (emitLine cg "advance:")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "unmap:")
+    (emitLine cg "  %next = load i64, ptr %nextp")
+    (emitLine cg "  store i64 %next, ptr %link")
+    (emitLine cg "  %size = load i64, ptr %np")
+    (emitLine cg "  %extent = add i64 %node, %size")
+    (emitEvCall cg "%node" "%extent")
+    (emitStackSys cg "%unmapped" (targetMunmapNum (cgTarget cg))
+      "i64 %node, i64 %size, i64 0, i64 0, i64 0, i64 0")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "exit:")
+    (emitLine cg "  ret void")
+    (emitLine cg "}")
+    (emitLine cg "define internal i64 @__axiom_reserved_bytes() #0 {")
+    (emitLine cg "entry:")
+    (emitLine cg "  %head = load i64, ptr @__axiom_reserved")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "scan:")
+    (emitLine cg "  %node = phi i64 [ %head, %entry ], [ %next, %body ]")
+    (emitLine cg "  %sum = phi i64 [ 0, %entry ], [ %total, %body ]")
+    (emitLine cg "  %done = icmp eq i64 %node, 0")
+    (emitLine cg "  br i1 %done, label %exit, label %body")
+    (emitLine cg "body:")
+    (emitLine cg "  %np = inttoptr i64 %node to ptr")
+    (emitLine cg "  %cp = getelementptr i64, ptr %np, i64 4")
+    (emitLine cg "  %cap = load i64, ptr %cp")
+    (emitLine cg "  %charged = add i64 %cap, 64")
+    (emitLine cg "  %total = add i64 %sum, %charged")
+    (emitLine cg "  %nextp = getelementptr i64, ptr %np, i64 1")
+    (emitLine cg "  %next = load i64, ptr %nextp")
+    (emitLine cg "  br label %scan")
+    (emitLine cg "exit:")
+    (emitLine cg "  ret i64 %sum")
     (emitLine cg "}")
     cg
   })
