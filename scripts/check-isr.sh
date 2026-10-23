@@ -263,9 +263,9 @@ PY
   fi
 done <<'ABL'
 faultsig~(if (== (isrFaultSigOk tc d) 1)~(if (== (isrFaultSigOk tc d) (isrFaultSigOk tc d))~1090-isr-fault-signature.ax
-waits~(checkIsrWaits tc d (isrVectorOf sig own) eff)~0~1091-isr-waits.ax
+waits~          (checkIsrWaits tc d vector eff)~          0~1091-isr-waits.ax
 norec~(if (! (== (strInVec rs "no-recursion" 0) 1))~(if false~1092-isr-recursion.ax
-waitsmay~(let w (graphWitnessAny tc ent "wfi"))~(let w (graphWitness tc ent "wfi"))~1486-isr-waits-through-local.ax
+waitsmay~(let wFound (graphWitnessAny tc (Some ent) "wfi"))~(let wFound (graphWitness tc (Some ent) "wfi"))~1486-isr-waits-through-local.ax
 ABL
 
 echo
