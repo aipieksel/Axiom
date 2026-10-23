@@ -703,17 +703,16 @@
 ; module on the NAME and nothing split the reference
 ; (macro-system.md MAC-LANG-12).
 ; ------------------------------------------------------------------
-(pub :: expModOf (-> String String))
+(pub :: expModOf (-> String (Option String)))
 (pub fn (expModOf s)
   (expModOfFrom s (- (strLen s) 1)))
 
-(pub :: expModOfFrom (-> String Int String))
-;@axiom:effect(unsafe)
+(pub :: expModOfFrom (-> String Int (Option String)))
 (pub fn (expModOfFrom s i)
   (if (< i 0)
-    (as 0 String)
+    None
     (if (== (strByte s i) 36)
-      (strSlice s 0 i)
+      (Some (strSlice s 0 i))
       (expModOfFrom s (- i 1)))))
 
 ; A reference as the programmer wrote it, for diagnostics: the parser
@@ -722,12 +721,9 @@
 ; untouched, which is what keeps every existing golden byte-stable.
 (pub :: expSrcSpelling (-> String String))
 (pub fn (expSrcSpelling s)
-  {
-    (let m (expModOf s))
-    (if (== (as m Int) 0)
-      s
-      (concat (concat m "::") (bareOf s)))
-  })
+  (match (expModOf s)
+    ((None) s)
+    ((Some m) (concat (concat m "::") (bareOf s)))))
 
 (pub :: expSameMod (-> String String Int))
 (pub fn (expSameMod a b)
@@ -745,28 +741,25 @@
 (pub fn (expFindMacro env name)
   {
     (let site (expSiteName env))
-    (let qm (expModOf name))
-    (if (!= (as qm Int) 0)
-      (expFindMacroQual (expMacrosVec env) (bareOf name) qm site (- (vecLen (expMacrosVec env)) 1))
-      (match (expFindMacroIn (expMacrosVec env) name site (- (vecLen (expMacrosVec env)) 1))
-        ((None) None)
-        ; MAC-HYG-8's third hole: an imported macro used to
-        ; outrank an entry-file FUNCTION of the same name at
-        ; every call site - silently when the arities agreed.
-        ; Function resolution is local-first, then the entry
-        ; file's bare declarations (`findFnEnt`), so a bare
-        ; invocation whose name a bare `fn`/`::` declares is the
-        ; function's - unless the macro belongs to the site's
-        ; own module, whose local names win there for the same
-        ; reason. `isMacroName` in the checker applies the
-        ; identical veto; the two have to agree.
-        ((Some mac)
-          (if (&& (!= (nodeModule mac) 0)
-                (&& (== (expSameMod (nodeModuleName mac) site) 0)
-                  (== (expDeclNamed (expDeclsVec env) name 0) 1)))
-            None
-            (Some mac))
-        )))
+    (match (expModOf name)
+      ((Some qm)
+        (expFindMacroQual (expMacrosVec env) (bareOf name) qm site
+          (- (vecLen (expMacrosVec env)) 1))
+      )
+      ((None)
+        (match (expFindMacroIn (expMacrosVec env) name site (- (vecLen (expMacrosVec env)) 1))
+          ((None) None)
+          ; An imported macro must not outrank an entry-file
+          ; function of the same bare name. `isMacroName` applies
+          ; the same veto.
+          ((Some mac)
+            (if (&& (!= (nodeModule mac) 0)
+                  (&& (== (expSameMod (nodeModuleName mac) site) 0)
+                    (== (expDeclNamed (expDeclsVec env) name 0) 1)))
+              None
+              (Some mac))
+          ))
+      ))
   })
 
 ; The backward walk for a QUALIFIED reference: name and module both,
@@ -8223,14 +8216,16 @@
     (let bare (bareOf name))
     (let own
       (expBindingIn decls bare
-        (if (== (as qual Int) 0)
-          modW
-          (as qual Int))
+        (match qual
+          ((None) modW)
+          ((Some module)
+            (as module Int)
+          ))
         0 0 ""))
     (let imported
-      (if (== (as qual Int) 0)
-        (expBindingIn decls bare modW 1 0 "")
-        ""))
+      (match qual
+        ((None) (expBindingIn decls bare modW 1 0 ""))
+        ((Some _) "")))
     (if (! (strEq own ""))
       own
       (if (strStartsWith imported "M:")
