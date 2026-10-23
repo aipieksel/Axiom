@@ -334,6 +334,11 @@ echo "--- 1. user-level cast count does not grow ---"
 # Four lookup/predicate fixtures read live owners' reference counts to
 # check retirement. These MM-VAL-23 observations keep their typed owner
 # alive; no application conversion or production erasure is introduced.
+# Assembler, CLI, formatter and LSP shape probes add four live-owner
+# reference-count observations under MM-VAL-23. The formatter golden carries
+# two existing syntax-zoo spellings: a numeric conversion and the unsafe
+# `(as 0 (Box Int))` syntax subject. They are unexecuted formatter golden
+# text, adding no production conversion or permission to forge references.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 # Optional context/query and propagation probes add five live-owner header
 # observations under MM-VAL-23. The exact documentation-render golden adds
@@ -342,10 +347,10 @@ cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!
 # conversion or production erasure; the census includes golden text.
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1513 ]; then
-  ok "user-level (cast count $cast_count <= 1513)"
+elif [ "$cast_count" -le 1519 ]; then
+  ok "user-level (cast count $cast_count <= 1519)"
 else
-  bad "user-level (cast count $cast_count > 1513): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1519): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
