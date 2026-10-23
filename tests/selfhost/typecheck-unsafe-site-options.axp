@@ -1,0 +1,175 @@
+; Unsafe diagnostic witnesses retain absence, source order and kind priority.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: siteAt (-> String Int ASTNode))
+(fn (siteAt name start)
+  (mkEVarAt name (mkSpan start (+ start (strLen name)))))
+
+(:: primitiveAt (-> Int ASTNode))
+(fn (primitiveAt start)
+  (mkEApp (mkEApp (siteAt "__load8" start) (mkEInt 0)) (mkEInt 0)))
+
+(:: forgeAt (-> Int ASTNode))
+(fn (forgeAt start)
+  (mkEApp (mkEApp (mkEVarAt "__as_numeric" (mkSpan start (+ start 2))) (mkEVar "Hid"))
+    (setNodeSpan (mkEInt 7) (mkSpan (+ start 9) (+ start 10)))))
+
+(:: addForge (-> Nodes ASTNode Nodes))
+(fn (addForge records site)
+  (vecPush (vecPush (vecPush records site) (mkTCon "Hid" vecNew)) mkIntTy))
+
+(:: unsafeContext (-> String TC))
+(fn (unsafeContext source)
+  {
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "unsafe-selection.ax" :src source :name "" :imports vecNew :library false)))
+    (tcNew vecNew vecNew units)
+  })
+
+(:: selectionOutput (-> ASTNode Nodes Nodes Diags))
+(fn (selectionOutput body sink forges)
+  {
+    (let tc (unsafeContext (concat "(fn (chosen) " (concat (spacesOf 120) ")"))))
+    (let declaration (nodeBuildDFn "chosen" vecNew body (mkSpan 5 11)))
+    (checkUndeclaredUnsafe tc declaration body sink forges)
+    (tcOutVec tc)
+  })
+
+; optional cases begin
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs value expected)
+  (match value
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: selectedLabelIs (-> ASTNode Nodes Nodes String Bool))
+(fn (selectedLabelIs body sink forges expected)
+  {
+    (let output (selectionOutput body sink forges))
+    (if (== (vecLen output) 1)
+      (&& (strEq (diagCode (vecGet output 0)) "AX3073")
+        (strEq (diagLabel (vecGet output 0)) expected))
+      false)
+  })
+
+(:: runCases ())
+;@axiom:effect(io)
+(fn (runCases)
+  {
+    (let noSpan (mkEVar "missing"))
+    (let zero (siteAt "zero" 0))
+    (let early (siteAt "early" 10))
+    (let late (siteAt "late" 30))
+    (let tied (siteAt "tied" 10))
+    (let pairs (vecPush (vecPush (vecPush vecNew late) early) tied))
+    (let triples (addForge (addForge vecNew (forgeAt 30)) (forgeAt 10)))
+    (say 1 (isNone (unsafeFirstSite vecNew 1)))
+    (say 2 (indexIs (unsafeFirstSite (vecPush vecNew zero) 1) 0))
+    (say 3 (isNone (unsafeFirstSite (vecPush vecNew noSpan) 1)))
+    (say 4 (indexIs (unsafeFirstSite pairs 1) 1))
+    (say 5 (indexIs (unsafeFirstSite triples 3) 1))
+    (say 6 (isNone (unsafeSiteStart vecNew None 1)))
+    (say 7 (indexIs (unsafeSiteStart (vecPush vecNew zero) (Some 0) 1) 0))
+    (say 8 (indexIs (unsafeSiteStart triples (Some 1) 3) 10))
+    (say 9 (isNone (unsafeMinStart None None)))
+    (say 10 (indexIs (unsafeMinStart None (Some 0)) 0))
+    (say 11 (indexIs (unsafeMinStart (Some 0) None) 0))
+    (say 12 (indexIs (unsafeMinStart (Some 20) (Some 10)) 10))
+    (say 13 (indexIs (unsafeMinStart (Some 10) (Some 20)) 10))
+    (say 14 (isNone (unsafeEarliestKind None None None)))
+    (say 15 (indexIs (unsafeEarliestKind (Some 0) None None) 0))
+    (say 16 (indexIs (unsafeEarliestKind None (Some 0) None) 1))
+    (say 17 (indexIs (unsafeEarliestKind None None (Some 0)) 2))
+    (say 18 (indexIs (unsafeEarliestKind (Some 10) (Some 10) (Some 10)) 0))
+    (say 19 (indexIs (unsafeEarliestKind None (Some 10) (Some 10)) 1))
+    (say 20 (indexIs (unsafeEarliestKind (Some 30) (Some 20) (Some 10)) 2))
+    (say 21 (indexIs (unsafeEarliestKind (Some 30) (Some 10) (Some 20)) 1))
+    (say 22
+      (selectedLabelIs (primitiveAt 10) (vecPush vecNew (siteAt "outside" 10))
+        (addForge vecNew (forgeAt 10)) "__load8"))
+    (say 23
+      (selectedLabelIs (mkEInt 0) (vecPush vecNew (siteAt "outside" 10))
+        (addForge vecNew (forgeAt 10)) "an extern call"))
+    (say 24
+      (selectedLabelIs (primitiveAt 50) (vecPush vecNew (siteAt "outside" 40)) triples
+        "forges a reference"))
+    (say 25 (== (vecLen (selectionOutput (mkEInt 0) vecNew vecNew)) 0))
+    (say 26
+      (== (vecLen (selectionOutput (mkEInt 0) (vecPush vecNew noSpan) (addForge vecNew noSpan))) 0))
+    (let tc (unsafeContext ""))
+    (let declaration (nodeBuildDFn "chosen" vecNew (mkEInt 0) 0))
+    (checkUndeclaredUnsafe tc declaration (primitiveAt 10) vecNew vecNew)
+    (say 27 (== (vecLen (tcOutVec tc)) 0))
+    (let forgeOutput (selectionOutput (mkEInt 0) vecNew triples))
+    (say 28
+      (if (== (vecLen forgeOutput) 1)
+        (&& (== (spanStart (diagSpan (vecGet forgeOutput 0))) 10)
+          (&& (== (diagSecCount (vecGet forgeOutput 0)) 1)
+            (&& (== (spanStart (diagSecSpan (vecGet forgeOutput 0) 0)) 19)
+              (strEq (diagSecMsg (vecGet forgeOutput 0) 0)
+                "source has type `Int`; the conversion trusts its representation"))))
+        false))
+  })
+
+; optional cases end
+; diagnostics begin
+(:: checkRealSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkRealSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResFailed parsed)
+      (println (concat "PARSE_FAILURE " name))
+      {
+        (let nodes (pResNodes parsed))
+        (let units
+          (vecPush vecNew (CUnit2 :file name :src source :name "" :imports vecNew :library false)))
+        (let checked (checkModuleTcTyped nodes nodes units))
+        (writeStr stdout (renderDiagsUnits (tcOutVec checked) units))
+      })
+  })
+
+(:: runDiagnostics ())
+;@axiom:effect(io)
+(fn (runDiagnostics)
+  {
+    (checkRealSource "unsafe-primitive.ax" "(:: main Int)\n(pub fn (main) (__load8 0 0))\n")
+    (checkRealSource "unsafe-extern.ax"
+      "(extern \"c\" (outside :: (-> Int Int)))\n(:: main Int)\n(pub fn (main) (outside 0))\n")
+    (checkRealSource "unsafe-forge.ax"
+      "(struct Hid (value : Int))\n(:: main Int)\n(pub fn (main) { (as 7 Hid) 0 })\n")
+    (checkRealSource "unsafe-mixed-order.ax"
+      "(extern \"c\" (outside :: (-> Int Int)))\n(struct Hid (value : Int))\n(:: main Int)\n(pub fn (main) { (outside 0) (__load8 0 0) (as 7 Hid) 0 })\n")
+    (checkRealSource "unsafe-forge-first.ax"
+      "(extern \"c\" (outside :: (-> Int Int)))\n(struct Hid (value : Int))\n(:: main Int)\n(pub fn (main) { (as 7 Hid) (__load8 0 0) (outside 0) 0 })\n")
+    (checkRealSource "unsafe-none.ax" "(:: main Int)\n(pub fn (main) 0)\n")
+  })
+
+; diagnostics end
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (runCases)
+    (writeStr stdout "DIAGNOSTICS\n")
+    (runDiagnostics)
+    0
+  })

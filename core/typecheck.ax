@@ -28853,85 +28853,86 @@
 (pub fn (checkUndeclaredUnsafe tc d e sink forges)
   {
     (let prims (unsafeScanInto e vecNew))
-    {
-      (let p (unsafeFirstSite prims 1))
-      (let c (unsafeFirstSite sink 1))
-      (let f (unsafeFirstSite forges 3))
-      {
-        (let kind
-          (unsafeEarliestKind (unsafeSiteStart prims p 1) (unsafeSiteStart sink c 1)
-            (unsafeSiteStart forges f 3)))
-        (if (== kind 0)
-          (emitUndeclaredUnsafe tc d (vecGet prims p) 0 forges 0)
-          ; An extern has no checked body to establish its safety; the
-          ; resolved-reference sink carries every one this body names.
-          (if (== kind 1)
-            (emitUndeclaredUnsafe tc d (vecGet sink c) 3 forges 0)
-            (if (== kind 2)
-              (emitUndeclaredUnsafe tc d (vecGet forges (* f 3)) 2 forges f)
-              0)))
-      }
-    }
+    (let p (unsafeFirstSite prims 1))
+    (let c (unsafeFirstSite sink 1))
+    (let f (unsafeFirstSite forges 3))
+    (let kind
+      (unsafeEarliestKind (unsafeSiteStart prims p 1) (unsafeSiteStart sink c 1)
+        (unsafeSiteStart forges f 3)))
+    (if (let (Some selected) kind)
+      (if (== selected 0)
+        (if (let (Some index) p)
+          (emitUndeclaredUnsafe tc d (vecGet prims index) 0 forges 0)
+          0)
+        ; Extern references have no checked body establishing their safety.
+        (if (== selected 1)
+          (if (let (Some index) c)
+            (emitUndeclaredUnsafe tc d (vecGet sink index) 3 forges 0)
+            0)
+          (if (let (Some index) f)
+            (emitUndeclaredUnsafe tc d (vecGet forges (* index 3)) 2 forges index)
+            0)))
+      0)
   })
 
-; The record of `v` - one every `stride` words, its node first - whose
-; node starts earliest in the source, or -1 when none has a span.
-(pub :: unsafeFirstSite (-> (Vec ASTNode) Int Int))
+; The first source-ordered record index, absent when no node has a span.
+; Each record occupies stride words and begins with its AST node.
+(pub :: unsafeFirstSite (-> (Vec ASTNode) Int (Option Int)))
 (pub fn (unsafeFirstSite v stride)
   {
     (let mut i 0)
-    (let mut best (- 0 1))
+    (let mut best (:: None (Option Int)))
     (let mut bestAt 0)
-    {
-      (while (< (* i stride) (vecLen v))
-        {
-          {
-            (let sp (spanOf (vecGet v (* i stride))))
-            (if (! (== sp 0))
-              (if (|| (< best 0) (< (spanStart sp) bestAt))
-                {
-                  (set best i)
-                  (set bestAt (spanStart sp))
-                }))
-          }
-          (set i (+ i 1))
-        })
-      best
-    }
+    (while (< (* i stride) (vecLen v))
+      {
+        (let sp (spanOf (vecGet v (* i stride))))
+        (if (!= sp 0)
+          (if (|| (isNone best) (< (spanStart sp) bestAt))
+            {
+              (set best (Some i))
+              (set bestAt (spanStart sp))
+            }))
+        (set i (+ i 1))
+      })
+    best
   })
 
-(pub :: unsafeSiteStart (-> (Vec ASTNode) Int Int Int))
+; Some indices come from unsafeFirstSite and therefore name a spanned node.
+(pub :: unsafeSiteStart (-> (Vec ASTNode) (Option Int) Int (Option Int)))
 (pub fn (unsafeSiteStart v k stride)
-  (if (< k 0)
-    (- 0 1)
-    (spanStart (spanOf (vecGet v (* k stride))))))
+  (match k
+    ((None) None)
+    ((Some index) (Some (spanStart (spanOf (vecGet v (* index stride))))))))
 
-; Which of the three kinds starts first: 0 a primitive, 1 an extern
-; call, 2 a forging cast, -1 none. Each argument is a
-; start offset, or -1 when that kind has no site; a tie goes to the
-; kind named first.
-(pub :: unsafeEarliestKind (-> Int Int Int Int))
+; Some 0 selects a primitive, Some 1 an extern, Some 2 a forging cast.
+; Missing sites stay absent. Source ties retain that priority order.
+(pub :: unsafeEarliestKind (-> (Option Int) (Option Int) (Option Int) (Option Int)))
 (pub fn (unsafeEarliestKind pa ca fa)
-  {
-    (let m (unsafeMinStart (unsafeMinStart pa ca) fa))
-    (if (< m 0)
-      (- 0 1)
-      (if (== pa m)
-        0
-        (if (== ca m)
-          1
-          2)))
-  })
+  (if (let (Some earliest) (unsafeMinStart (unsafeMinStart pa ca) fa))
+    (if (match pa
+      ((None) false)
+      ((Some start) (== start earliest)))
+      (Some 0)
+      (if (match ca
+        ((None) false)
+        ((Some start) (== start earliest)))
+        (Some 1)
+        (Some 2)))
+    None))
 
-(pub :: unsafeMinStart (-> Int Int Int))
+(pub :: unsafeMinStart (-> (Option Int) (Option Int) (Option Int)))
 (pub fn (unsafeMinStart a b)
-  (if (< a 0)
-    b
-    (if (< b 0)
-      a
-      (if (< b a)
-        b
-        a))))
+  (match a
+    ((None) b)
+    ((Some left)
+      (match b
+        ((None) a)
+        ((Some right)
+          (if (< right left)
+            b
+            a)
+        ))
+    )))
 
 ; `site` is the primitive's application (`kind` 0), the extern
 ; reference (3) or the cast (2); `forges` and `k` name the cast's
