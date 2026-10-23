@@ -1,0 +1,132 @@
+; Signature flags distinguish unknown extern metadata from known empty flags.
+(import codegen)
+(import parser)
+(import typecheck)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: absent (-> (Option a) Bool))
+(fn (absent value)
+  (match value
+    ((None) true)
+    ((Some _) false)))
+
+(:: signature (-> String (Option Ints) FSig))
+(fn (signature name flags)
+  (FSig
+    :name name
+    :nameLen (strLen name)
+    :flags flags
+    :sigTy mkIntTy
+    :takesEv 0
+    :owned 1
+    :arity 0
+    :stash 0
+    :ret 0
+    :consume 0
+    :transfer 0
+    :callers 0
+    :writes 0))
+
+(:: retireFlags (-> Ints Int))
+(fn (retireFlags flags)
+  {
+    (let row (signature "temporary" (Some flags)))
+    7
+  })
+
+(:: returnedFlags (Option Ints))
+(fn (returnedFlags)
+  {
+    (let flags (vecPush vecNew 1))
+    (let cg newCG)
+    (set cg.floatSigs (vecPush vecNew (signature "owned" (Some flags))))
+    (probeSignatureFlags cg "owned")
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let cg newCG)
+    (say 1 (absent (probeSignatureFlags cg "missing")))
+    (set cg.floatSigs (vecPush vecNew (signature "extern" None)))
+    (say 2 (absent (probeSignatureFlags cg "extern")))
+    (say 3 (== (fnRetIsFloat cg "extern") 0))
+    (let empty (signature "empty" (Some vecNew)))
+    (vecPush cg.floatSigs empty)
+    (say 4
+      (match (probeSignatureFlags cg "empty")
+        ((None) false)
+        ((Some flags) (== (vecLen flags) 0))))
+    (say 5 (== (fnRetIsFloat cg "empty") 0))
+    (vecPush cg.floatSigs (signature "float" (Some (vecPush vecNew 1))))
+    (say 6 (== (fnRetIsFloat cg "float") 1))
+    (vecPush cg.floatSigs (signature "scalar" (Some (vecPush vecNew 0))))
+    (say 7 (== (fnRetIsFloat cg "scalar") 0))
+    (vecPush cg.floatSigs (signature "float" None))
+    (say 8 (== (fnRetIsFloat cg "float") 1))
+    (let flags (vecPush (vecPush vecNew 1) 0))
+    (let before (count flags))
+    (say 9 (== (retireFlags flags) 7))
+    (say 10 (== (count flags) before))
+    (say 11
+      (match returnedFlags
+        ((None) false)
+        ((Some values) (&& (== (vecLen values) 1) (== (vecGet values 0) 1)))))
+    (say 12
+      (match empty.flags
+        ((None) false)
+        ((Some values) (== (vecLen values) 0))))
+    (let declaration (nodeBuildDSig "written" vecNew 0 0))
+    (let scanned (scanFloatSigs (vecPush vecNew declaration) vecNew 0))
+    (say 13 (== (vecLen scanned) 1))
+    (let written (vecGet scanned 0))
+    (say 14
+      (match written.flags
+        ((None) false)
+        ((Some values) (== (vecLen values) 0))))
+    (let item (nodeBuildFieldExtern "api" (mkTArr mkFloatTy mkFloatTy) "raw_api" 0))
+    (let externs
+      (scanFloatSigs (vecPush vecNew (nodeBuildDExtern "library" vecNew (vecPush vecNew item) 0))
+        vecNew 0))
+    (say 15 (== (vecLen externs) 1))
+    (let external (vecGet externs 0))
+    (say 16 (strEq external.name "raw_api"))
+    (say 17 (absent external.flags))
+    (say 18 (== external.arity 1))
+    (set cg.floatSigs externs)
+    (say 19 (absent (probeSignatureFlags cg "raw_api")))
+    (say 20 (== (fnRetIsFloat cg "raw_api") 0))
+    (probeSignatureChecked cg
+      (vecPush vecNew (FunctionType :name "raw_api" :ty mkFloatTy :arity (Some 0))))
+    (say 21 (== (fnRetIsFloat cg "raw_api") 1))
+    (say 22
+      (match (probeSignatureFlags cg "raw_api")
+        ((None) false)
+        ((Some values) (&& (== (vecLen values) 1) (== (vecGet values 0) 1)))))
+    (say 23 (absent (probeSignatureFlags cg "missing")))
+    (let empty2 (signature "empty2" (Some vecNew)))
+    (say 24
+      (match empty2.flags
+        ((None) false)
+        ((Some values) (== (vecLen values) 0))))
+    0
+  })
