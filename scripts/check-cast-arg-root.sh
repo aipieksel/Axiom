@@ -299,13 +299,16 @@ echo "--- 1. user-level cast count does not grow ---"
 # one valid arrow conversion, four diagnostic input conversions (including
 # one refused forgery), and nine exact help/fix strings. None adds a
 # production erasure or grants an exemption for reference forging.
+# Token and symbol-map controls add four MM-VAL-23 subjects: two live
+# header observations, one live-vector nullness observation, and a
+# child-map ablation of a copied Option. No production erasure is added.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1439 ]; then
-  ok "user-level (cast count $cast_count <= 1439)"
+elif [ "$cast_count" -le 1443 ]; then
+  ok "user-level (cast count $cast_count <= 1443)"
 else
-  bad "user-level (cast count $cast_count > 1439): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1443): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -494,7 +497,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # reference erasures: 411 to 397 under the same compiler.
 # Optional expansion results and owning generated-origin rows remove
 # fifty-one further reference erasures: 397 to 346 under one compiler.
-erasure_pin=346
+# Owning Token streams and optional symbol/AXIR lookups remove six
+# further reference erasures: 346 to 340 under one compiler.
+erasure_pin=340
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
