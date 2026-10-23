@@ -1,0 +1,255 @@
+; Optional field metadata preserves empty collections, poison and shape facts.
+(import codegen)
+(import parser)
+(import typecheck)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Mem)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: absent (-> (Option a) Bool))
+(fn (absent value)
+  (match value
+    ((None) true)
+    ((Some _) false)))
+
+(:: entry (-> Int Int (Option Names) (Option Nodes) TypeEntry))
+(fn (entry kind arity names types)
+  (vecGet (addTypeNamed vecNew "Case" kind arity 0 0 (vecPush (vecPush vecNew 0) 1) names types) 0))
+
+(:: isType (-> (Option ASTNode) ASTNode Bool))
+(fn (isType found expected)
+  (match found
+    ((None) false)
+    ((Some actual) (nodeSame actual expected))))
+
+(:: shapeIs (-> CG TypeEntry Int Bool))
+(fn (shapeIs cg value expected)
+  (match (ctorShapeConst cg value)
+    ((None) false)
+    ((Some actual) (== actual expected))))
+
+(:: retireName (-> String Int))
+(fn (retireName name)
+  {
+    (let value (entry TF_DATA 0 (Some (vecPush vecNew name)) None))
+    17
+  })
+
+(:: retireType (-> ASTNode Int))
+(fn (retireType ty)
+  {
+    (let value (entry TF_DATA 1 None (Some (vecPush vecNew ty))))
+    17
+  })
+
+(:: returnedEntry TypeEntry)
+(fn (returnedEntry)
+  (entry TF_DATA 1 (Some (vecPush vecNew (strDup "owned")))
+    (Some (vecPush vecNew (mkTCon (strDup "OwnedType") vecNew)))))
+
+(:: returnedTypes (Option Nodes))
+(fn (returnedTypes)
+  (eFieldTysVec returnedEntry))
+
+(:: realEmptyFields (-> TypeEntry Bool))
+(fn (realEmptyFields value)
+  (match (eStructFields value)
+    ((None) false)
+    ((Some fields) (&& (! (addrEq (addrOf fields) (addrOf nilNode))) (== (vecLen fields) 0)))))
+
+(:: checks ())
+;@axiom:effect(io)
+(fn (checks)
+  {
+    (let cg newCG)
+    (let unknown (entry TF_DATA 1 None None))
+    (say 1 (absent (eFieldNamesVec unknown)))
+    (say 2 (absent (eFieldTysVec unknown)))
+    (say 3 (absent (fieldTypeNode unknown 0)))
+    (say 4 (absent (probeCtorTypes unknown)))
+    (say 5 (shapeIs cg unknown 4))
+    (say 6 (== (fieldRetainCode cg unknown nilNode 0) -1))
+    (say 7 (shapeIs cg (entry TF_DATA 0 None None) 4))
+    (let knownEmpty (entry TF_DATA 1 (Some vecNew) (Some vecNew)))
+    (say 8
+      (match (eFieldNamesVec knownEmpty)
+        ((None) false)
+        ((Some names) (== (vecLen names) 0))))
+    (say 9
+      (match (eFieldTysVec knownEmpty)
+        ((None) false)
+        ((Some types) (== (vecLen types) 0))))
+    (say 10 (absent (fieldTypeNode knownEmpty 0)))
+    (say 11 (shapeIs cg knownEmpty 4))
+    (let stringTy (mkTCon "String" vecNew))
+    (let reference (entry TF_DATA 1 None (Some (vecPush vecNew stringTy))))
+    (say 12 (isType (fieldTypeNode reference 0) stringTy))
+    (say 13 (absent (fieldTypeNode reference 1)))
+    (say 14 (absent (fieldTypeNode reference -1)))
+    (say 15 (== (fieldRetainCode cg reference nilNode 0) 1))
+    (say 16 (shapeIs cg reference 131076))
+    (let scalar (entry TF_DATA 1 None (Some (vecPush vecNew mkIntTy))))
+    (say 17 (== (fieldRetainCode cg scalar nilNode 0) -1))
+    (say 18 (shapeIs cg scalar 4))
+    (let poison mkTErr)
+    (let poisoned (entry TF_DATA 1 None (Some (vecPush vecNew poison))))
+    (say 19 (isType (fieldTypeNode poisoned 0) poison))
+    (let wild (mkTVar "_"))
+    (say 20 (isType (fieldTypeNode (entry TF_DATA 1 None (Some (vecPush vecNew wild))) 0) wild))
+    (let generic (entry TF_DATA 1 None (Some (vecPush vecNew (mkTVar "a")))))
+    (say 21 (== (fieldRetainCode cg generic nilNode 0) -1))
+    (let stamp (mkEVar "Case"))
+    (writeNodeWords stamp 2 (vecPush vecNew 1))
+    (say 22 (== (fieldRetainCode cg generic stamp 0) 1))
+    (writeNodeWords stamp 2 (vecPush vecNew 2))
+    (say 23 (== (fieldRetainCode cg generic stamp 0) 2))
+    (writeNodeWords stamp 2 (vecPush vecNew -2))
+    (say 24 (== (fieldRetainCode cg generic stamp 0) -2))
+    (let construction (mkEApp (mkEVar "Case") (mkEVar "value")))
+    (say 25 (== (ctorFieldParks cg unknown construction (fieldTypeNode unknown 0) 0) 1))
+    (say 26 (== (ctorFieldParks cg scalar construction (fieldTypeNode scalar 0) 0) 1))
+    (say 27 (== (ctorFieldParks cg reference construction (fieldTypeNode reference 0) 0) 0))
+    (say 28 (== (ctorFieldParks cg generic construction (fieldTypeNode generic 0) 0) 1))
+    (setNodeTyChild (spineHead construction) stamp)
+    (writeNodeWords stamp 2 (vecPush vecNew 1))
+    (say 29 (== (ctorFieldParks cg generic construction (fieldTypeNode generic 0) 0) 0))
+    (let fields (vecPush vecNew (setNodeTyChild (mkField "value" 0) stringTy)))
+    (let structure (entry TF_STRUCT 1 None (Some fields)))
+    (say 30
+      (match (eStructFields structure)
+        ((None) false)
+        ((Some fs) (== (vecLen fs) 1))))
+    (say 31 (isType (fieldTypeNode structure 0) stringTy))
+    (say 32 (shapeIs cg structure 65540))
+    (say 33 (absent (fieldTypeNode structure 1)))
+    (let missingStruct (entry TF_STRUCT 1 None None))
+    (say 34 (absent (ctorShapeConst cg missingStruct)))
+    (say 35 (absent (probeCtorTypes missingStruct)))
+    (say 36 (shapeIs cg (entry TF_STRUCT 0 None (Some vecNew)) 0))
+    (say 37 (nodeSame (structFieldOf missingStruct "value") nilNode))
+    (say 38 (! (nodeSame (structFieldOf structure "value") nilNode)))
+    (let names (vecPush (vecPush vecNew "first") "second"))
+    (let named (entry TF_DATA 2 (Some names) None))
+    (let found (findDataField (vecPush vecNew named) "second"))
+    (say 39 (&& (! (nodeSame found nilNode)) (== (nodeA found) 1)))
+    (say 40 (nodeSame (findDataField (vecPush vecNew knownEmpty) "second") nilNode))
+    (say 41 (== (nodeB found) 1))
+    (say 42
+      (! (nodeSame (findDataField (vecPush (vecPush vecNew unknown) named) "second") nilNode)))
+    (let nullType (entry TF_DATA 1 None (Some (vecPush vecNew nilNode))))
+    (say 43 (absent (fieldTypeNode nullType 0)))
+    (let name (strDup "retired"))
+    (let beforeName (count name))
+    (retireName name)
+    (say 44 (== (count name) beforeName))
+    (let ownedType (mkTCon (strDup "RetiredType") vecNew))
+    (let beforeType (count ownedType))
+    (retireType ownedType)
+    (say 45 (== (count ownedType) beforeType))
+    (let returned returnedEntry)
+    (say 46
+      (match (eFieldNamesVec returned)
+        ((None) false)
+        ((Some ns) (strEq (vecGet ns 0) "owned"))))
+    (say 47
+      (match (fieldTypeNode returned 0)
+        ((None) false)
+        ((Some ty) (strEq (nodeAName ty) "OwnedType"))))
+    (say 48
+      (match (fieldTypeNode poisoned 0)
+        ((None) false)
+        ((Some ty) (== (tyIsErr ty) 1))))
+    (say 49 (== (fieldRetainCode cg poisoned nilNode 0) -1))
+    (say 50
+      (match returnedTypes
+        ((None) false)
+        ((Some types) (&& (vecOwnsRefs types) (strEq (nodeAName (vecGet types 0)) "OwnedType")))))
+    (let unstamped (entry TF_STRUCT 1 None (Some (vecPush vecNew (mkField "unstamped" 0)))))
+    (say 51 (absent (fieldTypeNode unstamped 0)))
+    (let emptyStruct (entry TF_STRUCT 0 None (Some vecNew)))
+    (say 52
+      (match (probeCtorWords emptyStruct)
+        ((None) false)
+        ((Some words) (== words 0))))
+    (say 53 (== (probeRequireFields emptyStruct) 0))
+    (say 54 (== (probeRequireFields structure) 1))
+    (say 55
+      (match (probeCtorWords structure)
+        ((None) false)
+        ((Some words) (== words 1))))
+    (say 56 (== (fieldRetainCode cg unstamped nilNode 0) -1))
+    (say 57 (! (dropFreeFields cg unknown 16 0 vecNew)))
+    (say 58 (dropFreeFields cg scalar 16 0 vecNew))
+    (let unitType (mkTTup vecNew))
+    (say 59
+      (== (fieldRetainCode cg (entry TF_DATA 1 None (Some (vecPush vecNew unitType))) nilNode 0)
+        -1))
+    (vecPush names "later")
+    (say 60 (== (nodeA (findDataField (vecPush vecNew named) "later")) 2))
+    (say 61
+      (match (eFieldNamesVec named)
+        ((None) false)
+        ((Some values) (vecOwnsRefs values))))
+    (say 62
+      (match (eFieldTysVec reference)
+        ((None) false)
+        ((Some values) (vecOwnsRefs values))))
+    (say 63
+      (match (lookupType cg.types "Some")
+        ((None) false)
+        ((Some value) (! (absent (fieldTypeNode value 0))))))
+    (say 64
+      (match (lookupType cg.types "None")
+        ((None) false)
+        ((Some value) (&& (absent (fieldTypeNode value 0)) (shapeIs cg value 4)))))
+    ; Exercise only the struct-field wire normalizer, without running a
+    ; malformed declaration through unrelated frontend passes.
+    (let declaration (nodeWireEmpty TAG_D_STRUCT))
+    (writeNodeText declaration 1 "ScannedEmpty")
+    (scanOne declaration cg)
+    (say 65
+      (match (lookupType cg.types "ScannedEmpty")
+        ((None) false)
+        ((Some value) (realEmptyFields value))))
+    (say 66
+      (match (lookupType cg.types "ScannedEmpty")
+        ((None) false)
+        ((Some value) (&& (realEmptyFields value) (shapeIs cg value 0)))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if (> sysArgc 1)
+    {
+      (let value (entry TF_STRUCT 1 None None))
+      (if (> sysArgc 2)
+        (ctorShapeEmit newCG "%cell" value nilNode)
+        {
+          (probeRequireFields value)
+          newCG
+        })
+      0
+    }
+    {
+      (checks)
+      0
+    }))

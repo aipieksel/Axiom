@@ -42,10 +42,10 @@
 ; `fieldFlags` is one 0/1 per field: is it declared `Float`. A pattern
 ; binder for that field carries the flag into the symbol table.
 ; `fieldNames` is a data constructor's declared field names when it
-; was written as a struct variant, 0 otherwise; a named pattern is
+; was written as a struct variant, None otherwise; a named pattern is
 ; reordered against it at emission.
 ; `fieldTys` is a data constructor's Vec of declared field TYPE nodes
-; (the parser's ty slot, one TAG_T_* node per field), 0 when nothing
+; (the parser's ty slot, one TAG_T_* node per field), None when nothing
 ; recorded one - it is what MM-LIFE-2d's shape constant is computed
 ; from at construction sites. A struct's field types ride inside its
 ; TAG_FIELD nodes, kept in the same typed vector slot.
@@ -57,8 +57,8 @@
   (tag : Int)
   (rep : Int)
   (fieldFlags : (Vec Int))
-  (fieldNames : Names)
-  (fieldTys : Nodes))
+  (fieldNames : (Option Names))
+  (fieldTys : (Option Nodes)))
 
 (pub :: TF_DATA Int)
 (pub fn (TF_DATA)
@@ -116,9 +116,10 @@
 
 (pub :: addType (-> (Vec TypeEntry) String Int Int Int Int Ints (Vec TypeEntry)))
 (pub fn (addType types name kind arity tag rep fieldFlags)
-  (addTypeNamed types name kind arity tag rep fieldFlags cgNullVec cgNullVec))
+  (addTypeNamed types name kind arity tag rep fieldFlags None None))
 
-(pub :: addTypeNamed (-> (Vec TypeEntry) String Int Int Int Int Ints Names Nodes (Vec TypeEntry)))
+(pub :: addTypeNamed
+  (-> (Vec TypeEntry) String Int Int Int Int Ints (Option Names) (Option Nodes) (Vec TypeEntry)))
 (pub fn (addTypeNamed types name kind arity tag rep fieldFlags fieldNames fieldTys)
   {
     (let nl (strLen name))
@@ -135,15 +136,29 @@
         :fieldTys fieldTys))
   })
 
-(pub :: eFieldNamesVec (-> TypeEntry Names))
+(pub :: eFieldNamesVec (-> TypeEntry (Option Names)))
 (pub fn (eFieldNamesVec e)
   e.fieldNames)
 
-(pub :: eStructFields (-> TypeEntry Nodes))
+(pub :: eStructFields (-> TypeEntry (Option Nodes)))
 (pub fn (eStructFields e)
   (eFieldTysVec e))
 
-(pub :: eFieldTysVec (-> TypeEntry Nodes))
+; Required emission layouts refuse unavailable metadata. Pure analyses retain
+; the Option and their conservative missing-metadata path.
+(:: requireStructFields (-> TypeEntry Nodes))
+;@axiom:effect(io)
+(fn (requireStructFields entry)
+  (match (eStructFields entry)
+    ((Some fields) fields)
+    ((None)
+      {
+        (dieCodegenDiag "struct entry has no field metadata: " (eName entry))
+        vecNew
+      }
+    )))
+
+(pub :: eFieldTysVec (-> TypeEntry (Option Nodes)))
 (pub fn (eFieldTysVec e)
   e.fieldTys)
 
@@ -524,14 +539,13 @@
             f
           }
         }
-        cgNullVec
-        {
-          (let ft vecNew)
+        None
+        (Some
           {
+            (let ft vecNew)
             (vecPush ft (mkTVar "a"))
             ft
-          }
-        })
+          }))
       (addType ts "None" TF_DATA 0 1 2 vecNew)
       (CG
         :lines vecNew
@@ -2850,14 +2864,16 @@
       (let tn
         (if (let (Some found) entry)
           (fieldTypeNode found i)
-          nilNode))
+          None))
       {
         (let f
-          (if (nodeSame tn nilNode)
-            flag
-            (if (== (fldClass cg tn) 0)
-              0
-              flag)))
+          (match tn
+            ((None) flag)
+            ((Some ty)
+              (if (== (fldClass cg ty) 0)
+                0
+                flag)
+            )))
         {
           (envPushPat cg v (spineArgAt pat i) f)
           (envPushPatArgs cg v pat n_ entry flag (+ i 1))
@@ -4540,9 +4556,9 @@
       (let tn (fieldTypeNode entry i))
       (let f (flowMask cg (vecGet args i) params env))
       {
-        (if (if (nodeSame tn nilNode)
-          true
-          (== (fldClass cg tn) 0))
+        (if (match tn
+          ((None) true)
+          ((Some ty) (== (fldClass cg ty) 0)))
           (stashAdd cell (parkForms f))
           (stashAdd cell
             (parkForms (retainedFieldWordFlow (fieldRetainCode cg entry nilNode i) f))))
@@ -4574,24 +4590,27 @@
     (wordParts flow)))
 
 ; The declared type node of field `j` of a constructor or struct
-; entry, or 0.
-(pub :: fieldTypeNode (-> TypeEntry Int ASTNode))
+; entry, or None when the metadata is unavailable.
+(pub :: fieldTypeNode (-> TypeEntry Int (Option ASTNode)))
 (pub fn (fieldTypeNode entry j)
-  (if (== (eKind entry) TF_DATA)
-    {
-      (let ftys (eFieldTysVec entry))
-      (if (== (as ftys Int) 0)
-        nilNode
-        (if (< j (vecLen ftys))
-          (vecGet ftys j)
-          nilNode))
-    }
-    {
-      (let fs (eStructFields entry))
-      (if (< j (vecLen fs))
-        (nodeTyChild (vecGet fs j))
-        nilNode)
-    }))
+  (if (< j 0)
+    None
+    (match (eFieldTysVec entry)
+      ((None) None)
+      ((Some fields)
+        (if (>= j (vecLen fields))
+          None
+          {
+            (let ty
+              (if (== (eKind entry) TF_DATA)
+                (vecGet fields j)
+                (nodeTyChild (vecGet fields j))))
+            ; A field's packed type slot may still be unstamped.
+            (if (nodeSame ty nilNode)
+              None
+              (Some ty))
+          })
+      ))))
 
 ; What a lambda body parks by capture: the `let`-bound locals it
 ; mentions, with their flows - a parameter captured directly takes a
@@ -5943,7 +5962,7 @@
           ; float flags alone - the kind decides the reading.
           {
             (let name (nodeAName node))
-            (let fields (nodeBChildren node))
+            (let fields (nodeStructFields node))
             (let types (cgTypes cg))
             (let kind
               (if (structIsWord node)
@@ -5952,8 +5971,8 @@
             {
               (cgSetTypes cg
                 (addQualified
-                  (addTypeNamed types name kind (vecLen fields) 0 0 vecNew cgNullVec fields)
-                  (nodeModule node) name kind (vecLen fields) 0 0 vecNew cgNullVec fields))
+                  (addTypeNamed types name kind (vecLen fields) 0 0 vecNew None (Some fields))
+                  (nodeModule node) name kind (vecLen fields) 0 0 vecNew None (Some fields)))
               cg
             }
           }
@@ -6007,13 +6026,21 @@
 ; changes no rule: the tag, arity and representation are the SAME
 ; values, which is what keeps a constructor reached under either
 ; spelling one constructor rather than two.
-(pub :: addQualified (-> (Vec TypeEntry) a String Int Int Int Int Ints Names Nodes (Vec TypeEntry)))
+(pub :: addQualified
+  (-> (Vec TypeEntry) a String Int Int Int Int Ints (Option Names) (Option Nodes) (Vec TypeEntry)))
 ;@axiom:effect(unsafe)
 (pub fn (addQualified types modName name kind arity tag rep fieldFlags fieldNames fieldTys)
   (if (== (as modName Int) 0)
     types
     (addTypeNamed types (concat (strDup (as modName String)) (concat "$" (strDup name))) kind arity
       tag rep fieldFlags fieldNames fieldTys)))
+
+; The constructor's packed type slot alone uses zero for unavailable metadata.
+(:: cgCtorFieldTypes (-> ASTNode (Option Nodes)))
+(fn (cgCtorFieldTypes node)
+  (if (== (nodeTy node) 0)
+    None
+    (Some (nodeTyChildren node))))
 
 (pub :: scanCtors (-> (Vec ASTNode) CG Int Int String CG))
 (pub fn (scanCtors ctors cg i rep modName)
@@ -6034,10 +6061,10 @@
           (cgSetTagN cg (+ t 1))
           (cgSetTypes cg
             (addQualified
-              (addTypeNamed types n TF_DATA a t rep (nodeCWords node) (nodeFieldNamesNames node)
-                (nodeTyChildren node))
-              modName n TF_DATA a t rep (nodeCWords node) (nodeFieldNamesNames node)
-              (nodeTyChildren node)))
+              (addTypeNamed types n TF_DATA a t rep (nodeCWords node) (nodeFieldNamesOpt node)
+                (cgCtorFieldTypes node))
+              modName n TF_DATA a t rep (nodeCWords node) (nodeFieldNamesOpt node)
+              (cgCtorFieldTypes node)))
           (scanCtors ctors cg (+ i 1) rep modName)
         }
       }
@@ -22298,12 +22325,14 @@
                   {
                     (let entFound (lookupType (cgTypes cg) (nodeAName pat)))
                     (if (let (Some ent) entFound)
-                      (if (== (as (eFieldNamesVec ent) Int) 0)
-                        cg
-                        (emitPatMatch
-                          (namedPatSpine (nodeAName pat) (eFieldNamesVec ent) (nodeBChildren pat)
-                            (nodeCChildren pat) (nodeSpan pat))
-                          vr failB cg isFloat))
+                      (match (eFieldNamesVec ent)
+                        ((None) cg)
+                        ((Some names)
+                          (emitPatMatch
+                            (namedPatSpine (nodeAName pat) names (nodeBChildren pat)
+                              (nodeCChildren pat) (nodeSpan pat))
+                            vr failB cg isFloat)
+                        ))
                       cg)
                   }
                   (if (== tag TAG_E_APP)
@@ -23183,15 +23212,19 @@
 
 (:: dataFieldOfEntry (-> TypeEntry String ASTNode))
 (fn (dataFieldOfEntry entry name)
-  {
-    (let i (dataFieldIndexIn (eFieldNamesVec entry) name 0))
-    (if (< i 0)
-      nilNode
-      (nodeBuildFieldOffset i
-        (if (< i (vecLen (eFieldFlagsVec entry)))
-          (vecGet (eFieldFlagsVec entry) i)
-          0)))
-  })
+  (match (eFieldNamesVec entry)
+    ((None) nilNode)
+    ((Some names)
+      {
+        (let i (dataFieldIndexIn names name 0))
+        (if (< i 0)
+          nilNode
+          (nodeBuildFieldOffset i
+            (if (< i (vecLen (eFieldFlagsVec entry)))
+              (vecGet (eFieldFlagsVec entry) i)
+              0)))
+      }
+    )))
 
 (pub :: findDataField (-> (Vec TypeEntry) String ASTNode))
 (pub fn (findDataField types fname)
@@ -23203,17 +23236,21 @@
     nilNode
     {
       (let e (vecGet types i))
-      (if (|| (!= (eKind e) TF_DATA) (== (as (eFieldNamesVec e) Int) 0))
+      (if (!= (eKind e) TF_DATA)
         (findDataFieldFrom types fname (+ i 1))
-        {
-          (let j (dataFieldIndexIn (eFieldNamesVec e) fname 0))
-          (if (< j 0)
-            (findDataFieldFrom types fname (+ i 1))
-            (nodeBuildFieldOffset j
-              (if (< j (vecLen (eFieldFlagsVec e)))
-                (vecGet (eFieldFlagsVec e) j)
-                0)))
-        })
+        (match (eFieldNamesVec e)
+          ((None) (findDataFieldFrom types fname (+ i 1)))
+          ((Some names)
+            {
+              (let j (dataFieldIndexIn names fname 0))
+              (if (< j 0)
+                (findDataFieldFrom types fname (+ i 1))
+                (nodeBuildFieldOffset j
+                  (if (< j (vecLen (eFieldFlagsVec e)))
+                    (vecGet (eFieldFlagsVec e) j)
+                    0)))
+            }
+          )))
     }))
 
 (pub :: dataFieldIndexIn (-> Names String Int Int))
@@ -23418,17 +23455,21 @@
 
 (pub :: structFieldOf (-> TypeEntry String ASTNode))
 (pub fn (structFieldOf e name)
-  {
-    (let idx (fieldIndexIn (eStructFields e) name 0))
-    (if (< idx 0)
-      nilNode
+  (match (eStructFields e)
+    ((None) nilNode)
+    ((Some fields)
       {
-        (let field (vecGet (eStructFields e) idx))
-        (setNodeTyWord
-          (nodeBuildNilPlain (structFieldOffset (eStructFields e) idx) (nodeB field) (nodeTy field))
-          (nodeTy field))
-      })
-  })
+        (let idx (fieldIndexIn fields name 0))
+        (if (< idx 0)
+          nilNode
+          {
+            (let field (vecGet fields idx))
+            (setNodeTyWord
+              (nodeBuildNilPlain (structFieldOffset fields idx) (nodeB field) (nodeTy field))
+              (nodeTy field))
+          })
+      }
+    )))
 
 ; The field's (byte offset, Float flag, type), or 0 when no struct
 ; declares the name.
@@ -28725,22 +28766,37 @@
       }
     }))
 
-(pub :: ctorShapeConst (-> CG TypeEntry Int))
-(pub fn (ctorShapeConst cg entry)
-  {
-    (let kind (eKind entry))
-    (let arity (eArity entry))
-    {
-      (let words
-        (if (== kind TF_DATA)
-          (+ arity 1)
-          (/ (+ (structPayloadBytes (eStructFields entry)) 7) 8)))
+; A missing struct layout has no shape constant, even when its arity is zero.
+(:: ctorPayloadWords (-> TypeEntry (Option Int)))
+(fn (ctorPayloadWords entry)
+  (if (== (eKind entry) TF_DATA)
+    (Some (+ (eArity entry) 1))
+    (match (eStructFields entry)
+      ((None) None)
+      ((Some fields) (Some (/ (+ (structPayloadBytes fields) 7) 8))))))
+
+(:: requireCtorWords (-> TypeEntry Int))
+;@axiom:effect(io)
+(fn (requireCtorWords entry)
+  (match (ctorPayloadWords entry)
+    ((Some words) words)
+    ((None)
       {
+        (dieCodegenDiag "constructor entry has no layout metadata: " (eName entry))
+        0
+      }
+    )))
+
+(pub :: ctorShapeConst (-> CG TypeEntry (Option Int)))
+(pub fn (ctorShapeConst cg entry)
+  (match (ctorPayloadWords entry)
+    ((None) None)
+    ((Some words)
+      {
+        (let kind (eKind entry))
+        (let arity (eArity entry))
         (let cnt (paddedWords words))
-        (let ftys
-          (if (== kind TF_DATA)
-            (eFieldTysVec entry)
-            (eStructFields entry)))
+        (let ftys (eFieldTysVec entry))
         (let base
           (if (== kind TF_DATA)
             1
@@ -28749,23 +28805,35 @@
           (if (== kind TF_DATA)
             0
             1))
-        {
-          (let bits
-            (if (> words 47)
-              (- 0 1)
-              (if (== (as ftys Int) 0)
+        (let bits
+          (if (> words 47)
+            (- 0 1)
+            (match ftys
+              ((None)
                 (if (== arity 0)
                   0
                   (- 0 1))
-                (shapeBits cg ftys isStruct base 0))))
+              )
+              ((Some fields) (shapeBits cg fields isStruct base 0)))))
+        (Some
           (+ (* cnt 2)
             (if (== bits (- 0 1))
               0
-              bits))
-        }
+              bits)))
       }
-    }
-  })
+    )))
+
+(:: requireCtorShapeConst (-> CG TypeEntry Int))
+;@axiom:effect(io)
+(fn (requireCtorShapeConst cg entry)
+  (match (ctorShapeConst cg entry)
+    ((Some shape) shape)
+    ((None)
+      {
+        (dieCodegenDiag "constructor entry has no shape metadata: " (eName entry))
+        0
+      }
+    )))
 
 ; The site's shape store - the third writer beside the allocator's
 ; leaf and the keep helper's re-stamp. The -8 is a literal in the
@@ -28945,194 +29013,202 @@
 ; forces the whole block to the leaf; a variable with no stamp, or
 ; a witness of 0, contributes no bit - which IS the leaf answer for
 ; that field, with every classifiable neighbour's bit kept.
-(:: ctorFieldTypes (-> TypeEntry (Vec ASTNode)))
+(:: ctorFieldTypes (-> TypeEntry (Option Nodes)))
 (fn (ctorFieldTypes entry)
   (if (== (eKind entry) TF_DATA)
     (eFieldTysVec entry)
-    {
-      (let types vecNew)
-      {
-        (for field in (eStructFields entry)
-          (vecPush types (nodeTyChild field)))
-        types
-      }
-    }))
+    (match (eStructFields entry)
+      ((None) None)
+      ((Some fields)
+        {
+          (let types vecNew)
+          (for field in fields
+            (vecPush types (nodeTyChild field)))
+          (Some types)
+        }
+      ))))
 
 (:: ctorFieldBit (-> TypeEntry Int Int))
+;@axiom:effect(io)
 (fn (ctorFieldBit entry i)
   (+ 16
     (if (== (eKind entry) TF_DATA)
       (+ 1 i)
-      (/ (structFieldOffset (eStructFields entry) i) 8))))
+      (/ (structFieldOffset (requireStructFields entry) i) 8))))
 
 (pub :: ctorShapeEmit (-> CG String TypeEntry ASTNode CG))
+;@axiom:effect(io)
 (pub fn (ctorShapeEmit cg ptr entry stamp)
   {
     (let kind (eKind entry))
     (let arity (eArity entry))
     {
-      (let words
-        (if (== kind TF_DATA)
-          (+ arity 1)
-          (/ (+ (structPayloadBytes (eStructFields entry)) 7) 8)))
-      (if (|| (&& (!= kind TF_DATA) (!= kind TF_STRUCT))
-            (|| (> words 47) (== (as (ctorFieldTypes entry) Int) 0)))
-        (storeShapeAt cg ptr (ctorShapeConst cg entry))
-        {
-          (let ftys0 (ctorFieldTypes entry))
-          (let mut anyVar 0)
-          {
+      (let words (requireCtorWords entry))
+      (if (|| (&& (!= kind TF_DATA) (!= kind TF_STRUCT)) (> words 47))
+        (storeShapeAt cg ptr (requireCtorShapeConst cg entry))
+        (match (ctorFieldTypes entry)
+          ((None) (storeShapeAt cg ptr (requireCtorShapeConst cg entry)))
+          ((Some ftys0)
             {
-              (let mut j0 0)
-              (while (< j0 (vecLen ftys0))
-                {
-                  (if (== (tyIsSrcVar (vecGet ftys0 j0)) 1)
-                    (set anyVar 1))
-                  (set j0 (+ j0 1))
-                })
-            }
-            (if (== anyVar 0)
-              ; no variable field: the static path allocates nothing
-              (storeShapeAt cg ptr (ctorShapeConst cg entry))
-              ; the ctor arrow's variable ordering = the fields walk,
-              ; in order - the checker's stamp walked fields-then-
-              ; result, and result-only variables sit past every
-              ; field index, so the prefix agrees by construction
+              (let mut anyVar 0)
               {
-                (let cnt (paddedWords words))
-                (let ftys (ctorFieldTypes entry))
-                (let vars vecNew)
-                (let symPos vecNew)
-                (let symK vecNew)
-                (let lamPos vecNew)
-                (let lamD vecNew)
-                (let mut stat 0)
-                (let mut leaf 0)
                 {
-                  (cgSigVarsVec ftys vars)
+                  (let mut j0 0)
+                  (while (< j0 (vecLen ftys0))
+                    {
+                      (if (== (tyIsSrcVar (vecGet ftys0 j0)) 1)
+                        (set anyVar 1))
+                      (set j0 (+ j0 1))
+                    })
+                }
+                (if (== anyVar 0)
+                  ; no variable field: the static path allocates nothing
+                  (storeShapeAt cg ptr (requireCtorShapeConst cg entry))
+                  ; the ctor arrow's variable ordering = the fields walk,
+                  ; in order - the checker's stamp walked fields-then-
+                  ; result, and result-only variables sit past every
+                  ; field index, so the prefix agrees by construction
                   {
-                    (let mut j 0)
-                    (while (< j (vecLen ftys))
+                    (let cnt (paddedWords words))
+                    (let ftys ftys0)
+                    (let vars vecNew)
+                    (let symPos vecNew)
+                    (let symK vecNew)
+                    (let lamPos vecNew)
+                    (let lamD vecNew)
+                    (let mut stat 0)
+                    (let mut leaf 0)
+                    {
+                      (cgSigVarsVec ftys vars)
                       {
-                        {
-                          (let tn (vecGet ftys j))
-                          (if (== (tyIsSrcVar tn) 1)
-                            (if (! (nodeSame stamp nilNode))
-                              {
-                                (let vi (strVecIdx vars (nodeAName tn)))
-                                (if (!
-                                      (if (< vi 0)
-                                        true
-                                        (>= vi (vecLen (nodeBWords stamp)))))
-                                  {
-                                    (let wv (as (vecGet (nodeBWords stamp) vi) Int))
-                                    (if (== wv 1)
-                                      (set stat (+ stat (pow2 (ctorFieldBit entry j))))
-                                      (if (>= wv 2)
-                                        {
-                                          (vecPush symPos (ctorFieldBit entry j))
-                                          (vecPush symK (- wv 2))
-                                        }
-                                        ; a lam-arg witness is dynamic
-                                        ; too, but its bit comes from
-                                        ; a DIFFERENT word - not the
-                                        ; enclosing function's, the
-                                        ; lambda's own argument
-                                        ; evidence at depth d, bit 0 -
-                                        ; so it cannot join `symPos`
-                                        ; and gets its own loop below.
-                                        (if (<= wv (- 0 2))
-                                          {
-                                            (vecPush lamPos (ctorFieldBit entry j))
-                                            (vecPush lamD (- (- 0 2) wv))
-                                          })))
-                                  })
-                              })
-                            {
-                              (let c (fldClass cg tn))
-                              (if (== c 1)
-                                (set leaf 1)
-                                (if (== c 2)
-                                  (set stat (+ stat (pow2 (ctorFieldBit entry j))))))
-                            })
-                        }
-                        (set j (+ j 1))
-                      })
-                  }
-                  (if (== leaf 1)
-                    (storeShapeAt cg ptr (* cnt 2))
-                    ; BOTH vectors, or a block whose only dynamic bit
-                    ; is a lam-arg one stores the constant and drops
-                    ; that bit - the leaf answer the release walk then
-                    ; believes.
-                    (if (&& (== (vecLen symPos) 0) (== (vecLen lamPos) 0))
-                      (storeShapeAt cg ptr (+ (* cnt 2) stat))
-                      ; the enclosing function's word is read only if
-                      ; something reads a bit OUT of it; a block with
-                      ; lam-arg bits alone would otherwise emit a dead
-                      ; load.
-                      {
-                        (let cgR
-                          (if (== (vecLen symPos) 0)
-                            cg
-                            (emitEvwRead cg)))
-                        {
-                          (let src
-                            (if (== (vecLen symPos) 0)
-                              (constStr 0)
-                              (strDup (cgResult cgR))))
-                          (let mut acc (constStr (+ (* cnt 2) stat)))
-                          (let mut cgX cgR)
-                          (let mut q 0)
+                        (let mut j 0)
+                        (while (< j (vecLen ftys))
                           {
-                            (while (< q (vecLen symPos))
-                              {
-                                {
-                                  (let an (allocReg cgX))
+                            {
+                              (let tn (vecGet ftys j))
+                              (if (== (tyIsSrcVar tn) 1)
+                                (if (! (nodeSame stamp nilNode))
                                   {
-                                    (let ar (regStr an))
-                                    {
-                                      (let cgA
-                                        (emitLine cgX
-                                          (concat
-                                            (concat (concat "  " ar) (concat " = lshr i64 " src))
-                                            (concat ", "
-                                              (concat (constStr (as (vecGet symK q) Int)) "")))))
+                                    (let vi (strVecIdx vars (nodeAName tn)))
+                                    (if (!
+                                          (if (< vi 0)
+                                            true
+                                            (>= vi (vecLen (nodeBWords stamp)))))
                                       {
-                                        (let bn (allocReg cgA))
-                                        {
-                                          (let br (regStr bn))
-                                          {
-                                            (let cgB
-                                              (emitLine cgA
-                                                (concat (concat "  " br)
-                                                  (concat " = and i64 " (concat ar ", 1")))))
+                                        (let wv (as (vecGet (nodeBWords stamp) vi) Int))
+                                        (if (== wv 1)
+                                          (set stat (+ stat (pow2 (ctorFieldBit entry j))))
+                                          (if (>= wv 2)
                                             {
-                                              (let sn2 (allocReg cgB))
+                                              (vecPush symPos (ctorFieldBit entry j))
+                                              (vecPush symK (- wv 2))
+                                            }
+                                            ; a lam-arg witness is dynamic
+                                            ; too, but its bit comes from
+                                            ; a DIFFERENT word - not the
+                                            ; enclosing function's, the
+                                            ; lambda's own argument
+                                            ; evidence at depth d, bit 0 -
+                                            ; so it cannot join `symPos`
+                                            ; and gets its own loop below.
+                                            (if (<= wv (- 0 2))
                                               {
-                                                (let sr2 (regStr sn2))
+                                                (vecPush lamPos (ctorFieldBit entry j))
+                                                (vecPush lamD (- (- 0 2) wv))
+                                              })))
+                                      })
+                                  })
+                                {
+                                  (let c (fldClass cg tn))
+                                  (if (== c 1)
+                                    (set leaf 1)
+                                    (if (== c 2)
+                                      (set stat (+ stat (pow2 (ctorFieldBit entry j))))))
+                                })
+                            }
+                            (set j (+ j 1))
+                          })
+                      }
+                      (if (== leaf 1)
+                        (storeShapeAt cg ptr (* cnt 2))
+                        ; BOTH vectors, or a block whose only dynamic bit
+                        ; is a lam-arg one stores the constant and drops
+                        ; that bit - the leaf answer the release walk then
+                        ; believes.
+                        (if (&& (== (vecLen symPos) 0) (== (vecLen lamPos) 0))
+                          (storeShapeAt cg ptr (+ (* cnt 2) stat))
+                          ; the enclosing function's word is read only if
+                          ; something reads a bit OUT of it; a block with
+                          ; lam-arg bits alone would otherwise emit a dead
+                          ; load.
+                          {
+                            (let cgR
+                              (if (== (vecLen symPos) 0)
+                                cg
+                                (emitEvwRead cg)))
+                            {
+                              (let src
+                                (if (== (vecLen symPos) 0)
+                                  (constStr 0)
+                                  (strDup (cgResult cgR))))
+                              (let mut acc (constStr (+ (* cnt 2) stat)))
+                              (let mut cgX cgR)
+                              (let mut q 0)
+                              {
+                                (while (< q (vecLen symPos))
+                                  {
+                                    {
+                                      (let an (allocReg cgX))
+                                      {
+                                        (let ar (regStr an))
+                                        {
+                                          (let cgA
+                                            (emitLine cgX
+                                              (concat
+                                                (concat (concat "  " ar)
+                                                  (concat " = lshr i64 " src))
+                                                (concat ", "
+                                                  (concat (constStr (as (vecGet symK q) Int))
+                                                    "")))))
+                                          {
+                                            (let bn (allocReg cgA))
+                                            {
+                                              (let br (regStr bn))
+                                              {
+                                                (let cgB
+                                                  (emitLine cgA
+                                                    (concat (concat "  " br)
+                                                      (concat " = and i64 " (concat ar ", 1")))))
                                                 {
-                                                  (let cgS
-                                                    (emitLine cgB
-                                                      (concat
-                                                        (concat (concat "  " sr2)
-                                                          (concat " = shl i64 " br))
-                                                        (concat ", "
-                                                          (concat
-                                                            (constStr (as (vecGet symPos q) Int))
-                                                            "")))))
+                                                  (let sn2 (allocReg cgB))
                                                   {
-                                                    (let on (allocReg cgS))
+                                                    (let sr2 (regStr sn2))
                                                     {
-                                                      (let orr (regStr on))
+                                                      (let cgS
+                                                        (emitLine cgB
+                                                          (concat
+                                                            (concat (concat "  " sr2)
+                                                              (concat " = shl i64 " br))
+                                                            (concat ", "
+                                                              (concat
+                                                                (constStr
+                                                                  (as (vecGet symPos q) Int))
+                                                                "")))))
                                                       {
-                                                        (set cgX (emitLine cgS
-                                                                   (concat
-                                                                     (concat (concat "  " orr)
-                                                                       (concat " = or i64 " acc))
-                                                                     (concat ", "
-                                                                       (concat sr2 "")))))
-                                                        (set acc orr)
+                                                        (let on (allocReg cgS))
+                                                        {
+                                                          (let orr (regStr on))
+                                                          {
+                                                            (set cgX (emitLine cgS
+                                                                       (concat
+                                                                         (concat (concat "  " orr)
+                                                                           (concat " = or i64 "
+                                                                             acc))
+                                                                         (concat ", "
+                                                                           (concat sr2 "")))))
+                                                            (set acc orr)
+                                                          }
+                                                        }
                                                       }
                                                     }
                                                   }
@@ -29143,85 +29219,86 @@
                                         }
                                       }
                                     }
-                                  }
-                                }
-                                (set q (+ q 1))
-                              })
-                            ; THE LAM-ARG BITS. One source register per
-                            ; entry, not one for the whole loop: each
-                            ; is `evwaSym d` resolved through the
-                            ; symbol table, and the class sits at bit 0
-                            ; because a lifted lambda absorbs exactly
-                            ; one argument. `emitRetainIfLamArg` reads
-                            ; it the same way, and the two must agree.
-                            ;
-                            ; No symbol - a body emitted outside a
-                            ; lambda, which `evClassOf` should make
-                            ; unreachable - contributes NO bit, so the
-                            ; field goes uncounted and leaks. That is
-                            ; the safe direction: a bit with no store
-                            ; behind it is an over-release.
-                            (set q 0)
-                            (while (< q (vecLen lamPos))
-                              {
-                                {
-                                  (let symIdx (symIndex cgX (evwaSym (as (vecGet lamD q) Int))))
-                                  (if (>= symIdx 0)
+                                    (set q (+ q 1))
+                                  })
+                                ; THE LAM-ARG BITS. One source register per
+                                ; entry, not one for the whole loop: each
+                                ; is `evwaSym d` resolved through the
+                                ; symbol table, and the class sits at bit 0
+                                ; because a lifted lambda absorbs exactly
+                                ; one argument. `emitRetainIfLamArg` reads
+                                ; it the same way, and the two must agree.
+                                ;
+                                ; No symbol - a body emitted outside a
+                                ; lambda, which `evClassOf` should make
+                                ; unreachable - contributes NO bit, so the
+                                ; field goes uncounted and leaks. That is
+                                ; the safe direction: a bit with no store
+                                ; behind it is an over-release.
+                                (set q 0)
+                                (while (< q (vecLen lamPos))
+                                  {
                                     {
-                                      (let bn (allocReg cgX))
-                                      {
-                                        (let br (regStr bn))
+                                      (let symIdx (symIndex cgX (evwaSym (as (vecGet lamD q) Int))))
+                                      (if (>= symIdx 0)
                                         {
-                                          (let cgB
-                                            (emitLine cgX
-                                              (concat (concat "  " br)
-                                                (concat " = and i64 "
-                                                  (concat (strDup (symRegAt cgX symIdx)) ", 1")))))
+                                          (let bn (allocReg cgX))
                                           {
-                                            (let sn2 (allocReg cgB))
+                                            (let br (regStr bn))
                                             {
-                                              (let sr2 (regStr sn2))
+                                              (let cgB
+                                                (emitLine cgX
+                                                  (concat (concat "  " br)
+                                                    (concat " = and i64 "
+                                                      (concat (strDup (symRegAt cgX symIdx))
+                                                        ", 1")))))
                                               {
-                                                (let cgS
-                                                  (emitLine cgB
-                                                    (concat
-                                                      (concat (concat "  " sr2)
-                                                        (concat " = shl i64 " br))
-                                                      (concat ", "
-                                                        (concat
-                                                          (constStr (as (vecGet lamPos q) Int))
-                                                          "")))))
+                                                (let sn2 (allocReg cgB))
                                                 {
-                                                  (let on (allocReg cgS))
+                                                  (let sr2 (regStr sn2))
                                                   {
-                                                    (let orr (regStr on))
+                                                    (let cgS
+                                                      (emitLine cgB
+                                                        (concat
+                                                          (concat (concat "  " sr2)
+                                                            (concat " = shl i64 " br))
+                                                          (concat ", "
+                                                            (concat
+                                                              (constStr (as (vecGet lamPos q) Int))
+                                                              "")))))
                                                     {
-                                                      (set cgX (emitLine cgS
-                                                                 (concat
-                                                                   (concat (concat "  " orr)
-                                                                     (concat " = or i64 " acc))
-                                                                   (concat ", " (concat sr2 "")))))
-                                                      (set acc orr)
+                                                      (let on (allocReg cgS))
+                                                      {
+                                                        (let orr (regStr on))
+                                                        {
+                                                          (set cgX (emitLine cgS
+                                                                     (concat
+                                                                       (concat (concat "  " orr)
+                                                                         (concat " = or i64 " acc))
+                                                                       (concat ", "
+                                                                         (concat sr2 "")))))
+                                                          (set acc orr)
+                                                        }
+                                                      }
                                                     }
                                                   }
                                                 }
                                               }
                                             }
                                           }
-                                        }
-                                      }
-                                    })
-                                }
-                                (set q (+ q 1))
-                              })
-                            (storeShapeValAt cgX ptr acc)
-                          }
-                        }
-                      }))
-                }
-              })
-          }
-        })
+                                        })
+                                    }
+                                    (set q (+ q 1))
+                                  })
+                                (storeShapeValAt cgX ptr acc)
+                              }
+                            }
+                          }))
+                    }
+                  })
+              }
+            }
+          )))
     }
   })
 
@@ -29982,7 +30059,7 @@
           (let size
             (if (== kind TF_DATA)
               (* (+ arity 1) 8)
-              (structPayloadBytes (eStructFields entry))))
+              (structPayloadBytes (requireStructFields entry))))
           {
             (let ptrN (allocReg cg))
             {
@@ -30094,69 +30171,52 @@
 ; bit k - the same per-field answer ctorShapeEmit derives
 (pub :: fieldRetainCode (-> CG TypeEntry ASTNode Int Int))
 (pub fn (fieldRetainCode cg entry stamp j)
-  {
-    (let kind (eKind entry))
-    {
-      (let tn
-        (if (== kind TF_DATA)
+  (match (fieldTypeNode entry j)
+    ((None) (- 0 1))
+    ((Some tn)
+      (if (== (tyIsSrcVar tn) 1)
+        (if (nodeSame stamp nilNode)
+          (- 0 1)
           {
-            (let ftys (eFieldTysVec entry))
-            (if (== (as ftys Int) 0)
-              nilNode
-              (if (< j (vecLen ftys))
-                (vecGet ftys j)
-                nilNode))
-          }
-          {
-            (let fs (eStructFields entry))
-            (if (< j (vecLen fs))
-              (nodeTyChild (vecGet fs j))
-              nilNode)
-          }))
-      (if (nodeSame tn nilNode)
-        (- 0 1)
-        (if (== (tyIsSrcVar tn) 1)
-          (if (nodeSame stamp nilNode)
-            (- 0 1)
+            (let vars vecNew)
             {
-              (let vars vecNew)
+              (match (ctorFieldTypes entry)
+                ((None) 0)
+                ((Some fields) (cgSigVarsVec fields vars)))
               {
-                (cgSigVarsVec (ctorFieldTypes entry) vars)
-                {
-                  (let vi (strVecIdx vars (nodeAName tn)))
-                  (if (if (< vi 0)
-                    true
-                    (>= vi (vecLen (nodeBWords stamp))))
-                    (- 0 1)
-                    {
-                      (let wv (as (vecGet (nodeBWords stamp) vi) Int))
-                      (if (== wv 1)
-                        1
-                        (if (>= wv 2)
+                (let vi (strVecIdx vars (nodeAName tn)))
+                (if (if (< vi 0)
+                  true
+                  (>= vi (vecLen (nodeBWords stamp))))
+                  (- 0 1)
+                  {
+                    (let wv (as (vecGet (nodeBWords stamp) vi) Int))
+                    (if (== wv 1)
+                      1
+                      (if (>= wv 2)
+                        wv
+                        ; `EV_LAMARG - d` (<= -2) is the enclosing
+                        ; lifted lambda's own argument, whose class
+                        ; only the APPLICATION knows. Pass the
+                        ; witness through UNCHANGED: -1 already
+                        ; means "no retain" and 1 / >=2 are taken,
+                        ; so the negative range is the free one, and
+                        ; `emitFieldStores` decodes the depth back
+                        ; out of it the way `emitPrimRetainRef`
+                        ; does. Answering -1 here is what left the
+                        ; store uncounted while the shape word said
+                        ; leaf.
+                        (if (<= wv (- 0 2))
                           wv
-                          ; `EV_LAMARG - d` (<= -2) is the enclosing
-                          ; lifted lambda's own argument, whose class
-                          ; only the APPLICATION knows. Pass the
-                          ; witness through UNCHANGED: -1 already
-                          ; means "no retain" and 1 / >=2 are taken,
-                          ; so the negative range is the free one, and
-                          ; `emitFieldStores` decodes the depth back
-                          ; out of it the way `emitPrimRetainRef`
-                          ; does. Answering -1 here is what left the
-                          ; store uncounted while the shape word said
-                          ; leaf.
-                          (if (<= wv (- 0 2))
-                            wv
-                            (- 0 1))))
-                    })
-                }
+                          (- 0 1))))
+                  })
               }
-            })
-          (if (== (fldClass cg tn) 2)
-            1
-            (- 0 1))))
-    }
-  })
+            }
+          })
+        (if (== (fldClass cg tn) 2)
+          1
+          (- 0 1)))
+    )))
 
 (pub :: emitFieldStores (-> CG String Nodes Int Int TypeEntry ASTNode CG))
 ;@axiom:effect(io)
@@ -30196,7 +30256,7 @@
                 (let cgS
                   (if (== (eKind entry) TF_STRUCT)
                     {
-                      (let fields (eStructFields entry))
+                      (let fields (requireStructFields entry))
                       (storeStructFieldAt cgR ptr (structFieldOffset fields i)
                         (nodeTyChild (vecGet fields i)) reg)
                     }
@@ -31318,17 +31378,19 @@
 ; whose witness collapsed to "no retain" (`fieldRetainCode` -1): the
 ; emitter stores the value uncounted there, whatever the field's
 ; declaration says. The stamp sits on the constructor's name node.
-(pub :: ctorFieldParks (-> CG TypeEntry ASTNode ASTNode Int Int))
+(pub :: ctorFieldParks (-> CG TypeEntry ASTNode (Option ASTNode) Int Int))
 (pub fn (ctorFieldParks cg entry e tn i)
-  (if (nodeSame tn nilNode)
-    1
-    (if (== (fldClass cg tn) 0)
-      1
-      (if (== (fldClass cg tn) 1)
-        (if (== (fieldRetainCode cg entry (nodeTyChild (spineHead e)) i) (- 0 1))
-          1
-          0)
-        0))))
+  (match tn
+    ((None) 1)
+    ((Some ty)
+      (if (== (fldClass cg ty) 0)
+        1
+        (if (== (fldClass cg ty) 1)
+          (if (== (fieldRetainCode cg entry (nodeTyChild (spineHead e)) i) (- 0 1))
+            1
+            0)
+          0))
+    )))
 
 (pub :: mentionsArgs (-> String ASTNode Int Int Int))
 (pub fn (mentionsArgs name e n_ i)
@@ -33639,13 +33701,11 @@
 (pub fn (dropFreeFields cg entry depth i seen)
   (if (|| (== (eKind entry) TF_WORD) (>= i (eArity entry)))
     true
-    {
-      (let ty
-        (if (== (eKind entry) TF_STRUCT)
-          (nodeTyChild (vecGet (eStructFields entry) i))
-          (vecGet (eFieldTysVec entry) i)))
-      (&& (dropFreeTyIn cg ty depth seen) (dropFreeFields cg entry depth (+ i 1) seen))
-    }))
+    (match (fieldTypeNode entry i)
+      ((None) false)
+      ((Some ty)
+        (&& (dropFreeTyIn cg ty depth seen) (dropFreeFields cg entry depth (+ i 1) seen))
+      ))))
 
 (pub :: dropFreeExpr (-> CG ASTNode Bool))
 (pub fn (dropFreeExpr cg e)
