@@ -1,0 +1,122 @@
+(import core)
+(import parser)
+(import Mem)
+(import Str)
+(import IO)
+
+(struct Box
+  (value : (Option ASTNode)))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+; Observe a live typed owner, never a retired allocation.
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: boxedTag (-> ASTNode Int))
+(fn (boxedTag value)
+  {
+    (let box (Box :value (Some value)))
+    (match box.value
+      ((None) 0)
+      ((Some child) (nodeTag child)))
+  })
+
+(:: plainTag (-> ASTNode Int))
+(fn (plainTag value)
+  {
+    (let option (Some value))
+    (match option
+      ((None) 0)
+      ((Some child) (nodeTag child)))
+  })
+
+(:: coreTag (-> ASTNode Int))
+(fn (coreTag value)
+  {
+    (let option (Some value))
+    (match option
+      ((None) 0)
+      ((Some child) (astNodeTag child)))
+  })
+
+(:: optionalTag (-> (Option ASTNode) Int))
+(fn (optionalTag value)
+  (match value
+    ((None) -1)
+    ((Some child) (nodeTag child))))
+
+(:: repeatTags (-> ASTNode Int Int))
+(fn (repeatTags value times)
+  {
+    (let mut i 0)
+    (while (< i times)
+      {
+        (boxedTag value)
+        (plainTag value)
+        (set i (+ i 1))
+      })
+    i
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (== (nodeTag nilNode) 0))
+    (say 2 (== (astNodeTag nilNode) 0))
+    (let zero (nodeWireEmpty 0))
+    (say 3 (! (nodeSame zero nilNode)))
+    (say 4 (== (nodeTag zero) 0))
+    (say 5 (== (astNodeTag zero) 0))
+    (let child (mkEInt 73))
+    (say 6 (== (nodeTag child) TAG_E_INT))
+    (say 7 (== (astNodeTag child) TAG_E_INT))
+    (say 8 (== (nodeA child) 73))
+    (let before (count child))
+    (say 9 (== (boxedTag child) TAG_E_INT))
+    (say 10 (== (count child) before))
+    (say 11 (== (plainTag child) TAG_E_INT))
+    (say 12 (== (count child) before))
+    (say 13 (== (coreTag child) TAG_E_INT))
+    (say 14 (== (count child) before))
+    (say 15 (== (repeatTags child 100) 100))
+    (say 16 (== (count child) before))
+    (say 17 (== (optionalTag None) -1))
+    (say 18 (== (optionalTag (Some zero)) 0))
+    (say 19 (== (optionalTag (Some child)) TAG_E_INT))
+    (say 20 (== (count child) before))
+    (let negative (nodeWireEmpty -17))
+    (say 21 (== (nodeTag negative) -17))
+    (say 22 (== (astNodeTag negative) -17))
+    (let maximum (nodeWireEmpty 9223372036854775807))
+    (say 23 (== (nodeTag maximum) 9223372036854775807))
+    (say 24 (== (astNodeTag maximum) 9223372036854775807))
+    (let packed (nodeWireEmpty 42))
+    (let mut slot 1)
+    (while (< slot 13)
+      {
+        (writeNodeWord packed slot (+ 100 slot))
+        (set slot (+ slot 1))
+      })
+    (say 25 (== (nodeTag packed) 42))
+    (say 26 (== (astNodeTag packed) 42))
+    (writeNodeWord packed 0 -9)
+    (say 27 (== (nodeTag packed) -9))
+    (say 28 (== (astNodeTag packed) -9))
+    (say 29 (== (nodeWireWord packed 1) 101))
+    (say 30 (== (nodeWireWord packed 12) 112))
+    (let name (strDup "typed node tag"))
+    (let named (mkEVar name))
+    (let nameBefore (count name))
+    (let nodeBefore (count named))
+    (say 31 (== (repeatTags named 100) 100))
+    (say 32 (== (count named) nodeBefore))
+    (say 33 (== (count name) nameBefore))
+    (say 34 (== (nodeTag named) TAG_E_VAR))
+  })
