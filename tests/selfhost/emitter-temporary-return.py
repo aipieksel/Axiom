@@ -15,7 +15,8 @@ SUPPORT = runpy.run_path(str(Path(__file__).with_name('emitter-line-buffer.py'))
 run_checked = SUPPORT['run_checked']
 check_output = SUPPORT['check_output']
 emitted_function = SUPPORT['emitted_function']
-EXPECTED = [f'{i} true' for i in range(1, 28)]
+EXPECTED = [f'{i} true' for i in range(1, 45)]
+POP = re.compile(r'(%[^ ]+) = call i64 @Vec\$vecPop\([^\n]+\)')
 GET = re.compile(r'(%[^ ]+) = call i64 @Vec\$vecGet\(i64 (%[^,]+),[^\n]+\)')
 
 
@@ -34,6 +35,16 @@ def protected_calls(body, expected, generic=False):
         if generic and 'icmp ne i64' not in body[call.end():body.index(retain)]:
             raise AssertionError('generic protection needs runtime reference evidence')
     return calls
+
+
+def transferred_calls(body):
+    calls = list(POP.finditer(body))
+    if len(calls) != 1:
+        raise AssertionError('expected one transferred call')
+    result = calls[0][1]
+    if f'call void @axiom_retain(i64 {result})' in body:
+        raise AssertionError('a transferred result already owns its return share')
+    return calls[0]
 
 
 def borrowed_parameter(body):
@@ -62,12 +73,13 @@ def check(compiler, root, work, baseline=None):
             'Nested temporary containers, conditional and match returns preserve that handoff.',
             'Borrowed parameters still acquire a return share; non-tail use retains and retires its child.',
             'Generic reference evidence guards the protection retain; scalar values retain their numeric meaning.',
+            'An explicit transferred result receives no duplicate tail retain; borrowed parameter returns still do.',
         ],
         'known_limits': [
             'These are focused native host tests with allocation poisoning, not global memory-soundness evidence.',
-            'General generic-call retirement and an owned-pop wrapper have separate pre-existing retained shares; cases 22-24 check value validity only.',
+            'General generic-call retirement has a separate pre-existing retained share; cases 22-23 check value validity only.',
             'The independent strict comparison probe preserves those failing retirement cases; this test does not bless retained shares as intended behaviour.',
-            'Named-container retention and scalar temporary-container retirement are outside this call-result fix.',
+            'Named-container retention and temporary-container reclamation for scalar or transferred results are outside this tail-result fix.',
             'No held M5 code or lifetime traversal, fixpoint or enforcement algorithm is inspected or changed.',
             'The generated-IR runtime counterexample links through cc on POSIX; Windows runs positive native and structural counterexamples only.',
         ],
@@ -86,10 +98,10 @@ def check(compiler, root, work, baseline=None):
                 stdout=work / 'fmt.stdout', stderr=work / 'fmt.stderr')
     for level in (0, 2):
         native(compiler, f'positive-O{level}', level)
-        report['configurations'].append({'optimization': level, 'allocation_poisoning': True, 'cases': 27})
-        print(f'ok   temporary child return: 27 outcomes O{level} poison', flush=True)
+        report['configurations'].append({'optimization': level, 'allocation_poisoning': True, 'cases': 44})
+        print(f'ok   temporary child return: 44 outcomes O{level} poison', flush=True)
         if baseline:
-            failures = native(baseline, f'baseline-O{level}', level, {4, 6, 8, 12})
+            failures = native(baseline, f'baseline-O{level}', level, {29, 31, 33, 37, 40, 41})
             report['baseline'].append({'optimization': level, 'failed_cases': sorted(failures),
                                        'builder': str(baseline)})
             print(f'ok   unchanged baseline O{level} exposes cases {sorted(failures)}', flush=True)
@@ -103,6 +115,8 @@ def check(compiler, root, work, baseline=None):
                         ('matchTemporary', 1), ('stringTemporary', 1), ('genericTemporary', 1), ('nonTail', 1)]:
         protected_calls(emitted_function(module, name), calls, name == 'genericTemporary')
     borrowed_parameter(emitted_function(module, 'borrowed'))
+    for name in ('ownedPop', 'ownedPopString', 'conditionalOwnedPop', 'matchOwnedPop', 'ownedParameter', 'genericPop'):
+        transferred_calls(emitted_function(module, name))
     scalar = emitted_function(module, 'scalarTemporary')
     call = list(GET.finditer(scalar))
     if len(call) != 1 or f'@axiom_retain(i64 {call[0][1]})' in scalar:
@@ -132,6 +146,12 @@ def check(compiler, root, work, baseline=None):
     rejected('blanket-suppressed-tail-retain', borrowed_parameter,
              borrowed.replace(f'  call void @axiom_retain(i64 {returned})\n', '', 1))
 
+    popped = emitted_function(module, 'ownedPop')
+    pop_result = transferred_calls(popped)[1]
+    pop_retain = f'  call void @axiom_retain(i64 {pop_result})\n'
+    pop_duplicate = popped.replace(f'  ret i64 {pop_result}', pop_retain + f'  ret i64 {pop_result}', 1)
+    rejected('duplicate-transferred-tail-retain', transferred_calls, pop_duplicate)
+
     # Only the extra-share mutation is executed. The missing/misordered
     # protection controls are rejected structurally before native execution.
     if sys.platform != 'win32':
@@ -149,6 +169,21 @@ def check(compiler, root, work, baseline=None):
         failures = check_output(output, EXPECTED, required_failures={4})
         report['counterexamples'][0]['native_failed_cases'] = sorted(failures)
         print(f'ok   duplicate-tail-retain native counterexample: cases {sorted(failures)} fail', flush=True)
+    if sys.platform != 'win32':
+        mutated = work / 'duplicate-transferred-tail-retain.ll'
+        mutated.write_text(module.replace(popped, pop_duplicate, 1))
+        run_checked(['opt', '-passes=verify', '-disable-output', str(mutated)], env=env,
+                    stdout=work / 'pop-mutant.verify.stdout', stderr=work / 'pop-mutant.verify.stderr')
+        obj, binary = work / 'pop-mutant.o', work / 'pop-mutant'
+        run_checked(['llc', '-filetype=obj', '-relocation-model=pic', str(mutated), '-o', str(obj)], env=env,
+                    stdout=work / 'pop-mutant.llc.stdout', stderr=work / 'pop-mutant.llc.stderr')
+        run_checked(['cc', str(obj), '-o', str(binary)], env=env,
+                    stdout=work / 'pop-mutant.link.stdout', stderr=work / 'pop-mutant.link.stderr')
+        output = work / 'pop-mutant.stdout'
+        run_checked([str(binary)], env=env, stdout=output, stderr=work / 'pop-mutant.stderr', timeout=30)
+        failures = check_output(output, EXPECTED, required_failures={29})
+        report['counterexamples'][-1]['native_failed_cases'] = sorted(failures)
+        print(f'ok   duplicate transferred retain native counterexample: cases {sorted(failures)} fail', flush=True)
     (work / 'temporary-return-report.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

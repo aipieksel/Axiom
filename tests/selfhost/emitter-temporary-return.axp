@@ -36,6 +36,66 @@
 (fn (ownedPop value)
   (vecPop (vecPush vecNew (Entry :value value))))
 
+(:: ownedPopString (-> String String))
+(fn (ownedPopString value)
+  (vecPop (vecPush vecNew value)))
+
+(:: conditionalOwnedPop (-> String Bool Entry))
+(fn (conditionalOwnedPop value select)
+  (if select
+    (vecPop (vecPush vecNew (Entry :value value)))
+    (Entry :value value)))
+
+(:: matchOwnedPop (-> String (Option Int) Entry))
+(fn (matchOwnedPop value select)
+  (match select
+    ((Some _) (vecPop (vecPush vecNew (Entry :value value))))
+    ((None) (Entry :value value))))
+
+(:: ownedParameter (-> (Vec Entry) Entry))
+(fn (ownedParameter rows)
+  (vecPop rows))
+
+(:: genericPop (-> a a))
+(fn (genericPop value)
+  (vecPop (vecPush vecNew value)))
+
+(:: retirePop (-> String Int))
+(fn (retirePop value)
+  {
+    (let row (ownedPop value))
+    17
+  })
+
+(:: retirePopString (-> String Int))
+(fn (retirePopString value)
+  {
+    (let result (ownedPopString value))
+    17
+  })
+
+(:: retireConditionalPop (-> String Bool Int))
+(fn (retireConditionalPop value select)
+  {
+    (let row (conditionalOwnedPop value select))
+    17
+  })
+
+(:: retireMatchPop (-> String (Option Int) Int))
+(fn (retireMatchPop value select)
+  {
+    (let row (matchOwnedPop value select))
+    17
+  })
+
+(:: retireOwnedParameter (-> String Bool))
+(fn (retireOwnedParameter value)
+  {
+    (let rows (vecPush vecNew (Entry :value value)))
+    (let row (ownedParameter rows))
+    (&& (== (vecLen rows) 0) (&& (== (count row) 1) (strEq row.value value)))
+  })
+
 (:: conditionalTemporary (-> String Bool Entry))
 (fn (conditionalTemporary value select)
   (if select
@@ -167,8 +227,8 @@
     (say 19 (== (genericTemporary 42) 42))
     (say 20 (== (genericTemporary 0) 0))
     (say 21 (== (genericTemporary -17) -17))
-    ; These check counted values and owned-pop results remain valid. General
-    ; generic-call and owned-pop retirement is a separate known limitation.
+    ; Generic callers still have a separate retained-share limitation. These
+    ; two cases check their values without weakening the strict comparison.
     (say 22 (strEq (genericTemporary value) value))
     (say 23
       {
@@ -183,4 +243,28 @@
     (say 25 (strEq (stringTemporary value) value))
     (say 26 (== (retireString value) 17))
     (say 27 (== scalarTemporary 42))
+    (let beforePop (count value))
+    (say 28 (== (retirePop value) 17))
+    (say 29 (== (count value) beforePop))
+    (let beforePopString (count value))
+    (say 30 (== (retirePopString value) 17))
+    (say 31 (== (count value) beforePopString))
+    (let beforeConditionalPop (count value))
+    (say 32 (== (retireConditionalPop value true) 17))
+    (say 33 (== (count value) beforeConditionalPop))
+    (let beforeConditionalOther (count value))
+    (say 34 (== (retireConditionalPop value false) 17))
+    (say 35 (== (count value) beforeConditionalOther))
+    (let beforeMatchPop (count value))
+    (say 36 (== (retireMatchPop value (Some 0)) 17))
+    (say 37 (== (count value) beforeMatchPop))
+    (let beforeMatchOther (count value))
+    (say 38 (== (retireMatchPop value None) 17))
+    (say 39 (== (count value) beforeMatchOther))
+    (let beforeOwnedParameter (count value))
+    (say 40 (retireOwnedParameter value))
+    (say 41 (== (count value) beforeOwnedParameter))
+    (say 42 (== (genericPop 42) 42))
+    (say 43 (== (genericPop 0) 0))
+    (say 44 (== (genericPop -17) -17))
   })
