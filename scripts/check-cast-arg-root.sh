@@ -345,12 +345,15 @@ cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!
 # 22 textual `(as ` examples from unchanged builtin documentation: eleven
 # each in the successful and missing-library snapshots. They add no executed
 # conversion or production erasure; the census includes golden text.
+# Tool-path and formatter-declaration fixtures add two live-owner header
+# observations under MM-VAL-23. They keep the owner alive throughout each
+# count read; no production reference conversion is added.
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1519 ]; then
-  ok "user-level (cast count $cast_count <= 1519)"
+elif [ "$cast_count" -le 1521 ]; then
+  ok "user-level (cast count $cast_count <= 1521)"
 else
-  bad "user-level (cast count $cast_count > 1519): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1521): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"

@@ -131,6 +131,7 @@ python3 tests/tools/rustbind-query-options.py "$axc"
 python3 tests/selfhost/doc-lookup-options.py --axiom "$axc"
 python3 tests/selfhost/lsp-shape-result-options.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/cli-flag-parts-options.py --axiom "$axc"
+python3 tests/selfhost/fmt-option-value.py --axiom "$axc"
 
 failed=0
 checks=0
