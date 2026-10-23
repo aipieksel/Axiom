@@ -3311,23 +3311,18 @@
 ;
 ; `Option` rather than -1: the caller reads the answer as
 ; `(strSlice lib bad 1)`, so a miss that reached the index would slice
-; from a negative offset. The scan below keeps the -1 and is private.
+; from a negative offset. The recursive scan preserves that typed result.
 (pub :: externLibBadAt (-> String (Option Int)))
 (pub fn (externLibBadAt s)
-  {
-    (let i (externLibBadAtFrom s 0))
-    (if (< i 0)
-      None
-      (Some i))
-  })
+  (externLibBadAtFrom s 0))
 
-(:: externLibBadAtFrom (-> String Int Int))
+(:: externLibBadAtFrom (-> String Int (Option Int)))
 (fn (externLibBadAtFrom s i)
   (if (>= i (strLen s))
-    (- 0 1)
+    None
     (if (externLibByte (strByte s i))
       (externLibBadAtFrom s (+ i 1))
-      i)))
+      (Some i))))
 
 (pub :: parseExternDecl (-> Tokens Int (PResult ASTNode)))
 (pub fn (parseExternDecl tokens pos)
@@ -7312,24 +7307,17 @@
 ; be a WILD READ and not a wrong answer. The type is what stops it
 ; now, in place of a `(< j 0)` the caller had to remember to write.
 ;
-; The recursion keeps the -1 and stays private, as `Path.ax`'s
-; `pathLastSlashFrom` does: the boundary is where the type is worth
-; having, and a walk that has not finished is not a boundary.
+; The recursive scan carries the optional index without a sentinel.
 (pub :: namedFieldIndex (-> (Vec ASTNode) String (Option Int)))
 (pub fn (namedFieldIndex names n)
-  {
-    (let i (namedFieldIndexFrom names n 0))
-    (if (< i 0)
-      None
-      (Some i))
-  })
+  (namedFieldIndexFrom names n 0))
 
-(:: namedFieldIndexFrom (-> (Vec ASTNode) String Int Int))
+(:: namedFieldIndexFrom (-> (Vec ASTNode) String Int (Option Int)))
 (fn (namedFieldIndexFrom names n i)
   (if (>= i (vecLen names))
-    (- 0 1)
+    None
     (if (strEq (nodeAName (vecGet names i)) n)
-      i
+      (Some i)
       (namedFieldIndexFrom names n (+ i 1)))))
 
 ; Is `n` one of the constructor's declared fields?
@@ -7724,29 +7712,29 @@
   1024)
 
 ; The index of the opening delimiter that first takes nesting past
-; `limit`, or -1 when nothing does. One walk answers both questions the
+; `limit`, or None when nothing does. One walk answers both questions the
 ; depth guard asks - whether the limit is passed, and where - so the
 ; maximum is never computed separately.
 ;
 ; A closer at depth 0 is unbalanced input, which the parser reports on
 ; its own terms; it is floored here rather than allowed to go negative,
 ; so a stray `)` early in a file cannot mask real depth after it.
-(pub :: nestOverflowTok (-> Tokens Int Int))
+(pub :: nestOverflowTok (-> Tokens Int (Option Int)))
 (pub fn (nestOverflowTok tokens limit)
   {
     (let mut i 0)
     (let mut d 0)
-    (let mut hit (- 0 1))
+    (let mut hit (None))
     (let n (vecLen tokens))
     {
-      (while (&& (< i n) (< hit 0))
+      (while (&& (< i n) (! (isSome hit)))
         {
           (if (|| (peekIs tokens i TK_LPAREN)
                 (|| (peekIs tokens i TK_LBRACE) (peekIs tokens i TK_LBRACKET)))
             {
               (set d (+ d 1))
               (if (> d limit)
-                (set hit i))
+                (set hit (Some i)))
             }
             (if (|| (peekIs tokens i TK_RPAREN)
                   (|| (peekIs tokens i TK_RBRACE) (peekIs tokens i TK_RBRACKET)))
@@ -7763,8 +7751,8 @@
   ; The depth check runs BEFORE `parseDecls`, because the failure it
   ; prevents is that call exhausting the stack.
   {
-    (let over (nestOverflowTok tokens parseMaxDepth))
-    (if (>= over 0)
+    (let overFound (nestOverflowTok tokens parseMaxDepth))
+    (if (let (Some over) overFound)
       (pErrCode over "AX2005")
       {
         (let r (parseDecls tokens 0 vecNew))
