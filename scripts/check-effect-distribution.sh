@@ -369,6 +369,10 @@ have() { # have <got> <want> <what>
 # and trusted Unsafe rows move; existing IO/Block/Spawn/Entropy stay fixed.
 # requireSignatureResult reports the existing required-metadata AX4002
 # failure and contributes the one new Alloc,IO,Mut helper.
+# Owning source indexes, String names and lambda Options add two helpers,
+# retire unitSrcMissing and change 13 existing effect rows against f15845d0
+# with the same compiler. Only Alloc/Mut/Unsafe/pure buckets move; every
+# existing IO, Block, Spawn and Entropy set stays unchanged.
 echo "== compiler view: symbols --calls core/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls core/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over core/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
@@ -429,16 +433,16 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # and vecReserveExactly moving its trusted Unsafe work into vecMoveTo.
 have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3688 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 501 "Alloc,IO,Mut"
-have "$(bucket "$work/main.axsym" 'Mut')" 284 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 405 "exactly Alloc"
+have "$(bucket "$work/main.axsym" 'Mut')" 285 "exactly Mut"
+have "$(bucket "$work/main.axsym" 'Alloc')" 412 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 77 "Alloc,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Unsafe')" 98 "exactly Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 76 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Unsafe')" 93 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 34 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 34 "Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 15 "Alloc,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 14 "Alloc,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Unsafe')" 18 "Alloc,IO,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Mut,Unsafe')" 0 "IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Unsafe')" 12 "IO,Unsafe"

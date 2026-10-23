@@ -327,6 +327,10 @@ echo "--- 1. user-level cast count does not grow ---"
 # the test rejects, and is never used in the positive implementation.
 # Four new Option-owner fixtures read a live value's reference count.
 # Each unsafe observation keeps its typed owner live through the read.
+# Source-index, String-name and lambda probes add eight subjects: five
+# live-owner/count or value observations, two erased-table ablation casts,
+# and one refused source-forging cast. Eight obsolete metadata-probe casts
+# leave, so the exact tracked user-level census remains 1482.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
@@ -532,7 +536,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # further reference erasures: 294 to 285 under one compiler.
 # Compared with 4ee86a21, canonical identity and typed diagnostic,
 # signature and editor queries measure 281 to 278 reference erasures.
-erasure_pin=278
+# Counted source indexes and required diagnostic Strings remove eighteen
+# more reference erasures: 278 to 260 under the same compiler.
+erasure_pin=260
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
