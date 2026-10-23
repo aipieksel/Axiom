@@ -8,6 +8,14 @@
 (import Str)
 (import IO)
 
+; These fixtures assert that their input parses before testing semantic results.
+; Failed parses terminate at the typed non-returning trap, never a forged value.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: report (-> String String ()))
 ;@axiom:effect(io)
 (fn (report file source)
@@ -26,8 +34,11 @@
       (vecPush ds diagnostic)
       {
         (let parsed (parseModuleWith tokens (scanAxtags source)))
-        (if (pResFailed parsed)
-          (vecPush ds (parseErrDiag tokens parsed source)))
+        (match parsed
+          ((ParseFailed parseError1)
+            (vecPush ds (parseErrDiag tokens (ParseFailed parseError1) source))
+          )
+          ((ParseSuccess parsedValue1 parsedPos1) ()))
       })
     (let units
       (vecPush vecNew (CUnit2 :file file :src source :name None :imports vecNew :library false)))
@@ -40,7 +51,7 @@
         (println "HL {kind} {start} {end}")
       })
     (let recovered (lspParse source))
-    (let count (vecLen (pResNodes recovered)))
+    (let count (vecLen (expectParsed recovered)))
     (let loss (pResPos recovered))
     (println "RECOVERY {count} {loss}")
   })

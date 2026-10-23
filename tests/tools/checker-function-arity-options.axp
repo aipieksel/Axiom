@@ -125,99 +125,105 @@
       (parseModule
         (lex
           "(:: unresolved (-> Float Float Float))\n(:: zero Float) (fn (zero) 1.5)\n(:: returning (-> Float Float Float)) (fn (returning x) (lambda (y) (+ x y)))\n(:: two (-> Float Float Float)) (fn (two x y) (+ x y))\n")))
-    (if (pResOk parsed)
-      {
-        (let nodes (pResNodes parsed))
-        (let tc (tcNew nodes nodes vecNew))
-        (say 21 (declaredUnknown tc "unresolved"))
-        (say 22 (namedArity tc "zero" 0))
-        (say 23 (namedArity tc "returning" 1))
-        (say 24 (namedArity tc "two" 2))
-        (say 25 (== (checkBareValue tc "unresolved" 0) 0))
-        (say 26 (== (checkBareValue tc "returning" 0) 0))
-        (say 27 (== (checkBareValue tc "two" 0) 1))
-        (say 28 (== (checkBareValue tc "__floatToInt" 0) 1))
-        (say 29 (== (checkBareValue tc "__argc" 0) 0))
-        (tcAddEffectOp tc "missingOp" nilNode "Effect")
-        (tcAddEffectOp tc "poisonOp" mkTErr "Effect")
-        (tcAddEffectOp tc "arrowOp" arrow "Effect")
-        (tcAddExtern tc "missingExtern" nilNode)
-        (tcAddExtern tc "zeroExtern" mkIntTy)
-        (tcAddExtern tc "arrowExtern" arrow)
-        (say 30 (declaredUnknown tc "missingOp"))
-        (say 31 (namedArity tc "poisonOp" 0))
-        (say 32 (namedArity tc "arrowOp" 2))
-        (say 33 (declaredUnknown tc "missingExtern"))
-        (say 34 (namedArity tc "zeroExtern" 0))
-        (say 35 (namedArity tc "arrowExtern" 2))
-        (say 36 (== (checkBareValue tc "missingOp" 0) 1))
-        (say 37 (== (checkBareValue tc "missingExtern" 0) 0))
-        (say 38 (== (effIn (callEffects tc unknown 3) effIncomplete) 0))
-        (say 39 (== (effIn (callEffects tc zero 1) effIncomplete) 1))
-        (say 40 (== (effIn (callEffects tc one 1) effIncomplete) 0))
-        (say 41 (== (effIn (callEffects tc one 2) effIncomplete) 1))
-        (say 42 (== (effIn (callEffects tc builtin 3) effIncomplete) 1))
-        (let stack (FsStack :names vecNew :inits vecNew :envs vecNew))
-        (say 43 (isKnown (fsClassify tc (vecGet nodes 2) (mkEVarAt "unresolved" 0) stack 0)))
-        (say 44 (! (isKnown (fsClassify tc (vecGet nodes 2) (mkEVarAt "zero" 0) stack 0))))
-        (say 45 (isKnown (fsClassify tc (vecGet nodes 2) (mkEVarAt "returning" 0) stack 0)))
-        (let types (arityProbeTypes (vecPush (vecPush vecNew unknown) zero)))
-        (say 46 (== (vecLen types) 2))
-        (let unknownType (vecGet types 0))
-        (let zeroType (vecGet types 1))
-        (say 47 (isNone unknownType.arity))
-        (say 48 (arityIs zeroType.arity 0))
-        (say 49 (flagsAre (arityProbeFlags mkFloatTy (Some 0)) (vecPush vecNew 1)))
-        (say 50 (flagsAre (arityProbeFlags mkFloatTy None) (vecPush vecNew 1)))
-        (say 51 (flagsAre (arityProbeFlags arrow (Some 1)) (vecPush (vecPush vecNew 1) 0)))
-        (say 52
-          (flagsAre (arityProbeFlags arrow (Some 2)) (vecPush (vecPush (vecPush vecNew 1) 1) 1)))
-        (say 53 (flagsAre (arityProbeFlags arrow None) (vecPush vecNew 0)))
-        (say 54
-          (flagsAre (arityProbeFlags mkIntTy (Some 2)) (vecPush (vecPush (vecPush vecNew 0) 0) 0)))
-        (say 55 (flagsAre (arityProbeFlags mkTErr None) (vecPush vecNew 0)))
-        (say 56 (flagsAre (arityProbeFlags nilNode None) (vecPush vecNew 0)))
-        (say 57 (strEq (axirArityLine None) "sig -1\n"))
-        (say 58 (strEq (axirArityLine (Some 0)) "sig 0\n"))
-        (say 59 (strEq (axirArityLine (Some 2)) "sig 2\n"))
-        (let wire "axir 1 darwin-aarch64 0.0.0\nF unresolved - \"(Float -> Float)\"\nsig -1\nend\n")
-        (say 60 (strEq (axirWrite (axirRead wire)) wire))
-        (let generatedSource
-          "(fn (value) 2.5)\n(fn (fraction n) (/ (as n Float) 2.0))\n(:: makeFloatAdder (-> Int Float Float)) (fn (makeFloatAdder n) (lambda (x) (+ (as n Float) x)))\n(:: main Int) (fn (main) (if (&& (== (as (+ value value) Int) 5) (&& (== (as (+ (fraction 5) value) Int) 5) (== (as (makeFloatAdder 1 2.5) Int) 3))) 42 1))\n")
-        (let generatedParsed (parseModule (lex generatedSource)))
-        (if (pResOk generatedParsed)
-          {
-            (let declarations (pResNodes generatedParsed))
-            (let units
-              (vecPush vecNew
-                (CUnit2
-                  :file "numeric.ax"
-                  :src generatedSource
-                  :name (Some "")
-                  :imports vecNew
-                  :library false)))
-            (let bares vecNew)
-            (let fulls vecNew)
-            (let mods vecNew)
-            (let merged
-              (resolveImports declarations bares fulls mods (targetCode hostTarget) "" units))
-            (expandProgram declarations merged vecNew vecNew units bares fulls mods)
-            (let result (checkExpandedProgram declarations merged units))
-            (if (> (countErrorDiags result.diagnostics) 0)
+    (match parsed
+      ((ParseFailed parseError1) 2)
+      ((ParseSuccess parsedValue1 parsedPos1)
+        {
+          (let nodes parsedValue1)
+          (let tc (tcNew nodes nodes vecNew))
+          (say 21 (declaredUnknown tc "unresolved"))
+          (say 22 (namedArity tc "zero" 0))
+          (say 23 (namedArity tc "returning" 1))
+          (say 24 (namedArity tc "two" 2))
+          (say 25 (== (checkBareValue tc "unresolved" 0) 0))
+          (say 26 (== (checkBareValue tc "returning" 0) 0))
+          (say 27 (== (checkBareValue tc "two" 0) 1))
+          (say 28 (== (checkBareValue tc "__floatToInt" 0) 1))
+          (say 29 (== (checkBareValue tc "__argc" 0) 0))
+          (tcAddEffectOp tc "missingOp" nilNode "Effect")
+          (tcAddEffectOp tc "poisonOp" mkTErr "Effect")
+          (tcAddEffectOp tc "arrowOp" arrow "Effect")
+          (tcAddExtern tc "missingExtern" nilNode)
+          (tcAddExtern tc "zeroExtern" mkIntTy)
+          (tcAddExtern tc "arrowExtern" arrow)
+          (say 30 (declaredUnknown tc "missingOp"))
+          (say 31 (namedArity tc "poisonOp" 0))
+          (say 32 (namedArity tc "arrowOp" 2))
+          (say 33 (declaredUnknown tc "missingExtern"))
+          (say 34 (namedArity tc "zeroExtern" 0))
+          (say 35 (namedArity tc "arrowExtern" 2))
+          (say 36 (== (checkBareValue tc "missingOp" 0) 1))
+          (say 37 (== (checkBareValue tc "missingExtern" 0) 0))
+          (say 38 (== (effIn (callEffects tc unknown 3) effIncomplete) 0))
+          (say 39 (== (effIn (callEffects tc zero 1) effIncomplete) 1))
+          (say 40 (== (effIn (callEffects tc one 1) effIncomplete) 0))
+          (say 41 (== (effIn (callEffects tc one 2) effIncomplete) 1))
+          (say 42 (== (effIn (callEffects tc builtin 3) effIncomplete) 1))
+          (let stack (FsStack :names vecNew :inits vecNew :envs vecNew))
+          (say 43 (isKnown (fsClassify tc (vecGet nodes 2) (mkEVarAt "unresolved" 0) stack 0)))
+          (say 44 (! (isKnown (fsClassify tc (vecGet nodes 2) (mkEVarAt "zero" 0) stack 0))))
+          (say 45 (isKnown (fsClassify tc (vecGet nodes 2) (mkEVarAt "returning" 0) stack 0)))
+          (let types (arityProbeTypes (vecPush (vecPush vecNew unknown) zero)))
+          (say 46 (== (vecLen types) 2))
+          (let unknownType (vecGet types 0))
+          (let zeroType (vecGet types 1))
+          (say 47 (isNone unknownType.arity))
+          (say 48 (arityIs zeroType.arity 0))
+          (say 49 (flagsAre (arityProbeFlags mkFloatTy (Some 0)) (vecPush vecNew 1)))
+          (say 50 (flagsAre (arityProbeFlags mkFloatTy None) (vecPush vecNew 1)))
+          (say 51 (flagsAre (arityProbeFlags arrow (Some 1)) (vecPush (vecPush vecNew 1) 0)))
+          (say 52
+            (flagsAre (arityProbeFlags arrow (Some 2)) (vecPush (vecPush (vecPush vecNew 1) 1) 1)))
+          (say 53 (flagsAre (arityProbeFlags arrow None) (vecPush vecNew 0)))
+          (say 54
+            (flagsAre (arityProbeFlags mkIntTy (Some 2))
+              (vecPush (vecPush (vecPush vecNew 0) 0) 0)))
+          (say 55 (flagsAre (arityProbeFlags mkTErr None) (vecPush vecNew 0)))
+          (say 56 (flagsAre (arityProbeFlags nilNode None) (vecPush vecNew 0)))
+          (say 57 (strEq (axirArityLine None) "sig -1\n"))
+          (say 58 (strEq (axirArityLine (Some 0)) "sig 0\n"))
+          (say 59 (strEq (axirArityLine (Some 2)) "sig 2\n"))
+          (let wire
+            "axir 1 darwin-aarch64 0.0.0\nF unresolved - \"(Float -> Float)\"\nsig -1\nend\n")
+          (say 60 (strEq (axirWrite (axirRead wire)) wire))
+          (let generatedSource
+            "(fn (value) 2.5)\n(fn (fraction n) (/ (as n Float) 2.0))\n(:: makeFloatAdder (-> Int Float Float)) (fn (makeFloatAdder n) (lambda (x) (+ (as n Float) x)))\n(:: main Int) (fn (main) (if (&& (== (as (+ value value) Int) 5) (&& (== (as (+ (fraction 5) value) Int) 5) (== (as (makeFloatAdder 1 2.5) Int) 3))) 42 1))\n")
+          (let generatedParsed (parseModule (lex generatedSource)))
+          (match generatedParsed
+            ((ParseFailed parseError2) 3)
+            ((ParseSuccess parsedValue2 parsedPos2)
               {
-                (writeStr stderr (renderDiagsUnits result.diagnostics units))
-                4
+                (let declarations parsedValue2)
+                (let units
+                  (vecPush vecNew
+                    (CUnit2
+                      :file "numeric.ax"
+                      :src generatedSource
+                      :name (Some "")
+                      :imports vecNew
+                      :library false)))
+                (let bares vecNew)
+                (let fulls vecNew)
+                (let mods vecNew)
+                (let merged
+                  (resolveImports declarations bares fulls mods (targetCode hostTarget) "" units))
+                (expandProgram declarations merged vecNew vecNew units bares fulls mods)
+                (let result (checkExpandedProgram declarations merged units))
+                (if (> (countErrorDiags result.diagnostics) 0)
+                  {
+                    (writeStr stderr (renderDiagsUnits result.diagnostics units))
+                    4
+                  }
+                  (if (let (Some program) result.program)
+                    {
+                      (writeStr stdout "-- emitted llvm --\n")
+                      (writeStr stdout
+                        (emitCheckedProgram program bares fulls (targetCode hostTarget) false))
+                      0
+                    }
+                    5))
               }
-              (if (let (Some program) result.program)
-                {
-                  (writeStr stdout "-- emitted llvm --\n")
-                  (writeStr stdout
-                    (emitCheckedProgram program bares fulls (targetCode hostTarget) false))
-                  0
-                }
-                5))
-          }
-          3)
-      }
-      2)
+            ))
+        }
+      ))
   })

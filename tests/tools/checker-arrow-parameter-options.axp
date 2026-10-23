@@ -181,52 +181,59 @@
     (let available
       (parseModule
         (lex "(pub :: available (-> Int String Int)) (pub fn (available number text) number)")))
-    (if (pResOk available)
-      {
-        (let declarations (pResNodes available))
-        (let tc (tcNew declarations declarations vecNew))
-        (let presentScope (bodyScopeOf tc (vecGet declarations 1)))
-        (say 71 (isSome (bsFnTy presentScope)))
-        (say 72 (intsAre (bsCallable presentScope) (vecPush (vecPush vecNew 0) 0)))
-      }
-      {
-        (say 71 false)
-        (say 72 false)
-      })
+    (match available
+      ((ParseFailed parseError1)
+        {
+          (say 71 false)
+          (say 72 false)
+        }
+      )
+      ((ParseSuccess parsedValue1 parsedPos1)
+        {
+          (let declarations parsedValue1)
+          (let tc (tcNew declarations declarations vecNew))
+          (let presentScope (bodyScopeOf tc (vecGet declarations 1)))
+          (say 71 (isSome (bsFnTy presentScope)))
+          (say 72 (intsAre (bsCallable presentScope) (vecPush (vecPush vecNew 0) 0)))
+        }
+      ))
     (say 73 (same (bsParamTy (bsNew names vecNew vecNew (Some poisonArrow)) (BoundParam 0)) poison))
     (let generatedSource
       "(import Str)\n(:: loop (-> Int String String)) (fn (loop count text) (if (<= count 0) text (loop (- count 1) text)))\n(:: identity (-> a a)) (fn (identity value) value)\n(:: applyInt (-> (-> Int Int) Int Int)) (fn (applyInt callback value) (callback value))\n(:: makeAdder (-> Int Int Int)) (fn (makeAdder offset) (lambda (value) (+ offset value)))\n(:: main Int) (fn (main) { (let text (loop 32 (identity \"retained\"))) (if (&& (== (strLen text) 8) (== (applyInt (makeAdder 2) 40) 42)) 42 1) })\n")
     (let parsed (parseModule (lex generatedSource)))
-    (if (pResOk parsed)
-      {
-        (let declarations (pResNodes parsed))
-        (let units
-          (vecPush vecNew
-            (CUnit2
-              :file "arrow-native.ax"
-              :src generatedSource
-              :name None
-              :imports vecNew
-              :library false)))
-        (let bares vecNew)
-        (let fulls vecNew)
-        (let mods vecNew)
-        (let merged (resolveImports declarations bares fulls mods (targetCode hostTarget) "" units))
-        (expandProgram declarations merged vecNew vecNew units bares fulls mods)
-        (let result (checkExpandedProgram declarations merged units))
-        (if (> (countErrorDiags result.diagnostics) 0)
-          {
-            (writeStr stderr (renderDiagsUnits result.diagnostics units))
-            3
-          }
-          (if (let (Some program) result.program)
+    (match parsed
+      ((ParseFailed parseError2) 2)
+      ((ParseSuccess parsedValue2 parsedPos2)
+        {
+          (let declarations parsedValue2)
+          (let units
+            (vecPush vecNew
+              (CUnit2
+                :file "arrow-native.ax"
+                :src generatedSource
+                :name None
+                :imports vecNew
+                :library false)))
+          (let bares vecNew)
+          (let fulls vecNew)
+          (let mods vecNew)
+          (let merged
+            (resolveImports declarations bares fulls mods (targetCode hostTarget) "" units))
+          (expandProgram declarations merged vecNew vecNew units bares fulls mods)
+          (let result (checkExpandedProgram declarations merged units))
+          (if (> (countErrorDiags result.diagnostics) 0)
             {
-              (writeStr stdout "-- emitted llvm --\n")
-              (writeStr stdout
-                (emitCheckedProgram program bares fulls (targetCode hostTarget) false))
-              0
+              (writeStr stderr (renderDiagsUnits result.diagnostics units))
+              3
             }
-            4))
-      }
-      2)
+            (if (let (Some program) result.program)
+              {
+                (writeStr stdout "-- emitted llvm --\n")
+                (writeStr stdout
+                  (emitCheckedProgram program bares fulls (targetCode hostTarget) false))
+                0
+              }
+              4))
+        }
+      ))
   })

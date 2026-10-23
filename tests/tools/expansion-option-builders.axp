@@ -64,9 +64,9 @@
 (fn (declarations source)
   {
     (let parsed (parseModule (lex source)))
-    (if (pResOk parsed)
-      (pResNodes parsed)
-      vecNew)
+    (match parsed
+      ((ParseFailed parseError1) vecNew)
+      ((ParseSuccess parsedValue1 parsedPos1) parsedValue1))
   })
 
 (:: declaration (-> String ASTNode))
@@ -96,21 +96,23 @@
 (fn (evaluatesExpansion source want)
   {
     (let parsed (parseModule (lex source)))
-    (if (pResOk parsed)
-      {
-        (let declarations (pResNodes parsed))
-        (let diagnostics (:: vecNew Diags))
-        (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
-        (if (== (countErrorDiags diagnostics) 0)
-          {
-            (let functions (:: vecNew (Vec MFunc)))
-            (let refused (:: vecNew Names))
-            (mLowerDecls declarations functions refused 0)
-            (&& (== (vecLen refused) 0) (== (mvalCall1 functions "main" 0) want))
-          }
-          false)
-      }
-      false)
+    (match parsed
+      ((ParseFailed parseError2) false)
+      ((ParseSuccess parsedValue2 parsedPos2)
+        {
+          (let declarations parsedValue2)
+          (let diagnostics (:: vecNew Diags))
+          (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
+          (if (== (countErrorDiags diagnostics) 0)
+            {
+              (let functions (:: vecNew (Vec MFunc)))
+              (let refused (:: vecNew Names))
+              (mLowerDecls declarations functions refused 0)
+              (&& (== (vecLen refused) 0) (== (mvalCall1 functions "main" 0) want))
+            }
+            false)
+        }
+      ))
   })
 
 (:: main Int)

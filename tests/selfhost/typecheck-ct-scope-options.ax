@@ -9,6 +9,13 @@
 (import Str)
 (import Vec)
 
+; Fixture inputs must parse before semantic assertions run.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: ctRowIs (-> (Option Int) Int Bool))
 (fn (ctRowIs result expected)
   (match result
@@ -61,9 +68,9 @@
   {
     (let source
       "(:: branch (-> Int Int))\n;@axiom:ct(secret)\n(pub fn (branch secret) (if (== secret 0) 1 2))\n(:: main Int)\n(pub fn (main) 42)\n")
-    (let declarations (readAstNodes (parseModuleWith (lex source) (scanAxtags source)) 1))
+    (let declarations (expectParsed (parseModuleWith (lex source) (scanAxtags source))))
     (let units vecNew)
-    (vecPush units (CUnit2 :file "ct-scope.ax" :src source :name "" :imports vecNew :library false))
+    (vecPush units (CUnit2 :file "ct-scope.ax" :src source :name (Some "") :imports vecNew :library false))
     (let checked (checkModuleTcTyped declarations declarations units))
     (if (== (countErrorDiags (tcOutVec checked)) 1)
       (&& (strEq (diagCode (vecGet (tcOutVec checked) 0)) "AX3092")

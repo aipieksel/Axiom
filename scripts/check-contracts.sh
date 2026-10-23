@@ -36,6 +36,7 @@ gate_build_axc axc
 
 python3 tests/tools/compiler-representation.py "$axc"
 python3 tests/selfhost/compiler-token-owners.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/compiler-parse-result-owners.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/emitter-context-options.py --axiom "$axc"
 python3 tests/selfhost/emitter-flow-environment.py --axiom "$axc"
 python3 tests/selfhost/emitter-index-owners.py --axiom "$axc"

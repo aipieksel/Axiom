@@ -14,6 +14,14 @@
 (import mir)
 (import mireval)
 
+; These fixtures assert that their input parses before testing semantic results.
+; Failed parses terminate at the typed non-returning trap, never a forged value.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: environment (-> Diags Units Nodes MEnv))
 (fn (environment diagnostics units declarations)
   (MEnv
@@ -63,7 +71,7 @@
       (parseModule
         (lex
           "(struct Empty) (struct Pair (left : Int) (right : Int)) (data Choice (Zero) (One Int))")))
-    (let declarations (pResNodes parsed))
+    (let declarations (expectParsed parsed))
     (let env (environment diagnostics units declarations))
     (expResolveQueryName env "T" (vecPush vecNew "T") (vecPush vecNew (mkEInt 3)) 0)
     (expQueryArgName env (mkEInt 3) vecNew vecNew 0)

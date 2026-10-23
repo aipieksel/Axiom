@@ -58,53 +58,60 @@
   {
     (let source "(:: f (-> Int Int))\n(fn (f x y) x)\n")
     (let parsed (parseModuleWith (lex source) (scanAxtags source)))
-    (if (pResFailed parsed)
-      (println "PARSE_FAILURE parameter-header")
-      {
-        (let nodes (pResNodes parsed))
-        (let d (vecGet nodes 1))
-        (let sig (vecGet nodes 0))
-        (let off (+ (spanStart (nodeSpan d)) 2))
-        (say 31 (sameType (lspParamTypeAt source nodes off "x") (nodeAChild (nodeTyChild sig))))
-        (say 32 (isNone (lspParamTypeAt source nodes off "y")))
-        (say 33 (isNone (lspParamTypeAt source nodes off "missing")))
-        (say 34 (isNone (lspParamTypeAt source nodes (strLen source) "x")))
-        (say 35 (tyIsBareInt (lspLocalTypeOf source nodes off "f")))
-        (let hints jsonArr)
-        (lspViewHintsHeader hints source (lspLineIndex source) d sig 0 (strLen source))
-        (say 36 (== (jsonArrLen hints) 2))
-        (say 37 (strEq (jsonGetStr (jsonArrGet hints 0) "label") ": Int"))
-        (let poisoned (signature "f" (mkTArr mkTErr mkIntTy)))
-        (let poisonHints jsonArr)
-        (lspViewHintsHeader poisonHints source (lspLineIndex source) d poisoned 0 (strLen source))
-        (say 38 (== (jsonArrLen poisonHints) 1))
-        (say 39
-          (sameType (lspParamTypeAt source (vecPush (vecPush vecNew poisoned) d) off "x")
-            (nodeAChild (nodeTyChild poisoned))))
-      })
+    (match parsed
+      ((ParseFailed parseError1) (println "PARSE_FAILURE parameter-header"))
+      ((ParseSuccess parsedValue1 parsedPos1)
+        {
+          (let nodes parsedValue1)
+          (let d (vecGet nodes 1))
+          (let sig (vecGet nodes 0))
+          (let off (+ (spanStart (nodeSpan d)) 2))
+          (say 31 (sameType (lspParamTypeAt source nodes off "x") (nodeAChild (nodeTyChild sig))))
+          (say 32 (isNone (lspParamTypeAt source nodes off "y")))
+          (say 33 (isNone (lspParamTypeAt source nodes off "missing")))
+          (say 34 (isNone (lspParamTypeAt source nodes (strLen source) "x")))
+          (say 35 (tyIsBareInt (lspLocalTypeOf source nodes off "f")))
+          (let hints jsonArr)
+          (lspViewHintsHeader hints source (lspLineIndex source) d sig 0 (strLen source))
+          (say 36 (== (jsonArrLen hints) 2))
+          (say 37 (strEq (jsonGetStr (jsonArrGet hints 0) "label") ": Int"))
+          (let poisoned (signature "f" (mkTArr mkTErr mkIntTy)))
+          (let poisonHints jsonArr)
+          (lspViewHintsHeader poisonHints source (lspLineIndex source) d poisoned 0 (strLen source))
+          (say 38 (== (jsonArrLen poisonHints) 1))
+          (say 39
+            (sameType (lspParamTypeAt source (vecPush (vecPush vecNew poisoned) d) off "x")
+              (nodeAChild (nodeTyChild poisoned))))
+        }
+      ))
     (let fields "(struct Box (value : Int))\n(:: f (-> Box Int))\n(fn (f box) box.value)\n")
     (let fieldParsed (parseModuleWith (lex fields) (scanAxtags fields)))
-    (if (pResFailed fieldParsed)
-      (println "PARSE_FAILURE field-header")
-      {
-        (let nodes (pResNodes fieldParsed))
-        (if (let (Some at) (strFind fields "box.value" 0))
-          {
-            (let fieldSpan (mkSpan (+ at 4) (+ at 9)))
-            (say 40
-              (&& (sameName (lspFieldBaseStruct fields nodes "box" at) "Box")
-                (! (jsonIsNull (lspHoverFieldUse fields nodes "box" at fieldSpan 0)))))
-            (say 41
-              (&& (isNone (lspFieldBaseStruct fields nodes "missing" (strLen fields)))
-                (jsonIsNull (lspHoverFieldUse fields nodes "missing" (strLen fields) fieldSpan 0))))
-          }
-          (println "PARSE_FAILURE field-offset"))
-      })
+    (match fieldParsed
+      ((ParseFailed parseError2) (println "PARSE_FAILURE field-header"))
+      ((ParseSuccess parsedValue2 parsedPos2)
+        {
+          (let nodes parsedValue2)
+          (if (let (Some at) (strFind fields "box.value" 0))
+            {
+              (let fieldSpan (mkSpan (+ at 4) (+ at 9)))
+              (say 40
+                (&& (sameName (lspFieldBaseStruct fields nodes "box" at) "Box")
+                  (! (jsonIsNull (lspHoverFieldUse fields nodes "box" at fieldSpan 0)))))
+              (say 41
+                (&& (isNone (lspFieldBaseStruct fields nodes "missing" (strLen fields)))
+                  (jsonIsNull
+                    (lspHoverFieldUse fields nodes "missing" (strLen fields) fieldSpan 0))))
+            }
+            (println "PARSE_FAILURE field-offset"))
+        }
+      ))
     (let nullary "(:: answer Int)\n(fn (answer) 42)\n")
     (let nullaryParsed (parseModuleWith (lex nullary) (scanAxtags nullary)))
-    (if (pResFailed nullaryParsed)
-      (println "PARSE_FAILURE nullary-header")
-      (say 42 (isNone (lspParamTypeAt nullary (pResNodes nullaryParsed) 25 "answer"))))
+    (match nullaryParsed
+      ((ParseFailed parseError3) (println "PARSE_FAILURE nullary-header"))
+      ((ParseSuccess parsedValue3 parsedPos3)
+        (say 42 (isNone (lspParamTypeAt nullary parsedValue3 25 "answer")))
+      ))
   })
 
 (:: runOptions ())
@@ -181,16 +188,18 @@
 (fn (checkSource name source)
   {
     (let parsed (parseModuleWith (lex source) (scanAxtags source)))
-    (if (pResFailed parsed)
-      (println (concat "PARSE_FAILURE " name))
-      {
-        (let nodes (pResNodes parsed))
-        (let units
-          (vecPush vecNew
-            (CUnit2 :file name :src source :name None :imports vecNew :library false)))
-        (let checked (checkModuleTcTyped nodes nodes units))
-        (writeStr stdout (renderDiagsUnits (tcOutVec checked) units))
-      })
+    (match parsed
+      ((ParseFailed parseError4) (println (concat "PARSE_FAILURE " name)))
+      ((ParseSuccess parsedValue4 parsedPos4)
+        {
+          (let nodes parsedValue4)
+          (let units
+            (vecPush vecNew
+              (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+          (let checked (checkModuleTcTyped nodes nodes units))
+          (writeStr stdout (renderDiagsUnits (tcOutVec checked) units))
+        }
+      ))
   })
 
 (:: runDiagnostics ())

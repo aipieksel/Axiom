@@ -9,6 +9,14 @@
 (import Str)
 (import Vec)
 
+; These fixtures assert that their input parses before testing semantic results.
+; Failed parses terminate at the typed non-returning trap, never a forged value.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: stringBucket (-> (Vec (Option (Vec String))) Int Int String Bool))
 (fn (stringBucket buckets slot count expected)
   (if (let (Some bucket) (vecGet buckets slot))
@@ -58,7 +66,7 @@
         (lspNavIntPut offsets 7)
         (lspNavTopPut tops "item" (concat "module" "::item"))
         (lspNavTopPut tops "item" (concat "local" "::item"))
-        (let decls (pResNodes (parseModule (lex "(:: item Int)\n(fn (item) 42)\n"))))
+        (let decls (expectParsed (parseModule (lex "(:: item Int)\n(fn (item) 42)\n"))))
         (let decl (vecGet decls 1))
         (lspViewIdxAdd nodes "item" decl)
         (if (&& (stringBucket buckets 0 2 "first value")

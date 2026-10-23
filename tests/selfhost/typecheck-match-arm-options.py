@@ -29,13 +29,13 @@ BRIDGE = '''
   (let parsed (parseModuleWith tokens (scanAxtags source)))
   (let units (vecPush vecNew
     (CUnit2 :file "match-arms.ax" :src source :name (Some "") :imports vecNew :library false)))
-  (if (pResFailed parsed)
-    { (let checker (tcNew vecNew vecNew units))
-      (vecPush checker.out (parseErrDiag tokens parsed source))
-      checker }
-    { (let declarations (pResNodes parsed))
+  (match parsed
+    ((ParseFailed parseError1) { (let checker (tcNew vecNew vecNew units))
+      (vecPush checker.out (parseErrDiag tokens (ParseFailed parseError1) source))
+      checker })
+    ((ParseSuccess parsedValue1 parsedPos1) { (let declarations parsedValue1)
       (for declaration in declarations (writeNodeWord declaration 5 1))
-      (checkModuleTcTyped declarations declarations units) })
+      (checkModuleTcTyped declarations declarations units) }))
 })
 (pub :: probeCaseText (-> Int String))
 (pub fn (probeCaseText mode) {

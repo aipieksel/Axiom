@@ -74,9 +74,9 @@ def main():
         if args.negative_controls:
             controls = (
                 ("trailing-expression-accepted", "parser.ax", "contractExprOf",
-                 "(peekIs toks (pResPos r) TK_EOF)", "true", 5, False),
+                 "(peekIs toks parsedPos126 TK_EOF)", "true", 5, False),
                 ("present-expression-discarded", "parser.ax", "contractExprOf",
-                 "(Some (pResNode r))", "None", 6, False),
+                 "(Some parsedValue126)", "None", 6, False),
                 ("malformed-diagnostic-suppressed", "typecheck.ax", "checkOneContract",
                  "ELSE_BRANCH", "0", None, True),
                 ("lowered-predicate-discarded", "expand.ax", "expSplitContracts",

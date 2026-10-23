@@ -24,29 +24,37 @@
     (let source
       "(macro make ((make N) (:: (syntax/join generated N) (-> Int Int)) (fn ((syntax/join generated N) value) value))) (make Result) (:: main Int) (fn (main) (generatedResult 3))")
     (let parsed (parseModuleWith (lex source) (scanAxtags source)))
-    (if (pResOk parsed)
-      {
-        (let declarations (pResNodes parsed))
-        (let units
-          (vecPush vecNew
-            (CUnit2 :file "origin.ax" :src source :name (Some "") :imports vecNew :library false)))
-        (let diagnostics (:: vecNew Diags))
-        (let bares vecNew)
-        (let fulls vecNew)
-        (let mods vecNew)
-        (let merged
-          (resolveImports declarations bares fulls mods (targetCode "darwin-aarch64") "" units))
-        (let origins (expandProgram declarations merged diagnostics vecNew units bares fulls mods))
-        (let checker (checkModuleTc declarations merged units))
-        (if (== (+ (countErrorDiags diagnostics) (countErrorDiags (tcOutVec checker))) 0)
-          {
-            (writeStr stdout (symbolsRenderGens checker 0 origins 0 0))
-            0
-          }
-          {
-            (writeStr stdout (renderDiagsUnits (tcOutVec checker) units))
-            1
-          })
-      }
-      2)
+    (match parsed
+      ((ParseFailed parseError1) 2)
+      ((ParseSuccess parsedValue1 parsedPos1)
+        {
+          (let declarations parsedValue1)
+          (let units
+            (vecPush vecNew
+              (CUnit2
+                :file "origin.ax"
+                :src source
+                :name (Some "")
+                :imports vecNew
+                :library false)))
+          (let diagnostics (:: vecNew Diags))
+          (let bares vecNew)
+          (let fulls vecNew)
+          (let mods vecNew)
+          (let merged
+            (resolveImports declarations bares fulls mods (targetCode "darwin-aarch64") "" units))
+          (let origins
+            (expandProgram declarations merged diagnostics vecNew units bares fulls mods))
+          (let checker (checkModuleTc declarations merged units))
+          (if (== (+ (countErrorDiags diagnostics) (countErrorDiags (tcOutVec checker))) 0)
+            {
+              (writeStr stdout (symbolsRenderGens checker 0 origins 0 0))
+              0
+            }
+            {
+              (writeStr stdout (renderDiagsUnits (tcOutVec checker) units))
+              1
+            })
+        }
+      ))
   })

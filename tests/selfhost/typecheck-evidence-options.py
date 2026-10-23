@@ -20,8 +20,14 @@ def golden_helpers(root):
     cases = ['426-undefined-sig-type', '1103-removed-builtin-types',
              '1108-star-glued-type', '1420-generic-alias-arity', '1424-generic-alias-ambiguity']
     text = '''
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: probeParse (-> String Nodes))
-(fn (probeParse text) (readAstNodes (parseModuleWith (lex text) (scanAxtags text)) 1))
+(fn (probeParse text) (expectParsed (parseModuleWith (lex text) (scanAxtags text))))
 (:: probeGoldenSingle (-> String String String))
 (fn (probeGoldenSingle file text) {
   (let declarations (probeParse text))

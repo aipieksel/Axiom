@@ -14,6 +14,14 @@
 (import mir)
 (import mireval)
 
+; These fixtures assert that their input parses before testing semantic results.
+; Failed parses terminate at the typed non-returning trap, never a forged value.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: environment (-> Diags Units Nodes MEnv))
 (fn (environment diagnostics units declarations)
   (MEnv
@@ -64,9 +72,9 @@
 (fn (expression body)
   {
     (let parsed (parseModule (lex (concat (concat "(fn (probe) " body) ")"))))
-    (if (pResOk parsed)
-      (nodeCChild (vecGet (pResNodes parsed) 0))
-      (mkEInt -900))
+    (match parsed
+      ((ParseFailed parseError1) (mkEInt -900))
+      ((ParseSuccess parsedValue1 parsedPos1) (nodeCChild (vecGet parsedValue1 0))))
   })
 
 (:: named (-> (Option String) String Bool))
@@ -80,21 +88,23 @@
 (fn (evaluatesExpansion source want)
   {
     (let parsed (parseModule (lex source)))
-    (if (pResOk parsed)
-      {
-        (let declarations (pResNodes parsed))
-        (let diagnostics (:: vecNew Diags))
-        (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
-        (if (== (countErrorDiags diagnostics) 0)
-          {
-            (let functions (:: vecNew (Vec MFunc)))
-            (let refused (:: vecNew Names))
-            (mLowerDecls declarations functions refused 0)
-            (&& (== (vecLen refused) 0) (== (mvalCall1 functions "main" 0) want))
-          }
-          false)
-      }
-      false)
+    (match parsed
+      ((ParseFailed parseError2) false)
+      ((ParseSuccess parsedValue2 parsedPos2)
+        {
+          (let declarations parsedValue2)
+          (let diagnostics (:: vecNew Diags))
+          (expandProgram declarations declarations diagnostics vecNew vecNew vecNew vecNew vecNew)
+          (if (== (countErrorDiags diagnostics) 0)
+            {
+              (let functions (:: vecNew (Vec MFunc)))
+              (let refused (:: vecNew Names))
+              (mLowerDecls declarations functions refused 0)
+              (&& (== (vecLen refused) 0) (== (mvalCall1 functions "main" 0) want))
+            }
+            false)
+        }
+      ))
   })
 
 (:: main Int)
@@ -176,7 +186,7 @@
       (evaluatesExpansion
         "(macro make ((make P) (:: generated (-> Int Int)) (fn (generated P) (+ P 3)))) (make input) (:: main Int) (fn (main) (generated 5))"
         8))
-    (let template (vecGet (pResNodes (parseModule (lex "(fn (left right) 1)"))) 0))
+    (let template (vecGet (expectParsed (parseModule (lex "(fn (left right) 1)"))) 0))
     (say 23
       (if (let None (expBuildOneDecl template parameters
                       (vecPush (vecPush vecNew (mkEInt 1)) (mkEVar "Result")) env 0))

@@ -9,6 +9,14 @@
 (import IO)
 (import Fmt)
 
+; These fixtures assert that their input parses before testing semantic results.
+; Failed parses terminate at the typed non-returning trap, never a forged value.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (:: say (-> Int Bool ()))
 ;@axiom:effect(io)
 (fn (say index good)
@@ -34,7 +42,7 @@
 (fn (expression body)
   {
     (let parsed (parseModule (lex (concat (concat "(pub fn (expression) " body) ")"))))
-    (nodeCChild (vecGet (pResNodes parsed) 0))
+    (nodeCChild (vecGet (expectParsed parsed) 0))
   })
 
 (:: main Int)
@@ -45,7 +53,7 @@
       (parseModule
         (lex
           "(pub type Amount Int) (pub type Identity a a) (subtype Positive is Int range 1..10) (subtype NonNeg is Int range 0) (pub struct Record (value : Int)) (pub :: take (-> Positive Int))")))
-    (let declarations (pResNodes parsed))
+    (let declarations (expectParsed parsed))
     (let hidden (nodeBuildDAlias "Hidden" (mkTCon "Int" vecNew) vecNew 0))
     (writeNodeText hidden 8 "Owner")
     (vecPush declarations hidden)

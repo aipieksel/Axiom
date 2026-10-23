@@ -24,6 +24,12 @@ DIAGNOSTICS = [
     '(keepFn h (lambda (n) { s.name n })) 0 }) 0 })\n',
 ]
 BRIDGE = '''
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
 (pub :: probeComputeCast (-> (Option ASTNode) Int))
 (pub fn (probeComputeCast ty) {
   (let checker (tcNew vecNew vecNew vecNew))
@@ -36,7 +42,7 @@ BRIDGE = '''
 (pub :: probeDiagnosticChecker (-> Int TC))
 (pub fn (probeDiagnosticChecker mode) {
   (let text (probeDiagnosticSource mode))
-  (let declarations (readAstNodes (parseModuleWith (lex text) (scanAxtags text)) 1))
+  (let declarations (expectParsed (parseModuleWith (lex text) (scanAxtags text))))
   (for declaration in declarations (writeNodeWord declaration 5 1))
   (let units (vecPush vecNew (CUnit2 :file "checked-stamp.ax" :src text :name (Some "") :imports vecNew :library false)))
   (checkModuleTcTyped declarations declarations units)
