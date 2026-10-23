@@ -1,0 +1,119 @@
+; Missing effect mappings and suggestion selection retain their distinct states.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: named (-> String String Bool))
+(fn (named restriction expected)
+  (match (restrictionEffectName restriction)
+    ((None) false)
+    ((Some name) (strEq name expected))))
+
+(:: row2 (-> String String Strings))
+(fn (row2 first second)
+  (vecPush (vecPush vecNew first) second))
+
+(:: checked (-> Strings Strings Int TC))
+(fn (checked row required start)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (regFn (tcFnsVec tc) "Pkg$limited" mkIntTy)
+    (if (let (Some entry) (findFnEntExact (tcFnsVec tc) "Pkg$limited" 0))
+      (checkArgumentRestrictions tc entry (mkEVarAt "callback" (mkSpan 0 8)) row required start)
+      0)
+    tc
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (named "no-io" "IO"))
+    (say 2 (named "no-alloc" "Alloc"))
+    (say 3 (named "no-unsafe" "Unsafe"))
+    (say 4 (named "no-entropy" "Entropy"))
+    (say 5 (named "no-spawn" "Spawn"))
+    (say 6 (named "no-block" "Block"))
+    (say 7 (isNone (restrictionEffectName "")))
+    (say 8 (isNone (restrictionEffectName "no-cast")))
+    (say 9 (isNone (restrictionEffectName "no-foreign")))
+    (say 10 (isNone (restrictionEffectName "no-recursion")))
+    (say 11 (isNone (restrictionEffectName "IO")))
+    (say 12 (isNone (restrictionEffectName "no-IO")))
+    (say 13 (strEq (fieldEffectToSuggest vecNew) (builtinEff "Alloc")))
+    (say 14
+      (strEq (fieldEffectToSuggest (vecPush vecNew (builtinEff "Alloc"))) (builtinEff "Alloc")))
+    (say 15 (strEq (fieldEffectToSuggest (vecPush vecNew (builtinEff "Mut"))) (builtinEff "Alloc")))
+    (say 16
+      (strEq (fieldEffectToSuggest (row2 (builtinEff "Mut") (builtinEff "Alloc")))
+        (builtinEff "Alloc")))
+    (say 17 (strEq (fieldEffectToSuggest (vecPush vecNew (builtinEff "IO"))) (builtinEff "IO")))
+    (say 18
+      (strEq (fieldEffectToSuggest (row2 (builtinEff "IO") (builtinEff "Block")))
+        (builtinEff "Block")))
+    (say 19
+      (strEq (fieldEffectToSuggest (row2 (builtinEff "Block") (builtinEff "IO")))
+        (builtinEff "Block")))
+    (say 20
+      (strEq (fieldEffectToSuggest (row2 (customEff "Alpha") (builtinEff "IO")))
+        (customEff "Alpha")))
+    (say 21
+      (strEq
+        (fieldEffectToSuggest
+          (vecPush (row2 (builtinEff "Mut") (builtinEff "Alloc")) (builtinEff "Entropy")))
+        (builtinEff "Entropy")))
+    (let possible (effPossibleOf (builtinEff "IO")))
+    (say 22 (strEq (fieldEffectToSuggest (row2 possible (builtinEff "IO"))) possible))
+    (say 23 (strEq (fieldEffectToSuggest (row2 effIncomplete effPoison)) (builtinEff "Alloc")))
+    (say 24 (strEq (fieldEffectToSuggest (vecPush vecNew "")) (builtinEff "Alloc")))
+    (say 25 (strEq (fieldEffectToSuggest (row2 "" (builtinEff "IO"))) (builtinEff "IO")))
+    (say 26
+      (strEq (fieldEffectToSuggest (vecPush vecNew (effPossibleOf (builtinEff "Mut"))))
+        (effPossibleOf (builtinEff "Mut"))))
+    (let original (row2 (builtinEff "IO") (builtinEff "Block")))
+    (fieldEffectToSuggest original)
+    (say 27 (== (vecLen original) 2))
+    (say 28
+      (&& (strEq (vecGet original 0) (builtinEff "IO"))
+        (strEq (vecGet original 1) (builtinEff "Block"))))
+    (let io (vecPush vecNew (builtinEff "IO")))
+    (let noIO (vecPush vecNew "no-io"))
+    (say 29 (== (countErrorDiags (tcOutVec (checked io noIO 0))) 1))
+    (say 30 (== (countErrorDiags (tcOutVec (checked io (vecPush vecNew "no-foreign") 0))) 0))
+    (say 31 (== (countErrorDiags (tcOutVec (checked io (vecPush vecNew "") 0))) 0))
+    (let required (vecPush (row2 "no-block" "no-io") "no-cast"))
+    (let multiple (checked (row2 (builtinEff "IO") (builtinEff "Block")) required 0))
+    (say 32 (== (countErrorDiags (tcOutVec multiple)) 2))
+    (say 33
+      (==
+        (countErrorDiags
+          (tcOutVec (checked (row2 (builtinEff "IO") (builtinEff "Block")) required 1)))
+        1))
+    (say 34 (== (countErrorDiags (tcOutVec (checked io noIO 1))) 0))
+    (say 35 (== (countErrorDiags (tcOutVec (checked vecNew noIO 0))) 0))
+    (say 36 (== (countErrorDiags (tcOutVec (checked (vecPush vecNew possible) noIO 0))) 1))
+    (say 37
+      (== (countErrorDiags (tcOutVec (checked (vecPush vecNew (builtinEff "Alloc")) noIO 0))) 0))
+    (say 38 (== (countErrorDiags (tcOutVec (checked io (row2 "no-io" "no-io") 0))) 2))
+    (say 39
+      (strEq (diagMsg (vecGet (tcOutVec multiple) 0))
+        "this callback may perform Block; limited requires no-block"))
+    (say 40
+      (strEq (diagMsg (vecGet (tcOutVec multiple) 1))
+        "this callback may perform IO; limited requires no-io"))
+    0
+  })

@@ -16765,21 +16765,21 @@
       (noteLatentRestrictions bound uses required (+ i 1))
     }))
 
-(pub :: restrictionEffectName (-> String String))
+(pub :: restrictionEffectName (-> String (Option String)))
 (pub fn (restrictionEffectName restriction)
   (if (strEq restriction "no-io")
-      "IO"
+      (Some "IO")
     (strEq restriction "no-alloc")
-      "Alloc"
+      (Some "Alloc")
     (strEq restriction "no-unsafe")
-      "Unsafe"
+      (Some "Unsafe")
     (strEq restriction "no-entropy")
-      "Entropy"
+      (Some "Entropy")
     (strEq restriction "no-spawn")
-      "Spawn"
+      (Some "Spawn")
     (strEq restriction "no-block")
-      "Block"
-    ""))
+      (Some "Block")
+    None))
 
 (pub :: checkArgumentRestrictions (-> TC FnEnt ASTNode Strings Strings Int Int))
 (pub fn (checkArgumentRestrictions tc entry arg row required i)
@@ -16787,13 +16787,17 @@
     0
     {
       (let restriction (vecGet required i))
-      (let effect (restrictionEffectName restriction))
-      (if (&& (> (strLen effect) 0) (== (effMay row (builtinEff effect)) 1))
-        (emitDiag tc
-          (mkDiag SEV_ERROR "AX3049" "restriction-violated" (nodeSpan arg)
-            (concat (concat (concat "this callback may perform " effect) "; ")
-              (concat (concat (bareOf entry.name) " requires ") restriction))
-            0 "" "pass a callback that keeps the restriction")))
+      (match (restrictionEffectName restriction)
+        ((None) 0)
+        ((Some effect)
+          (if (== (effMay row (builtinEff effect)) 1)
+            (emitDiag tc
+              (mkDiag SEV_ERROR "AX3049" "restriction-violated" (nodeSpan arg)
+                (concat (concat (concat "this callback may perform " effect) "; ")
+                  (concat (concat (bareOf entry.name) " requires ") restriction))
+                0 "" "pass a callback that keeps the restriction"))
+            0)
+        ))
       (checkArgumentRestrictions tc entry arg row required (+ i 1))
     }))
 
@@ -19647,14 +19651,16 @@
 (pub :: fieldEffectToSuggest (-> Strings String))
 (pub fn (fieldEffectToSuggest effs)
   {
-    (let mut pick "")
+    (let mut pick (:: None (Option String)))
+    ; Empty text has not selected an effect, matching the total Alloc fallback.
     (for e in (effSorted effs)
-      (if (&& (strEq pick "")
-            (&& (! (strEq e (builtinEff "Alloc"))) (! (strEq e (builtinEff "Mut")))))
-        (set pick e)))
-    (if (strEq pick "")
-      (builtinEff "Alloc")
-      pick)
+      (if (&& (isNone pick)
+            (&& (> (strLen e) 0)
+              (&& (! (strEq e (builtinEff "Alloc"))) (! (strEq e (builtinEff "Mut"))))))
+        (set pick (Some e))))
+    (match pick
+      ((None) (builtinEff "Alloc"))
+      ((Some effect) effect))
   })
 
 ; The tag spelling of an effect: a built-in's lower-case name, a

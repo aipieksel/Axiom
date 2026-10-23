@@ -1,0 +1,43 @@
+; Effect mapping and suggestion help retain their original diagnostic bytes.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let tc (tcNew vecNew vecNew vecNew))
+    (regFn (tcFnsVec tc) "Pkg$limited" mkIntTy)
+    (let span (mkSpan 0 8))
+    (let argument (mkEVarAt "callback" span))
+    (if (let (Some entry) (findFnEntExact (tcFnsVec tc) "Pkg$limited" 0))
+      {
+        (let row vecNew)
+        (for effect in (strSplit "IO,Alloc,Unsafe,Entropy,Spawn,Block" 44)
+          (vecPush row (builtinEff effect)))
+        (checkArgumentRestrictions tc entry argument row
+          (strSplit "no-block,no-foreign,no-io,no-unsafe,no-alloc,no-entropy,no-spawn," 44) 0)
+        (checkArgumentRestrictions tc entry argument
+          (vecPush vecNew (effPossibleOf (builtinEff "IO"))) (vecPush vecNew "no-io") 0)
+        (let owner (StructEnt :name "Container" :fields vecNew :module None :tyvars vecNew :repr 0))
+        (let declaration
+          (FieldDecl :owner owner :name "callback" :row vecNew :said "`effect(pure)`"))
+        (emitFieldStoreExceeds tc owner declaration span "the function"
+          (vecPush (vecPush vecNew (builtinEff "Mut")) (builtinEff "Alloc")))
+        (emitFieldStoreExceeds tc owner declaration span "the function"
+          (vecPush (vecPush (vecPush vecNew (builtinEff "IO")) (builtinEff "Block"))
+            (customEff "Alpha")))
+        (emitFieldStoreExceeds tc owner declaration span "the function"
+          (vecPush (vecPush vecNew (effPossibleOf (builtinEff "IO"))) (builtinEff "Alloc")))
+        (for diagnostic in (tcOutVec tc)
+          (writeStr stdout
+            (concat (renderDiag diagnostic "callback\n" "effect-selection.ax" vecNew) "\n")))
+        0
+      }
+      2)
+  })
