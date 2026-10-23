@@ -337,8 +337,8 @@
         (emitDiag tc
           (diagSetLabel
             (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
-              (concat (concat "type mismatch: expected " want) ", found {unknown}") 0 0
-              "declare the type with a `(:: ...)` signature"
+              (concat (concat "type mismatch: expected " want) ", found {unknown}") None
+              (Some "declare the type with a `(:: ...)` signature")
               "no signature declares this value's type - a `lambda` parameter has nowhere to declare one, so name the function and sign it - and each representation lowers differently")
             "this has an unknown type"))
         1
@@ -566,8 +566,9 @@
                 (diagSetLabel
                   (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
                     "type mismatch: cannot check this function while its parameter types are still being inferred"
-                    0 0
-                    "use it after its definition is complete - a use during its own inference resolves nothing yet"
+                    None
+                    (Some
+                      "use it after its definition is complete - a use during its own inference resolves nothing yet")
                     "inference grounds a lambda's parameters from its uses; this use runs before the grounding finished")
                   "this use is too early to check"))
               (nodeBuildTErrPlain 0 0 0)
@@ -656,8 +657,9 @@
             (diagSetLabel
               (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
                 "type mismatch: cannot call this function while its parameter types are still being inferred"
-                0 0
-                "call it after its definition is complete - a recursive call through a `let` alias hides the recursion from inference"
+                None
+                (Some
+                  "call it after its definition is complete - a recursive call through a `let` alias hides the recursion from inference")
                 "inference grounds a lambda's parameters from its uses; this use runs before the grounding finished")
               "this call is too early to check"))
           (nodeBuildTErrPlain 0 0 0)
@@ -784,8 +786,9 @@
                     (diagSetLabel
                       (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
                         "type mismatch: this function calls itself through an alias bound after its definition, which cannot be compiled"
-                        0 0
-                        "name the function with `fn` and recurse through its name - a top-level name compiles to a direct call"
+                        None
+                        (Some
+                          "name the function with `fn` and recurse through its name - a top-level name compiles to a direct call")
                         "inference grounds a lambda's parameters from its uses; a use through a forward alias resolves only after the definition, past what the emitter can call")
                       "this call cannot be compiled"))
                   (nodeBuildTErrPlain 0 0 0)
@@ -915,8 +918,8 @@
     (emitDiag tc
       (diagSetLabel
         (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
-          "type mismatch: cannot infer the parameter types of this multi-parameter lambda" 0 0
-          "name the function and sign it with a `(:: ...)` signature"
+          "type mismatch: cannot infer the parameter types of this multi-parameter lambda" None
+          (Some "name the function and sign it with a `(:: ...)` signature")
           "inference grounds one parameter per application level; this lambda kept a flat spelling")
         "cannot ground this call"))
     (nodeBuildTErrPlain 0 0 0)
@@ -1085,8 +1088,9 @@
                       (diagSetLabel
                         (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
                           "type mismatch: cannot pass this function while its parameter types are still being inferred"
-                          0 0
-                          "pass it after its definition is complete - a use through a `let` alias hides the recursion from inference"
+                          None
+                          (Some
+                            "pass it after its definition is complete - a use through a `let` alias hides the recursion from inference")
                           "inference grounds a lambda's parameters from its uses; this use runs before the grounding finished")
                         "this use is too early to check"))
                     (nodeBuildTErrPlain 0 0 0)
@@ -2729,8 +2733,9 @@
               (diagSetLabel
                 (mkDiagNote SEV_ERROR "AX3026" "reserved-runtime-name" (nodeSpan d)
                   "`axiom_alloc` is the emitted runtime's allocator symbol; a program cannot define it"
-                  0 0
-                  "rename the function - the override seam does not exist (docs/memory-model.md MM-ALLOC-8)"
+                  None
+                  (Some
+                    "rename the function - the override seam does not exist (docs/memory-model.md MM-ALLOC-8)")
                   "the backend emits its own definition of `axiom_alloc` unconditionally; before this refusal the build died in `opt` as a duplicate symbol after `check` said OK")
                 "this name belongs to the runtime"))
             (if (|| (strEq (nodeAName d) "axiom_retain") (strEq (nodeAName d) "axiom_release"))
@@ -2739,8 +2744,9 @@
                   (mkDiagNote SEV_ERROR "AX3026" "reserved-runtime-name" (nodeSpan d)
                     (concat (concat "`" (nodeAName d))
                       "` is the emitted runtime's ownership primitive; a program cannot define it")
-                    0 0
-                    "rename the function - retain and release belong to the reference-counting runtime (docs/memory-model.md MM-LIFE-2b)"
+                    None
+                    (Some
+                      "rename the function - retain and release belong to the reference-counting runtime (docs/memory-model.md MM-LIFE-2b)")
                     "the backend emits its own definition unconditionally, exactly as it does `axiom_alloc`'s")
                   "this name belongs to the runtime"))
               ()))
@@ -2771,9 +2777,10 @@
     (vecPush out
       (diagSetLabel
         (mkDiag SEV_ERROR "AX3006" "duplicate-definition" sp
-          (concat (concat "a second signature for `" name) "`") (nodeSpan (vecGet decls j))
-          (concat (concat "`" name) "`'s signature is first written here")
-          "keep one signature for each function, and remove the other")
+          (concat (concat "a second signature for `" name) "`")
+          (diagRelated (nodeSpan (vecGet decls j))
+            (concat (concat "`" name) "`'s signature is first written here"))
+          (Some "keep one signature for each function, and remove the other"))
         "this signature is a second one"))
     0
   })
@@ -2784,9 +2791,10 @@
     (vecPush out
       (diagSetLabel
         (mkDiag SEV_ERROR "AX3006" "duplicate-definition" sp
-          (concat (concat "duplicate definition `" name) "`") (declDefSpan (vecGet decls j) name)
-          (concat (concat "`" name) "` first defined here")
-          "rename one of the definitions, or remove the duplicate")
+          (concat (concat "duplicate definition `" name) "`")
+          (diagRelated (declDefSpan (vecGet decls j) name)
+            (concat (concat "`" name) "` first defined here"))
+          (Some "rename one of the definitions, or remove the duplicate"))
         (concat (concat "`" name) "` redefined here")))
     0
   })
@@ -2987,7 +2995,7 @@
     (vecPush out
       (diagSetUnit
         (diagSetLabel
-          (mkDiagNote SEV_ERROR "AX3023" "private-name" sp msg 0 0 help
+          (mkDiagNote SEV_ERROR "AX3023" "private-name" sp msg None (Some help)
             "an import's name list is checked against what the module exports")
           "not exported")
         unit))
@@ -3050,8 +3058,9 @@
               (vecPush out
                 (diagSetLabel
                   (mkDiag SEV_ERROR "AX3015" "missing-definition" (nodeSpan d)
-                    (concat (concat "`" name) "` has a signature but no definition") 0 0
-                    "add the definition, or if it lives in another module, mark that definition `pub` so the import carries it")
+                    (concat (concat "`" name) "` has a signature but no definition") None
+                    (Some
+                      "add the definition, or if it lives in another module, mark that definition `pub` so the import carries it"))
                   (concat (concat "no `fn` defines `" name) "`")))
               (checkMissingDefs bs entryDecls out (+ i 1) missing)
             })
@@ -4611,8 +4620,9 @@
               (mkDiag SEV_ERROR "AX5002" "internal-module" (nodeSpan d)
                 (concat (concat "module `" (nodeAName d))
                   "` is internal to the standard library, and only the library may import it")
-                0 0
-                "use the library's typed interface instead; raw memory access belongs in your own function, written with the primitives under `;@axiom:effect(unsafe)`")
+                None
+                (Some
+                  "use the library's typed interface instead; raw memory access belongs in your own function, written with the primitives under `;@axiom:effect(unsafe)`"))
               "internal to the standard library")
             unit)))
       (internalImportsIn units sites out unit (+ i 1))
@@ -5340,8 +5350,9 @@
                 (concat (concat (concat "constructor `" (as (nodeA c) String)) "` has ")
                   (concat (fmtInt (nodeB c))
                     " fields, and a cell's reference map covers 46 beside the tag word"))
-                0 0
-                "split the declaration: a nested struct or constructor cell is ONE word of the outer block, and every block carries its own map"
+                None
+                (Some
+                  "split the declaration: a nested struct or constructor cell is ONE word of the outer block, and every block carries its own map")
                 "the shape word packs one bit per payload word - is this word a reference the release path must follow - beside the form bit and the word count; bits 16..62 give 47 mappable words, the tag takes the first, and the widest declaration in this repository is the compiler's own 37-field CG record (docs/memory-model.md MM-LIFE-2d)")
               "too wide for one reference map")))
       })
@@ -5367,7 +5378,9 @@
       (mkDiagNote SEV_ERROR "AX3030" "evidence-word-capacity" span
         (concat (concat (concat "this " what) " declares ")
           (concat (fmtInt n) " type variables, and the evidence word carries 64"))
-        0 0 "split the declaration, or make some positions concrete - each variable needs one bit"
+        None
+        (Some
+          "split the declaration, or make some positions concrete - each variable needs one bit")
         "a symbolic witness reads its bit with a shift by the variable's index, and a shift of 64 or more is poison in the emitted LLVM - an arbitrary answer at run time, which under reference maps is a wrong free; the widest signature in this repository declares 4")
       "too many type variables for one word")))
 
@@ -5391,8 +5404,8 @@
             (emitDiag tc
               (diagSetLabel
                 (mkDiagNote SEV_ERROR "AX3017" "effect-handler-unsupported" (nodeSpan f)
-                  "an effect operation's type cannot mention a type variable" 0 0
-                  "give the operation a concrete type"
+                  "an effect operation's type cannot mention a type variable" None
+                  (Some "give the operation a concrete type")
                   "a handler is installed and called through a protocol that carries no pointerhood evidence, so a variable here would be invisible to the reference maps (docs/memory-model.md MM-LIFE-2d)")
                 "no evidence crosses a handler")))
         })
@@ -5420,8 +5433,9 @@
           (if (== tag TAG_D_SYNFOR)
             (emitDiag tc
               (mkDiagNote SEV_ERROR "AX3028" "syntax-query" (nodeSpan d)
-                "syntax/for stands in a declaration macro's template, not at top level" 0 0
-                "iteration is an expansion-time facility: move these declarations into a rule-form macro's template, or write them by hand"
+                "syntax/for stands in a declaration macro's template, not at top level" None
+                (Some
+                  "iteration is an expansion-time facility: move these declarations into a rule-form macro's template, or write them by hand")
                 "the query vocabulary is CLOSED and compiler-implemented (macro-system.md MAC-CAP-5/6): every query is answered from the declaration list at expansion time"))
             (if (== tag TAG_D_DATA)
               {
@@ -5449,8 +5463,9 @@
                           (concat (concat (concat "struct `" (as (nodeA d) String)) "` has ")
                             (concat (fmtInt (vecLen (nodeBChildren d)))
                               " fields, and a block's reference map covers 47"))
-                          0 0
-                          "split the declaration: a nested struct or constructor cell is ONE word of the outer block, and every block carries its own map"
+                          None
+                          (Some
+                            "split the declaration: a nested struct or constructor cell is ONE word of the outer block, and every block carries its own map")
                           "the shape word packs one bit per payload word - is this word a reference the release path must follow - beside the form bit and the word count; bits 16..62 give 47 mappable words, and the widest declaration in this repository is the compiler's own 37-field CG record (docs/memory-model.md MM-LIFE-2d)")
                         "too wide for one reference map")))
                   ; A field with no readable type: AX3056, before the
@@ -5587,7 +5602,7 @@
                   (concat
                     (concat (concat (concat "operation `" (nodeAName f)) "` of effect `") effName)
                     "` declares no type; a handler is checked against it and a call is checked against its arity")
-                  0 0 (concat (concat "write `(" (nodeAName f)) " :: (-> Arg Result))`"))
+                  None (Some (concat (concat "write `(" (nodeAName f)) " :: (-> Arg Result))`")))
                 "no `::` type after the operation's name")))
         })
       0
@@ -5633,9 +5648,10 @@
                   (concat
                     (concat (concat (concat "field `" (nodeAName f)) "` of struct `") structName)
                     "` declares no type; a field's type is what decides whether the release path follows it")
-                  0 0
-                  (concat (concat "write `(" (nodeAName f))
-                    " : Type)` - the `:` is what makes this a field declaration"))
+                  None
+                  (Some
+                    (concat (concat "write `(" (nodeAName f))
+                      " : Type)` - the `:` is what makes this a field declaration")))
                 "no `:` type after the field's name")))
         })
       0
@@ -7316,7 +7332,7 @@
               (mkDiag SEV_ERROR "AX3044" "ambiguous-type" span
                 (concat (concat (concat "ambiguous type `" (bareOf name)) "`: declared in ")
                   (joinModules mods))
-                0 0 (concat "qualify the reference: " (joinQualified mods (bareOf name))))
+                None (Some (concat "qualify the reference: " (joinQualified mods (bareOf name)))))
               (concat (concat "`" (bareOf name)) "` could mean more than one declaration")))
           1
         })
@@ -7990,7 +8006,8 @@
     0
     {
       (emitDiag tc
-        (diagSetLabel (mkDiagNote SEV_ERROR "AX3084" "struct-marker" span msg 0 0 help note)
+        (diagSetLabel
+          (mkDiagNote SEV_ERROR "AX3084" "struct-marker" span msg None (Some help) note)
           "refused here"))
       0
     }))
@@ -8013,11 +8030,12 @@
                   (concat (concat "only module `" (wordEntModuleName entry)) "` can make a `")
                   (structEntName entry))
                 "`")
-              0 0
-              (concat (concat "get one from a function module `" (wordEntModuleName entry))
-                (if (!= (& (structEntRepr entry) 1) 0)
-                  "` provides: a word struct's constructor stays in its module, `pub` or not"
-                  "` provides: a sealed struct's constructor stays in its module, `pub` or not"))
+              None
+              (Some
+                (concat (concat "get one from a function module `" (wordEntModuleName entry))
+                  (if (!= (& (structEntRepr entry) 1) 0)
+                    "` provides: a word struct's constructor stays in its module, `pub` or not"
+                    "` provides: a sealed struct's constructor stays in its module, `pub` or not")))
               (if (!= (& (structEntRepr entry) 1) 0)
                 "a word struct is sealed, so every value of its type is one its module made and no other code can forge one (docs/memory-model.md MM-VAL-10a)"
                 "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
@@ -8049,11 +8067,12 @@
                     "` of `")
                   (structEntName entry))
                 "`")
-              0 0
-              (concat (concat "use the functions module `" (wordEntModuleName entry))
-                (if (!= (& (structEntRepr entry) 1) 0)
-                  "` provides: a word struct's field stays in its module, `pub` or not"
-                  "` provides: a sealed struct's field stays in its module, `pub` or not"))
+              None
+              (Some
+                (concat (concat "use the functions module `" (wordEntModuleName entry))
+                  (if (!= (& (structEntRepr entry) 1) 0)
+                    "` provides: a word struct's field stays in its module, `pub` or not"
+                    "` provides: a sealed struct's field stays in its module, `pub` or not")))
               (if (!= (& (structEntRepr entry) 1) 0)
                 "a word struct is sealed: what its word means is its module's business, and code that read it could hand the same word to something else (docs/memory-model.md MM-VAL-10a)"
                 "a sealed struct keeps ownership state private; use its module's functions (docs/reference.md Structs)"))
@@ -8680,8 +8699,9 @@
   (if (== (nodeSpan d) 0)
     0
     (emitDiag tc
-      (mkDiag SEV_ERROR "AX3125" "type-parameter" (nodeSpan d) message 0 0
-        "declare each lowercase type parameter once on the type; every variable in its target or fields must be declared there"))))
+      (mkDiag SEV_ERROR "AX3125" "type-parameter" (nodeSpan d) message None
+        (Some
+          "declare each lowercase type parameter once on the type; every variable in its target or fields must be declared there")))))
 
 ; The first recursive alias on a declaration path, or None. Arguments
 ; are walked before entering the target; `Id (Id Int)` is finite.
@@ -8773,8 +8793,9 @@
                     (mkDiag SEV_ERROR "AX3126" "recursive-alias" (nodeSpan d)
                       (concat "type alias `"
                         (concat (bareOf (nodeAName d)) "` expands recursively"))
-                      0 0
-                      "use a `data` or `struct` declaration for a recursive type; an alias must expand to a finite existing type"))))
+                      None
+                      (Some
+                        "use a `data` or `struct` declaration for a recursive type; an alias must expand to a finite existing type")))))
               (tcSetCurModule tc saved)
             }
           })
@@ -8818,7 +8839,7 @@
                           (concat (fmtInt arity)
                             (concat " type argument(s), found "
                               (fmtInt (vecLen (nodeBChildren t))))))
-                        0 0 "supply exactly the declared number of type arguments")))
+                        None (Some "supply exactly the declared number of type arguments"))))
                   false
                 }
                 true)
@@ -8862,8 +8883,9 @@
               (mkDiag SEV_ERROR "AX3145" "link-width" span
                 (concat "a link's width is `UInt8`, `UInt16` or `UInt32`, found `"
                   (concat (tyRender w) "`"))
-                0 0
-                "write the narrowest of the three that counts the vector's elements plus one: `(Link Node UInt16)` reaches 65,535 elements")))
+                None
+                (Some
+                  "write the narrowest of the three that counts the vector's elements plus one: `(Link Node UInt16)` reaches 65,535 elements"))))
           0
         })
     }))
@@ -9019,7 +9041,7 @@
       (if (!= (nodeSpan d) 0)
         (emitDiag tc
           (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan d)
-            (concat "undefined type `" (concat bad "`")) 0 0 (tyRemovedBuiltinHelp bad))))
+            (concat "undefined type `" (concat bad "`")) None (Some (tyRemovedBuiltinHelp bad)))))
       (writeNodeChild d 2 mkTErr)
     }
     0))
@@ -9097,9 +9119,9 @@
           (emitDiag tc
             (diagSetLabel
               (mkDiag SEV_ERROR "AX3006" "duplicate-definition" current.span
-                (concat (concat "duplicate constructor `" current.name) "`") prior.span
-                (concat (concat "`" current.name) "` first declared here")
-                "rename one of the constructors")
+                (concat (concat "duplicate constructor `" current.name) "`")
+                (diagRelated prior.span (concat (concat "`" current.name) "` first declared here"))
+                (Some "rename one of the constructors"))
               (concat (concat "`" current.name) "` redeclared here")))
           1
         }
@@ -9122,8 +9144,8 @@
           (if (>= (nodeA lo) (nodeA hi))
             (emitDiag tc
               (mkDiag SEV_ERROR "AX3004" "type-mismatch" (nodeSpan d)
-                "this subtype range is empty: its lower bound is not below its upper bound" 0 ""
-                "give the range a lower bound below its upper bound"))
+                "this subtype range is empty: its lower bound is not below its upper bound" None
+                (Some "give the range a lower bound below its upper bound")))
             0)
           0)
       })
@@ -9332,8 +9354,9 @@
                 (emitDiag tc
                   (diagSetLabel
                     (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan f)
-                      (concat (concat "undefined type `" bad) "`") 0 0
-                      "an `extern` item's type is the only description of the boundary the compiler has; declare the type, or use `Foreign` for an opaque handle")
+                      (concat (concat "undefined type `" bad) "`") None
+                      (Some
+                        "an `extern` item's type is the only description of the boundary the compiler has; declare the type, or use `Foreign` for an opaque handle"))
                     (concat (concat "no type named `" bad) "` is visible here"))))
               {
                 (let shape (externTypeRefusal (nodeBChild f) 1))
@@ -9343,8 +9366,9 @@
                       (mkDiag SEV_ERROR "AX3036" "extern-type" (nodeSpan f)
                         (concat (concat "an `extern` item cannot carry " shape)
                           " across the boundary")
-                        0 0
-                        "an `extern` signature names only `Int`, `Float`, `Bool`, `Char`, `String` and `Foreign` (one machine word each way); a Rust value of any other shape crosses as a `Foreign` handle, or through the wrapper `axiom-bindgen` generates (a `String` result, a `Result`, an `Option`, an opaque type)"))))
+                        None
+                        (Some
+                          "an `extern` signature names only `Int`, `Float`, `Bool`, `Char`, `String` and `Foreign` (one machine word each way); a Rust value of any other shape crosses as a `Foreign` handle, or through the wrapper `axiom-bindgen` generates (a `String` result, a `Result`, an `Option`, an opaque type)")))))
               })
           }
         }
@@ -10107,8 +10131,9 @@
             (concat (concat "`" (bareOf (nodeAName d))) "` must produce a value of type variable `")
             v)
           "`, which no parameter supplies: it occurs inside a function-typed parameter, on the side this function fills in, so the caller chooses the type and an `as` conversion fabricates the value")
-        0 0
-        "making the function diverge does not answer this one - the value is fabricated before it returns, or fails to; name a concrete word type in the callback's parameter and let callers write `as`"))))
+        None
+        (Some
+          "making the function diverge does not answer this one - the value is fabricated before it returns, or fails to; name a concrete word type in the callback's parameter and let callers write `as`")))))
 
 (pub :: emitResultOnlyVar (-> TC ASTNode String Int))
 (pub fn (emitResultOnlyVar tc d v)
@@ -10118,8 +10143,9 @@
       (mkDiag SEV_ERROR "AX3040" "result-only-tyvar" (nodeSpan d)
         (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` returns type variable `") v)
           "`, which no parameter mentions, and its body produces that result rather than never returning: the caller chooses the type and an `as` conversion fabricates the value")
-        0 0
-        "two ways out: return a concrete word type and let callers write `as`; or make it DIVERGE, so every path ends in a call that never returns, which is what makes `for all a` honest"))))
+        None
+        (Some
+          "two ways out: return a concrete word type and let callers write `as`; or make it DIVERGE, so every path ends in a call that never returns, which is what makes `for all a` honest")))))
 
 ; Does this declaration carry `;@axiom:<key>` exactly?
 (pub :: declHasAxtag (-> ASTNode String Int))
@@ -10198,7 +10224,7 @@
           (emitDiag tc
             (diagSetLabel
               (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan d)
-                (concat (concat "undefined type `" bad) "`") 0 0 (tyRemovedBuiltinHelp bad))
+                (concat (concat "undefined type `" bad) "`") None (Some (tyRemovedBuiltinHelp bad)))
               (concat (concat "no type named `" bad) "` is visible here"))))
         {
           (let entFound (fnEntExact tc (nodeAName d)))
@@ -10396,7 +10422,7 @@
                     "bind `"))
                 name)
               "` - it is a boolean literal")
-            0 0 "choose another name"
+            None (Some "choose another name")
             (if (== isDecl 1)
               "a top-level `true` would be dead: every reference answers the literal before the declaration is consulted"
               "a reference to this name answers the literal before scope is consulted, so the binding would check as `Bool` and run as the bound value"))
@@ -10633,8 +10659,9 @@
         (mkDiagNote SEV_ERROR "AX3058" "region-name-shadowed" span
           (concat (concat "region `" name)
             "` is already open: a nested region cannot reuse an enclosing region's name")
-          0 0
-          "rename the inner region: regions are ordered by nesting (MM-RGN-2), and a name that means two extents cannot be ordered"
+          None
+          (Some
+            "rename the inner region: regions are ordered by nesting (MM-RGN-2), and a name that means two extents cannot be ordered")
           "lexical region names identify reset extents in diagnostics and macro expansion; reference origins are inferred from the body")
         (concat (concat "`" name) "` is already the name of an enclosing region")))
     0
@@ -10649,8 +10676,9 @@
           (concat
             (concat (concat (concat "region `" name) "` answers a value of type `") (tyRender ty))
             "`, which may point into the memory the region reclaims")
-          boundary "this region reclaims the result's allocation when its body ends"
-          "compute a scalar such as (strLen value) inside the region and return it; if you need a reference result, allocate it outside the region"
+          (diagRelated boundary "this region reclaims the result's allocation when its body ends")
+          (Some
+            "compute a scalar such as (strLen value) inside the region and return it; if you need a reference result, allocate it outside the region")
           "a `String` is a descriptor over a second block, a struct is a block and a closure is a record; every one of them would point at reclaimed memory")
         (concat (concat "this has type `" (tyRender ty)) "`")))
     0
@@ -10675,14 +10703,16 @@
                 "`, and the value stored into it has type `")
               (tyRender ty))
             "`")
-          (if (< (rgInner tc) 0)
-            0
-            {
-              (let entry (vecGet (tcRegionsVec tc) (rgInner tc)))
-              entry.span
-            })
-          "this region ends before the outer binding is used"
-          "move the reference allocation and this store outside the region, or bind the destination inside it; an outer binding may receive a scalar computed inside the region"
+          (diagRelated
+            (if (< (rgInner tc) 0)
+              0
+              {
+                (let entry (vecGet (tcRegionsVec tc) (rgInner tc)))
+                entry.span
+              })
+            "this region ends before the outer binding is used")
+          (Some
+            "move the reference allocation and this store outside the region, or bind the destination inside it; an outer binding may receive a scalar computed inside the region")
           "a store is the one escape channel a scope check can see; a call that stores the value for you is refused too, where the facts walk sees it")
         "this store leaves the region"))
     0
@@ -10893,7 +10923,7 @@
                 (concat "`"
                   (concat (bareOf (nodeAName d))
                     "` needs a signature to declare its parameter types"))
-                0 0 "write a `(:: ...)` signature above this definition"
+                None (Some "write a `(:: ...)` signature above this definition")
                 "parameters of a function without a signature default to Int; this body needs a different parameter type")
               "declare this function's parameter types")))
         0))
@@ -10907,7 +10937,8 @@
       (emitDiag tc
         (diagSetLabel
           (mkDiag SEV_ERROR "AX3004" "type-mismatch" span
-            (concat (concat (concat "type mismatch: expected " expected) ", found ") found) 0 0 0)
+            (concat (concat (concat "type mismatch: expected " expected) ", found ") found) None
+            None)
           (concat (concat (concat (concat "this has type `" found) "`, expected `") expected) "`")))
       0
     }))
@@ -10924,8 +10955,8 @@
       (emitDiag tc
         (diagSetLabel
           (mkDiag SEV_ERROR "AX3004" "type-mismatch" span
-            (concat (concat (concat "type mismatch: expected " expected) ", found ") found) 0 0
-            help)
+            (concat (concat (concat "type mismatch: expected " expected) ", found ") found) None
+            (Some help))
           (concat (concat (concat (concat "this has type `" found) "`, expected `") expected) "`")))
       0
     }))
@@ -11010,11 +11041,11 @@
         (emitDiag tc
           (diagSetLabel
             (mkDiagFix2 SEV_ERROR "AX3012" "assign-to-immutable" tspan
-              (concat (concat "cannot assign to immutable binding `" disp) "`") bspan
-              (concat (concat "`" disp) "` is bound here")
-              (concat (concat "declare it mutable: `(let mut " disp) " value)`") bspan
-              (concat "mut " disp)
-              "only a local declared `(let mut name value)` may be the target of `set`")
+              (concat (concat "cannot assign to immutable binding `" disp) "`")
+              (diagRelated bspan (concat (concat "`" disp) "` is bound here"))
+              (concat (concat "declare it mutable: `(let mut " disp) " value)`")
+              (diagFix bspan (concat "mut " disp))
+              (Some "only a local declared `(let mut name value)` may be the target of `set`"))
             (concat (concat "`" disp) "` cannot be assigned")))
         0
       }
@@ -11048,14 +11079,15 @@
             (mkDiagNote SEV_ERROR "AX3012" "assign-to-immutable" tspan
               (concat (concat "cannot assign to `" disp)
                 "`: it is a parameter, and parameters are immutable")
-              0 0
-              (concat
+              None
+              (Some
                 (concat
                   (concat
-                    (concat "copy it into a mutable local inside a brace block: `(let mut " disp)
-                    "2 ")
-                  disp)
-                ")`")
+                    (concat
+                      (concat "copy it into a mutable local inside a brace block: `(let mut " disp)
+                      "2 ")
+                    disp)
+                  ")`"))
               "this used to pass `check` and fail inside codegen as AX4002; the check runs here now")
             (concat (concat "`" disp) "` is a parameter")))
         0
@@ -11076,8 +11108,9 @@
             (concat
               (concat (concat (concat "cannot assign to `" (srcSpelling name)) "`: it is ") what)
               ", not a binding")
-            0 0
-            "only a local declared `(let mut name value)` may be the target of `set`; bind a mutable local of your own"
+            None
+            (Some
+              "only a local declared `(let mut name value)` may be the target of `set`; bind a mutable local of your own")
             "this used to pass `check` and fail inside codegen as AX4002")
           (concat (concat "`" (srcSpelling name)) "` cannot be assigned"))))
     (nodeBuildTErrPlain 0 0 0)
@@ -11107,8 +11140,9 @@
             (mkDiagNote SEV_ERROR "AX3012" "assign-to-immutable" tspan
               (concat (concat "cannot assign to `" disp)
                 "` from inside a lambda: the lambda captured its value, not the binding")
-              bspan (concat (concat "`" disp) "` is bound outside the lambda, here")
-              "return the new value instead, or restructure so the assignment happens where the binding lives"
+              (diagRelated bspan (concat (concat "`" disp) "` is bound outside the lambda, here"))
+              (Some
+                "return the new value instead, or restructure so the assignment happens where the binding lives")
               "a closure captures by value when its record is built, so a later `set` inside it could never be observed outside; this used to pass `check` and fail inside codegen as AX4002")
             (concat (concat "`" disp) "` was captured, not shared")))
         0
@@ -11144,13 +11178,14 @@
             (concat (concat (concat "cannot assign to field `" fname) "` of `")
               (srcSpelling tyname))
             "`: the field is not declared `mut`")
-          0 0
-          (concat
+          None
+          (Some
             (concat
-              (concat (concat "declare it mutable where `" (srcSpelling tyname))
-                "` is defined: `(mut ")
-              fname)
-            (concat (concat " : " fty) ")`"))
+              (concat
+                (concat (concat "declare it mutable where `" (srcSpelling tyname))
+                  "` is defined: `(mut ")
+                fname)
+              (concat (concat " : " fty) ")`")))
           "a struct field is immutable unless its declaration marks it `mut`, the rule `let` already follows; until 0.6.0 the marker was parsed and discarded and this store compiled in silence")
         (concat (concat "`" fname) "` is not a `mut` field")))
     0
@@ -11465,8 +11500,9 @@
           (mkDiag SEV_ERROR "AX3054" "effect-name-reserved" (nodeSpan d)
             (concat (concat "`" (nodeAName d))
               "` names a built-in effect, and an effect declared with that name can never be handled: a handle list naming it reads as the built-in")
-            0 0
-            "choose another name - the built-in effect names are `IO`, `Pure`, `Alloc`, `Mut`, `Div` and `Unsafe`")
+            None
+            (Some
+              "choose another name - the built-in effect names are `IO`, `Pure`, `Alloc`, `Mut`, `Div` and `Unsafe`"))
           (concat (concat "`" (nodeAName d)) "` is a built-in effect"))))))
 
 (pub :: isValueCastForm (-> String Bool))
@@ -11642,8 +11678,9 @@
                                       (mkDiag SEV_ERROR "AX3046" "discarded-result" (nodeSpan e)
                                         (concat (concat "a `Result` bound to `" (nodeAName e))
                                           "` is never read")
-                                        0 ""
-                                        "match on it, propagate it with `?`, or give it a name starting with `_` if the discard is deliberate")
+                                        None
+                                        (Some
+                                          "match on it, propagate it with `?`, or give it a name starting with `_` if the discard is deliberate"))
                                       "unused `Result`")))
                                 (flushScopePending tc mark)
                                 (scopeTrunc (tcScopeVec tc) mark)
@@ -11854,8 +11891,9 @@
         (emitDiag tc
           (diagSetLabel
             (mkDiag SEV_ERROR "AX3046" "discarded-result" at
-              "a `Result` is discarded here, in statement position" 0 ""
-              "match on it, propagate it with `?`, or bind it to `_` if the discard is deliberate")
+              "a `Result` is discarded here, in statement position" None
+              (Some
+                "match on it, propagate it with `?`, or bind it to `_` if the discard is deliberate"))
             "unused `Result`")))
     }
   })
@@ -12025,8 +12063,9 @@
         (emitDiag tc
           (diagSetLabel
             (mkDiagNote SEV_ERROR "AX3068" "nullary-lambda" (nodeSpan e)
-              "a lambda with no parameters can never be called" 0 0
-              "give it a parameter, or write a top-level `(fn (name) body)` - a bare reference to a nullary function does call it"
+              "a lambda with no parameters can never be called" None
+              (Some
+                "give it a parameter, or write a top-level `(fn (name) body)` - a bare reference to a nullary function does call it")
               "`(f)` and `f` are the same expression, so no syntax applies a nullary closure; it used to evaluate to the closure record's address")
             "this lambda takes no parameters")))
       (refuseReservedParams tc params (nodeSpan e) 0)
@@ -12299,7 +12338,7 @@
                     (concat (concat (concat "ambiguous name `" (bareOf name)) "`: defined in ")
                       (joinModules mods))
                     "")
-                  0 0 (concat "qualify the reference: " (joinQualified mods (bareOf name))))
+                  None (Some (concat "qualify the reference: " (joinQualified mods (bareOf name)))))
                 (concat (concat "`" (bareOf name)) "` could mean more than one definition")))
             1
           })))
@@ -12603,8 +12642,9 @@
                             (diagSetLabel
                               (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" (nodeSpan e)
                                 "type mismatch: cannot use this function while its parameter types are still being inferred"
-                                0 0
-                                "use it after its definition is complete - a use through a `let` alias hides the recursion from inference"
+                                None
+                                (Some
+                                  "use it after its definition is complete - a use through a `let` alias hides the recursion from inference")
                                 "inference grounds a lambda's parameters from its uses; this use runs before the grounding finished")
                               "this use is too early to check"))
                           (nodeBuildTErrPlain 0 0 0)
@@ -12685,7 +12725,7 @@
                       (bareOf name))
                     " x))`")
                   "")
-                0 0 0)))
+                None None)))
           1
         }
         (if (let (Some ar) (repArity ent))
@@ -12700,8 +12740,9 @@
                         (concat (concat (concat "partial application of `" name) "`: it takes ")
                           (fmtInt ar))
                         " argument(s) and 0 were supplied")
-                      0 0
-                      "bind the missing arguments with a lambda: `(lambda (y) (f x y))` builds the value `(f x)` would mean"
+                      None
+                      (Some
+                        "bind the missing arguments with a lambda: `(lambda (y) (f x y))` builds the value `(f x)` would mean")
                       "a partial application has to hold the arguments it was not given, and a top-level function has no closure record to hold them in")
                     (concat (concat (concat (concat "`" name) "` takes ") (fmtInt ar))
                       " arguments, so it cannot be used as a bare value")))
@@ -12754,9 +12795,10 @@
                                 (fmtInt fc))
                               " argument(s), found ")
                             "0")
-                          0 0
-                          (concat (concat "this constructor takes exactly " (fmtInt fc))
-                            " field(s); add or remove arguments to match"))
+                          None
+                          (Some
+                            (concat (concat "this constructor takes exactly " (fmtInt fc))
+                              " field(s); add or remove arguments to match")))
                         "0 argument(s) provided here"))
                     1
                   }))
@@ -12779,7 +12821,7 @@
             (concat
               (concat (concat (concat "partial application of `" name) "`: it takes ") (fmtInt ar))
               " argument(s) and 0 were supplied")
-            0 0 help note)
+            None (Some help) note)
           (concat (concat (concat (concat "`" name) "` takes ") (fmtInt ar))
             " argument(s), so it cannot be used as a bare value"))))
     1
@@ -12810,8 +12852,9 @@
               (concat (concat (concat "`" (srcSpelling name)) "` belongs to `")
                 (modOfName declName))
               "`, which is internal to the standard library")
-            0 0
-            "use the library's typed interface instead, such as `vecGet` or `strSlice`; raw memory access belongs in your own function, written with the primitives under `;@axiom:effect(unsafe)`")
+            None
+            (Some
+              "use the library's typed interface instead, such as `vecGet` or `strSlice`; raw memory access belongs in your own function, written with the primitives under `;@axiom:effect(unsafe)`"))
           "internal to the standard library"))
       (if (!= span 0)
         (emitDiag tc
@@ -12821,8 +12864,9 @@
                 (concat (concat (concat "`" (srcSpelling name)) "` is private to module `")
                   (modOfName declName))
                 "`")
-              0 0
-              "a name leaves its module when its declaration is written `pub`; if the import that brought the module in carries a name list, the name has to appear there too")
+              None
+              (Some
+                "a name leaves its module when its declaration is written `pub`; if the import that brought the module in carries a name list, the name has to appear there too"))
             (concat (concat "`" (bareOf declName)) "` is not exported by its module")))))
     (nodeBuildTErrPlain 0 0 0)
   })
@@ -12921,17 +12965,19 @@
             (let msg (concat (concat "undefined variable `" (srcSpelling name)) "`"))
             (diagSetLabel
               (if (isErrImportName name)
-                (mkDiag SEV_ERROR "AX3001" "undefined-variable" span msg 0 0
-                  (concat "`"
-                    (concat (srcSpelling name)
-                      "` is defined in the `Err` module; add `(import Err)`")))
+                (mkDiag SEV_ERROR "AX3001" "undefined-variable" span msg None
+                  (Some
+                    (concat "`"
+                      (concat (srcSpelling name)
+                        "` is defined in the `Err` module; add `(import Err)`"))))
                 (if (let (Some cand) best.cand)
-                  (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" span msg 0 0
+                  (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" span msg None
                     (concat (concat "a similarly named binding `" cand)
                       "` is in scope; did you mean this?")
-                    span cand)
-                  (mkDiag SEV_ERROR "AX3001" "undefined-variable" span msg 0 0
-                    "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")))
+                    (diagFix span cand))
+                  (mkDiag SEV_ERROR "AX3001" "undefined-variable" span msg None
+                    (Some
+                      "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos"))))
               (concat (concat "no binding named `" (srcSpelling name)) "` in scope"))
           }))
       (nodeBuildTErrPlain 0 0 0)
@@ -13228,8 +13274,9 @@
         (mkDiagNote SEV_ERROR "AX3064" "parallel-capture" span
           (concat (concat "a concurrent binding spawns " shape)
             ", whose captures this checker cannot see")
-          0 0
-          "write the lambda at the spawn, or name a top-level function: a literal is checked where it stands and a top-level name captures nothing"
+          None
+          (Some
+            "write the lambda at the spawn, or name a top-level function: a literal is checked where it stands and a top-level name captures nothing")
           "MM-PAR-6: a binding runs BESIDE its parent, and `axiom_retain`/`axiom_release` are a plain load-add-store rather than an `atomicrmw` - two threads touching one block's count lose an increment and free a block a live reference still names. The rule is the language's and not the lowering's, so it does not depend on `--threads`; `__proc_spawn` names the isolated lowering and is exempt")
         "the thunk's captures are not visible here"))
     0
@@ -13755,8 +13802,9 @@
                 (if (>= cls 2)
                   "` - a type the caller chooses, so it may be a reference here"
                   "` - a type this checker cannot classify, so it cannot promise the block's count is untouched"))))
-          0 0
-          "pass the value in through the thunk's word argument instead of capturing it, or build a copy of it inside the binding. A `parallel` binding may borrow a String or an immutable data graph its parent holds. Mutable, unknown and type-changing recursive payloads cannot be borrowed; the structural check examines at most 64 nested types. Use a shared word handle or explicit serialization for other input"
+          None
+          (Some
+            "pass the value in through the thunk's word argument instead of capturing it, or build a copy of it inside the binding. A `parallel` binding may borrow a String or an immutable data graph its parent holds. Mutable, unknown and type-changing recursive payloads cannot be borrowed; the structural check examines at most 64 nested types. Use a shared word handle or explicit serialization for other input")
           "MM-PAR-6: a binding runs BESIDE its parent, and `axiom_retain`/`axiom_release` are a plain load-add-store rather than an `atomicrmw` - two threads touching one block's count lose an increment and free a block a live reference still names. The rule is the language's and not the lowering's, so it does not depend on `--threads`; `__proc_spawn` names the isolated lowering and is exempt")
         (concat (concat "`" name) "` is bound outside this binding")))
     0
@@ -13778,14 +13826,15 @@
             (if (strEq (tyRender ty) "Spawn")
               "` - a spawn handle, which only the binding that spawned it may join"
               "` - a handle its module did not declare `shared`"))
-          0 0
-          (if (strEq (tyRender ty) "Spawn")
-            "join the handle in the binding that spawned it: a spawn handle belongs to the binding that made it, and a join from another thread is refused at run time"
-            (concat
+          None
+          (Some
+            (if (strEq (tyRender ty) "Spawn")
+              "join the handle in the binding that spawned it: a spawn handle belongs to the binding that made it, and a join from another thread is refused at run time"
               (concat
-                "use the handle only in the binding that holds it, or have its module declare `(struct "
-                (tyRender ty))
-              " word shared ...)` if every operation on it is safe from several bindings at once"))
+                (concat
+                  "use the handle only in the binding that holds it, or have its module declare `(struct "
+                  (tyRender ty))
+                " word shared ...)` if every operation on it is safe from several bindings at once")))
           "MM-PAR-6: a word struct crosses into a concurrent binding only when its module declares it `shared`, which says every operation on it is safe from several bindings at once; `__proc_spawn` names the isolated lowering and is exempt")
         (concat (concat "`" name) "` is bound outside this binding")))
     0
@@ -13809,8 +13858,9 @@
                 "`, a local name holding a function of type `")
               (tyRender ty))
             "` whose captures this checker cannot see")
-          0 0
-          "write the lambda at the spawn, or name a top-level function: a literal is checked where it stands and a top-level name captures nothing"
+          None
+          (Some
+            "write the lambda at the spawn, or name a top-level function: a literal is checked where it stands and a top-level name captures nothing")
           "MM-PAR-6: a binding runs BESIDE its parent, and `axiom_retain`/`axiom_release` are a plain load-add-store rather than an `atomicrmw` - two threads touching one block's count lose an increment and free a block a live reference still names. The rule is the language's and not the lowering's, so it does not depend on `--threads`; `__proc_spawn` names the isolated lowering and is exempt")
         (concat (concat "`" name) "` is bound outside this binding")))
     0
@@ -13964,8 +14014,9 @@
           (mkDiagNote SEV_ERROR "AX3071" "unretained-store" sp
             (concat (concat "storing a `" (tyRender oty))
               "` with a bare `__store64` takes no share: the owner's release frees a block this word still names")
-            0 0
-            "take a share first with `(__retainref v)` and then store, or keep the value in a struct field or a `Vec`, which count their own shares"
+            None
+            (Some
+              "take a share first with `(__retainref v)` and then store, or keep the value in a struct field or a `Vec`, which count their own shares")
             "a raw `__store64` writes the word and nothing else; the release walk never counted a share it cannot see")
           (concat (concat "storing `" (tyRender oty)) "`"))))
   })
@@ -14011,7 +14062,7 @@
                         (mkDiagNote SEV_ERROR "AX3043" "error-payload-untyped" span
                           (concat (concat "storing a `" (tyRender oty))
                             "` through a field declared `Int` hides it from the release walk, which follows declared types")
-                          0 0 "declare the field's real type"
+                          None (Some "declare the field's real type")
                           "an `Int` slot holding a reference is invisible to reclamation, and leaks (error-model.md ERR-TYPE-5/ERR-MEM-1)")
                         (concat (concat "this holds a `" (tyRender oty)) "`")))
                     1
@@ -14045,8 +14096,9 @@
           (diagSetLabel
             (mkDiagNote SEV_ERROR "AX3072" "addr-nonliteral" sp
               "`__addr` answers a literal's bytes: a non-literal argument has no interned bytes, and the address it yields is the value's header, not its text"
-              0 0
-              "spell the literal - `(__addr \"text\")` - or read bytes out of a value with `strData`"
+              None
+              (Some
+                "spell the literal - `(__addr \"text\")` - or read bytes out of a value with `strData`")
               "the emitter evaluates a non-literal like any expression, so what comes back is an address the caller never asked for")
             "not a literal")))
     }))
@@ -14067,8 +14119,8 @@
         (emitDiag tc
           (diagSetLabel
             (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf (vecGet args 1))
-              "this operation always traps: its divisor is the literal 0" 0 0
-              "divide by a value that can be nonzero, or handle the zero case first"
+              "this operation always traps: its divisor is the literal 0" None
+              (Some "divide by a value that can be nonzero, or handle the zero case first")
               "division and remainder by zero trap with status 72 on every run, so the trap is part of what this expression means")
             "always traps"))
         0)
@@ -14078,8 +14130,8 @@
           (emitDiag tc
             (diagSetLabel
               (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf (vecGet args 1))
-                "this `vecGet` always traps: its index is a negative literal" 0 0
-                "index with a value from 0 to the vector's length"
+                "this `vecGet` always traps: its index is a negative literal" None
+                (Some "index with a value from 0 to the vector's length")
                 "`vecGet` traps with status 77 on an index outside the vector, and a negative index is outside every vector")
               "always traps"))
           0)
@@ -14121,7 +14173,7 @@
                   (mkDiagNote SEV_ERROR "AX3140" "certain-trap" (spanOf arg)
                     (concat (concat "this value always traps: the literal " (fmtInt (nodeA arg)))
                       (concat " is outside the range of `" (concat (tyRender param) "`")))
-                    0 0 "pass a value inside the subtype's range"
+                    None (Some "pass a value inside the subtype's range")
                     "a value outside a subtype's range traps with status 80 on every run, so the trap is part of what this call means")
                   "always traps")))
           })
@@ -14956,7 +15008,7 @@
     0
     {
       (emitDiag tc
-        (diagSetLabel (mkDiagNote SEV_ERROR "AX3025" "no-rendering" sp msg 0 0 help note)
+        (diagSetLabel (mkDiagNote SEV_ERROR "AX3025" "no-rendering" sp msg None (Some help) note)
           "no rendering derived"))
       0
     }))
@@ -16365,7 +16417,7 @@
                 (mkDiagNote SEV_ERROR "AX3069" "sizeof-arity" (spanOf (vecGet args 1))
                   (concat (concat "`" hname)
                     "` takes one type and answers a constant, so this argument has nowhere to go")
-                  0 0 "remove the extra argument" "it used to be discarded in silence")
+                  None (Some "remove the extra argument") "it used to be discarded in silence")
                 "extra argument")))
           ; The other side of the same count: `(cast T)` with its VALUE
           ; missing. `isCastLike` keeps `cast` out of `checkSaturation`,
@@ -16390,8 +16442,9 @@
                     (concat "partial application of `as`: it takes 2 argument(s) and "
                       (fmtInt (vecLen args)))
                     " were supplied")
-                  0 0
-                  "write the value to convert before the target type - `(as e Int)` - or, for a function value, `(lambda (x) (as x Int))`"
+                  None
+                  (Some
+                    "write the value to convert before the target type - `(as e Int)` - or, for a function value, `(lambda (x) (as x Int))`")
                   "`as` is a form and not a function: with its value missing there was nothing to convert, and the emitter read the type name as a variable the native toolchain refused")
                 "`as` takes a value and a target type; an operand is missing")))
           (if (let (Some badPart) (if (>= (vecLen args) 1)
@@ -16429,10 +16482,11 @@
                         (concat (concat "a literal is not a type, and `" hname) "` takes a type")
                         (concat (concat "this expression is not a type, and `" hname)
                           "` takes a type")))
-                    0 0
-                    (if (isValueCastForm hname)
-                      "write the type to cast TO - `(as e Int)` - or, for an ascription, `(:: e Int)`"
-                      (concat (concat "write the type to measure - `(" hname) " Int)`"))
+                    None
+                    (Some
+                      (if (isValueCastForm hname)
+                        "write the type to cast TO - `(as e Int)` - or, for an ascription, `(:: e Int)`"
+                        (concat (concat "write the type to measure - `(" hname) " Int)`")))
                     (if (isValueCastForm hname)
                       "an unconvertible shape here used to answer a silent wildcard, which unifies with everything: the cast was performed, the result had no type anyone could object to, and a function returning it satisfied any declaration"
                       (concat (concat "the operand used to be ignored in silence: `(" hname)
@@ -16453,7 +16507,8 @@
                               (if (tyIsUnit targetTy)
                                 "`as` cannot convert to `()`: it has one value and carries no information"
                                 "`as` cannot convert from `()`: it has one value and carries no information")
-                              0 0 "convert a value that carries information, or drop the cast"
+                              None
+                              (Some "convert a value that carries information, or drop the cast")
                               "a cast through `()` answers the unit word 0 whatever the value was, so the conversion could only lose what it was given")
                             "a cast through `()`"))))
                     (let subBase
@@ -16901,7 +16956,7 @@
               (mkDiag SEV_ERROR "AX3049" "restriction-violated" (nodeSpan arg)
                 (concat (concat (concat "this callback may perform " effect) "; ")
                   (concat (concat (bareOf entry.name) " requires ") restriction))
-                0 "" "pass a callback that keeps the restriction"))
+                None (Some "pass a callback that keeps the restriction")))
             0)
         ))
       (checkArgumentRestrictions tc entry arg row required (+ i 1))
@@ -16934,8 +16989,9 @@
                           (mkDiag SEV_ERROR "AX3004" "type-mismatch" (nodeSpan head)
                             (concat (concat (concat (concat "`" hname) "` takes ") (fmtInt arLim))
                               (concat " argument(s), given " (fmtInt got)))
-                            0 0
-                            "remove the extra argument(s), or add a parameter to the definition")
+                            None
+                            (Some
+                              "remove the extra argument(s), or add a parameter to the definition"))
                           (concat (fmtInt got) " argument(s) provided here")))
                       (checkSpineArgsOnly tc e)
                       1
@@ -16956,8 +17012,9 @@
                                     (fmtInt ar))
                                   " argument(s) and ")
                                 (concat (fmtInt got) " were supplied"))
-                              0 0
-                              "bind the missing arguments with a lambda: `(lambda (y) (f x y))` builds the value `(f x)` would mean"
+                              None
+                              (Some
+                                "bind the missing arguments with a lambda: `(lambda (y) (f x y))` builds the value `(f x)` would mean")
                               "a partial application has to hold the arguments it was not given, and a top-level function has no closure record to hold them in")
                             (concat
                               (concat (concat (concat (concat "`" hname) "` takes ") (fmtInt ar))
@@ -16988,9 +17045,10 @@
                                     (fmtInt want))
                                   " argument(s), found ")
                                 (fmtInt got))
-                              0 0
-                              (concat (concat "this constructor takes exactly " (fmtInt want))
-                                " field(s); add or remove arguments to match"))
+                              None
+                              (Some
+                                (concat (concat "this constructor takes exactly " (fmtInt want))
+                                  " field(s); add or remove arguments to match")))
                             (concat (fmtInt got) " argument(s) provided here")))
                         (checkSpineArgsOnly tc e)
                         1
@@ -17129,7 +17187,7 @@
                         (fmtInt (vecLen fields)))
                       " field(s), found ")
                     (fmtInt (vecLen args))))
-                (mkDiag SEV_ERROR "AX3067" "struct-arity-mismatch" span msg 0 0 0)
+                (mkDiag SEV_ERROR "AX3067" "struct-arity-mismatch" span msg None None)
               }))
           (nodeBuildTErrPlain 0 0 0)
         }
@@ -19374,8 +19432,9 @@
     0
     (emitDiag tc
       (diagSetLabel
-        (mkDiagNote SEV_ERROR "AX3144" "field-effect-declaration" (nodeSpan f) msg 0 0
-          "a function-typed field declares `;@axiom:effect(pure)`, or one line per effect its functions may perform: `io`, `alloc`, `mut`, `spawn`, `block`, `entropy` or a declared effect"
+        (mkDiagNote SEV_ERROR "AX3144" "field-effect-declaration" (nodeSpan f) msg None
+          (Some
+            "a function-typed field declares `;@axiom:effect(pure)`, or one line per effect its functions may perform: `io`, `alloc`, `mut`, `spawn`, `block`, `entropy` or a declared effect")
           note)
         "declaration not read"))))
 
@@ -19731,10 +19790,11 @@
         (mkDiagNote SEV_ERROR "AX3142" "field-effect-exceeded" span
           (concat (concat (concat (concat what " performs ") (effJoin effs)) ", and the field `")
             (concat (concat field "` declares ") d.said))
-          0 0
-          (concat
-            "store a function that keeps the declaration, or declare the effect on the field with `;@axiom:effect("
-            (concat (fieldEffectSpelling (fieldEffectToSuggest effs)) ")`"))
+          None
+          (Some
+            (concat
+              "store a function that keeps the declaration, or declare the effect on the field with `;@axiom:effect("
+              (concat (fieldEffectSpelling (fieldEffectToSuggest effs)) ")`")))
           (concat (concat "a call through `" field)
             "` is charged what the field declares and nothing else, so everything stored in it has to keep that"))
         (concat "performs " (effJoin effs))))
@@ -19792,8 +19852,9 @@
                 "` keeps ")
               d.said)
             (concat ": it is " why))
-          0 0
-          "store a named function or a lambda whose body the compiler can see, or build the record where the function is known"
+          None
+          (Some
+            "store a named function or a lambda whose body the compiler can see, or build the record where the function is known")
           (concat (concat "a call through `" field)
             "` is charged what the field declares and nothing else, so a value whose effects can't be determined is refused rather than trusted"))
         "effects unknown here"))
@@ -21074,8 +21135,9 @@
 (pub fn (checkAsmSymBad tc a msg)
   {
     (emitDiag tc
-      (mkDiagNote SEV_ERROR "AX3091" "inline-asm" (nodeSpan a) msg 0 0
-        "an `asm` form's `(sym name f)` passes the symbol of `f`, a top-level `fn` or an `extern` item, for instructions such as `bl {name}` or `call {name}`"
+      (mkDiagNote SEV_ERROR "AX3091" "inline-asm" (nodeSpan a) msg None
+        (Some
+          "an `asm` form's `(sym name f)` passes the symbol of `f`, a top-level `fn` or an `extern` item, for instructions such as `bl {name}` or `call {name}`")
         "run `axiom explain AX3091` for the full form"))
     mkIntTy
   })
@@ -21923,8 +21985,9 @@
           (emitDiag tc
             (diagSetLabel
               (mkDiagNote SEV_ERROR "AX3137" "uppercase-pattern-binder" (nodeSpan node)
-                (concat (concat "pattern binder `" name) "` starts with a capital letter") 0 0
-                "rename the binder in lowercase to bind, or write `(Name)` or `(Name ...)` to test a constructor"
+                (concat (concat "pattern binder `" name) "` starts with a capital letter") None
+                (Some
+                  "rename the binder in lowercase to bind, or write `(Name)` or `(Name ...)` to test a constructor")
                 "a bare name in pattern position binds every value, whatever its case, so this arm matches everything and the arms after it are dead; a constructor test needs the parentheses")
               (concat (concat "`" name) "` binds every value here"))))
         (checkUpperPatBindersAt tc nodes (+ i 1))
@@ -21959,11 +22022,12 @@
             (diagSetLabel
               (mkDiagNote SEV_ERROR "AX3136" "duplicate-pattern-binder" (nodeSpan node)
                 (concat (concat "duplicate binder `" name) "` in one pattern")
-                (match (patBinderFirst nodes name 0)
-                  ((Some first) (nodeSpan first))
-                  ((None) 0))
-                (concat (concat "first binder `" name) "`")
-                "give each binder in the pattern its own name"
+                (diagRelated
+                  (match (patBinderFirst nodes name 0)
+                    ((Some first) (nodeSpan first))
+                    ((None) 0))
+                  (concat (concat "first binder `" name) "`"))
+                (Some "give each binder in the pattern its own name")
                 "one pattern binds each name once; the second binding shadows the first, so the arm body could only ever read one of the two values")
               (concat (concat "`" name) "` is bound twice in this pattern"))))
         (checkDupPatBindersAt tc nodes (+ i 1))
@@ -22711,8 +22775,9 @@
     (emitDiag tc
       (mkDiag SEV_WARNING "AX3038" "effect-unverifiable" span
         "handled-effects list cannot be checked: the body calls a value the compiler could not resolve"
-        0 0
-        "name the function at the call, or widen the handled list: an unresolved call may perform any effect, and reaching one with no handler aborts the process"))
+        None
+        (Some
+          "name the function at the call, or widen the handled list: an unresolved call may perform any effect, and reaching one with no handler aborts the process")))
     0))
 
 (pub :: checkUnhandled (-> TC Strings (Vec ASTNode) Int Int Int))
@@ -22740,7 +22805,7 @@
                 (concat
                   (concat "effect mismatch: unhandled effect `" (effRender (vecGetStr inner i)))
                   "`")
-                0 0 0)))))
+                None None)))))
       (checkUnhandled tc inner effs (+ i 1) span)
     }))
 
@@ -22801,8 +22866,8 @@
     (if (&& (> dynN 1) (!= formSpan 0))
       (emitDiag tc
         (mkDiag SEV_ERROR "AX3017" "effect-handler-unsupported" formSpan
-          (concat (fmtInt dynN) " custom effects in one handle; nest one `handle` per effect") 0 0
-          0))
+          (concat (fmtInt dynN) " custom effects in one handle; nest one `handle` per effect") None
+          None))
       0)
     {
       (let nm (vecGet effs i))
@@ -22820,7 +22885,7 @@
                         (concat (concat (concat "effect `" (nodeAName nm)) "` declares ")
                           (fmtInt (vecLen (nodeBNames d))))
                         " operations; a dynamic handler covers exactly one")
-                      0 0 0)))
+                      None None)))
                 (checkHandleEffects tc effs (+ i 1) dynN formSpan)
               }
               (checkHandleEffects tc effs (+ i 1) (+ dynN 1) formSpan))
@@ -22829,8 +22894,9 @@
                 (emitDiag tc
                   (diagSetLabel
                     (mkDiag SEV_ERROR "AX3016" "unknown-effect" (nodeSpan nm)
-                      (concat (concat "unknown effect `" (nodeAName nm)) "`") 0 0
-                      "declare it with `(effect Name (op :: sig))`, import the module that does, or fix the spelling")
+                      (concat (concat "unknown effect `" (nodeAName nm)) "`") None
+                      (Some
+                        "declare it with `(effect Name (op :: sig))`, import the module that does, or fix the spelling"))
                     (concat (concat "no effect named `" (nodeAName nm)) "` is declared"))))
               (checkHandleEffects tc effs (+ i 1) dynN formSpan)
             })
@@ -23343,8 +23409,9 @@
             (concat (concat (concat "field access `." fname) "` is unsafe on `")
               (srcSpelling tyname))
             "`: the type has a nullary constructor, so a value may be an immediate tag with no fields to read")
-          0 0
-          "match on the value instead, and read the field in the fieldful arm - a `match` emits the immediate-or-address guard that field access cannot"
+          None
+          (Some
+            "match on the value instead, and read the field in the fieldful arm - a `match` emits the immediate-or-address guard that field access cannot")
           "an unguarded load on an immediate dereferences a small integer: this passed `check` and died of SIGSEGV (docs/memory-model.md MM-VAL-9a)")
         "the value may not be a block at all"))
     0
@@ -23365,8 +23432,9 @@
             (concat (concat (concat "field access `." fname) "` is unsafe on `")
               (srcSpelling tyname))
             "`: not every constructor declares that field, so a value built by another constructor has no such word to read")
-          0 0
-          "match on the value instead, and read the field in the arm that has it - a `match` emits the tag guard that field access cannot"
+          None
+          (Some
+            "match on the value instead, and read the field in the arm that has it - a `match` emits the tag guard that field access cannot")
           "an unguarded load on a value of another constructor reads its slot, or a word past its block: this passed `check` and died of SIGSEGV")
         "only some constructors declare this field"))
     0
@@ -23416,9 +23484,10 @@
               (concat (concat (concat "field `" fname) "` not found on type `")
                 (srcSpelling tyName))
               "`")
-            0 0
-            (concat (concat "check the field name and the definition of `" (srcSpelling tyName))
-              "`"))
+            None
+            (Some
+              (concat (concat "check the field name and the definition of `" (srcSpelling tyName))
+                "`")))
           (concat (concat (concat (concat "no field `" fname) "` on `") (srcSpelling tyName)) "`")))
       0
     }))
@@ -23619,12 +23688,13 @@
                       (let msg (concat (concat "undefined variable `" (srcSpelling name)) "`"))
                       (diagSetLabel
                         (if (let (Some cand) best.cand)
-                          (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
+                          (mkDiagFix SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg None
                             (concat (concat "a similarly named binding `" cand)
                               "` is in scope; did you mean this?")
-                            (nodeSpan e) cand)
-                          (mkDiag SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg 0 0
-                            "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos"))
+                            (diagFix (nodeSpan e) cand))
+                          (mkDiag SEV_ERROR "AX3001" "undefined-variable" (nodeSpan e) msg None
+                            (Some
+                              "variables must be defined (via `fn`, a `let` binding, or a lambda parameter) before they are used; check for typos")))
                         (concat (concat "no binding named `" (srcSpelling name)) "` in scope"))
                     }))
                 (nodeBuildTErrPlain 0 0 0)
@@ -23894,8 +23964,9 @@
                         (mkDiag SEV_WARNING "AX3045" "recursion-in-scrutinee" (nodeSpan found)
                           (concat (concat "`" (bareOf name))
                             "` calls itself here, in the scrutinee of a `match`")
-                          0 ""
-                          "bind the scrutinee in a `let` and answer the recursive call from a match arm, where the self call is a tail call and the loop conversion fires")
+                          None
+                          (Some
+                            "bind the scrutinee in a `let` and answer the recursive call from a match arm, where the self call is a tail call and the loop conversion fires"))
                         (concat (concat "recursive call to `" (bareOf name)) "`")))))
                 0)
             })
@@ -23996,8 +24067,8 @@
             (if (|| (== catchallSeen 1) (== (armsRepeatTest arms pat 0 i) 1))
               (emitDiag tc
                 (mkDiag SEV_WARNING "AX3134" "unreachable-arm" (nodeSpan pat)
-                  "this arm can never match: an earlier arm already covers it" 0 ""
-                  "remove the arm, or move it above the arm that covers it")))
+                  "this arm can never match: an earlier arm already covers it" None
+                  (Some "remove the arm, or move it above the arm that covers it"))))
             (checkUnreachableArms tc arms (+ i 1)
               (if (== (patIrrefutable pat) 1)
                 1
@@ -24123,7 +24194,7 @@
                     (diagSetLabel
                       (mkDiagNote SEV_ERROR "AX3005" "non-exhaustive-match" (spanOf (nodeAChild e))
                         "this match can fall through: no arm is a constructor and nothing catches the rest"
-                        0 0 "add a `_` arm"
+                        None (Some "add a `_` arm")
                         "a match no arm matched used to answer 0 silently at exit 0 - the result cell's zeroed contents, indistinguishable from a real answer (docs/memory-model.md MM-VAL-9b)")
                       "no arm catches a non-matching value")))
               }
@@ -24253,8 +24324,9 @@
         {
           (emitDiag tc
             (mkDiagNote SEV_ERROR "AX3028" "syntax-query" (nodeSpan arm)
-              "syntax/for stands in a macro template's match, not in ordinary code" 0 0
-              "iteration is an expansion-time facility: move the match into a declaration macro's template, or write the arms by hand"
+              "syntax/for stands in a macro template's match, not in ordinary code" None
+              (Some
+                "iteration is an expansion-time facility: move the match into a declaration macro's template, or write the arms by hand")
               "the query vocabulary is CLOSED and compiler-implemented (macro-system.md MAC-CAP-5/6): every query is answered from the declaration list at expansion time"))
           (vecPush tys (:: None (Option ASTNode)))
           (checkArms tc arms (+ i 1) covered catchall resTy scrutTy fitTy joinTy tys disc)
@@ -25311,7 +25383,7 @@
                   (concat "non-exhaustive pattern match: some `"
                     (concat (tyRender scrutTy) "` values are not covered"))
                   (concat "non-exhaustive pattern match: missing " (joinComma missing)))
-                0 0 0))
+                None None))
             {
               (diagSetLabel d
                 (if (== (vecLen missing) 0)
@@ -25428,8 +25500,9 @@
             (concat "integer pattern `"
               (concat (fmtInt value)
                 (concat "` is outside the range of `" (concat (tyRender ty) "`"))))
-            0 0
-            "Use an integer literal within the scrutinee type's range. Patterns test the mathematical value; they do not truncate or reinterpret its bits.")
+            None
+            (Some
+              "Use an integer literal within the scrutinee type's range. Patterns test the mathematical value; they do not truncate or reinterpret its bits."))
           "pattern is outside the type's range"))
       0)
   })
@@ -25463,8 +25536,9 @@
                 (emitDiag tc
                   (diagSetLabel
                     (mkDiag SEV_ERROR "AX3003" "undefined-constructor" span
-                      "this pattern head does not name a data constructor" 0 0
-                      "Write a declared data constructor before its field patterns, or match a literal directly.")
+                      "this pattern head does not name a data constructor" None
+                      (Some
+                        "Write a declared data constructor before its field patterns, or match a literal directly."))
                     "expected a constructor name"))
                 (bindPatternArgsPoison tc (spineArgVec pat vecNew) 0)
                 0
@@ -25654,9 +25728,10 @@
                           (fmtInt (vecLen fieldTys)))
                         " argument(s), found ")
                       (fmtInt (vecLen args)))
-                    0 0
-                    (concat (concat "this constructor takes exactly " (fmtInt (vecLen fieldTys)))
-                      " field(s); add or remove arguments to match"))
+                    None
+                    (Some
+                      (concat (concat "this constructor takes exactly " (fmtInt (vecLen fieldTys)))
+                        " field(s); add or remove arguments to match")))
                   (concat (fmtInt (vecLen args)) " argument(s) provided here")))))
           (bindPatternArgs tc args fieldTys 0)
           0
@@ -25828,12 +25903,12 @@
               (let msg (concat (concat "undefined constructor `" cname) "`"))
               (diagSetLabel
                 (if (let (Some cand) best.cand)
-                  (mkDiagFix SEV_ERROR "AX3003" "undefined-constructor" span msg 0 0
+                  (mkDiagFix SEV_ERROR "AX3003" "undefined-constructor" span msg None
                     (concat (concat "a similarly named constructor `" cand)
                       "` is visible; did you mean this?")
-                    span cand)
-                  (mkDiag SEV_ERROR "AX3003" "undefined-constructor" span msg 0 0
-                    "check the `data` declaration for the correct constructor name"))
+                    (diagFix span cand))
+                  (mkDiag SEV_ERROR "AX3003" "undefined-constructor" span msg None
+                    (Some "check the `data` declaration for the correct constructor name")))
                 (concat (concat "no constructor named `" cname) "` is visible here"))
             }))
         0
@@ -26123,8 +26198,9 @@
           (sizedTyIn (nodeAName d) "Vec Option Link")))
     (emitDiag tc
       (mkDiag SEV_ERROR "AX3006" "duplicate-definition" (nodeSpan d)
-        (concat "cannot redefine built-in type `" (concat (nodeAName d) "`")) 0 0
-        "Choose another type name. Primitive types and built-in containers keep the representation and ownership rules the compiler assigns them."))
+        (concat "cannot redefine built-in type `" (concat (nodeAName d) "`")) None
+        (Some
+          "Choose another type name. Primitive types and built-in containers keep the representation and ownership rules the compiler assigns them.")))
     0))
 
 (pub :: tcWalkDecls (-> TC Int Int))
@@ -26190,8 +26266,8 @@
                           (emitDiag tc
                             (diagSetLabel
                               (mkDiag SEV_ERROR "AX3002" "undefined-type" (nodeSpan d)
-                                (concat (concat "undefined type `" bad) "`") 0 0
-                                (tyRemovedBuiltinHelp bad))
+                                (concat (concat "undefined type `" bad) "`") None
+                                (Some (tyRemovedBuiltinHelp bad)))
                               (concat (concat "no type named `" bad) "` is visible here"))))
                         (if (! (tyIsBareInt (nodeBChild d)))
                           (if (! (== (nodeSpan d) 0))
@@ -26742,8 +26818,9 @@
         (mkDiag SEV_ERROR "AX4009" "isr-waits" (nodeSpan d)
           (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` is bound by `isr(") v)
             (concat ")` and " why))
-          0 0
-          "a handler bound to a vector runs while the code it interrupted is stopped - until it returns, for `isr(irq)`, and for good, for `isr(fault)` - so anything it waits for can't come. Every blocking library call ends in a system call, which baremetal-aarch64 answers with trap 74, and `__arm_wfi` in an IRQ handler sleeps with the interrupt that would wake it masked. Set a flag the main loop reads instead, and do the waiting there. A fault hook may halt in `wfi`: never returning is one of its answers")))))
+          None
+          (Some
+            "a handler bound to a vector runs while the code it interrupted is stopped - until it returns, for `isr(irq)`, and for good, for `isr(fault)` - so anything it waits for can't come. Every blocking library call ends in a system call, which baremetal-aarch64 answers with trap 74, and `__arm_wfi` in an IRQ handler sleeps with the interrupt that would wake it masked. Set a flag the main loop reads instead, and do the waiting there. A fault hook may halt in `wfi`: never returning is one of its answers"))))))
 
 (pub :: restrictHasStrict (-> Strings Int Int))
 (pub fn (restrictHasStrict rs i)
@@ -28432,8 +28509,9 @@
         (mkDiag SEV_ERROR "AX3049" "restriction-violated" (nodeSpan d)
           (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` claims `restrict(") r)
             (concat ")` and " why))
-          0 0
-          "a restriction is a CLAIM the author wrote, and this is the compiler answering it. `no-io`, `no-alloc`, `no-unsafe`, `no-foreign`, `no-cast:deep` and `no-recursion` are transitive - the effect row and the call graph are fixpoints over every callee - and the path in the message is the chain of resolved calls (`symbols --calls` spells each hop the same way) from this declaration to where the effect enters, or around the cycle, so the fix is at a named place rather than somewhere below. Make the body keep the claim, or delete the tag, which WITHDRAWS the claim rather than answering it; an unrestricted function is never asked")))))
+          None
+          (Some
+            "a restriction is a CLAIM the author wrote, and this is the compiler answering it. `no-io`, `no-alloc`, `no-unsafe`, `no-foreign`, `no-cast:deep` and `no-recursion` are transitive - the effect row and the call graph are fixpoints over every callee - and the path in the message is the chain of resolved calls (`symbols --calls` spells each hop the same way) from this declaration to where the effect enters, or around the cycle, so the fix is at a named place rather than somewhere below. Make the body keep the claim, or delete the tag, which WITHDRAWS the claim rather than answering it; an unrestricted function is never asked"))))))
 
 ; AX3049 at the CAST, for the local one: it has a span, and the fix
 ; is where the span is.
@@ -28449,8 +28527,9 @@
               "`, which claims `restrict(")
             r)
           ")`")
-        0 0
-        "`no-cast` rejects explicit conversions in this body. Use an operation that preserves the required type, or remove the restriction. `no-cast:deep` also follows resolved callees; an unresolved path cannot establish the claim."))))
+        None
+        (Some
+          "`no-cast` rejects explicit conversions in this body. Use an operation that preserves the required type, or remove the restriction. `no-cast:deep` also follows resolved callees; an unresolved path cannot establish the claim.")))))
 
 (pub :: emitRestrictWidth (-> TC ASTNode String ASTNode Bool Int))
 (pub fn (emitRestrictWidth tc d restriction expression trapping)
@@ -28461,10 +28540,11 @@
           (concat "` in the body of `"
             (concat (bareOf (nodeAName d))
               (concat "`, which claims `restrict(" (concat restriction ")`"))))))
-      0 0
-      (if trapping
-        "Fixed-width division and remainder trap on zero; signed minimum divided by -1 also traps. Shifts trap when the count is negative or reaches the type's width. Remove this restriction when these operations are intended."
-        "Fixed-width addition, subtraction, multiplication and left shifts wrap at the declared width. Use explicit widening and checked Int arithmetic when the range fits Int, or remove this restriction when wrapping is intended."))))
+      None
+      (Some
+        (if trapping
+          "Fixed-width division and remainder trap on zero; signed minimum divided by -1 also traps. Shifts trap when the count is negative or reaches the type's width. Remove this restriction when these operations are intended."
+          "Fixed-width addition, subtraction, multiplication and left shifts wrap at the declared width. Use explicit widening and checked Int arithmetic when the range fits Int, or remove this restriction when wrapping is intended.")))))
 
 ; AX3049 at the OPERATOR, for `no-wrap`, LOCAL like `no-cast`: it has
 ; a span, and the fix is where the span is. Unlike `no-cast` there are
@@ -28482,8 +28562,9 @@
               "`, which claims `restrict(")
             r)
           ")`")
-        0 0
-        "Left shifts can discard high bits and are refused by `no-wrap`. `no-wrap` is LOCAL, like `no-cast`: on `Int` operands `+`, `-` and `*` lower to plain `add`/`sub`/`mul` with no overflow check, so a silent wraparound is an act this body performs by writing the raw operator, not a fact the effect row or call graph carries - it is refused where it is written, and a callee's arithmetic is the callee's claim to make. `stdlib/Err.ax` has the checked alternative for each: `addChecked`, `subChecked`, `mulChecked`, every one `(-> Int Int (Result Int Error))`. Calling one pulls `Alloc` into this body's effect row (constructing the `Result` allocates), so `no-wrap` cannot be satisfied together with `no-alloc` or `pure` by a body that needs arithmetic - write the checked call and match its `Err`, accept the row, or delete the tag. TWO OPERATORS ARE NOT REFUSED, because neither can wrap: the same three spellings on `Float` operands, which lower to `fadd`/`fsub`/`fmul`, and the `for` keyword's own counter increment, which the parser writes and whose loop guard bounds it"))))
+        None
+        (Some
+          "Left shifts can discard high bits and are refused by `no-wrap`. `no-wrap` is LOCAL, like `no-cast`: on `Int` operands `+`, `-` and `*` lower to plain `add`/`sub`/`mul` with no overflow check, so a silent wraparound is an act this body performs by writing the raw operator, not a fact the effect row or call graph carries - it is refused where it is written, and a callee's arithmetic is the callee's claim to make. `stdlib/Err.ax` has the checked alternative for each: `addChecked`, `subChecked`, `mulChecked`, every one `(-> Int Int (Result Int Error))`. Calling one pulls `Alloc` into this body's effect row (constructing the `Result` allocates), so `no-wrap` cannot be satisfied together with `no-alloc` or `pure` by a body that needs arithmetic - write the checked call and match its `Err`, accept the row, or delete the tag. TWO OPERATORS ARE NOT REFUSED, because neither can wrap: the same three spellings on `Float` operands, which lower to `fadd`/`fsub`/`fmul`, and the `for` keyword's own counter increment, which the parser writes and whose loop guard bounds it")))))
 
 ; AX3049 at the OPERATOR, for `no-trap`, LOCAL like `no-cast`
 ; and `no-wrap`: it has a span, and the fix is where the span is.
@@ -28502,8 +28583,9 @@
               "`, which claims `restrict(")
             r)
           ")`")
-        0 0
-        "`no-trap` is LOCAL, like `no-cast` and `no-wrap`: on `Int` operands `/` and `%` trap on a zero divisor (exit 72) and on the `INT_MIN / -1` corner (exit 83), and `<<` and `>>` trap on an out-of-range shift amount (exit 84) - so the trapping use is an act this body performs by writing the raw operator, not a fact the effect row or call graph carries. `stdlib/Err.ax` has the checked alternative for each: `divChecked`, `remChecked`, `shlChecked`, `shrChecked`, every one `(-> Int Int (Result Int Error))`. Calling one pulls `Alloc` into this body's effect row (constructing the `Result` allocates), so `no-trap` cannot be satisfied together with `no-alloc` or `pure` by a body that needs these operations - write the checked call and match its `Err`, accept the row, or delete the tag. ONE SPELLING IS NOT REFUSED: `/` on `Float` operands, which lowers to `fdiv` with no integer trap to require, and whose checked fix is `(-> Int Int (Result Int Error))` and does not typecheck against a `Float`"))))
+        None
+        (Some
+          "`no-trap` is LOCAL, like `no-cast` and `no-wrap`: on `Int` operands `/` and `%` trap on a zero divisor (exit 72) and on the `INT_MIN / -1` corner (exit 83), and `<<` and `>>` trap on an out-of-range shift amount (exit 84) - so the trapping use is an act this body performs by writing the raw operator, not a fact the effect row or call graph carries. `stdlib/Err.ax` has the checked alternative for each: `divChecked`, `remChecked`, `shlChecked`, `shrChecked`, every one `(-> Int Int (Result Int Error))`. Calling one pulls `Alloc` into this body's effect row (constructing the `Result` allocates), so `no-trap` cannot be satisfied together with `no-alloc` or `pure` by a body that needs these operations - write the checked call and match its `Err`, accept the row, or delete the tag. ONE SPELLING IS NOT REFUSED: `/` on `Float` operands, which lowers to `fdiv` with no integer trap to require, and whose checked fix is `(-> Int Int (Result Int Error))` and does not typecheck against a `Float`")))))
 
 ; AX3051: unverifiable, a warning - the claim is neither refuted nor
 ; acquitted, and the reason is the analysis's rather than the body's.
@@ -28525,15 +28607,17 @@
           (mkDiag SEV_ERROR "AX3057" "restriction-unproven" (nodeSpan d)
             (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` claims `restrict(") r)
               (concat ", strict)` and the claim cannot be PROVEN: " why))
-            0 0
-            "`strict` asks for a guarantee and not a best effort: where the walk cannot settle the claim, it is refused rather than warned. The four readings are AX3051's - an effect present only as POSSIBLE, a row the walk marked incomplete, a body that CALLS one of its own parameters (`#effect-params=`), whose answer is chosen by each caller, and a region fixpoint that hit its round limit. Name the function at the call site, stop calling the parameter, shorten the chain, or drop `strict` to keep the claim as a checked best effort (AX3051)")))
+            None
+            (Some
+              "`strict` asks for a guarantee and not a best effort: where the walk cannot settle the claim, it is refused rather than warned. The four readings are AX3051's - an effect present only as POSSIBLE, a row the walk marked incomplete, a body that CALLS one of its own parameters (`#effect-params=`), whose answer is chosen by each caller, and a region fixpoint that hit its round limit. Name the function at the call site, stop calling the parameter, shorten the chain, or drop `strict` to keep the claim as a checked best effort (AX3051)"))))
       (emitDiag tc
         (restrictPathSecs tc path 1
           (mkDiag SEV_WARNING "AX3051" "restriction-unverifiable" (nodeSpan d)
             (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` claims `restrict(") r)
               (concat ")` and the claim cannot be checked: " why))
-            0 0
-            "a limit of the ANALYSIS rather than a defect in the program - AX3037's argument at one remove. There are four readings: an effect present only as POSSIBLE, a row the walk marked incomplete, a body that CALLS one of its own parameters (`#effect-params=`), whose answer is chosen by each caller and cannot be settled here at all, and - for `no-escape` alone - a region fixpoint that hit its round limit before the facts settled, which is a depth limit rather than anything about this declaration. Name the function at the call, stop calling the parameter, shorten the chain, or drop the claim; `no-cast`, `no-wrap` and `no-trap` are checked regardless, because all three are lexical and need no call resolved"))))))
+            None
+            (Some
+              "a limit of the ANALYSIS rather than a defect in the program - AX3037's argument at one remove. There are four readings: an effect present only as POSSIBLE, a row the walk marked incomplete, a body that CALLS one of its own parameters (`#effect-params=`), whose answer is chosen by each caller and cannot be settled here at all, and - for `no-escape` alone - a region fixpoint that hit its round limit before the facts settled, which is a depth limit rather than anything about this declaration. Name the function at the call, stop calling the parameter, shorten the chain, or drop the claim; `no-cast`, `no-wrap` and `no-trap` are checked regardless, because all three are lexical and need no call resolved")))))))
 
 ; AX3052: a name outside the closed list. The help states the list,
 ; and it is the one place the list is stated to the author - keep it
@@ -28549,8 +28633,9 @@
             "` claims `restrict()`, which names no restriction")
           (concat (concat (concat (concat "`" (bareOf (nodeAName d))) "` claims `restrict(") r)
             (concat (concat ")`, and `" r) "` names no restriction")))
-        0 0
-        "the restrictions this compiler checks are `no-cast`, `no-cast:deep`, `no-io`, `no-alloc`, `no-unsafe`, `no-foreign`, `no-recursion`, `no-wrap`, `no-trap`, `no-escape`, `no-entropy`, `no-spawn` and `no-block`, comma-separated inside one `restrict(...)`. The list is closed, so a name outside it is not metadata - it is a claim in the one place the compiler has said it checks, and it would otherwise read like a guarantee and buy silence"))))
+        None
+        (Some
+          "the restrictions this compiler checks are `no-cast`, `no-cast:deep`, `no-io`, `no-alloc`, `no-unsafe`, `no-foreign`, `no-recursion`, `no-wrap`, `no-trap`, `no-escape`, `no-entropy`, `no-spawn` and `no-block`, comma-separated inside one `restrict(...)`. The list is closed, so a name outside it is not metadata - it is a claim in the one place the compiler has said it checks, and it would otherwise read like a guarantee and buy silence")))))
 
 ; ==================================================================
 ; `;@axiom:pre(...)` and `;@axiom:post(...)`: AX3050, the static half.
@@ -28796,8 +28881,9 @@
     0
     (emitDiag tc
       (mkDiag SEV_ERROR "AX3050" "contract-malformed" span
-        (concat (concat (concat "`" (contractLead t)) "` ") why) 0 0
-        "a `;@axiom:pre(...)` or `;@axiom:post(...)` is a claim the COMPILER cannot decide - there is no value analysis here - so it is compiled into the body and checked at run time, on every call, and a failure writes `axiom: precondition failed in `f`: ...` on fd 2 and exits 80. That is why the expression has to parse, has to be `Bool`, and has to PERFORM nothing: a contract that allocates or writes changes the program by being stated. Comparison, indexing, `strEq`, `strLen`, `vecLen` and `vecGet` are allocation-free and are what a predicate is written from; `concat`, `fmtInt` and `vecNew` are not. `result` names the declared result of a `post` and nothing anywhere else"))))
+        (concat (concat (concat "`" (contractLead t)) "` ") why) None
+        (Some
+          "a `;@axiom:pre(...)` or `;@axiom:post(...)` is a claim the COMPILER cannot decide - there is no value analysis here - so it is compiled into the body and checked at run time, on every call, and a failure writes `axiom: precondition failed in `f`: ...` on fd 2 and exits 80. That is why the expression has to parse, has to be `Bool`, and has to PERFORM nothing: a contract that allocates or writes changes the program by being stated. Comparison, indexing, `strEq`, `strLen`, `vecLen` and `vecGet` are allocation-free and are what a predicate is written from; `concat`, `fmtInt` and `vecNew` are not. `result` names the declared result of a `post` and nothing anywhere else")))))
 
 ; AX3050 for `result` naming nothing, reported from `checkVar` so that
 ; the question is total - see the `inContract` field's own note.
@@ -28815,8 +28901,9 @@
               ((ContractPost) false))
               "`result` names nothing in a `pre`: a precondition is checked BEFORE the body runs, so there is no result yet"
               "`result` names nothing here: this declaration has no `::` signature, so it declares no result type for `result` to have")
-            0 0
-            "a `;@axiom:pre(...)` or `;@axiom:post(...)` is a claim the COMPILER cannot decide - there is no value analysis here - so it is compiled into the body and checked at run time, on every call, and a failure writes `axiom: precondition failed in `f`: ...` on fd 2 and exits 80. That is why the expression has to parse, has to be `Bool`, and has to PERFORM nothing: a contract that allocates or writes changes the program by being stated. Comparison, indexing, `strEq`, `strLen`, `vecLen` and `vecGet` are allocation-free and are what a predicate is written from; `concat`, `fmtInt` and `vecNew` are not. `result` names the declared result of a `post` and nothing anywhere else")))
+            None
+            (Some
+              "a `;@axiom:pre(...)` or `;@axiom:post(...)` is a claim the COMPILER cannot decide - there is no value analysis here - so it is compiled into the body and checked at run time, on every call, and a failure writes `axiom: precondition failed in `f`: ...` on fd 2 and exits 80. That is why the expression has to parse, has to be `Bool`, and has to PERFORM nothing: a contract that allocates or writes changes the program by being stated. Comparison, indexing, `strEq`, `strLen`, `vecLen` and `vecGet` are allocation-free and are what a predicate is written from; `concat`, `fmtInt` and `vecNew` are not. `result` names the declared result of a `post` and nothing anywhere else"))))
     }
     0))
 
@@ -28884,7 +28971,7 @@
         (mkDiag SEV_ERROR "AX3042" "undeclared-effect" (nodeSpan d)
           (concat (concat (concat "`" (bareOf (nodeAName d))) "` performs ")
             (concat name " and its declaration does not say so"))
-          0 0 0))
+          None None))
       {
         (let at
           (if (== (strLen src) 0)
@@ -29081,7 +29168,7 @@
             (mkDiag SEV_ERROR "AX3073" "undeclared-unsafe" sp
               (concat (concat (concat "`" (bareOf (nodeAName d))) "` ")
                 (unsafeOpText site kind forges k))
-              0 0 0))
+              None None))
           {
             (let at
               (if (== (strLen src) 0)
@@ -29533,8 +29620,8 @@
         (emitDiag tc
           (diagSetLabel
             (mkDiagNote SEV_WARNING "AX3048" "deprecated-name" span
-              (concat (concat "`" (srcSpelling name)) "` is deprecated") 0 ""
-              (concat "the declaration says: " repl)
+              (concat (concat "`" (srcSpelling name)) "` is deprecated") None
+              (Some (concat "the declaration says: " repl))
               "It still works, and it still compiles - a deprecation is a notice, not a refusal. It may be removed in a later release, and `compat/BREAKING`'s rule lets that happen without a declared break precisely because this notice shipped first")
             (concat "declared `;@axiom:deprecated(" (concat repl ")`")))))
       0)))
@@ -29696,7 +29783,7 @@
               (concat
                 (concat "text after the closing `)` of this `;@axiom:` tag is not read: `" trail)
                 "`")
-              0 0 "move the text inside the parentheses, or onto its own comment line"
+              None (Some "move the text inside the parentheses, or onto its own comment line")
               "every reader of a tag stops at the last `)`, so a word after it changes nothing the compiler checks; a misspelt `strict` there would silently weaken the claim")
             "this text is not read"))
         (if (strEq key "effect")
@@ -29750,8 +29837,9 @@
             (mkDiagNote SEV_ERROR "AX3116" "result-claim" (nodeSpan d)
               (concat (concat "`result(owned)` on `" (bareOf (nodeAName d)))
                 "` is a claim only a trusted function may make")
-              0 0
-              "put `;@axiom:effect(unsafe)` beside it on the same declaration, or let the result's ownership be inferred"
+              None
+              (Some
+                "put `;@axiom:effect(unsafe)` beside it on the same declaration, or let the result's ownership be inferred")
               "the checker cannot see that a share was transferred through a raw load, so the claim is accepted only inside a trusted encapsulation (MM-LIFE-2n)")
             "safe code claims it")))
       (emitDiag tc
@@ -29759,7 +29847,7 @@
           (mkDiagNote SEV_ERROR "AX3116" "result-claim" (nodeSpan d)
             (concat (concat (concat (concat "`result(" val) ")` on `") (bareOf (nodeAName d)))
               "` is not a claim the compiler reads")
-            0 0 "write `;@axiom:result(owned)`, the one value this key takes"
+            None (Some "write `;@axiom:result(owned)`, the one value this key takes")
             "`result(owned)` says a type-variable result carries a share the caller must release; codegen acts on it, so a value it does not know is refused rather than ignored")
           "not `owned`")))))
 
@@ -29818,7 +29906,7 @@
             (concat (concat (concat (concat "`effect(" val) ")` on `") (bareOf (nodeAName d)))
               "` names ")
             (concat (fmtInt (vecLen names)) " effects, and an `effect(...)` tag names one"))
-          0 0 (concat "write one tag line per effect: " (effTagLines names))
+          None (Some (concat "write one tag line per effect: " (effTagLines names)))
           "a list here was read as ONE effect spelled with the comma in it, which nothing declares - so the claim could never be satisfied, and AX3010 reported it missing from a body that performed it. `restrict(...)` takes a comma list; `effect(...)` does not")
         "one effect per `effect(...)` tag"))))
 
@@ -29908,7 +29996,7 @@
                 "` is written `;@axiom:effect(pure)`, not `;@axiom:")
               key)
             "`")
-          0 0 "write `;@axiom:effect(pure)`"
+          None (Some "write `;@axiom:effect(pure)`")
           "an effect claim is always `effect(...)`, so purity has one spelling; the others are refused rather than read as metadata")
         "write `;@axiom:effect(pure)`"))))
 
@@ -29960,9 +30048,10 @@
           (concat "`"
             (concat (bareOf hname)
               "` has no signature, and its type isn't known until its own body has been checked"))
-          0 0
-          (concat "write its signature above its definition, such as `(:: "
-            (concat (bareOf hname) " (-> Int Int))`"))
+          None
+          (Some
+            (concat "write its signature above its definition, such as `(:: "
+              (concat (bareOf hname) " (-> Int Int))`")))
           "a function with no signature is typed by checking its body, and declarations are checked in the order they are written: a call from inside that body, or from above it, needs the signature")
         "called before its type is known"))))
 
@@ -30106,8 +30195,9 @@
     0
     (emitDiag tc
       (mkDiag SEV_ERROR "AX3135" "main-result-type" (nodeSpan d)
-        (concat (concat "`main` answers `" (tyRender ty)) "`, which is not an exit status") 0 0
-        "declare `main` as `Int`, `()`, `(Result Int Error)` or `(Result () Error)`, and print any other value before it returns"))))
+        (concat (concat "`main` answers `" (tyRender ty)) "`, which is not an exit status") None
+        (Some
+          "declare `main` as `Int`, `()`, `(Result Int Error)` or `(Result () Error)`, and print any other value before it returns")))))
 
 ; One row entry. A DEFINITE CUSTOM effect is exactly an entry that
 ; spells itself back: `c:Console` renders `Console` and `customEff`
@@ -30146,8 +30236,9 @@
                     " with no handler: the process would write `axiom: unhandled effect` and exit 71 there")
                   (unhandledPathText path))
                 (unhandledElsewhereText tc d path))
-              (unhandledRelSpan tc d path) (unhandledRelText path)
-              "install one - `(handle BODY (E) HANDLER)` around the call - or, if an unhandled operation of this effect is a deliberate abort as `Assert`'s is, write `;@axiom:unhandled(trap)` above its `effect` declaration")
+              (diagRelated (unhandledRelSpan tc d path) (unhandledRelText path))
+              (Some
+                "install one - `(handle BODY (E) HANDLER)` around the call - or, if an unhandled operation of this effect is a deliberate abort as `Assert`'s is, write `;@axiom:unhandled(trap)` above its `effect` declaration"))
             (concat (concat "reaches `" name) "` with nothing handling it")))
       })))
 
@@ -30398,12 +30489,13 @@
             (concat (concat (concat (concat "the `" key) "` tag on `") (bareOf (nodeAName d)))
               "` is never checked: it is ")
             (axtagDeclKind (nodeTag d)))
-          0 0
-          (if (strEq key "unhandled")
-              "`unhandled(trap)` belongs above an `effect` declaration; move it there, or drop it"
-            (strEq key "deprecated")
-              "`deprecated(...)` belongs above a declaration `axiom symbols` lists: a function, a `data`, a `struct`, a type alias, a macro or an `effect`; move it there, or drop it"
-            "a checked claim belongs above the function it describes - its `(:: ...)` or its `(fn ...)`; move it there, or drop it")
+          None
+          (Some
+            (if (strEq key "unhandled")
+                "`unhandled(trap)` belongs above an `effect` declaration; move it there, or drop it"
+              (strEq key "deprecated")
+                "`deprecated(...)` belongs above a declaration `axiom symbols` lists: a function, a `data`, a `struct`, a type alias, a macro or an `effect`; move it there, or drop it"
+              "a checked claim belongs above the function it describes - its `(:: ...)` or its `(fn ...)`; move it there, or drop it"))
           "the tag was recorded and nothing read it, so the claim it looks like was never made; an unrecognised key is still legal metadata")
         "tag not checked here"))))
 
@@ -30552,8 +30644,9 @@
       (mkDiag SEV_ERROR "AX3065" "axtag-key-reserved" (nodeSpan d)
         (concat (concat (concat (concat "AXTAG key `" key) "` on `") (bareOf (nodeAName d)))
           "` is a key the compiler derives and writes itself")
-        0 0
-        "the AXTAG namespace is open, but not for the keys `axiom symbols` writes from the checker's own answers: a reader of that stream cannot tell an author's copy from the compiler's. Namespace it - `;@axiom:my:effects(...)` - or drop it"))))
+        None
+        (Some
+          "the AXTAG namespace is open, but not for the keys `axiom symbols` writes from the checker's own answers: a reader of that stream cannot tell an author's copy from the compiler's. Namespace it - `;@axiom:my:effects(...)` - or drop it")))))
 
 (pub :: axtagKnownKey (-> String Int))
 (pub fn (axtagKnownKey key)
@@ -30657,8 +30750,9 @@
               key)
             "`; did you mean `")
           (concat want "`?"))
-        0 0
-        "an unrecognised key is recorded and never checked, so the claim this looks like was not made. Fix the spelling, or namespace a key of your own, such as `;@axiom:my:KEY(...)`, so it cannot be mistaken for a claim"))))
+        None
+        (Some
+          "an unrecognised key is recorded and never checked, so the claim this looks like was not made. Fix the spelling, or namespace a key of your own, such as `;@axiom:my:KEY(...)`, so it cannot be mistaken for a claim")))))
 
 (pub :: axtagCloseAt (-> String Int))
 (pub fn (axtagCloseAt content)
@@ -30804,8 +30898,9 @@
           (concat " cannot be checked: the body may perform "
             (concat (effJoin (effPossibleOnly eff))
               ", through a function it names without calling or a field whose stored functions do not all perform it")))
-        0 0
-        "store only functions that keep the claim in the field, call the function rather than handing it on, or drop the claim"))))
+        None
+        (Some
+          "store only functions that keep the claim in the field, call the function rather than handing it on, or drop the claim")))))
 
 ; A claimed effect the body does not perform. stage0 suppresses this
 ; when the effect COULD arrive through a callback - but only when the
@@ -30930,8 +31025,9 @@
         (concat (concat (concat "AXTAG never checked on `" (bareOf (nodeAName d))) "`: ")
           (concat (concat "`effect(" val)
             ")` names an effect nothing in the compiler infers, so no body can support the claim"))
-        0 0
-        "keep the intent in a comment, or in a key of your own such as `;@axiom:my:div`, which no check reads. Divergence is not inferred: the cheapest sound rule - a self-call, or any `while` - marks most of a real program non-terminating"))))
+        None
+        (Some
+          "keep the intent in a comment, or in a key of your own such as `;@axiom:my:div`, which no check reads. Divergence is not inferred: the cheapest sound rule - a self-call, or any `while` - marks most of a real program non-terminating")))))
 
 (pub :: axtagCouldExist (-> TC String Int))
 (pub fn (axtagCouldExist tc e)
@@ -31042,8 +31138,9 @@
       (mkDiag SEV_ERROR "AX3010" "axtag-mismatch" (nodeSpan d)
         (concat (concat (concat (concat "AXTAG mismatch on `" (bareOf (nodeAName d))) "`: ") msg)
           "")
-        0 0
-        "an AXTAG is a CLAIM, and this is the compiler answering it: make the body match the tag, or correct the tag to what the body does. Deleting the tag also silences this, and an untagged function is never checked - but that WITHDRAWS the claim rather than answering it, and every reader that trusted the tag loses the guarantee. A claim the walk cannot check is AX3037 and stays a warning; this code fires only where the walk has an answer"))))
+        None
+        (Some
+          "an AXTAG is a CLAIM, and this is the compiler answering it: make the body match the tag, or correct the tag to what the body does. Deleting the tag also silences this, and an untagged function is never checked - but that WITHDRAWS the claim rather than answering it, and every reader that trusted the tag loses the guarantee. A claim the walk cannot check is AX3037 and stays a warning; this code fires only where the walk has an answer")))))
 
 ; AX3037: a claim the walk is not in a position to check. Distinct
 ; from AX3010 on purpose - "your tag is wrong" and "your tag cannot be
@@ -31065,8 +31162,9 @@
         (concat (concat (concat "AXTAG unverifiable on `" (bareOf (nodeAName d))) "`: ")
           (concat label
             " cannot be checked: the body calls a value the compiler could not resolve"))
-        0 0
-        "name the function at the call, or drop the claim: an unresolved call may perform anything"))))
+        None
+        (Some
+          "name the function at the call, or drop the claim: an unresolved call may perform anything")))))
 
 (pub :: tcCheckFn (-> TC ASTNode Int))
 (pub fn (tcCheckFn tc d)
@@ -31270,8 +31368,9 @@
                       "` in the definition of `")
                     (srcSpelling (bareOf (nodeAName d))))
                   "`")
-                0 0
-                "give each parameter its own name; an unused one can be `_a`, `_b` - `_` is a name here like any other, so two of them collide too"
+                None
+                (Some
+                  "give each parameter its own name; an unused one can be `_a`, `_b` - `_` is a name here like any other, so two of them collide too")
                 "the body could only ever read one of them, and the emitted function declared both, which the native toolchain refused after `check` said OK")
               (concat (concat "`" (srcSpelling p)) "` names two parameters of this function"))))
         (checkDupParams tc d params (+ i 1))
@@ -31647,8 +31746,9 @@
   (if (== span 0)
     0
     (emitDiag tc
-      (mkDiag SEV_ERROR "AX3130" "scoped-callback" span message 0 0
-        "write a lambda at the call, or forward a parameter declared scoped; a scoped callback returns a scalar and retains no invocation-owned references or allocations"))))
+      (mkDiag SEV_ERROR "AX3130" "scoped-callback" span message None
+        (Some
+          "write a lambda at the call, or forward a parameter declared scoped; a scoped callback returns a scalar and retains no invocation-owned references or allocations")))))
 
 (pub :: checkScopedTag (-> TC ASTNode String Int))
 (pub fn (checkScopedTag tc d name)
@@ -32113,9 +32213,10 @@
                         (concat (concat (concat (rgnOriginTextComma rc v) " is stored into ") into)
                           (concat ", which lives in " (rgnRidText rc t)))
                         how)
-                      (rgnOriginSpan rc v)
-                      "this scope reclaims the stored value before the destination is used"
-                      "this store or call crosses a reclamation boundary: move it to the destination's outer scope, or keep the destination and every use inside the value's region; keeping another reference cannot postpone the reset"))
+                      (diagRelated (rgnOriginSpan rc v)
+                        "this scope reclaims the stored value before the destination is used")
+                      (Some
+                        "this store or call crosses a reclamation boundary: move it to the destination's outer scope, or keep the destination and every use inside the value's region; keeping another reference cannot postpone the reset")))
                   (emitDiag (rgnTc rc)
                     (mkDiag SEV_ERROR "AX3062" "region-capture" span
                       (concat
@@ -32134,9 +32235,10 @@
                             (rgnRidText rc (rgnOriginRid rc (/ (- capBad 1) 64))))
                           (concat ", and is stored into " into))
                         (concat (concat ", which lives in " (rgnRidText rc t)) how))
-                      (rgnOriginSpan rc (/ (- capBad 1) 64))
-                      "this scope reclaims a value the closure captures"
-                      "keep the closure and every use inside its captures' region, or create its captured values and the closure in the destination's outer scope; capturing a reference does not extend its region")))
+                      (diagRelated (rgnOriginSpan rc (/ (- capBad 1) 64))
+                        "this scope reclaims a value the closure captures")
+                      (Some
+                        "keep the closure and every use inside its captures' region, or create its captured values and the closure in the destination's outer scope; capturing a reference does not extend its region"))))
               })
           }
         }
@@ -32450,8 +32552,9 @@
           (if (== rep 1)
             (emitDiag (rgnTc rc)
               (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan e)
-                "region safety cannot be proved: loop lifetime analysis did not converge" 0 0
-                "simplify the loop's lifetime dependencies or split the function into smaller functions")))
+                "region safety cannot be proved: loop lifetime analysis did not converge" None
+                (Some
+                  "simplify the loop's lifetime dependencies or split the function into smaller functions"))))
         }
         {
           (rgnExpr rc (nodeAChild e))
@@ -32742,8 +32845,9 @@
             (emitDiag (rgnTc rc)
               (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan body)
                 "region safety cannot be proved: this function exceeds the lifetime origin capacity"
-                0 0
-                "split this function into smaller functions so each region has a distinct tracked origin")))
+                None
+                (Some
+                  "split this function into smaller functions so each region has a distinct tracked origin"))))
           (rgnSetUnknown (rgnFacts rc))
           0
         }
@@ -32842,8 +32946,9 @@
             (emitDiag (rgnTc rc)
               (mkDiag SEV_ERROR "AX3090" "recover-thunk-unseen" span
                 "a recovery point's thunk has to be a lambda written at the call, or a top-level function"
-                0 0
-                "an abort reclaims everything the thunk allocated, so the thunk is held to storing none of it anywhere older; that is checked on a lambda written here, and a top-level function captures nothing. Write the lambda at the call")))))
+                None
+                (Some
+                  "an abort reclaims everything the thunk allocated, so the thunk is held to storing none of it anywhere older; that is checked on a lambda written here, and a top-level function captures nothing. Write the lambda at the call"))))))
       0
     }
   })
@@ -32892,13 +32997,15 @@
                   (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan h)
                     (concat (concat "the handler `" (nodeAName h))
                       "` may store a value it is handed, or one it allocates, into another of its arguments; an operation performed inside a region or a recovery point hands it values that extent reclaims")
-                    0 0
-                    "a handler runs where the operation is performed, so what it is handed and what it allocates belong to that extent: compute a scalar in the handler, or perform the operation outside the region or recovery point")))
+                    None
+                    (Some
+                      "a handler runs where the operation is performed, so what it is handed and what it allocates belong to that extent: compute a scalar in the handler, or perform the operation outside the region or recovery point"))))
               (emitDiag (rgnTc rc)
                 (mkDiag SEV_ERROR "AX3060" "region-escape" (spanOf h)
                   "region safety cannot be proved: the handler's body is not visible at its installation"
-                  0 0
-                  "write the handler as a lambda at the handle form, or name a top-level function; an operation may run inside a shorter region or recovery point, so its handler must retain none of that extent's references or allocations"))))
+                  None
+                  (Some
+                    "write the handler as a lambda at the handle form, or name a top-level function; an operation may run inside a shorter region or recovery point, so its handler must retain none of that extent's references or allocations")))))
           (rgnExpr rc h)
         }
       })))
@@ -33281,9 +33388,10 @@
         (if (== report 1)
           (emitDiag tc
             (mkDiag SEV_ERROR "AX3060" "region-escape" (nodeSpan d)
-              "region safety cannot be proved: this function has more than 61 parameter origins" 0
-              0
-              "split this function into smaller functions so every parameter has a distinct tracked origin")))
+              "region safety cannot be proved: this function has more than 61 parameter origins"
+              None
+              (Some
+                "split this function into smaller functions so every parameter has a distinct tracked origin"))))
         (rgnSetUnknown (rgnFacts rc))
         0
       }
@@ -33492,8 +33600,9 @@
           (if (== (vecLen decls) 0)
             0
             (nodeSpan (vecGet decls 0)))
-          "region safety cannot be proved: lifetime analysis did not converge" 0 0
-          "simplify the lifetime dependencies or split the call graph into smaller functions"))
+          "region safety cannot be proved: lifetime analysis did not converge" None
+          (Some
+            "simplify the lifetime dependencies or split the call graph into smaller functions")))
       0
     }
     {
@@ -34375,8 +34484,9 @@
   (if (== (nodeSpan d) 0)
     0
     (emitDiag tc
-      (mkDiag SEV_ERROR "AX3093" "ct-claim-malformed" (nodeSpan d) msg 0 0
-        "`ct(...)` names the parameters that carry secrets: `name` for a secret value, `*name` for an address whose memory is secret. Name only this function's own parameters"))))
+      (mkDiag SEV_ERROR "AX3093" "ct-claim-malformed" (nodeSpan d) msg None
+        (Some
+          "`ct(...)` names the parameters that carry secrets: `name` for a secret value, `*name` for an address whose memory is secret. Name only this function's own parameters")))))
 
 (pub :: emitCtHits (-> TC ASTNode CtWalk Int Int))
 (pub fn (emitCtHits tc d w i)
@@ -34389,8 +34499,9 @@
             (if (== (vecGet w.spans i) 0)
               (nodeSpan d)
               (vecGet w.spans i))
-            (vecGet w.msgs i) 0 0
-            "a function that claims `ct(...)` promises its timing doesn't depend on the parameters it names. A branch, a memory address or a division that depends on one breaks the promise, and so does handing one to a function whose own claim doesn't name it. Compute both sides and choose between them with the masks in `Crypto.Ct` (`ctSelect`, `ctMaskEq`), claim the callee's parameter, or take the parameter out of this claim")
+            (vecGet w.msgs i) None
+            (Some
+              "a function that claims `ct(...)` promises its timing doesn't depend on the parameters it names. A branch, a memory address or a division that depends on one breaks the promise, and so does handing one to a function whose own claim doesn't name it. Compute both sides and choose between them with the masks in `Crypto.Ct` (`ctSelect`, `ctMaskEq`), claim the callee's parameter, or take the parameter out of this claim"))
           (vecGet w.labels i)))
       (emitCtHits tc d w (+ i 1))
     }))
@@ -34488,8 +34599,9 @@
 (:: emitCompute (-> TC Int String Int))
 (fn (emitCompute tc span message)
   (emitDiag tc
-    (mkDiag SEV_ERROR "AX3131" "compute-callback" span message 0 0
-      "pass a numeric lambda, a checked named function, or the exact parameter carrying compute; use canonical primitive captures, numeric operations and local accumulators; raw/runtime observers, references, heap stores, allocation and opaque calls are refused")))
+    (mkDiag SEV_ERROR "AX3131" "compute-callback" span message None
+      (Some
+        "pass a numeric lambda, a checked named function, or the exact parameter carrying compute; use canonical primitive captures, numeric operations and local accumulators; raw/runtime observers, references, heap stores, allocation and opaque calls are refused"))))
 
 (:: computePrimitive (-> TC ASTNode Bool))
 (fn (computePrimitive tc ty0)

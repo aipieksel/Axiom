@@ -532,63 +532,60 @@
     d
   })
 
-; ------------------------------------------------------------------
-; The three constructors every existing emission site calls, kept as
-; adapters over the builders above.
-;
-; They are not convenience: they are what makes this widening provable.
-; Roughly thirty-five call sites across typecheck.ax, parser.ax,
-; codegen.ax and main.ax pass these argument lists, and each adapter
-; reproduces the EXACT predicate the old renderer used to decide whether
-; a field appeared - a related span iff `relSpan` is non-zero, a help
-; iff `help` is non-zero, that help's machine-applicable form iff
-; `fixSpan` is non-zero, a second help iff `help2` is non-zero. So the
-; output is byte-identical by construction, and the whole corpus passing
-; with no re-bless is the check on it.
-; ------------------------------------------------------------------
+; A related location in the diagnostic's own unit. Packed span zero
+; suppresses this optional field; diagAddSecondary can still explicitly
+; record a spanless call-graph hop.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiag (-> Int String String Int String Int a b Diag))
-(pub fn (mkDiag sev code slug span msg relSpan relMsg help)
-  (mkDiagFix2 sev code slug span msg relSpan relMsg help 0 0 0))
+(pub :: diagRelated (-> Int String (Option DLabel)))
+(pub fn (diagRelated span msg)
+  (if (== span 0)
+    None
+    (Some (DLabel :span span :msg msg :unit -1))))
 
+; An applicable replacement owns both its location and text. Empty
+; replacement text means deletion; a zero span means no edit.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagFix (-> Int String String Int String Int a b Int c Diag))
-(pub fn (mkDiagFix sev code slug span msg relSpan relMsg help fixSpan fixText)
-  (mkDiagFix2 sev code slug span msg relSpan relMsg help fixSpan fixText 0))
+(pub :: diagFix (-> Int String (Option DFix)))
+(pub fn (diagFix span text)
+  (if (== span 0)
+    None
+    (Some (DFix :span span :text text))))
 
-; `mkDiag` plus one note. A NOTE is a fact about why the program is
-; wrong; a HELP is an action that would make it right. The distinction
-; is rustc's and it is worth keeping: a reader who already knows what to
-; do skips the help, and a reader who does not understand the refusal
-; needs the note. AXDL renders them as separate fields and the human
-; renderer as separate lines, so the two never have to be crammed into
-; one sentence.
+; Constructor inputs own typed optional fields. None omits a field;
+; Some "" preserves a present empty help or replacement.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagNote (-> Int String String Int String Int a b c Diag))
-;@axiom:effect(unsafe)
-(pub fn (mkDiagNote sev code slug span msg relSpan relMsg help note)
-  (diagAddNote (mkDiag sev code slug span msg relSpan relMsg help) (as note String)))
-
-;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagFix2 (-> Int String String Int String Int a b Int c d Diag))
-;@axiom:effect(unsafe)
-(pub fn (mkDiagFix2 sev code slug span msg relSpan relMsg help fixSpan fixText help2)
-  ; Legacy producer arguments still use zero for absent optional text.
-  ; The casts are confined to this adapter; the record owns typed Options.
-  ; Migrating those producer APIs is separate from the stored representation.
+(pub :: mkDiag (-> Int String String Int String (Option DLabel) (Option String) Diag))
+(pub fn (mkDiag sev code slug span msg related help)
   {
     (let d (mkDiagBase sev code slug span msg None))
-    {
-      (if (! (== relSpan 0))
-        (diagAddSecondary d relSpan (as relMsg String)))
-      (if (! (== (as help Int) 0))
-        (if (== fixSpan 0)
-          (diagAddHelp d (as help String))
-          (diagAddFixHelp d (as help String) fixSpan (as fixText String))))
-      (if (! (== (as help2 Int) 0))
-        (diagAddHelp d (as help2 String)))
-      d
-    }
+    (if (let (Some label) related)
+      (diagAddSecondaryIn d label.span label.msg label.unit))
+    (if (let (Some text) help)
+      (diagAddHelp d text))
+    d
+  })
+
+;@axiom:restrict(no-io,no-foreign)
+(pub :: mkDiagFix (-> Int String String Int String (Option DLabel) String (Option DFix) Diag))
+(pub fn (mkDiagFix sev code slug span msg related help fix)
+  (diagAddHelpEntry (mkDiag sev code slug span msg related None) (DHelp :msg help :fix fix)))
+
+; A note states a fact about the refusal. A help suggests an action.
+; Both preserve present empty text without interpreting it as absence.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: mkDiagNote (-> Int String String Int String (Option DLabel) (Option String) String Diag))
+(pub fn (mkDiagNote sev code slug span msg related help note)
+  (diagAddNote (mkDiag sev code slug span msg related help) note))
+
+;@axiom:restrict(no-io,no-foreign)
+(pub :: mkDiagFix2
+  (-> Int String String Int String (Option DLabel) String (Option DFix) (Option String) Diag))
+(pub fn (mkDiagFix2 sev code slug span msg related help fix help2)
+  {
+    (let d (mkDiagFix sev code slug span msg related help fix))
+    (if (let (Some text) help2)
+      (diagAddHelp d text))
+    d
   })
 
 ; ------------------------------------------------------------------

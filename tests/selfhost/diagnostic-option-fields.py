@@ -30,7 +30,7 @@ def check(compiler, root, work, baseline=None):
               'fixture_sha256': hashlib.sha256(fixture.encode()).hexdigest(),
               'configurations': [], 'controls': [], 'refusals': [],
               'limits': ['Host O0/O2 native allocation poisoning, not target-wide qualification.',
-                         'Legacy generic mkDiag producer adapters and numeric packed spans remain explicit boundaries.',
+                         'Packed spans and unit indexes retain the existing numeric wire protocol.',
                          'No held lifetime analysis work is read, changed or validated.']}
 
     def modules(label, texts):
@@ -82,6 +82,11 @@ def check(compiler, root, work, baseline=None):
     for label, before, after, failures in controls:
         changed = dict(source)
         changed['diag.ax'] = replace_once(source['diag.ax'], before, after, label)
+        if label == 'drop-empty-deletion':
+            changed['diag.ax'] = replace_once(changed['diag.ax'],
+                '(if (== span 0)\n    None\n    (Some (DFix',
+                '(if (|| (== span 0) (== (strLen text) 0))\n    None\n    (Some (DFix',
+                'drop constructor deletion')
         failed = check_output(native(label, 0, changed, fixture), expected, required_failures=failures)
         report['controls'].append({'name': label, 'failed_cases': sorted(failed)})
         print(f'ok   counterexample {label}: {sorted(failed)}', flush=True)
