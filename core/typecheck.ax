@@ -30988,6 +30988,10 @@
     (let entFound (findFnEnt tc (nodeAName d)))
     (let params (nodeBNames d))
     (let base (vecLen (tcScopeVec tc)))
+    (let sigTy
+      (:: (match entFound
+        ((None) None)
+        ((Some entry) (bsTypeOpt (fnEntTy entry)))) (Option ASTNode)))
     {
       (tcSetFrameBase tc base)
       ; The current function's parameters and their callability, for
@@ -30995,41 +30999,33 @@
       ; with. Without them a call through a parameter inside a handle
       ; would look like a call to an unknown global.
       (tcSetCurParams tc params)
-      (tcSetCurCallable tc
-        (paramCallablesOf
-          (:: (match entFound
-            ((None) None)
-            ((Some ent) (bsTypeOpt (fnEntTy ent)))) (Option ASTNode))
-          (vecLen params)))
+      (tcSetCurCallable tc (paramCallablesOf sigTy (vecLen params)))
       ; MM-LIFE-2d: the body's evidence context - this function's
       ; own ordered tyvars (what a symbolic witness indexes into)
       ; and the declaration every stamp it writes is tagged with.
       {
-        (let sigTy
-          (if (let (Some ent) entFound)
-            (fnEntTy ent)
-            nilNode))
         (let ptys vecNew)
         {
           (tcSetCurDeclNode tc (Some d))
-          (if (== (tyHasSrcVar sigTy) 1)
-            {
-              (let sv vecNew)
-              {
-                (sigTyVarsInto sigTy sv)
-                (tcSetCurSigVars tc
-                  (if (== (tyHasPoison sigTy) 1)
+          (tcSetCurSigVars tc
+            (if (let (Some signature) sigTy)
+              (if (== (tyHasSrcVar signature) 1)
+                {
+                  (let sv vecNew)
+                  (sigTyVarsInto signature sv)
+                  (if (== (tyHasPoison signature) 1)
                     vecNew
-                    sv))
-              }
-            }
-            (tcSetCurSigVars tc vecNew))
+                    sv)
+                }
+                vecNew)
+              vecNew))
           (refuseReservedParams tc params (nodeSpan d) 0)
           (checkDupParams tc d params 1)
           (bindFnParams tc params ptys sigTy 0)
           (let state (tcCheckState tc))
-          (set state.unsignedParams (if (&& (== (nodeTag sigTy) TAG_T_VAR)
-                                          (strStartsWith (nodeAName sigTy) "_fn_"))
+          (set state.unsignedParams (if (if (let (Some signature) sigTy)
+            (&& (== (nodeTag signature) TAG_T_VAR) (strStartsWith (nodeAName signature) "_fn_"))
+            false)
             ptys
             vecNew))
           ; A LAMBDA BODY IS CHECKED AGAINST THE DECLARED RESULT, for the
@@ -31087,7 +31083,10 @@
           ; recorded arrow below all require a TYPE, never a
           ; pending node.
           {
-            (let resTy (peelArrows sigTy (vecLen params)))
+            (let resTy
+              (:: (match sigTy
+                ((None) None)
+                ((Some signature) (peelArrows signature (vecLen params)))) (Option ASTNode)))
             {
               (let bodyTy
                 {
@@ -31326,31 +31325,25 @@
 ; 2188-2196). The counter bumps once per parameter regardless of
 ; where the type came from - `_tN` names render, so the discipline is
 ; not a style choice.
-(pub :: bindFnParams (-> TC Names (Vec ASTNode) ASTNode Int Int))
+(pub :: bindFnParams (-> TC Names (Vec ASTNode) (Option ASTNode) Int Int))
 (pub fn (bindFnParams tc params ptys sigTy i)
   (if (>= i (vecLen params))
     0
     {
-      (let isArrowSig
-        (if (nodeSame sigTy nilNode)
-          0
-          (if (== (nodeTag sigTy) TAG_T_ARR)
-            1
-            0)))
-      {
-        (let pty
-          (if (== isArrowSig 1)
-            (if (let (Some declared) (nthParamTy sigTy i))
-              declared
-              (freshTVar tc 0))
-            mkIntTy))
-        {
-          (tcBumpCounter tc)
-          (vecPush ptys pty)
-          (pushScope (tcScopeVec tc) (vecGetStr params i) 0 0 pty)
-          (bindFnParams tc params ptys sigTy (+ i 1))
-        }
-      }
+      (let pty
+        (match sigTy
+          ((None) mkIntTy)
+          ((Some signature)
+            (if (&& (! (nodeSame signature nilNode)) (== (nodeTag signature) TAG_T_ARR))
+              (if (let (Some declared) (nthParamTy signature i))
+                declared
+                (freshTVar tc 0))
+              mkIntTy)
+          )))
+      (tcBumpCounter tc)
+      (vecPush ptys pty)
+      (pushScope (tcScopeVec tc) (vecGetStr params i) 0 0 pty)
+      (bindFnParams tc params ptys sigTy (+ i 1))
     }))
 
 ; The i-th parameter type of an arrow chain. None means the signature
@@ -31987,7 +31980,9 @@
       (vecGet boundaries k))
   })
 
-(pub :: rgnEmitEscape (-> RgnCtx Int Int String String ASTNode Int))
+; A diagnostic may describe a concrete value, or only a synthetic flow.
+; None selects the generic escape message without inspecting capture data.
+(pub :: rgnEmitEscape (-> RgnCtx Int Int String String (Option ASTNode) Int))
 (pub fn (rgnEmitEscape rc bad span into how valNode)
   (if (== (rgnReport rc) 0)
     0
@@ -32016,7 +32011,10 @@
               {
                 (let v (/ (- bad 1) 64))
                 (let t (% (- bad 1) 64))
-                (let capBad (rgnCaptureBad rc valNode (% (- bad 1) 64)))
+                (let capBad
+                  (if (let (Some value) valNode)
+                    (rgnCaptureBad rc value (% (- bad 1) 64))
+                    0))
                 (if (== capBad 0)
                   (emitDiag (rgnTc rc)
                     (mkDiag SEV_ERROR "AX3060" "region-escape" span
@@ -32034,9 +32032,13 @@
                           (concat
                             (concat
                               (concat "the closure captures `"
-                                (match (rgnCaptureFor rc valNode (/ (- capBad 1) 64))
+                                (match valNode
                                   ((None) "")
-                                  ((Some name) name)))
+                                  ((Some value)
+                                    (match (rgnCaptureFor rc value (/ (- capBad 1) 64))
+                                      ((None) "")
+                                      ((Some name) name))
+                                  )))
                               "`, which lives in ")
                             (rgnRidText rc (rgnOriginRid rc (/ (- capBad 1) 64))))
                           (concat ", and is stored into " into))
@@ -32452,7 +32454,7 @@
     (if (let (Some idx) idx)
       {
         (rgnEmitEscape rc (rgnStoreBad rc v (vecGet (rgnBinds rc) idx)) (nodeSpan e)
-          (concat (concat "the binding `" (nodeAName e)) "`") "" (nodeBChild e))
+          (concat (concat "the binding `" (nodeAName e)) "`") "" (Some (nodeBChild e)))
         (vecSet (rgnOrigs rc) idx (| (vecGet (rgnOrigs rc) idx) v))
         0
       }
@@ -32476,7 +32478,7 @@
         origins))
     {
       (rgnEmitEscape rc (rgnStoreBadMask rc v b) (nodeSpan e)
-        (concat (concat "the field `" (nodeBName e)) "` of a value") "" (nodeCChild e))
+        (concat (concat "the field `" (nodeBName e)) "` of a value") "" (Some (nodeCChild e)))
       (rgnNoteFlow rc v b "")
       0
     }
@@ -32928,7 +32930,7 @@
         {
           (rgnEmitEscape rc (rgnStoreBadMask rc (| u rc.curBit) captures) span
             "the captures of a call the compiler cannot resolve"
-            " - the call may store its arguments or fresh values into a capture" nilNode)
+            " - the call may store its arguments or fresh values into a capture" None)
           (rgnNoteFlow rc (| u rc.curBit) captures "<unresolved call>")
         })
       (for i in 0..(vecLen args)
@@ -32938,7 +32940,7 @@
               (concat (concat "argument " (fmtInt (+ i 1)))
                 " of a call the compiler cannot resolve")
               " - a call through a parameter, a closure or a field is assumed to store every argument into every argument"
-              nilNode)
+              None)
             (rgnNoteFlow rc (| u rc.curBit) (vecGet masks i) "<unresolved call>")
           }))
       (if (== (rgnUnknown (rgnFacts rc)) 0)
@@ -32967,7 +32969,8 @@
             (let v (vecGet masks (- (vecLen masks) 1)))
             {
               (rgnEmitEscape rc (rgnStoreBadMask rc v (vecGet masks 0)) span
-                (concat (concat "the block `" n) "` writes") "" (vecGet args (- (vecLen args) 1)))
+                (concat (concat "the block `" n) "` writes") ""
+                (Some (vecGet args (- (vecLen args) 1))))
               (rgnNoteFlow rc v (vecGet masks 0) "")
               0
             }
@@ -33047,7 +33050,7 @@
                               (rgnEmitEscape rc bad span into
                                 (concat (concat " - `" (bareOf callee))
                                   "` stores a value it allocates into that parameter")
-                                nilNode))
+                                None))
                           })
                         (rgnNoteFlow rc rc.curBit (vecGet masks i) callee)
                       })
@@ -33068,7 +33071,7 @@
                                             "` stores its parameter `")
                                           (rgnCalleeParamName tc callee j))
                                         "` into it")
-                                      (vecGet args j)))
+                                      (Some (vecGet args j))))
                                 })
                               (rgnNoteFlow rc (vecGet masks j) (vecGet masks i) callee)
                             })
