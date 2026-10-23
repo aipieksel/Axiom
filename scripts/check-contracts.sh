@@ -106,6 +106,10 @@ python3 tests/selfhost/parser-scan-options.py --axiom "$axc"
 python3 tests/tools/expansion-try-state-options.py --axiom "$axc"
 python3 tests/selfhost/parser-typed-node-tag.py --axiom "$axc"
 python3 tests/selfhost/diagnostic-option-fields.py --axiom "$axc"
+python3 tests/selfhost/diagnostic-constructor-options.py --axiom "$axc"
+python3 tests/selfhost/emitter-signature-types.py --axiom "$axc"
+python3 tests/selfhost/lsp-field-query-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/lsp-hierarchy-query-options.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/emitter-signature-flags.py --axiom "$axc"
 python3 tests/selfhost/checker-axtag-owners.py --axiom "$axc" --negative-controls
 python3 tests/tools/compiler-tag-consumers.py --axiom "$axc"

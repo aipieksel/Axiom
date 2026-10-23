@@ -325,13 +325,15 @@ echo "--- 1. user-level cast count does not grow ---"
 # The canonical-module negative control restores the old Option-to-word
 # pointer test in its generated mutant; that erased spelling is the defect
 # the test rejects, and is never used in the positive implementation.
+# Four new Option-owner fixtures read a live value's reference count.
+# Each unsafe observation keeps its typed owner live through the read.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1478 ]; then
-  ok "user-level (cast count $cast_count <= 1478)"
+elif [ "$cast_count" -le 1482 ]; then
+  ok "user-level (cast count $cast_count <= 1482)"
 else
-  bad "user-level (cast count $cast_count > 1478): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1482): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -528,7 +530,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # 21 further reference erasures: 315 to 294 under one compiler.
 # Typed emitter, editor and diagnostic optional owners remove nine
 # further reference erasures: 294 to 285 under one compiler.
-erasure_pin=285
+# Compared with 4ee86a21, canonical identity and typed diagnostic,
+# signature and editor queries measure 281 to 278 reference erasures.
+erasure_pin=278
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
