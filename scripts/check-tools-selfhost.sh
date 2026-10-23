@@ -133,7 +133,7 @@ golden="tests/tools/explain.golden"
     echo "### explain $c"
     "$work/axc" explain "$c" 2>&1
   done
-  for v in ax3001 3001 AX-3001 AX9999 ax99; do
+  for v in ax3001 3001 AX-3001 AX3123 AX9999 ax99; do
     echo "### explain $v (exit $("$work/axc" explain "$v" >/dev/null 2>&1; echo $?))"
     "$work/axc" explain "$v" 2>&1
   done

@@ -6856,8 +6856,9 @@
 ;   * a `?` in a branch, a `let` body or a loop is rewritten so the
 ;     form answers a `Result`: `Err` skips the rest, and the `Ok`
 ;     payload is the value the form would have had. A `region` or a
-;     `handle` still has no tail to move, and is AX3123. The node is
-;     left in place, and the checker reads a leftover `?` as poison.
+;     `handle` propagates through its body in the same way.
+;   * an inconsistent internal AST stops lowering with AX3146. The
+;     error prevents emission, and any leftover `?` remains poison.
 ;
 ; A lambda is its own body: its `?`s answer the lambda, and the walk
 ; here never looks inside one (`qmHas`).
@@ -7198,51 +7199,6 @@
     0
   })
 
-; The first `?` under `e`, for the refusal's span.
-(pub :: qmFirstSpan (-> ASTNode Int))
-(pub fn (qmFirstSpan e)
-  (if (nodeSame e nilNode)
-    0
-    {
-      (let tag (nodeTag e))
-      (if (== tag TAG_E_TRY)
-          (nodeSpan e)
-        (== tag TAG_E_APP)
-          (qmSpanOr (qmFirstSpan (nodeAChild e)) (nodeBChild e))
-        (== tag TAG_E_IF)
-          (qmSpanOr (qmFirstSpan (nodeAChild e)) (nodeBChild e))
-        (|| (== tag TAG_E_LET) (== tag TAG_E_LETM))
-          (qmSpanOr (qmFirstSpan (nodeBChild e)) (nodeCChild e))
-        (== tag TAG_E_BEGIN)
-          (qmFirstSpanVec (nodeAChildren e) 0)
-        (== tag TAG_E_WHILE)
-          (qmSpanOr (qmFirstSpan (nodeAChild e)) (nodeBuildEBegin (nodeBChildren e) 0 0 0))
-        (|| (== tag TAG_E_REGION) (== tag TAG_E_SET))
-          (qmFirstSpan (nodeBChild e))
-        (== tag TAG_E_FIELD)
-          (qmFirstSpan (nodeAChild e))
-        (|| (== tag TAG_E_SETF) (== tag TAG_E_HANDLE))
-          (qmSpanOr (qmFirstSpan (nodeAChild e)) (nodeCChild e))
-        (== tag TAG_E_MATCH)
-          (qmSpanOr (qmFirstSpan (nodeAChild e)) (qmArmBodies (nodeBChildren e)))
-        0)
-    }))
-
-(pub :: qmSpanOr (-> Int ASTNode Int))
-(pub fn (qmSpanOr sp e)
-  (if (!= sp 0)
-    sp
-    (qmFirstSpan e)))
-
-(pub :: qmFirstSpanVec (-> (Vec ASTNode) Int Int))
-(pub fn (qmFirstSpanVec xs i)
-  (if (>= i (vecLen xs))
-    0
-    (qmSpanOr (qmFirstSpan (vecGet xs i))
-      (if (< (+ i 1) (vecLen xs))
-        (nodeBuildEBegin (qmTail xs (+ i 1)) 0 0 0)
-        nilNode))))
-
 (pub :: qmTail (-> (Vec ASTNode) Int (Vec ASTNode)))
 (pub fn (qmTail xs i)
   {
@@ -7254,29 +7210,21 @@
     }
   })
 
-(pub :: qmArmBodies (-> (Vec ASTNode) ASTNode))
-(pub fn (qmArmBodies arms)
-  {
-    (let out vecNew)
-    {
-      (for k in 0..(vecLen arms)
-        (vecPush out (nodeBChild (vecGet arms k))))
-      (nodeBuildEBegin out 0 0 0)
-    }
-  })
-
-; AX3123: a `?` with no tail to propagate to.
-(pub :: qmRefuse (-> MEnv QmSt ASTNode String ASTNode))
-(pub fn (qmRefuse env st e place)
+; Every tag admitted by qmHasCore has a qmExtract arm. Reaching this
+; fallback means an internal caller or memo broke that precondition.
+; Keep both the failure state and error: neither a value nor a warning
+; may let the compiler emit a partly lowered tree.
+(pub :: qmInvariant (-> MEnv QmSt ASTNode ASTNode))
+(pub fn (qmInvariant env st e)
   {
     (set st.failed true)
     (expEmit env
       (diagSetLabel
-        (mkDiagNote SEV_ERROR "AX3123" "propagate-position" (qmFirstSpan e)
-          (concat (concat "this `?` sits in " place) ", so it has no tail to propagate to") None
-          (Some "take the `Result` apart with `match`")
-          "a `?` in a branch, a `let` body, a loop, a region or a handler is rewritten into a `Result`. This form still has no tail to move into the `Ok` arm")
-        "no tail to propagate to"))
+        (mkDiagNote SEV_ERROR "AX3146" "propagate-invariant" (nodeSpan e)
+          "the compiler could not lower an inconsistent propagation node" None
+          (Some "report this compiler bug with the smallest reproducing program")
+          "the propagation scan and extractor must agree on every supported AST form; this is an internal compiler error")
+        "propagation lowering stopped here"))
     e
   })
 
@@ -7668,7 +7616,7 @@
         (qmAsValue env st (qmPropagateRegion env e) sp)
       (== tag TAG_E_HANDLE)
         (qmAsValue env st (qmPropagateHandle env e) sp)
-      (qmRefuse env st e "a form"))
+      (qmInvariant env st e))
   })
 
 ; An application, read as its spine: the head, then each argument, in

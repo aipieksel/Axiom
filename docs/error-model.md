@@ -1139,7 +1139,8 @@ first. Three rules keep the numbering straight:
 - A new code takes the next number above the highest one in use, the
   *free end*, and never a number from the reserved block.
 - A retired number **MUST NOT** be reused. `AX3008`, `AX3032`,
-  `AX3061`, `AX3063`, `AX3075`, `AX3079`, `AX3080`, `AX3095` and `AX3096` are retired. `AX3081`, `AX3082`,
+  `AX3061`, `AX3063`, `AX3075`, `AX3079`, `AX3080`, `AX3095`, `AX3096` and `AX3123` are retired.
+  `AX3081`, `AX3082`,
   `AX3083`, `AX3087` and `AX3088` were skipped and never assigned, and
   the same rule covers them.
 
@@ -1200,7 +1201,6 @@ This section records the codes below. All of them are built, and
 | `AX3089` `signature-needed` | a function needs a signature: it is called before its type is known, or its body needs parameter types other than the default `Int` | An error. `tests/diagnostics/1032-signature-needed.ax`, `tests/diagnostics/1484-unsigned-parameter-poison.ax` |
 | `AX3090` `recover-thunk-unseen` | a recovery point's thunk that isn't a lambda written at the call or a top-level function, so the region check can't walk it | An error. `tests/diagnostics/1033-recover-escape.ax` |
 | `AX3091` `inline-asm` | an `asm` form the compiler can't lower: an unknown architecture, operand kind or option, a second arm for one architecture, a template naming no operand or defining a named label, a second answered output, a `const` it can't fold, a `sym` with no symbol, or a register an arm can't name | An error, where the form is written. `tests/diagnostics/1044-inline-asm.ax`, `tests/diagnostics/1280-inline-asm-forms.ax` |
-| `AX3123` `propagate-position` | a `?` with no tail to propagate to | `tests/diagnostics/1300-propagate-position.ax` |
 | `AX3124` `type-argument-arity` | a type used with a different number of arguments from its declaration | `tests/diagnostics/1420-generic-alias-arity.ax` |
 | `AX3125` `type-parameter` | an invalid, repeated or undeclared type parameter, or an unused alias parameter | `tests/diagnostics/1421-generic-alias-parameters.axbad` |
 | `AX3126` `recursive-alias` | a direct or indirect recursive alias, including unused declarations | `tests/diagnostics/1422-recursive-alias.ax` |
@@ -1220,6 +1220,7 @@ This section records the codes below. All of them are built, and
 | `AX3143` `field-effect-unknown` | a value stored in a field that declares its effects is one whose effects the compiler can't determine: a parameter, a call's result, a function that calls its argument, or a lambda that calls a parameter | `tests/diagnostics/1501-field-effect-parameter.ax`, `tests/diagnostics/1503-field-effect-transparent.ax` |
 | `AX3144` `field-effect-declaration` | a field effect declaration the compiler can't read: on a field that holds no function, `unsafe` or `div`, an undeclared effect, or `pure` beside another effect | `tests/diagnostics/1507-field-effect-declaration.ax` |
 | `AX3145` `link-width` | a link whose width is not `UInt8`, `UInt16` or `UInt32` or a type variable, such as `(Link Node Int)` (`MM-VAL-10b`) | `tests/diagnostics/1509-link-width.ax` |
+| `AX3146` `propagate-invariant` | an inconsistent internal AST during `?` lowering | `tests/diagnostics/internal/propagate-invariant.axp` |
 | `AX3116` `result-claim` | a `result(...)` claim the compiler cannot read: a value other than `owned`, or the claim on a function that is not a trusted encapsulation | `tests/diagnostics/1259-result-claim.ax` |
 | `AX3110` `axtag-never-checked` | an `effect(div)` claim, which names an effect nothing infers | An error, because no body can ever support it. `tests/diagnostics/359-div-not-inferred.ax` |
 | `AX3117` `inline-asm-rejected` | a line of an `asm` template the assembler rejects, or whose operands the register allocator can't place | An error when the program is built, at the template line, with status 1. `tests/embedded/asm-rejected.ax` |
@@ -1427,6 +1428,10 @@ or a `handle` is rewritten the same way. A `Result` leaves a region
 only when its payload and its error are both scalars (`AX3059`).
 A lambda is its own body: its
 `?`s answer the lambda.
+
+AX3123 is retired. If the propagation scan and extractor disagree on an
+internal node, AX3146 stops compilation. Tested by
+`tests/diagnostics/internal/propagate-invariant.axp`.
 
 The operand must be a `Result`. An `Option` converts first with
 `okOr`, and an error that needs another type is changed with `mapErr`

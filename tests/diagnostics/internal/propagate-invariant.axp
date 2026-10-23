@@ -1,0 +1,117 @@
+; Internal AST fault injection. This is not a refused source program.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+(import Mem)
+(import render)
+
+(:: environment (-> Diags Units Nodes InternState MEnv))
+(fn (environment diagnostics units declarations owner)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames owner
+    :structBuckets vecNew
+    :carrier 0
+    :optNames vecNew))
+
+(:: countOf (-> a Int))
+;@axiom:effect(unsafe)
+(fn (countOf value)
+  (__load64 (as value Int) -2))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source "7\n")
+    (let diagnostics (:: vecNew Diags))
+    (let units
+      (vecPush vecNew
+        (CUnit2
+          :file "internal-propagate.ax"
+          :src source
+          :name None
+          :imports vecNew
+          :library false)))
+    (let env (environment diagnostics units vecNew internNewTyped))
+    (let node (mkEInt 7))
+    (writeNodeWord node 4 (mkSpan 0 1))
+    (let child (mkEInt 9))
+    (let state
+      (QmSt :names vecNew :vals vecNew :scrut (Some child) :tname "kept" :tsp 17 :failed false))
+    (let owners (countOf child))
+    (let mut valid true)
+    (if (strEq (sysArg 1) "memo")
+      {
+        ; A corrupted true memo must reach the actual lowering guard.
+        (set valid (! (qmHas node)))
+        (writeNodeWord node 7 2)
+        (set valid (&& valid (qmHas node)))
+        (set valid (&& valid (nodeSame (qmBody env node) node)))
+        (set valid (&& valid (== (nodeAxtagsWord node) 0)))
+      }
+      {
+        ; Direct misuse violates qmExtract's documented precondition.
+        (set valid (! (qmHas node)))
+        (set valid (&& valid (nodeSame (qmExtract env state node) node)))
+        (set valid (&& valid state.failed))
+        (set valid (&& valid
+                     (match state.scrut
+                       ((None) false)
+                       ((Some value) (nodeSame value child)))))
+        (set valid (&& valid (== (countOf child) owners)))
+        (set valid (&& valid (strEq state.tname "kept")))
+        (set valid (&& valid (== state.tsp 17)))
+      })
+    (let format
+      (if (strEq (sysArg 2) "ai")
+          FMT_AI
+        (strEq (sysArg 2) "json")
+          FMT_JSON
+        FMT_HUMAN))
+    (writeStr stderr (renderDiagsFormat format diagnostics units))
+    (if (&& valid (== (vecLen diagnostics) 1))
+      (countErrorDiags diagnostics)
+      98)
+  })

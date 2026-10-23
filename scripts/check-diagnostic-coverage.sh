@@ -9,7 +9,7 @@
 # symbol-stream one: as a SET, not a count.
 #
 #   constructed (81, from core/*.ax outside explain.ax)
-#     == primary .axdl codes + tests/diagnostics/UNCOVERED
+#     == source primary .axdl codes + executed internal probes + UNCOVERED
 #
 # A new diagnostic code without a primary golden fails here until it
 # gains a fixture or an UNCOVERED line with a reason. Closing a hole is
@@ -26,7 +26,16 @@ ok()  { echo "ok   $*"; checks=$((checks + 1)); }
 bad() { echo "FAIL $*"; failed=$((failed + 1)); }
 
 constructed="$(sed 's/;.*$//' core/*.ax | grep -ohE '"AX[0-9]{4}"' | tr -d '"' | sort -u)"
-primary="$(grep -hoE '^[EWNH] AX[0-9]{4}' tests/diagnostics/*.axdl | grep -oE 'AX[0-9]{4}' | sort -u)"
+# An internal AST invariant has no honest refused source program. Count its
+# primary code only after compiling the current source, exercising the guard,
+# checking all renderers and rejecting guard/diagnostic ablations.
+if ! python3 tests/diagnostics/internal/propagate-invariant.py --axiom "$axiom" \
+    --codes-out "$work/internal-primary.codes"; then
+  echo "FAIL: internal diagnostic execution did not establish coverage"
+  exit 1
+fi
+primary="$( { grep -hoE '^[EWNH] AX[0-9]{4}' tests/diagnostics/*.axdl | grep -oE 'AX[0-9]{4}';
+              cat "$work/internal-primary.codes"; } | sort -u)"
 uncovered="$(grep -oE '^AX[0-9]{4}$' tests/diagnostics/UNCOVERED | sort -u)"
 
 n_constructed="$(echo "$constructed" | wc -l | tr -d ' ')"
