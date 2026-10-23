@@ -3636,10 +3636,9 @@
 
 ; The struct behind a `let`: the constructor application the value
 ; builds, when its head is an upcased name.
-(pub :: lspFieldValueStruct (-> ASTNode (Option String)))
+(pub :: lspFieldValueStruct (-> (Option ASTNode) (Option String)))
 (pub fn (lspFieldValueStruct v)
-  (if (nodeSame v nilNode)
-    None
+  (if (let (Some v) v)
     {
       (let h (lspSpineHead v))
       (if (nodeSame h nilNode)
@@ -3652,7 +3651,8 @@
               (Some n)
               None)
           }))
-    }))
+    }
+    None))
 
 ; The struct behind a base name at an offset: a parameter's declared
 ; type, or a let's built value. None means the struct is unknown.
@@ -6234,7 +6234,7 @@
 ;   bkind  binder kind (NAV_B_*), 0 for anything but a binder
 ;   owner  the top-level declaration the occurrence sits in
 ;   param  parameter index, for a `fn` parameter
-;   value  the bound expression, for a `let` binder; else `nilNode`
+;   value  the bound expression for a `let` binder, or None
 ; ------------------------------------------------------------------
 (pub struct LspOcc
   (name : String)
@@ -6244,7 +6244,7 @@
   (bkind : Int)
   (owner : String)
   (param : Int)
-  (value : ASTNode))
+  (value : (Option ASTNode)))
 
 ; The walk's context:
 ;
@@ -6388,9 +6388,9 @@
 
 (pub :: lspNavEmit (-> LspNav String Int Int String Int Int Int))
 (pub fn (lspNavEmit nv name span role key bkind idx)
-  (lspNavEmitValue nv name span role key bkind idx nilNode))
+  (lspNavEmitValue nv name span role key bkind idx None))
 
-(:: lspNavEmitValue (-> LspNav String Int Int String Int Int ASTNode Int))
+(:: lspNavEmitValue (-> LspNav String Int Int String Int Int (Option ASTNode) Int))
 (fn (lspNavEmitValue nv name span role key bkind idx value)
   {
     (vecPush nv.occs
@@ -6681,9 +6681,9 @@
 
 (pub :: lspNavEmitBinder (-> LspNav String Int String Int Int Int))
 (pub fn (lspNavEmitBinder nv name span key bkind idx)
-  (lspNavEmitBinderValue nv name span key bkind idx nilNode))
+  (lspNavEmitBinderValue nv name span key bkind idx None))
 
-(:: lspNavEmitBinderValue (-> LspNav String Int String Int Int ASTNode Int))
+(:: lspNavEmitBinderValue (-> LspNav String Int String Int Int (Option ASTNode) Int))
 (fn (lspNavEmitBinderValue nv name span key bkind idx value)
   (if (|| (== span 0) (|| (strEq name "_") (isSome (strFindByte name 36 0))))
     0
@@ -7371,19 +7371,23 @@
 ; A `let` binder scopes its BODY and not its value - a `let` is not
 ; recursive - so the value is walked before the name is pushed. The
 ; occurrence is emitted first because the name precedes the value in
-; the source, and the list is kept in source order. The binder's sixth
-; word carries the VALUE node (0 for every other binder kind, whose
-; sixth word is an index or unused): field hover reads a `let`-bound
-; base's type off the constructor the value builds, and no other
-; reader consults the word, so nothing else moves.
+; the source, and the list is kept in source order. The occurrence owns
+; the optional value separately from its parameter index. Field hover
+; and shape inference read a let-bound value when it is present.
 (pub :: lspNavWalkLet (-> LspNav ASTNode Int))
 (pub fn (lspNavWalkLet nv e)
   {
     (let name (nodeAName e))
+    ; The packed child slot uses nil for a missing expression.
+    (let value (nodeBChild e))
+    (let valueOpt
+      (:: (if (nodeSame value nilNode)
+        None
+        (Some value)) (Option ASTNode)))
     (let key (lspNavBinderKey (nodeAName e) (nodeSpan e) e))
     {
-      (lspNavEmitBinderValue nv name (nodeSpan e) key NAV_B_LET 0 (nodeBChild e))
-      (lspNavWalk nv (nodeBChild e))
+      (lspNavEmitBinderValue nv name (nodeSpan e) key NAV_B_LET 0 valueOpt)
+      (lspNavWalk nv value)
       (lspNavPush nv name key)
       (lspNavWalk nv (nodeCChild e))
       (lspNavPopN nv 1)
@@ -8627,12 +8631,9 @@
                         (if (== bkind NAV_B_LET)
                           (if (<= fuel 0)
                             nilNode
-                            {
-                              (let v b.value)
-                              (if (nodeSame v nilNode)
-                                nilNode
-                                (lspShapeOf decls occs v (- fuel 1)))
-                            })
+                            (if (let (Some v) b.value)
+                              (lspShapeOf decls occs v (- fuel 1))
+                              nilNode))
                           nilNode))
                     }
                   ))
@@ -8866,12 +8867,9 @@
           t)
         nilNode)
       (if (== bkind NAV_B_LET)
-        {
-          (let v b.value)
-          (if (nodeSame v nilNode)
-            nilNode
-            (lspShapeOf decls occs v 16))
-        }
+        (if (let (Some v) b.value)
+          (lspShapeOf decls occs v 16)
+          nilNode)
         nilNode))
   })
 

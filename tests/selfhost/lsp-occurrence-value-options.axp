@@ -1,0 +1,171 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import typecheck)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+(:: parse (-> String Nodes))
+(fn (parse source)
+  (match (parseModule (lex source))
+    ((ParseFailed error) __indexTrap)
+    ((ParseSuccess declarations after) declarations)))
+
+(:: occurrence (-> (Option ASTNode) Int LspOcc))
+(fn (occurrence value kind)
+  (LspOcc
+    :name "value"
+    :span 0
+    :role NAV_BINDER
+    :key "@0"
+    :bkind kind
+    :owner "test"
+    :param 0
+    :value value))
+
+(:: sameValue (-> (Option ASTNode) ASTNode Bool))
+(fn (sameValue found expected)
+  (match found
+    ((None) false)
+    ((Some value) (nodeSame value expected))))
+
+(:: textIs (-> (Option String) String Bool))
+(fn (textIs found expected)
+  (match found
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: rawLetValue (-> ASTNode (Option ASTNode)))
+(fn (rawLetValue value)
+  {
+    (let nv (lspNavContext "x" vecNew None))
+    (lspNavWalkLet nv (nodeBuildELet "x" value nilNode (mkSpan 0 1)))
+    (match (lspNavBinderOf nv.occs "@0")
+      ((None) __indexTrap)
+      ((Some binder) binder.value))
+  })
+
+(:: namedBinder (-> (Vec LspOcc) String (Option LspOcc)))
+(fn (namedBinder occs name)
+  {
+    (let mut found (:: None (Option LspOcc)))
+    (for o in occs
+      (if (&& (== o.role NAV_BINDER) (strEq o.name name))
+        (set found (Some o))))
+    found
+  })
+
+(:: binderValue (-> (Vec LspOcc) String (Option ASTNode)))
+(fn (binderValue occs name)
+  (match (namedBinder occs name)
+    ((None) __indexTrap)
+    ((Some binder) binder.value)))
+
+(:: shapeIs (-> ASTNode String Bool))
+(fn (shapeIs shape expected)
+  (if (lspShapeIsBad shape)
+    false
+    (strEq (tyRender shape) expected)))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: retireOccurrence (-> ASTNode ()))
+(fn (retireOccurrence value)
+  {
+    (let o (occurrence (Some value) NAV_B_LET))
+    o.param
+    ()
+  })
+
+(:: escaped (Option ASTNode))
+(fn (escaped)
+  (binderValue
+    (lspNavOccurrences "(fn (test) { (let local \"owned\") local })"
+      (parse "(fn (test) { (let local \"owned\") local })"))
+    "local"))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let absent (occurrence None NAV_B_LET))
+    (let poison mkTErr)
+    (let unit (mkEUnitAt 0))
+    (let integer (mkEInt 7))
+    (say 1 (isNone absent.value))
+    (let poisoned (occurrence (Some poison) NAV_B_LET))
+    (say 2 (sameValue poisoned.value poison))
+    (say 3 (isSome (rawLetValue unit)))
+    (say 4 (sameValue (rawLetValue integer) integer))
+    (say 5 (isNone (lspFieldValueStruct None)))
+    (say 6 (textIs (lspFieldValueStruct (Some (mkEApp (mkEVar "Box") (mkEInt 1)))) "Box"))
+    (say 7 (textIs (lspFieldValueStruct (Some (mkEVar "Box"))) "Box"))
+    (say 8 (isNone (lspFieldValueStruct (Some (mkEVar "lower")))))
+    (say 9 (isNone (lspFieldValueStruct (Some integer))))
+    (say 10 (isNone (lspFieldValueStruct (Some poison))))
+    (say 11 (isNone (lspFieldValueStruct (Some nilNode))))
+    (say 12 (isNone (rawLetValue nilNode)))
+    (say 13 (sameValue (rawLetValue poison) poison))
+    (say 14 (isSome (rawLetValue (mkEVar "()"))))
+    (let source "(:: test (-> Int Int)) (fn (test p) { (let local 7) local })")
+    (let declarations (parse source))
+    (let occs (lspNavOccurrences source declarations))
+    (say 15 (isNone (binderValue occs "p")))
+    (say 16 (isSome (binderValue occs "local")))
+    (let mut ordinaryMissing true)
+    (for o in occs
+      (if (!= o.bkind NAV_B_LET)
+        (set ordinaryMissing (&& ordinaryMissing (isNone o.value)))))
+    (say 17 ordinaryMissing)
+    (say 18 (lspShapeIsBad (lspShapeOfBinder vecNew vecNew absent)))
+    (say 19 (shapeIs (lspShapeOfBinder vecNew vecNew (occurrence (Some integer) NAV_B_LET)) "Int"))
+    (say 20
+      (shapeIs (lspShapeOfBinder vecNew vecNew (occurrence (Some (mkEUnitAt 0)) NAV_B_LET)) "()"))
+    (say 21 (lspShapeIsBad (lspShapeOfBinder vecNew vecNew poisoned)))
+    (say 22 (lspShapeIsBad (lspShapeOfBinder vecNew vecNew (occurrence None NAV_B_PARAM))))
+    (say 23
+      (match (namedBinder occs "p")
+        ((None) false)
+        ((Some binder) (shapeIs (lspShapeOfBinder declarations occs binder) "Int"))))
+    (let readSpan (:: (strFind source "local })" 0) (Option Int)))
+    (let at
+      (match readSpan
+        ((None) __indexTrap)
+        ((Some pos) pos)))
+    (let read (mkEVarAt "local" (mkSpan at (+ at 5))))
+    (say 24 (shapeIs (lspShapeVar declarations occs read 16) "Int"))
+    (say 25 (lspShapeIsBad (lspShapeVar declarations occs read 0)))
+    (let boxes "(fn (test) { (let box (Box :field 1)) box.field })")
+    (let boxesDecls (parse boxes))
+    (let boxAt
+      (match (strFind boxes "box.field" 0)
+        ((None) __indexTrap)
+        ((Some pos) pos)))
+    (say 26 (textIs (lspFieldBaseStruct boxes boxesDecls "box" boxAt) "Box"))
+    (say 27 (isNone (lspFieldBaseStruct source declarations "local" at)))
+    (let value (mkEInt 17))
+    (let before (count value))
+    (retireOccurrence value)
+    (say 28 (== (count value) before))
+    (let held (occurrence (Some value) NAV_B_LET))
+    (say 29 (== (count value) (+ before 1)))
+    (say 30 (sameValue held.value value))
+    (let child escaped)
+    (for i in 0..16
+      (strDup "temporary child payload stays alive"))
+    (say 31
+      (match child
+        ((None) false)
+        ((Some expression) (strEq (nodeAText expression) "\"owned\""))))
+    0
+  })

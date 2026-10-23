@@ -1,0 +1,47 @@
+(import core)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: report (-> String Int ()))
+;@axiom:effect(io)
+(fn (report source offset)
+  {
+    (println "SOURCE {source}")
+    (let workspace (lspWorkspaceNew vecNew vecNew vecNew))
+    (let uri "file:///tmp/lsp-occurrence.ax")
+    (let params (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (println (jsonWrite (lspHover workspace source uri params "")))
+    (println (jsonWrite (lspDocumentHighlight source params)))
+    (println (jsonWrite (lspPrepareRename source params)))
+    (println
+      (jsonWrite
+        (lspRename workspace source uri (jsonObjPut params "newName" (jsonStr "fresh")) vecNew
+          vecNew)))
+    (println
+      (jsonWrite
+        (lspInlayHints workspace source uri
+          (jsonObjPut jsonObj "range"
+            (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+              (lspPos source (strLen source)))))))
+    (println (jsonWrite (lspSemanticTokens source)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (report "" 0)
+    (report "(fn (test) { (let value 7) value })" 18)
+    (report "(fn (test) { (let value \"\") value })" 18)
+    (report "(fn (test) { (let value ()) value })" 18)
+    (report "(:: test (-> Int Int)) (fn (test p) p)" 32)
+    (report "(fn (test p) p)" 10)
+    (report "(fn (test) { (let value missing) value })" 18)
+    (report "(fn (test) { (let value 7) value }" 18)
+    (report "(fn (test) { (let value 7) value }) @" 18)
+    (report "(struct Box (field : Int)) (fn (test) { (let box (Box :field 1)) box.field })" 42)
+    0
+  })

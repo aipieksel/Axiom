@@ -56,7 +56,7 @@ def main():
             "missing-none": ("(match (nthParamTy mkIntTy 0) ((Some ty) (nodeTag ty)))", "AX3005"),
             "wrong-index": ("(nthParamTy mkIntTy false)", "AX3004"),
             "unchecked-lsp-type": ("(nodeTag (lspShapeParamTy vecNew \"none\" 0))", "AX3004"),
-            "unchecked-lsp-name": ("(strLen (lspFieldValueStruct (mkEInt 1)))", "AX3004"),
+            "unchecked-lsp-name": ("(strLen (lspFieldValueStruct (Some (mkEInt 1))))", "AX3004"),
         }
         for name, (expression, code) in invalid.items():
             source = work / (name + ".ax")
