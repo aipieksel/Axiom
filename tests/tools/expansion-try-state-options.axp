@@ -1,0 +1,233 @@
+; Try-lowering state owns an optional scrutinee and retires its children.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+(import Mem)
+
+(:: environment (-> Diags Units Nodes InternState MEnv))
+(fn (environment diagnostics units declarations owner)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames owner
+    :structBuckets vecNew))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+; Observe the live count while the owning value remains in scope.
+(:: countOf (-> a Int))
+;@axiom:effect(unsafe)
+(fn (countOf value)
+  (__load64 (as value Int) -2))
+
+(:: state (-> (Option ASTNode) QmSt))
+(fn (state value)
+  (QmSt :names vecNew :vals vecNew :scrut value :tname "" :tsp 0 :failed false))
+
+(:: retireState (-> ASTNode Int))
+(fn (retireState value)
+  {
+    (let st (state (Some value)))
+    (match st.scrut
+      ((None) 0)
+      ((Some child) (nodeTag child)))
+  })
+
+(:: retireEnvironment (-> InternState Int))
+(fn (retireEnvironment owner)
+  {
+    (let env (environment vecNew vecNew vecNew owner))
+    (internCap (internWordOf env.structNames))
+  })
+
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
+(:: expression (-> String ASTNode))
+(fn (expression source)
+  {
+    (let result (parseExpr (lex source) 0))
+    (expectParsed result)
+  })
+
+(:: retireEmptyState Int)
+(fn (retireEmptyState)
+  {
+    (let st (state None))
+    (match st.scrut
+      ((None) 42)
+      ((Some child) (nodeTag child)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let owner internNewTyped)
+    (let before (countOf owner))
+    (retireEnvironment owner)
+    (say 1 (== (countOf owner) before))
+    (let diagnostics (:: vecNew Diags))
+    (let declarations
+      (expectParsed (parseModule (lex "(struct Empty) (struct Pair (left : Int))"))))
+    (let env (environment diagnostics vecNew declarations owner))
+    (say 2 (== (countOf owner) (+ before 1)))
+    (expIndexStructDecls env)
+    (say 3 (== (vecLen env.structBuckets) 2))
+    (say 4
+      (if (let (Some id) (internFind (internWordOf env.structNames) "Pair"))
+        (== id 1)
+        false))
+    (say 5
+      (match (expNamedStructDecl env (mkEVar "Pair"))
+        ((ExpStructFound node) (strEq (nodeAName node) "Pair"))
+        ((ExpStructMissing) false)
+        ((ExpStructAmbiguous) false)))
+    (say 6
+      (match (expNamedStructDecl env (mkEVar "Missing"))
+        ((ExpStructFound node) false)
+        ((ExpStructMissing) true)
+        ((ExpStructAmbiguous) false)))
+    (for i in 0..100
+      (internIntern (internWordOf env.structNames) (concat "growth" (fmtInt i))))
+    (say 7
+      (if (let (Some id) (internFind (internWordOf owner) "Pair"))
+        (== id 1)
+        false))
+    (let child (mkEInt 7))
+    (let childBefore (countOf child))
+    (retireState child)
+    (say 8 (== (countOf child) childBefore))
+    (let st (state None))
+    (say 9
+      (match st.scrut
+        ((None) true)
+        ((Some child) false)))
+    (let trial (nodeBuildETry child 0 0 0))
+    (let hole (qmExtract env st trial))
+    (say 10
+      (match st.scrut
+        ((None) false)
+        ((Some value) (nodeSame value child))))
+    (say 11 (== (nodeTag hole) TAG_E_VAR))
+    (say 12 (> (strLen st.tname) 0))
+    (let lifted (qmLift env trial))
+    (say 13 (== (nodeTag lifted) TAG_E_MATCH))
+    (say 14 (nodeSame (nodeAChild lifted) child))
+    (say 15 (&& (== (nodeTag lifted) TAG_E_MATCH) (== (vecLen (nodeBChildren lifted)) 2)))
+    (let malformed (nodeBuildETry nilNode 0 0 0))
+    (say 16 (nodeSame (qmLift env malformed) malformed))
+    (let bad (expression "(if true (Ok 1)? (Ok 2))"))
+    (say 17 (nodeSame (qmLift env bad) bad))
+    (say 18 (== (vecLen diagnostics) 1))
+    (say 19 (strEq (diagCode (vecGet diagnostics 0)) "AX3123"))
+    (say 20 (== retireEmptyState 42))
+    (let first (mkEInt 101))
+    (let second (mkEInt 202))
+    (let firstBefore (countOf first))
+    (let secondBefore (countOf second))
+    (let replace (state (Some first)))
+    (say 21 (== (countOf first) (+ firstBefore 1)))
+    (set replace.scrut (Some second))
+    (say 22 (== (countOf first) firstBefore))
+    (say 23 (== (countOf second) (+ secondBefore 1)))
+    (say 24
+      (match replace.scrut
+        ((None) false)
+        ((Some value) (nodeSame value second))))
+    (set replace.scrut None)
+    (say 25 (== (countOf second) secondBefore))
+    (say 26
+      (match replace.scrut
+        ((None) true)
+        ((Some value) false)))
+    (set replace.scrut (Some first))
+    (set replace.scrut replace.scrut)
+    (say 27 (== (countOf first) (+ firstBefore 1)))
+    (set replace.scrut None)
+    (say 28 (== (countOf first) firstBefore))
+    (let zero (nodeWireEmpty 0))
+    (let zeroState (state None))
+    (qmExtract env zeroState (nodeBuildETry zero 0 0 0))
+    (say 29
+      (match zeroState.scrut
+        ((None) false)
+        ((Some value) (nodeSame value zero))))
+    (let absentState (state None))
+    (qmExtract env absentState malformed)
+    (say 30
+      (match absentState.scrut
+        ((None) true)
+        ((Some value) false)))
+    (let outer (nodeBuildETry trial 0 0 0))
+    (let nestedState (state None))
+    (let nestedHole (qmExtract env nestedState outer))
+    (say 31
+      (match nestedState.scrut
+        ((None) false)
+        ((Some value) (nodeSame value child))))
+    (say 32 (== (nodeTag nestedHole) TAG_E_TRY))
+    (say 33 (== (nodeTag (nodeAChild nestedHole)) TAG_E_VAR))
+    (say 34 (! nestedState.failed))
+    (let failedState (state (Some child)))
+    (let diagnosticBefore (vecLen diagnostics))
+    (qmRefuse env failedState bad "a branch")
+    (say 35 failedState.failed)
+    (say 36 (== (vecLen diagnostics) (+ diagnosticBefore 1)))
+    (say 37
+      (match failedState.scrut
+        ((None) false)
+        ((Some value) (nodeSame value child))))
+    (say 38 (== (nodeTag (qmLift env outer)) TAG_E_MATCH))
+    0
+  })

@@ -1,0 +1,150 @@
+; Try-lowering state owns an optional scrutinee and retires its children.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+(import Mem)
+
+(:: environment (-> Diags Units Nodes InternState MEnv))
+(fn (environment diagnostics units declarations owner)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames owner
+    :structBuckets vecNew))
+
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
+(:: expression (-> String ASTNode))
+(fn (expression source)
+  {
+    (let result (parseExpr (lex source) 0))
+    (expectParsed result)
+  })
+
+(:: dumpNodes (-> Nodes Int String))
+(fn (dumpNodes nodes budget)
+  {
+    (let parts (:: vecNew Names))
+    (for node in nodes
+      (vecPush parts (dumpNode node budget)))
+    (concat "[" (concat (strJoin parts " ") "]"))
+  })
+
+(:: dumpNode (-> ASTNode Int String))
+(fn (dumpNode node budget)
+  (if (nodeSame node nilNode)
+    "_"
+    (if (<= budget 0)
+      "LIMIT"
+      {
+        (let tag (nodeTag node))
+        (let childBudget (- budget 1))
+        (let body
+          (if (== tag TAG_E_INT)
+              (fmtInt (nodeA node))
+            (== tag TAG_E_VAR)
+              (nodeAName node)
+            (== tag TAG_E_APP)
+              (concat (dumpNode (nodeAChild node) childBudget)
+                (concat " " (dumpNode (nodeBChild node) childBudget)))
+            (== tag TAG_E_TRY)
+              (dumpNode (nodeAChild node) childBudget)
+            (== tag TAG_E_BEGIN)
+              (dumpNodes (nodeAChildren node) childBudget)
+            (|| (== tag TAG_E_LET) (== tag TAG_E_LETM))
+              (concat (nodeAName node)
+                (concat " "
+                  (concat (dumpNode (nodeBChild node) childBudget)
+                    (concat " " (dumpNode (nodeCChild node) childBudget)))))
+            (== tag TAG_E_IF)
+              (concat (dumpNode (nodeAChild node) childBudget)
+                (concat " "
+                  (concat (dumpNode (nodeBChild node) childBudget)
+                    (concat " " (dumpNode (nodeCChild node) childBudget)))))
+            (== tag TAG_E_MATCH)
+              (concat (dumpNode (nodeAChild node) childBudget)
+                (concat " " (dumpNodes (nodeBChildren node) childBudget)))
+            (== tag TAG_M_ARM)
+              (concat (dumpNode (nodeAChild node) childBudget)
+                (concat " " (dumpNode (nodeBChild node) childBudget)))
+            "UNKNOWN"))
+        (concat "(" (concat (fmtInt tag) (concat " " (concat body ")"))))
+      })))
+
+(:: dump (-> String Bool ()))
+;@axiom:effect(io)
+(fn (dump source body)
+  {
+    (let diagnostics (:: vecNew Diags))
+    (let units
+      (vecPush vecNew
+        (CUnit2 :file "try-state.ax" :src source :name (Some "") :imports vecNew :library false)))
+    (let env (environment diagnostics units vecNew internNewTyped))
+    (let input (expression source))
+    (let output
+      (if body
+        (qmBody env input)
+        (qmLift env input)))
+    (println (concat "SOURCE " source))
+    (println (concat "TREE " (dumpNode output 64)))
+    (writeStr stdout (renderDiagsUnits diagnostics units))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (dump "(Ok 7)?" true)
+    (dump "(f (g 1) (Ok 2)?)" true)
+    (dump "(f (g 1) (Ok 2)? (later 3))" true)
+    (dump "(f (Ok 1)? (Ok 2)?)" true)
+    (dump "(Ok (Ok 3))??" true)
+    (dump "{ (observe 1) (Ok 2)? }" true)
+    (dump "(if true (Ok 1)? (Ok 2))" false)
+    (dump "(f (if true (Ok 1)? (Ok 2)))" true)
+    0
+  })

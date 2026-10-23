@@ -6864,7 +6864,7 @@
 (pub struct QmSt
   (mut names : (Vec String))
   (mut vals : (Vec ASTNode))
-  (mut scrut : ASTNode)
+  (mut scrut : (Option ASTNode))
   (mut tname : String)
   (mut tsp : Int)
   (mut failed : Bool))
@@ -7109,14 +7109,18 @@
 (pub :: qmLift (-> MEnv ASTNode ASTNode))
 (pub fn (qmLift env e)
   {
-    (let st (QmSt :names vecNew :vals vecNew :scrut nilNode :tname "" :tsp 0 :failed false))
+    (let st (QmSt :names vecNew :vals vecNew :scrut None :tname "" :tsp 0 :failed false))
     {
       (let hole (qmExtract env st e))
-      (if (|| st.failed (nodeSame st.scrut nilNode))
+      (if st.failed
         e
-        (qmWrap st 0
-          (nodeBuildEMatch st.scrut (qmArms (expFresh env "q") st.tname (qmRw env hole) st.tsp) 0
-            st.tsp)))
+        (match st.scrut
+          ((None) e)
+          ((Some scrutinee)
+            (qmWrap st 0
+              (nodeBuildEMatch scrutinee
+                (qmArms (expFresh env "q") st.tname (qmRw env hole) st.tsp) 0 st.tsp))
+          )))
     }
   })
 
@@ -7281,7 +7285,10 @@
           {
             (let t (expFresh env "q"))
             {
-              (set st.scrut (nodeAChild e))
+              (let scrutinee (nodeAChild e))
+              (set st.scrut (if (nodeSame scrutinee nilNode)
+                None
+                (Some scrutinee)))
               (set st.tname t)
               (set st.tsp sp)
               (mkEVarAt t sp)
