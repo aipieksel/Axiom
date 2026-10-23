@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import runpy
 import shutil
@@ -24,7 +25,21 @@ CC_FAILURE = diagnostic('cc failed', 'a C compiler drives the link step; put `cc
 CC_MISSING = diagnostic('could not run `cc`', 'a C compiler drives the link step; put `cc` on PATH')
 
 
+def supports_posix_process_probes(system):
+    # These probes require signal wait status and wait-any-child reaping.
+    return system in ('Darwin', 'Linux', 'FreeBSD')
+
+
 def check(compiler, root, work):
+    system = platform.system()
+    if not supports_posix_process_probes(system):
+        reason = ('This harness requires POSIX signals and wait-any-child reaping; '
+                  'Windows process handles and termination need separate native coverage.')
+        report = {'status': 'skipped', 'host': system, 'reason': reason,
+                  'configurations': [], 'controls': [], 'refusals': []}
+        (work / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(f'skip process results on {system}: {reason}', flush=True)
+        return
     driver = (root / 'core/driver.ax').read_text()
     bridge = (root / 'tests/tools/driver-process-bridge.axp').read_text()
     fixture = root / 'tests/tools/driver-process-results.axp'
@@ -32,7 +47,7 @@ def check(compiler, root, work):
     hashes = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
               for folder in ('core', 'stdlib') for path in sorted((root / folder).rglob('*.ax'))}
     env = dict(os.environ, AXIOM_STDLIB=str(root / 'stdlib'))
-    report = {'builder': str(compiler), 'builder_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
+    report = {'status': 'passed', 'host': system, 'builder': str(compiler), 'builder_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(),
               'source_sha256': hashes, 'configurations': [], 'controls': [], 'refusals': [],
               'limits': [
                   'Native host O0/O2 with allocation poisoning; no cross-target execution claim.',
