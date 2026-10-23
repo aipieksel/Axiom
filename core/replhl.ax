@@ -580,7 +580,7 @@
         (|| (strEq parent "data") (|| (strEq parent "effect") (strEq parent "match")))))))
 
 ;@axiom:restrict(no-io,no-foreign)
-(:: hlClassOf (-> Int Bool Bool Int Int))
+(:: hlClassOf (-> Token Bool Bool Int Int))
 (fn (hlClassOf t isHead isBinder n)
   {
     (let k (kindInt (tokenKind t)))
@@ -751,21 +751,24 @@
 ; Contextual roles for the flat local spelling and colon labels.
 ; `ordinal` counts operands after the head, including this token.
 ;@axiom:restrict(no-io,no-foreign)
-(:: hlContextClass (-> Int Int String String Int Int))
+(:: hlContextClass (-> Token (Option Token) String String Int Int))
 (fn (hlContextClass t previous head parent ordinal)
   (if (!= (kindInt (tokenKind t)) (kindInt TK_IDENT))
     (- 0 1)
-    (if (&& (! (|| (strEq parent "struct") (strEq head "{")))
-          (&& (!= previous 0)
-            (&& (== (kindInt (tokenKind previous)) (kindInt TK_COLON))
-              (== (spanEnd (tokenSpan previous)) (spanStart (tokenSpan t))))))
+    (if (if (let (Some prev) previous)
+      (&& (! (|| (strEq parent "struct") (strEq head "{")))
+        (&& (== (kindInt (tokenKind prev)) (kindInt TK_COLON))
+          (== (spanEnd (tokenSpan prev)) (spanStart (tokenSpan t)))))
+      false)
       HL_MEMBER
       (if (strEq head "let")
         (if (== ordinal 1)
           (if (strEq (tokenLexeme t) "mut")
             HL_KEYWORD
             HL_IDENT)
-          (if (&& (== ordinal 2) (&& (!= previous 0) (strEq (tokenLexeme previous) "mut")))
+          (if (if (let (Some prev) previous)
+            (&& (== ordinal 2) (strEq (tokenLexeme prev) "mut"))
+            false)
             HL_IDENT
             (- 0 1)))
         (- 0 1)))))
@@ -906,8 +909,8 @@
                       (let contextClass
                         (hlContextClass t
                           (if (> i 0)
-                            (vecGet toks (- i 1))
-                            0)
+                            (Some (vecGet toks (- i 1)))
+                            None)
                           (if (> depth 0)
                             (vecGet heads (- depth 1))
                             "")

@@ -1,6 +1,6 @@
 ; parser.ax — recursive-descent S-expression parser.
 ;
-; Consumes a Vec of Token handles and produces ASTNodes.
+; Consumes owning Tokens and produces ASTNodes.
 ; Dependencies: core.ax, Mem, Str, Fmt, Vec, lexer.ax.
 (import core)
 (import Mem)
@@ -1846,7 +1846,7 @@
 ; AX2005, whose message, label and help are stage0's own wording. The
 ; limit renders from `parseMaxDepth` rather than being spelled out, so
 ; the constant and the sentence about it cannot drift.
-(pub :: ax2005Diag (-> Ints Int Diag))
+(pub :: ax2005Diag (-> Tokens Int Diag))
 (pub fn (ax2005Diag tokens pos)
   {
     (let tok (vecGet tokens pos))
@@ -1878,7 +1878,7 @@
 ; the other half: it is a type VARIABLE, and a signature carrying one
 ; accepts anything at all. The help names the Axiom type so the fix is
 ; a substitution rather than a search.
-(pub :: ax3047Diag (-> Ints Int String diag::Diag))
+(pub :: ax3047Diag (-> Tokens Int String diag::Diag))
 (pub fn (ax3047Diag tokens pos n)
   {
     (let d
@@ -1893,7 +1893,7 @@
 ; AX3133, at the rule pattern's head token: the one name a rule's
 ; pattern may not open with is any name but the macro's own, because
 ; the head is how a rule is matched to its macro (MAC-LANG-14).
-(pub :: ax3133Diag (-> Ints Int String diag::Diag))
+(pub :: ax3133Diag (-> Tokens Int String diag::Diag))
 (pub fn (ax3133Diag tokens pos mac)
   {
     (let tok (vecGet tokens pos))
@@ -1914,7 +1914,7 @@
 ; quote followed by space, `(` or `[` here - and Axiom has no
 ; quote form, so the help says what the quote mark does open
 ; rather than naming a replacement that does not exist.
-(pub :: quoteDiag (-> Ints Int diag::Diag))
+(pub :: quoteDiag (-> Tokens Int diag::Diag))
 (pub fn (quoteDiag tokens pos)
   {
     (let tok (vecGet tokens pos))
@@ -1934,7 +1934,7 @@
 ; (`(import Sys/Platform)` for `Sys.Platform`). The note records what
 ; the acceptance used to cost, which is the fact that decides whether
 ; anyone may relax this later.
-(pub :: ax2006Diag (-> Ints Int String Diag))
+(pub :: ax2006Diag (-> Tokens Int String Diag))
 (pub fn (ax2006Diag tokens pos seg)
   {
     (let tok (vecGet tokens pos))
@@ -1972,7 +1972,7 @@
 ; the check is not in the lexer: `scanStringEnd` treats a line break
 ; inside a literal as an ordinary character on purpose, and banning it
 ; there would be a change to every string in the language.
-(pub :: ax3041Diag (-> Ints Int String Diag))
+(pub :: ax3041Diag (-> Tokens Int String Diag))
 (pub fn (ax3041Diag tokens pos ch)
   {
     (let tok (vecGet tokens pos))
@@ -2016,7 +2016,7 @@
 ; token where `in` belongs. The help inserts it, unless the form ends
 ; there: then the loop is missing more than one word, and an insertion
 ; would only move the error along.
-(pub :: forInDiag (-> Ints Int Diag))
+(pub :: forInDiag (-> Tokens Int Diag))
 (pub fn (forInDiag tokens pos)
   {
     (let tok (vecGet tokens pos))
@@ -2041,7 +2041,7 @@
 
 ; Imports form the module header. Both late and nested imports keep
 ; AX2001, with placement advice at the import keyword.
-(pub :: importPositionDiag (-> Ints Int String diag::Diag))
+(pub :: importPositionDiag (-> Tokens Int String diag::Diag))
 (pub fn (importPositionDiag tokens pos code)
   (diagSetLabel
     (mkDiag SEV_ERROR "AX2001" "unexpected-token" (tokenSpan (vecGet tokens pos))
@@ -2052,7 +2052,7 @@
       "move this import before the module's signatures, functions and other declarations, outside any function, block or lambda")
     "imports belong at the start of the module"))
 
-(pub :: parseErrDiag (-> Ints Int String Diag))
+(pub :: parseErrDiag (-> Tokens Int String Diag))
 (pub fn (parseErrDiag tokens r src)
   ; Tested on the CODE rather than inferred from the position: the
   ; overflow token is always a real `(`, so every test below would step
@@ -2170,7 +2170,7 @@
                         }))))))))))
   })
 
-; The diagnostic for a LEXICAL error, or 0 when the token stream has
+; The diagnostic for a LEXICAL error, or None when the token stream has
 ; none. Lexing happens before parsing, so this is asked first and a
 ; file with both kinds of error reports this one - which is also
 ; stage0's order.
@@ -2186,32 +2186,31 @@
 ; which is an unexpected character. Keying off the byte gave the bare
 ; one AX1005 where stage0 says AX1001 - found by sweeping all 94
 ; printable bytes through both compilers, not by reading.
-(pub :: lexErrDiag (-> Ints String (Option Diag)))
+(pub :: lexErrDiag (-> Tokens String (Option Diag)))
 (pub fn (lexErrDiag tokens src)
   {
     (let mut i 0)
-    (let mut found 0)
+    (let mut found (:: None (Option Token)))
     (let mut isEsc false)
     {
-      (while (&& (< i (vecLen tokens)) (== found 0))
+      (while (&& (< i (vecLen tokens)) (isNone found))
         {
           {
             (let k (kindInt (tokenKind (vecGet tokens i))))
             (if (== k (kindInt TK_ERROR))
-              (set found (vecGet tokens i))
+              (set found (Some (vecGet tokens i)))
               (if (== k (kindInt TK_ERROR_ESC))
                 {
-                  (set found (vecGet tokens i))
+                  (set found (Some (vecGet tokens i)))
                   (set isEsc true)
                 }))
           }
           (set i (+ i 1))
         })
-      (if (== found 0)
-        None
+      (if (let (Some token) found)
         (Some
           {
-            (let sp (tokenSpan found))
+            (let sp (tokenSpan token))
             {
               (let b (strByte src (spanStart sp)))
               (if isEsc
@@ -2270,7 +2269,8 @@
                             (concat (concat "`" ch) "` is not valid here")))
                       }))))
             }
-          }))
+          })
+        None)
     }
   })
 
@@ -2280,7 +2280,7 @@
   (concat (strSlice "0123456789ABCDEF" (/ b 16) 1) (strSlice "0123456789ABCDEF" (% b 16) 1)))
 
 ; The EOF token has no lexeme; stage0 spells it `EOF` in the message.
-(pub :: foundText (-> Int String))
+(pub :: foundText (-> Token String))
 (pub fn (foundText tok)
   (if (== (kindInt (tokenKind tok)) (kindInt TK_EOF))
     "EOF"
@@ -2433,20 +2433,18 @@
 (pub fn (kindInt k)
   (as k Int))
 
-(pub :: peekToken (-> Ints Int Int))
+; Missing lookahead is separate from the EOF token the lexer supplies.
+(pub :: peekToken (-> Tokens Int (Option Token)))
 (pub fn (peekToken tokens pos)
   (if (>= pos (vecLen tokens))
-    0
-    (vecGet tokens pos)))
+    None
+    (Some (vecGet tokens pos))))
 
-(pub :: peekIs (-> Ints Int TokenKind Bool))
+(pub :: peekIs (-> Tokens Int TokenKind Bool))
 (pub fn (peekIs tokens pos kind)
-  {
-    (let t (peekToken tokens pos))
-    (if (== t 0)
-      (== (kindInt TK_EOF) (kindInt kind))
-      (== (kindInt (tokenKind t)) (kindInt kind)))
-  })
+  (if (let (Some token) (peekToken tokens pos))
+    (== (kindInt (tokenKind token)) (kindInt kind))
+    (== (kindInt TK_EOF) (kindInt kind))))
 
 (pub :: advance (-> Int Int))
 (pub fn (advance p)
@@ -2455,7 +2453,7 @@
 ; ------------------------------------------------------------------
 ; Skip to matching close-paren. depth starts at 1.
 ; ------------------------------------------------------------------
-(pub :: skipParens (-> Ints Int Int Int))
+(pub :: skipParens (-> Tokens Int Int Int))
 (pub fn (skipParens tokens pos depth)
   (if (>= pos (vecLen tokens))
     (pErr pos)
@@ -2470,7 +2468,7 @@
 ; ------------------------------------------------------------------
 ; Parse literals.
 ; ------------------------------------------------------------------
-(pub :: parseLit (-> Ints Int Int))
+(pub :: parseLit (-> Tokens Int Int))
 (pub fn (parseLit tokens pos)
   ; Literals carry their token's span now: an AX3004 about an argument
   ; or an if-join anchors at the literal in stage0, and a span the
@@ -2563,7 +2561,7 @@
     }
   })
 
-(pub :: parseIdentRef (-> Ints Int Int))
+(pub :: parseIdentRef (-> Tokens Int Int))
 ; A dotted chain of identifiers is either FIELD ACCESS (`p.x.y`) or a
 ; MODULE PATH (`Sys.Platform::sysReadNum`), and which one is only known at
 ; the end: `::` makes it a module path. So the chain is collected
@@ -2607,7 +2605,7 @@
 ; is none the caller re-parses from the start as a field chain, which
 ; costs one extra pass over a handful of tokens and keeps the field
 ; path exactly as it was.
-(pub :: parseDottedChain (-> Ints Int Strings Int))
+(pub :: parseDottedChain (-> Tokens Int Strings Int))
 (pub fn (parseDottedChain tokens pos acc)
   (if (&& (peekIs tokens pos TK_DOT) (peekIs tokens (advance pos) TK_IDENT))
     {
@@ -2618,7 +2616,7 @@
 
 ; At the `::`. Every further `::ident` extends the path; the LAST
 ; segment is the name and the rest are the module.
-(pub :: parseQualifiedTail (-> Ints Int Strings Int Int))
+(pub :: parseQualifiedTail (-> Tokens Int Strings Int Int))
 (pub fn (parseQualifiedTail tokens pos chain sp)
   (if (peekIs tokens pos TK_DOUBLE_COLON)
     (if (peekIs tokens (advance pos) TK_IDENT)
@@ -2648,7 +2646,7 @@
 ; `.field` suffixes make field accesses, folded left so `a.b.c` reads
 ; the `c` of the value at `a.b`. Dotted module paths never reach here -
 ; imports parse through parseModPath.
-(pub :: parseFieldChain (-> Ints Int ASTNode Int))
+(pub :: parseFieldChain (-> Tokens Int ASTNode Int))
 (pub fn (parseFieldChain tokens pos base)
   ; The node's span is the FIELD NAME token's - AX3007's anchor. An
   ; expression-position anchor for the whole access is the BASE's span
@@ -2663,7 +2661,7 @@
 ; ------------------------------------------------------------------
 ; Parse an identifier token, returning the lexeme Str handle.
 ; ------------------------------------------------------------------
-(pub :: parseIdentName (-> Ints Int Int))
+(pub :: parseIdentName (-> Tokens Int Int))
 (pub fn (parseIdentName tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -2687,7 +2685,7 @@
 ; field name needs - `getX` twice is one program with two definitions
 ; of one symbol. The marker stays the same space-joined string,
 ; PREFIX-encoded, and `expMarkerPart` reads it back.
-(pub :: parseDeclName (-> Ints Int Int))
+(pub :: parseDeclName (-> Tokens Int Int))
 (pub fn (parseDeclName tokens pos)
   (if (&& (peekIs tokens pos TK_LPAREN)
         (&& (peekIs tokens (advance pos) TK_IDENT)
@@ -2718,7 +2716,7 @@
 
 ; A join's operand: a bare identifier, or a nested join. Answers the
 ; operand's own marker text, which the caller splices into its own.
-(pub :: parseJoinOperand (-> Ints Int Int))
+(pub :: parseJoinOperand (-> Tokens Int Int))
 (pub fn (parseJoinOperand tokens pos)
   (if (peekIs tokens pos TK_LPAREN)
     (parseDeclName tokens pos)
@@ -2729,7 +2727,7 @@
 ; ------------------------------------------------------------------
 ; Parse a list of identifiers until ), returning a Vec of Str handles.
 ; ------------------------------------------------------------------
-(pub :: parseIdentList (-> Ints Int Strings Int))
+(pub :: parseIdentList (-> Tokens Int Strings Int))
 (pub fn (parseIdentList tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -2776,7 +2774,7 @@
 ; inherited from the AST rather than introduced here, and symmetric,
 ; so a pattern and an argument that spell alike still match.
 ; ------------------------------------------------------------------
-(pub :: parseMacroPat (-> Ints Int Int))
+(pub :: parseMacroPat (-> Tokens Int Int))
 (pub fn (parseMacroPat tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -2794,7 +2792,7 @@
 ; The elements of a parenthesised pattern, folded into a spine. An
 ; EMPTY one is refused: `()` would match a form of zero elements, and
 ; no argument is one, so it is a rule that could never fire.
-(pub :: parseMacroPatArgs (-> Ints Int ASTNode Int))
+(pub :: parseMacroPatArgs (-> Tokens Int ASTNode Int))
 (pub fn (parseMacroPatArgs tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (if (nodeSame acc nilNode)
@@ -2825,7 +2823,7 @@
 ; identifier, so no template name can resolve to the marker - the same
 ; trick `(syntax/join a b)` uses one screen up, and for the same
 ; reason.
-(pub :: parseMacroPatList (-> Ints Int Ints Strings Strings Ints Int))
+(pub :: parseMacroPatList (-> Tokens Int Ints Strings Strings Ints Int))
 (pub fn (parseMacroPatList tokens pos pats names spells reps)
   (if (peekIs tokens pos TK_RPAREN)
     {
@@ -2872,7 +2870,7 @@
         })
     }))
 
-(pub :: patIsEllipsis (-> Ints Int Bool))
+(pub :: patIsEllipsis (-> Tokens Int Bool))
 (pub fn (patIsEllipsis tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     (strEq (tokenLexeme (vecGet tokens pos)) "...")
@@ -2917,7 +2915,7 @@
 ; either back would need a formatter the parser does not import, and
 ; would print a spelling the author did not write. The tokens are what
 ; the author wrote.
-(pub :: patTokensSpelling (-> Ints Int Int String String))
+(pub :: patTokensSpelling (-> Tokens Int Int String String))
 (pub fn (patTokensSpelling tokens from to acc)
   (if (>= from to)
     acc
@@ -2940,7 +2938,7 @@
 ; ------------------------------------------------------------------
 ; Parse an expression list until ), returning a Vec of Expr handles.
 ; ------------------------------------------------------------------
-(pub :: parseExprList (-> Ints Int Ints Int))
+(pub :: parseExprList (-> Tokens Int Ints Int))
 (pub fn (parseExprList tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -3018,7 +3016,7 @@
 ; ------------------------------------------------------------------
 ; Top-level declaration parse: (keyword ...)
 ; ------------------------------------------------------------------
-(pub :: parseDecl (-> Ints Int Int))
+(pub :: parseDecl (-> Tokens Int Int))
 (pub fn (parseDecl tokens pos)
   (if (peekIs tokens pos TK_EOF)
     (pOk 0 pos)
@@ -3029,13 +3027,13 @@
         (pErrExp pos "(")))))
 
 ; Is the token at `pos` a second `pub`?
-(pub :: pubFollows (-> Ints Int Bool))
+(pub :: pubFollows (-> Tokens Int Bool))
 (pub fn (pubFollows tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     (kwEq (tokenLexeme (vecGet tokens pos)) kwPub)
     false))
 
-(pub :: parseTopForm (-> Ints Int Int))
+(pub :: parseTopForm (-> Tokens Int Int))
 (pub fn (parseTopForm tokens pos)
   (if (peekIs tokens pos TK_DOUBLE_COLON)
     (parseSigDecl tokens (advance pos))
@@ -3161,7 +3159,7 @@
 ; the same delegation the rule-form template uses - so a nested
 ; syntax/for parses through the parseTopForm hook above. At least one
 ; declaration is required.
-(pub :: parseDeclFor (-> Ints Int Int))
+(pub :: parseDeclFor (-> Tokens Int Int))
 (pub fn (parseDeclFor tokens pos)
   {
     (let sp (tokenSpan (vecGet tokens pos)))
@@ -3185,7 +3183,7 @@
       (pErrExp p1 "("))
   })
 
-(pub :: parseDeclForBody (-> Ints Int String ASTNode Int (Vec ASTNode) Int))
+(pub :: parseDeclForBody (-> Tokens Int String ASTNode Int (Vec ASTNode) Int))
 (pub fn (parseDeclForBody tokens pos var seq sp acc)
   (if (peekIs tokens pos TK_RPAREN)
     (if (== (vecLen acc) 0)
@@ -3211,7 +3209,7 @@
 ; and its operations' names. Nothing else survives: stage1 emits no
 ; effect code, and a type it cannot lower is a type it need not
 ; record.
-(pub :: parseEffectDecl (-> Ints Int Int))
+(pub :: parseEffectDecl (-> Tokens Int Int))
 (pub fn (parseEffectDecl tokens pos)
   ; `parseDeclName` for the same reason `data` uses it: an `effect`
   ; template may join its name.
@@ -3246,7 +3244,7 @@
 ; the end position, so acceptance is unchanged; a type the parser
 ; cannot read leaves 0 in the field and only `symbols` is the poorer
 ; for it.
-(pub :: parseEffectOps (-> Ints Int Names Nodes Int))
+(pub :: parseEffectOps (-> Tokens Int Names Nodes Int))
 (pub fn (parseEffectOps tokens pos ops opFields)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk 0 (advance pos))
@@ -3354,7 +3352,7 @@
       (externLibBadAtFrom s (+ i 1))
       i)))
 
-(pub :: parseExternDecl (-> Ints Int Int))
+(pub :: parseExternDecl (-> Tokens Int Int))
 (pub fn (parseExternDecl tokens pos)
   (if (peekIs tokens pos TK_STRING)
     ; The library name is validated HERE, at the front end, and not
@@ -3397,7 +3395,7 @@
 ; symbol, or a clause the design document once proposed (`effects`,
 ; `opaque`, `drop`) used to be skipped without a word, and `(opaque
 ; Thing ...)` bound an item called `opaque`.
-(pub :: parseExternItems (-> Ints Int Names Nodes Int))
+(pub :: parseExternItems (-> Tokens Int Names Nodes Int))
 (pub fn (parseExternItems tokens pos names items)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk 0 (advance pos))
@@ -3436,7 +3434,7 @@
 ; absent (a documented footgun: a static link is one flat namespace,
 ; and two blocks binding a `parse` without the clause dedup to one
 ; `declare`; `axiom-bindgen` always writes it).
-(pub :: parseExternClauses (-> Ints Int String Int))
+(pub :: parseExternClauses (-> Tokens Int String Int))
 (pub fn (parseExternClauses tokens pos dflt)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk (as dflt Int) (advance pos))
@@ -3492,7 +3490,7 @@
 ; the checker's notation. Any shape this does not recognise falls
 ; back to the old skip, so acceptance is unchanged: only
 ; well-formed aliases gain a node.
-(pub :: parseAliasDecl (-> Ints Int Int Int))
+(pub :: parseAliasDecl (-> Tokens Int Int Int))
 (pub fn (parseAliasDecl tokens pos origPos)
   ; `(` as well as an identifier, because the name may be a
   ; `(syntax/join ...)` inside a template. The old guard tested for an
@@ -3545,7 +3543,7 @@
 ; (`>= lo` and `< hi`). The bounds live as a Vec of expr nodes in the
 ; declaration's c slot.
 ; ------------------------------------------------------------------
-(pub :: parseSubtypeDecl (-> Ints Int Int Int))
+(pub :: parseSubtypeDecl (-> Tokens Int Int Int))
 (pub fn (parseSubtypeDecl tokens pos origPos)
   {
     (let nr (parseDeclName tokens pos))
@@ -3612,7 +3610,7 @@
 
 ; Type parameters between an alias's name and its target: a paren
 ; list, or a bare run of idents that start with a lowercase LETTER.
-(pub :: aliasTyvarsEnd (-> Ints Int Strings Int))
+(pub :: aliasTyvarsEnd (-> Tokens Int Strings Int))
 (pub fn (aliasTyvarsEnd tokens pos tvs)
   (if (peekIs tokens pos TK_LPAREN)
     (collectTyParams tokens pos tvs)
@@ -3909,7 +3907,7 @@
 ; of `parseQualifiedTail`: it answers the mangled spelling rather
 ; than a node, so the bare atom below and the application head in
 ; `parseTypeParens` share it.
-(pub :: parseTyQualChain (-> Ints Int Strings Int))
+(pub :: parseTyQualChain (-> Tokens Int Strings Int))
 (pub fn (parseTyQualChain tokens pos chain)
   (if (peekIs tokens pos TK_DOUBLE_COLON)
     (if (peekIs tokens (advance pos) TK_IDENT)
@@ -3924,7 +3922,7 @@
 ; when the `::` is already confirmed ahead, so the tail always
 ; consumes it; a missing name after the colons is a parse error, the
 ; same answer the expression side gives.
-(pub :: parseQualifiedTyAtom (-> Ints Int Int))
+(pub :: parseQualifiedTyAtom (-> Tokens Int Int))
 (pub fn (parseQualifiedTyAtom tokens pos)
   {
     (let chain
@@ -3946,7 +3944,7 @@
     }
   })
 
-(pub :: parseTypeAtom (-> Ints Int Int))
+(pub :: parseTypeAtom (-> Tokens Int Int))
 (pub fn (parseTypeAtom tokens pos)
   ; `[T]` is REFUSED, not parsed. The list type checked in signatures
   ; while no literal, no pattern and no runtime representation existed
@@ -4011,14 +4009,14 @@
         (parseTypeParens tokens (advance pos))
         (pErrExp pos "type")))))
 
-(pub :: parseType (-> Ints Int Int))
+(pub :: parseType (-> Tokens Int Int))
 (pub fn (parseType tokens pos)
   (if (peekIs tokens pos TK_LPAREN)
     (parseTypeParens tokens (advance pos))
     (parseTypeAtom tokens pos)))
 
 ; A run of atoms up to the closing paren, which is consumed.
-(pub :: parseTypeAtoms (-> Ints Int Ints Int))
+(pub :: parseTypeAtoms (-> Tokens Int Ints Int))
 (pub fn (parseTypeAtoms tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -4032,7 +4030,7 @@
       })))
 
 ; `pos` is just past the opening paren.
-(pub :: parseTypeParens (-> Ints Int Int))
+(pub :: parseTypeParens (-> Tokens Int Int))
 (pub fn (parseTypeParens tokens pos)
   (if (peekIs tokens pos TK_RARROW)
     {
@@ -4133,7 +4131,7 @@
 ; ------------------------------------------------------------------
 ; Parse (:: name (-> ...))
 ; ------------------------------------------------------------------
-(pub :: parseSigDecl (-> Ints Int Int))
+(pub :: parseSigDecl (-> Tokens Int Int))
 (pub fn (parseSigDecl tokens pos)
   {
     (let nr (parseDeclName tokens pos))
@@ -4211,7 +4209,7 @@
 ; spine. A parenthesised position (a nested arrow, a type application
 ; like `(Vec Float)`) is a closure or a pointer, carried as a word,
 ; never a bare float.
-(pub :: sigFloatFlags (-> Ints Int Ints))
+(pub :: sigFloatFlags (-> Tokens Int Ints))
 (pub fn (sigFloatFlags tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -4231,13 +4229,13 @@
         }
       })))
 
-(pub :: identIsFloat (-> Ints Int Int))
+(pub :: identIsFloat (-> Tokens Int Int))
 (pub fn (identIsFloat tokens pos)
   (if (strEq (tokenLexeme (vecGet tokens pos)) "Float")
     1
     0))
 
-(pub :: spineFlags (-> Ints Int Ints Ints))
+(pub :: spineFlags (-> Tokens Int Ints Ints))
 (pub fn (spineFlags tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     acc
@@ -4287,7 +4285,7 @@
 ; is the fixture that says so.
 ; `tests/diagnostics/955-import-absolute-path.axbad` pins the refusal.
 ; ------------------------------------------------------------------
-(pub :: parseModPath (-> Ints Int Int))
+(pub :: parseModPath (-> Tokens Int Int))
 (pub fn (parseModPath tokens pos)
   {
     (let nr (parseIdentName tokens pos))
@@ -4300,7 +4298,7 @@
         (parseModPathRest tokens (pResPos nr) (pResText nr))))
   })
 
-(pub :: parseModPathRest (-> Ints Int String Int))
+(pub :: parseModPathRest (-> Tokens Int String Int))
 (pub fn (parseModPathRest tokens pos acc)
   (if (peekIs tokens pos TK_DOT)
     {
@@ -4321,7 +4319,7 @@
 ; ------------------------------------------------------------------
 ; Parse (import Module (names...)) / (import Mod.Sub)
 ; ------------------------------------------------------------------
-(pub :: parseImportDecl (-> Ints Int Int))
+(pub :: parseImportDecl (-> Tokens Int Int))
 (pub fn (parseImportDecl tokens pos)
   {
     (let mr (parseModPath tokens pos))
@@ -4356,7 +4354,7 @@
 ; ------------------------------------------------------------------
 ; Parse (data Name (Ctor1 ...) (Ctor2) ...)
 ; ------------------------------------------------------------------
-(pub :: parseDataDecl (-> Ints Int Int))
+(pub :: parseDataDecl (-> Tokens Int Int))
 (pub fn (parseDataDecl tokens pos)
   ; `parseDeclName`, not `parseIdentName`: a `data` template may name
   ; its type with `(syntax/join Box T)`, exactly as a `fn` template
@@ -4392,7 +4390,7 @@
 ; position advances, so deciding the shape and capturing it are one
 ; walk - they were two, and a shape one declined and the other did not
 ; drifted the parse position.
-(pub :: collectTyParams (-> Ints Int Strings Int))
+(pub :: collectTyParams (-> Tokens Int Strings Int))
 (pub fn (collectTyParams tokens pos tvs)
   (if (peekIs tokens pos TK_LPAREN)
     {
@@ -4431,7 +4429,7 @@
 ; lowercase names, and only names. A parenthesised list after them
 ; used to be taken as a second parameter list, so `a ()` declared the
 ; empty list as parameters where the formatter refused it.
-(pub :: collectBareTyParams (-> Ints Int Strings Int))
+(pub :: collectBareTyParams (-> Tokens Int Strings Int))
 (pub fn (collectBareTyParams tokens pos tvs)
   (if (peekIs tokens pos TK_IDENT)
     (if (identStartsUpper tokens pos)
@@ -4443,7 +4441,7 @@
     pos))
 
 ; 1 when the tokens from `pos` are names up to a `)`.
-(pub :: namesReachRParen (-> Ints Int Int))
+(pub :: namesReachRParen (-> Tokens Int Int))
 (pub fn (namesReachRParen tokens pos)
   (if (peekIs tokens pos TK_RPAREN)
     1
@@ -4451,7 +4449,7 @@
       (namesReachRParen tokens (advance pos))
       0)))
 
-(pub :: collectIdentsUntilRParen (-> Ints Int Strings Int))
+(pub :: collectIdentsUntilRParen (-> Tokens Int Strings Int))
 (pub fn (collectIdentsUntilRParen tokens pos tvs)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -4460,7 +4458,7 @@
     }
     0))
 
-(pub :: parseConstructors (-> Ints Int String Int (Vec ASTNode) Int Int))
+(pub :: parseConstructors (-> Tokens Int String Int (Vec ASTNode) Int Int))
 (pub fn (parseConstructors tokens pos dataName nameSpan acc tvs)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk (setNodeTyWord (mkDDataAt dataName acc nameSpan) tvs) (advance pos))
@@ -4507,7 +4505,7 @@
           (pErrRemoved pos "deriving")
           (pErrExp pos "identifier"))))))
 
-(pub :: parseOneCtor (-> Ints Int Int))
+(pub :: parseOneCtor (-> Tokens Int Int))
 (pub fn (parseOneCtor tokens pos)
   {
     (let r0 (parseOneCtorInner tokens pos))
@@ -4522,7 +4520,7 @@
       })
   })
 
-(pub :: parseOneCtorInner (-> Ints Int Int))
+(pub :: parseOneCtorInner (-> Tokens Int Int))
 (pub fn (parseOneCtorInner tokens pos)
   {
     (let nr (parseDeclName tokens pos))
@@ -4550,7 +4548,7 @@
 ; `name : Type` pairs to the closing brace, commas optional - stage0
 ; treats a comma as separator-or-not, so `{ w : Int h : Int }` parses
 ; the same as `{ w : Int, h : Int }`.
-(pub :: parseNamedFieldTypes (-> Ints Int Ints String Nodes Names Int))
+(pub :: parseNamedFieldTypes (-> Tokens Int Ints String Nodes Names Int))
 (pub fn (parseNamedFieldTypes tokens pos flags ctorName tys names)
   (if (peekIs tokens pos TK_RBRACE)
     (if (peekIs tokens (advance pos) TK_RPAREN)
@@ -4588,7 +4586,7 @@
 ; for patterns). So `{ w : Int,, h : Int }` and a leading `{ , w ... }`
 ; are parse errors there, and skipping commas wherever they appear
 ; would accept programs it refuses.
-(pub :: skipFieldComma (-> Ints Int Int))
+(pub :: skipFieldComma (-> Tokens Int Int))
 (pub fn (skipFieldComma tokens pos)
   (if (peekIs tokens pos TK_COMMA)
     (advance pos)
@@ -4611,7 +4609,7 @@
 ; these types and checks construction arguments against them. The flag
 ; rule above is deliberately unchanged (`(Float)` parenthesised is
 ; still flag 0), so codegen behaves bit-identically.
-(pub :: parseFieldTypes (-> Ints Int Ints String Nodes Int))
+(pub :: parseFieldTypes (-> Tokens Int Ints String Nodes Int))
 (pub fn (parseFieldTypes tokens pos flags ctorName tys)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk (setNodeTyChildren (mkCtor ctorName (vecLen flags) flags) tys) (advance pos))
@@ -4646,7 +4644,7 @@
 ; ------------------------------------------------------------------
 ; Parse (struct Name (field1 : Type1) (field2 : Type2) ...)
 ; ------------------------------------------------------------------
-(pub :: parseStructDecl (-> Ints Int Int))
+(pub :: parseStructDecl (-> Tokens Int Int))
 (pub fn (parseStructDecl tokens pos)
   {
     (let nr (parseDeclName tokens pos))
@@ -4729,7 +4727,7 @@
 ; The bare words after a struct's name, each as a TAG_E_VAR node that
 ; keeps its span for the checker's diagnostic. Answers the position of
 ; the first token that is not one.
-(pub :: collectStructMarkers (-> Ints Int (Vec ASTNode) Int))
+(pub :: collectStructMarkers (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (collectStructMarkers tokens pos markers)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -4789,7 +4787,7 @@
 ; identifier is NOT followed by a colon. `(a)` and `(a b)` are
 ; parameters; `(start : Int)` is a field; `()` is neither and is left
 ; to `parseFields` to refuse as it always has.
-(pub :: structGroupIsTyParams (-> Ints Int Int))
+(pub :: structGroupIsTyParams (-> Tokens Int Int))
 (pub fn (structGroupIsTyParams tokens pos)
   (if (peekIs tokens pos TK_LPAREN)
     (if (peekIs tokens (advance pos) TK_IDENT)
@@ -4815,7 +4813,7 @@
 ; `collectTyParams` applies for `data`, and it separates the two
 ; shapes exactly: `String` is uppercase, so `(msg String)` is a field
 ; the checker still refuses.
-(pub :: structTyParamRun (-> Ints Int Int))
+(pub :: structTyParamRun (-> Tokens Int Int))
 (pub fn (structTyParamRun tokens pos)
   (if (peekIs tokens pos TK_RPAREN)
     1
@@ -4825,7 +4823,7 @@
         (structTyParamRun tokens (advance pos)))
       0)))
 
-(pub :: parseFieldsTv (-> Ints Int String Int (Vec ASTNode) Strings Int))
+(pub :: parseFieldsTv (-> Tokens Int String Int (Vec ASTNode) Strings Int))
 (pub fn (parseFieldsTv tokens pos structName nameSpan acc tvs)
   {
     (let r (parseFields tokens pos structName nameSpan acc))
@@ -4849,7 +4847,7 @@
         }))
   })
 
-(pub :: parseFields (-> Ints Int String Int (Vec ASTNode) Int))
+(pub :: parseFields (-> Tokens Int String Int (Vec ASTNode) Int))
 (pub fn (parseFields tokens pos structName nameSpan acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk (mkDStructAt structName acc nameSpan) (advance pos))
@@ -4882,7 +4880,7 @@
 ; ownership guarantee and supplies none" - and it is why `linear`,
 ; `consume` and `deriving` were removed rather than left parsing.
 ; `checkSetField` reads this word now; see AX3012 there.
-(pub :: parseOneField (-> Ints Int Int))
+(pub :: parseOneField (-> Tokens Int Int))
 (pub fn (parseOneField tokens pos)
   (if (&& (peekIs tokens pos TK_IDENT)
         (&& (strEq (tokenLexeme (vecGet tokens pos)) "mut") (peekIs tokens (advance pos) TK_IDENT)))
@@ -4912,7 +4910,7 @@
     1))
 
 ; Did a field's type parse, and something other than `)` follow it?
-(pub :: fieldTyOverruns (-> Ints Int Bool))
+(pub :: fieldTyOverruns (-> Tokens Int Bool))
 (pub fn (fieldTyOverruns tokens tr)
   (if (pResFailed tr)
     false
@@ -4920,7 +4918,7 @@
       false
       true)))
 
-(pub :: parseOneFieldNamed (-> Ints Int Int))
+(pub :: parseOneFieldNamed (-> Tokens Int Int))
 (pub fn (parseOneFieldNamed tokens pos)
   {
     (let nr (parseIdentName tokens pos))
@@ -5000,7 +4998,7 @@
 ; closing paren. The node must be a REAL handle (`parseDecls` reads a
 ; parse value of 0 as the clean end of the module - the historical
 ; skipParens trap), and `mkNodeAt` provides one.
-(pub :: parseMacroCall (-> Ints Int Int))
+(pub :: parseMacroCall (-> Tokens Int Int))
 (pub fn (parseMacroCall tokens pos)
   ; A QUALIFIED head - `Pre::when` - is three tokens here, exactly
   ; as it is in expression position, and joins to the same flat
@@ -5033,7 +5031,7 @@
 
 ; `:: IDENT` pairs after a head identifier, pushed onto the chain;
 ; answers the position after the last one consumed.
-(pub :: parseQualChainTail (-> Ints Int Strings Int))
+(pub :: parseQualChainTail (-> Tokens Int Strings Int))
 (pub fn (parseQualChainTail tokens pos chain)
   (if (&& (peekIs tokens pos TK_DOUBLE_COLON) (peekIs tokens (advance pos) TK_IDENT))
     {
@@ -5045,7 +5043,7 @@
 ; Whether `pos` opens a `(literals ...)` header: a paren followed
 ; by the identifier `literals`. Single-paren, so it never collides
 ; with a rule, whose head is doubly parenthesised.
-(pub :: parseLiteralsHead (-> Ints Int Bool))
+(pub :: parseLiteralsHead (-> Tokens Int Bool))
 (pub fn (parseLiteralsHead tokens pos)
   (if (peekIs tokens pos TK_LPAREN)
     (if (peekIs tokens (advance pos) TK_IDENT)
@@ -5062,14 +5060,14 @@
 ; `_` and `...` may be listed but never reserve: the rewrite skips
 ; both (a wildcard stays a wildcard, the repeat marker stays the
 ; repeat marker), and the expansion-time unused check names them.
-(pub :: parseLiteralsDecl (-> Ints Int Int))
+(pub :: parseLiteralsDecl (-> Tokens Int Int))
 (pub fn (parseLiteralsDecl tokens pos)
   {
     (let acc vecNew)
     (parseLiteralsDeclIn tokens (advance (advance pos)) acc)
   })
 
-(pub :: parseLiteralsDeclIn (-> Ints Int Strings Int))
+(pub :: parseLiteralsDeclIn (-> Tokens Int Strings Int))
 (pub fn (parseLiteralsDeclIn tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -5177,7 +5175,7 @@
 ; own name stops the list, which is what makes a malformed second rule
 ; a refusal rather than a silent truncation - the caller then demands
 ; the closing paren and fails there.
-(pub :: parseMacroRules (-> Ints Int String IntRows Names Int))
+(pub :: parseMacroRules (-> Tokens Int String IntRows Names Int))
 ;@axiom:effect(unsafe)
 (pub fn (parseMacroRules tokens pos macName acc lits)
   (if (if (peekIs tokens pos TK_LPAREN)
@@ -5261,7 +5259,7 @@
 ; rule that parses neither way reports the reading its shape asks for:
 ; the declaration error for several forms or a declaration head, else
 ; the expression error.
-(pub :: parseRuleTemplates (-> Ints Int Int))
+(pub :: parseRuleTemplates (-> Tokens Int Int))
 (pub fn (parseRuleTemplates tokens pos)
   {
     (let declR (parseTplDecls tokens pos vecNew))
@@ -5299,7 +5297,7 @@
 
 ; Whether the template at `pos` opens with a declaration head - a
 ; declaration keyword or `syntax/for` - which no expression starts with.
-(pub :: tplDeclHead (-> Ints Int Bool))
+(pub :: tplDeclHead (-> Tokens Int Bool))
 (pub fn (tplDeclHead tokens pos)
   (if (&& (peekIs tokens pos TK_LPAREN) (peekIs tokens (advance pos) TK_DOUBLE_COLON))
     true
@@ -5321,7 +5319,7 @@
 ; Whether the one form at `pos` could invoke a declaration macro: its
 ; head is a name, not an operator or an expression keyword, so at the
 ; top level it reads as a macro invocation.
-(pub :: tplNamesMacro (-> Ints Int Bool))
+(pub :: tplNamesMacro (-> Tokens Int Bool))
 (pub fn (tplNamesMacro tokens pos)
   (if (&& (peekIs tokens pos TK_LPAREN) (peekIs tokens (advance pos) TK_IDENT))
     {
@@ -5350,7 +5348,7 @@
 (pub fn (ruleExprAt rules i)
   (packedNodeAt (vecGet rules i) 6))
 
-(pub :: parseTplDecls (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseTplDecls (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseTplDecls tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (if (== (vecLen acc) 0)
@@ -5397,7 +5395,7 @@
 ; declaration. The template vec rides in the macro node's word 9
 ; (unused for macros); word 3, an expression macro's template, stays
 ; 0, and that pairing is the discriminator everywhere else.
-(pub :: parseDeclMacro (-> Ints Int Int))
+(pub :: parseDeclMacro (-> Tokens Int Int))
 (pub fn (parseDeclMacro tokens pos)
   {
     (let macName (tokenLexeme (vecGet tokens pos)))
@@ -5429,7 +5427,7 @@
 ; One or more RULES after the optional `(literals ...)` header:
 ; shared by the plain and headered shapes so the two spell one
 ; list, one node and one refusal.
-(pub :: parseDeclMacroRules (-> Ints Int String Int Strings Int))
+(pub :: parseDeclMacroRules (-> Tokens Int String Int Strings Int))
 (pub fn (parseDeclMacroRules tokens pos macName macSpan lits)
   (if (peekIs tokens (advance pos) TK_LPAREN)
     {
@@ -5452,7 +5450,7 @@
     }
     (pErr (advance pos))))
 
-(pub :: parseMacroDecl (-> Ints Int Int))
+(pub :: parseMacroDecl (-> Tokens Int Int))
 (pub fn (parseMacroDecl tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     (parseDeclMacro tokens pos)
@@ -5497,7 +5495,7 @@
 ; ------------------------------------------------------------------
 ; Parse (fn (name args...) body) at top level.
 ; ------------------------------------------------------------------
-(pub :: parseFnDecl (-> Ints Int Int))
+(pub :: parseFnDecl (-> Tokens Int Int))
 (pub fn (parseFnDecl tokens pos)
   (if (peekIs tokens pos TK_LPAREN)
     {
@@ -5556,7 +5554,7 @@
 ; ------------------------------------------------------------------
 ; Expression parsing.
 ; ------------------------------------------------------------------
-(pub :: parseExpr (-> Ints Int Int))
+(pub :: parseExpr (-> Tokens Int Int))
 (pub fn (parseExpr tokens pos)
   {
     (let r (parseExprCore tokens pos))
@@ -5569,7 +5567,7 @@
 ; tighter than application, so `(g (f x)?)` passes the propagated value
 ; to `g`. Several in a row stack, `(f x)??`, which the expander then
 ; propagates twice.
-(pub :: parsePostfix (-> Ints Int Int))
+(pub :: parsePostfix (-> Tokens Int Int))
 (pub fn (parsePostfix tokens r)
   {
     (let pos (pResPos r))
@@ -5594,7 +5592,7 @@
       r)
   })
 
-(pub :: parseExprCore (-> Ints Int Int))
+(pub :: parseExprCore (-> Tokens Int Int))
 (pub fn (parseExprCore tokens pos)
   (if (peekIs tokens pos TK_INT)
     (parseLit tokens pos)
@@ -5620,13 +5618,13 @@
 ; ------------------------------------------------------------------
 ; Parse an S-expression: dispatch on first token.
 ; ------------------------------------------------------------------
-(pub :: parseSExpr (-> Ints Int Int))
+(pub :: parseSExpr (-> Tokens Int Int))
 (pub fn (parseSExpr tokens pos)
   (if (peekIs tokens pos TK_LPAREN)
     (parseInner tokens (advance pos))
     (pErrExp pos "expression")))
 
-(pub :: parseInner (-> Ints Int Int))
+(pub :: parseInner (-> Tokens Int Int))
 (pub fn (parseInner tokens pos)
   (if (peekIs tokens pos TK_RPAREN)
     ; `()`, the unit value.
@@ -5826,7 +5824,7 @@
     (typeExprArrow (nodeBChild ty) (mkEApp head (typeExprAt (nodeAChild ty) sp)) sp)
     (mkEApp head (typeExprAt ty sp))))
 
-(pub :: parseAsExpr (-> Ints Int Int))
+(pub :: parseAsExpr (-> Tokens Int Int))
 (pub fn (parseAsExpr tokens pos)
   {
     (let value (parseExpr tokens pos))
@@ -5850,7 +5848,7 @@
       })
   })
 
-(pub :: parseTypeSigExpr (-> Ints Int Int))
+(pub :: parseTypeSigExpr (-> Tokens Int Int))
 (pub fn (parseTypeSigExpr tokens pos)
   {
     (let er (parseExpr tokens pos))
@@ -5875,7 +5873,7 @@
 ; ------------------------------------------------------------------
 ; (while cond body...) - body takes any number of expressions.
 ; ------------------------------------------------------------------
-(pub :: parseWhileExpr (-> Ints Int Int))
+(pub :: parseWhileExpr (-> Tokens Int Int))
 (pub fn (parseWhileExpr tokens pos)
   {
     (let condR (parseExpr tokens pos))
@@ -5991,7 +5989,7 @@
 ; binder `let`, which carries the binder token's, so hover and rename
 ; land on the text the user wrote.
 ; ------------------------------------------------------------------
-(pub :: parseForExpr (-> Ints Int Int Int))
+(pub :: parseForExpr (-> Tokens Int Int Int))
 (pub fn (parseForExpr tokens pos kwSpan)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -6039,7 +6037,7 @@
 ; there, so `in` stays an ordinary name everywhere else (an `asm`
 ; operand is `(in name value)`). Right after a binder it is always
 ; this word, so a variable named `in` can't be the first operand.
-(pub :: forHasIn (-> Ints Int Bool))
+(pub :: forHasIn (-> Tokens Int Bool))
 (pub fn (forHasIn tokens pos)
   (&& (peekIs tokens pos TK_IDENT) (strEq (tokenLexeme (vecGet tokens pos)) "in")))
 
@@ -6055,7 +6053,7 @@
 ; the generic refusal, which is about the operand rather than the
 ; loop. `isPair` is 1 for an `(x i)` binder, which takes the container
 ; shape only: a range counts its own index.
-(pub :: parseForOperands (-> Ints Int Int String Int String Int Int Int))
+(pub :: parseForOperands (-> Tokens Int Int String Int String Int Int Int))
 (pub fn (parseForOperands tokens pos isPair xName xSpan iName iSpan kwSpan)
   {
     (let aR (parseExpr tokens pos))
@@ -6085,13 +6083,13 @@
 ; and a field access needs a name after its dot, so `lo..hi`,
 ; `0..(strLen s)` and `p.x..p.y` all reach here with both dots
 ; unconsumed.
-(pub :: forAtDotDot (-> Ints Int Bool))
+(pub :: forAtDotDot (-> Tokens Int Bool))
 (pub fn (forAtDotDot tokens pos)
   (&& (peekIs tokens pos TK_DOT) (peekIs tokens (advance pos) TK_DOT)))
 
 ; The range shapes, from just after `..`: `hi`, then either the body or
 ; `by step` and the body. `lo` is already parsed.
-(pub :: parseForRange (-> Ints Int String Int ASTNode Int Int))
+(pub :: parseForRange (-> Tokens Int String Int ASTNode Int Int))
 (pub fn (parseForRange tokens pos xName xSpan lo kwSpan)
   {
     (let hR (parseExpr tokens pos))
@@ -6134,7 +6132,7 @@
 
 ; The body of a `for` and its closing paren: the body node, and the
 ; position after the paren.
-(pub :: parseForBody (-> Ints Int Int))
+(pub :: parseForBody (-> Tokens Int Int))
 (pub fn (parseForBody tokens pos)
   {
     (let bR (parseExpr tokens pos))
@@ -6312,7 +6310,7 @@
 ; level, where a region never belonged. Both are gone: `parseTopForm`
 ; no longer names the word, and the expression is this.
 ; ------------------------------------------------------------------
-(pub :: parseRegionExpr (-> Ints Int Int Int))
+(pub :: parseRegionExpr (-> Tokens Int Int Int))
 (pub fn (parseRegionExpr tokens pos kwSpan)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -6374,7 +6372,7 @@
 ;
 ; ONE OR MORE BODY EXPRESSIONS, sequenced, as `let` takes them.
 ; ------------------------------------------------------------------
-(pub :: parseParallelExpr (-> Ints Int Int Int))
+(pub :: parseParallelExpr (-> Tokens Int Int Int))
 (pub fn (parseParallelExpr tokens pos kwSpan)
   (if (peekIs tokens pos TK_IDENT)
     {
@@ -6418,7 +6416,7 @@
 ; The binding list `((x e) ...)`, each pair carried as a TAG_NIL node
 ; with a=name and b=expression, the NAME token's span, as
 ; a local declaration does. Parallel bindings are immutable at their join.
-(pub :: parseParBindings (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseParBindings (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseParBindings tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -6552,7 +6550,7 @@
 ; Each effect name is kept as a TAG_E_VAR node so it carries its own
 ; span; AX3016 and AX3017 both anchor at the name, not at the form.
 ; ------------------------------------------------------------------
-(pub :: parseHandleExpr (-> Ints Int Int))
+(pub :: parseHandleExpr (-> Tokens Int Int))
 (pub fn (parseHandleExpr tokens pos)
   {
     (let bodyR (parseExpr tokens pos))
@@ -6578,7 +6576,7 @@
   })
 
 ; The names inside a handle's effect list, each as a spanned var node.
-(pub :: parseEffectNames (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseEffectNames (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseEffectNames tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -6597,7 +6595,7 @@
 ; `(set r.field v)` needs storage stage1 does not model; the dot after
 ; the name makes this a parse error rather than a miscompile.
 ; ------------------------------------------------------------------
-(pub :: parseSetExpr (-> Ints Int Int))
+(pub :: parseSetExpr (-> Tokens Int Int))
 (pub fn (parseSetExpr tokens pos)
   ; stage0 names what a `set` target IS here rather than inheriting
   ; the generic "identifier" its own ident parser would give.
@@ -6630,7 +6628,7 @@
 
 ; At a `.`: if another `.` follows the field, the field folds into the
 ; base; otherwise it is the store target and the value follows.
-(pub :: parseSetField (-> Ints Int ASTNode Int))
+(pub :: parseSetField (-> Tokens Int ASTNode Int))
 (pub fn (parseSetField tokens pos base)
   (if (&& (peekIs tokens pos TK_DOT) (peekIs tokens (advance pos) TK_IDENT))
     {
@@ -6714,7 +6712,7 @@
     (nodeBuildELam params body 0 sp)
     (curryLam params body sp 0)))
 
-(pub :: parseLamExpr (-> Ints Int Int))
+(pub :: parseLamExpr (-> Tokens Int Int))
 (pub fn (parseLamExpr tokens pos)
   {
     (let kwSp
@@ -6779,7 +6777,7 @@
 ; expression". A genuinely broken operand anywhere else keeps the
 ; generic refusal, which is about the operand rather than the chain.
 ; ------------------------------------------------------------------
-(pub :: parseIfExpr (-> Ints Int Int))
+(pub :: parseIfExpr (-> Tokens Int Int))
 (pub fn (parseIfExpr tokens pos)
   {
     (let testR (parseIfTest tokens pos))
@@ -6810,7 +6808,7 @@
 ; desugar, so there is no second representation for any later pass
 ; to learn. A `)` where an else could stand ends the chain with the
 ; unit value as its else: `(if t b)` and `(if t1 b1 t2 b2)`.
-(pub :: parseIfTail (-> Ints Int ASTNode ASTNode Int))
+(pub :: parseIfTail (-> Tokens Int ASTNode ASTNode Int))
 (pub fn (parseIfTail tokens pos test thenEx)
   {
     (let eR (parseIfTest tokens pos))
@@ -6851,7 +6849,7 @@
 ; `match`, with its exhaustiveness, binder and type rules. A `let` test
 ; can stand at any test position of a variadic chain, and the else
 ; branches see none of its names.
-(pub :: parseIfTest (-> Ints Int Int))
+(pub :: parseIfTest (-> Tokens Int Int))
 (pub fn (parseIfTest tokens pos)
   (if (&& (peekIs tokens pos TK_LPAREN)
         (&& (peekIs tokens (advance pos) TK_IDENT)
@@ -6864,7 +6862,7 @@
 ; builders read it. A pattern that cannot fail, a lowercase name or
 ; `_`, is refused: its else branch could never run, and the binding
 ; it makes is a block's `(let x value)`.
-(pub :: parseLetTest (-> Ints Int Int))
+(pub :: parseLetTest (-> Tokens Int Int))
 (pub fn (parseLetTest tokens pos)
   (if (&& (peekIs tokens pos TK_IDENT) (kwEq (tokenLexeme (vecGet tokens pos)) "mut"))
     (pErrExp pos
@@ -6931,7 +6929,7 @@
 ; ------------------------------------------------------------------
 ; Parse (match scrutinee (pat body) ...)
 ; ------------------------------------------------------------------
-(pub :: parseMatchExpr (-> Ints Int Int))
+(pub :: parseMatchExpr (-> Tokens Int Int))
 (pub fn (parseMatchExpr tokens pos)
   {
     (let scrutR (parseExpr tokens pos))
@@ -6958,7 +6956,7 @@
 ; Stops *at* the closing paren without consuming it: `parseMatchExpr`
 ; expects to find it and consume it itself. Consuming it here made every
 ; `match` a parse error, since the caller then demanded a second one.
-(pub :: parseMatchArms (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseMatchArms (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseMatchArms tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc pos)
@@ -7010,7 +7008,7 @@
 ; paren. At least one template arm is required - an empty iteration
 ; body generates nothing and means nothing. BINDS is `parseIterBinder`'s
 ; form: one pair, or several zipped in lockstep.
-(pub :: parseMatchForArm (-> Ints Int Int))
+(pub :: parseMatchForArm (-> Tokens Int Int))
 (pub fn (parseMatchForArm tokens pos)
   {
     (let sp (tokenSpan (vecGet tokens pos)))
@@ -7051,7 +7049,7 @@
 ;
 ; The pattern is kept. It used to be parsed and thrown away, which left
 ; codegen with a list of bodies and no way to tell which one applied.
-(pub :: identStartsUpper (-> Ints Int Bool))
+(pub :: identStartsUpper (-> Tokens Int Bool))
 (pub fn (identStartsUpper tokens pos)
   {
     (let s (tokenLexeme (vecGet tokens pos)))
@@ -7075,7 +7073,7 @@
 ; A fieldful pattern still builds the application spine `parseExpr`
 ; would have built, so every consumer downstream is unchanged - only
 ; the ARGUMENTS are parsed as patterns rather than as expressions.
-(pub :: parseArmPattern (-> Ints Int Int))
+(pub :: parseArmPattern (-> Tokens Int Int))
 (pub fn (parseArmPattern tokens pos)
   (if (&& (peekIs tokens pos TK_LPAREN)
         (&& (peekIs tokens (advance pos) TK_IDENT)
@@ -7111,7 +7109,7 @@
 ; would turn a nested `(Red)` test back into a catch-all binder.
 ; A grouped constructor head can still take arguments, as `(Wrap)` in
 ; `((Wrap) (Red))`; flatten that head into the ordinary pattern spine.
-(pub :: parseGroupedArmPattern (-> Ints Int Int))
+(pub :: parseGroupedArmPattern (-> Tokens Int Int))
 (pub fn (parseGroupedArmPattern tokens pos)
   {
     (let inner (parseArmPattern tokens (advance pos)))
@@ -7200,7 +7198,7 @@
       1
       (declaredHasFieldFrom declared n (+ i 1)))))
 
-(pub :: peekIsEq (-> Ints Int Bool))
+(pub :: peekIsEq (-> Tokens Int Bool))
 (pub fn (peekIsEq tokens pos)
   (if (peekIs tokens pos TK_IDENT)
     (strEq (tokenLexeme (vecGet tokens pos)) "=")
@@ -7209,7 +7207,7 @@
 ; `{ f = pat, g }` to the closing brace. A bare name PUNS: `{ w, h }`
 ; means `{ w = w, h = h }`, which is stage0's rule and is resolved
 ; here at parse time, since it needs no knowledge of the declaration.
-(pub :: parseNamedPatFields (-> Ints Int String Int (Vec ASTNode) (Vec ASTNode) Int))
+(pub :: parseNamedPatFields (-> Tokens Int String Int (Vec ASTNode) (Vec ASTNode) Int))
 (pub fn (parseNamedPatFields tokens pos cname csp names pats)
   (if (peekIs tokens pos TK_RBRACE)
     (if (peekIs tokens (advance pos) TK_RPAREN)
@@ -7243,7 +7241,7 @@
       }
       (pErr pos))))
 
-(pub :: parseArmPatternArgs (-> Ints Int ASTNode Int))
+(pub :: parseArmPatternArgs (-> Tokens Int ASTNode Int))
 (pub fn (parseArmPatternArgs tokens pos acc)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk acc (advance pos))
@@ -7256,7 +7254,7 @@
           (parseArmPatternArgs tokens (pResPos r) (mkEApp acc (pResNode r))))
       })))
 
-(pub :: parseMatchArm (-> Ints Int Int))
+(pub :: parseMatchArm (-> Tokens Int Int))
 (pub fn (parseMatchArm tokens pos)
   {
     (let patR (parseArmPattern tokens pos))
@@ -7283,11 +7281,11 @@
 ; ------------------------------------------------------------------
 ; Parse { expr1 expr2 ... }
 ; ------------------------------------------------------------------
-(pub :: parseBlock (-> Ints Int Int))
+(pub :: parseBlock (-> Tokens Int Int))
 (pub fn (parseBlock tokens pos)
   (parseBlockBody tokens pos vecNew))
 
-(pub :: parseBlockBody (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseBlockBody (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseBlockBody tokens pos acc)
   (if (peekIs tokens pos TK_RBRACE)
     ; An empty `{}` is the same defect one node along. It parsed as a
@@ -7316,14 +7314,14 @@
 ; A local declaration belongs to the block that contains it. Lower
 ; its remainder to an ordinary lexical let, preserving scope ends and
 ; evaluation order for every existing consumer of the expression tree.
-(pub :: isBlockLocalLet (-> Ints Int Bool))
+(pub :: isBlockLocalLet (-> Tokens Int Bool))
 (pub fn (isBlockLocalLet tokens pos)
   (&& (peekIs tokens pos TK_LPAREN)
     (&& (peekIs tokens (advance pos) TK_IDENT)
       (&& (strEq (tokenLexeme (vecGet tokens (advance pos))) kwLet)
         (! (peekIs tokens (advance (advance pos)) TK_LPAREN))))))
 
-(pub :: parseBlockLocalLet (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseBlockLocalLet (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseBlockLocalLet tokens pos acc)
   {
     (let nr (parseIdentName tokens pos))
@@ -7371,7 +7369,7 @@
 ; ------------------------------------------------------------------
 ; Function application: (f args...)
 ; ------------------------------------------------------------------
-(pub :: parseAppForm (-> Ints Int Int))
+(pub :: parseAppForm (-> Tokens Int Int))
 (pub fn (parseAppForm tokens pos)
   {
     (let r (parseExpr tokens pos))
@@ -7416,7 +7414,7 @@
     }
     e))
 
-(pub :: parseArgs (-> Ints Int ASTNode Int))
+(pub :: parseArgs (-> Tokens Int ASTNode Int))
 (pub fn (parseArgs tokens pos fnExpr)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk fnExpr (advance pos))
@@ -7440,7 +7438,7 @@
 ; Labels belong to the complete application, in source order. Values
 ; remain ordinary arguments, so expression visitors see every value.
 ; Expansion resolves the struct and lowers its checked field order.
-(pub :: parseNamedArgs (-> Ints Int ASTNode Strings Ints Int))
+(pub :: parseNamedArgs (-> Tokens Int ASTNode Strings Ints Int))
 (pub fn (parseNamedArgs tokens pos call labels spans)
   (if (peekIs tokens pos TK_RPAREN)
     (pOk (setNamedCall call labels spans) (advance pos))
@@ -7473,7 +7471,7 @@
 ; ------------------------------------------------------------------
 ; Parse declarations until EOF.
 ; ------------------------------------------------------------------
-(pub :: parseDecls (-> Ints Int (Vec ASTNode) Int))
+(pub :: parseDecls (-> Tokens Int (Vec ASTNode) Int))
 (pub fn (parseDecls tokens pos acc)
   {
     (let r (parseDecl tokens pos))
@@ -7498,7 +7496,7 @@
 ; ------------------------------------------------------------------
 ; Top-level: parse a module.
 ; ------------------------------------------------------------------
-(pub :: parseModule (-> Ints Int))
+(pub :: parseModule (-> Tokens Int))
 (pub fn (parseModule tokens)
   {
     (let r (parseDecls tokens 0 vecNew))
@@ -7558,7 +7556,7 @@
 ; A closer at depth 0 is unbalanced input, which the parser reports on
 ; its own terms; it is floored here rather than allowed to go negative,
 ; so a stray `)` early in a file cannot mask real depth after it.
-(pub :: nestOverflowTok (-> Ints Int Int))
+(pub :: nestOverflowTok (-> Tokens Int Int))
 (pub fn (nestOverflowTok tokens limit)
   {
     (let mut i 0)
@@ -7585,7 +7583,7 @@
     }
   })
 
-(pub :: parseModuleWith (-> Ints (Vec AxtagEnt) Int))
+(pub :: parseModuleWith (-> Tokens (Vec AxtagEnt) Int))
 (pub fn (parseModuleWith tokens axtags)
   ; The depth check runs BEFORE `parseDecls`, because the failure it
   ; prevents is that call exhausting the stack.
@@ -7842,7 +7840,7 @@
 
 ; Shift every token's span by `base`, in place. A `Span` is
 ; `(start, end)` (core.ax), so this is two words per token.
-(pub :: contractShift (-> Ints Int Int Int))
+(pub :: contractShift (-> Tokens Int Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (contractShift toks i base)
   (if (>= i (vecLen toks))
