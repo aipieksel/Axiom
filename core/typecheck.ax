@@ -14786,6 +14786,12 @@
 ; The argument's checked type and diagnostics are kept together. The
 ; rewritten expression is checked with the argument cached, so an
 ; already-grounded lambda need not report its body again.
+(pub data ShowOutcome
+  (ShowUnavailable)
+  (ShowRefused)
+  (ShowRewritten)
+  (ShowSpliced))
+
 (pub :: showBuiltin (-> TC ASTNode ASTNode ASTNode))
 (pub fn (showBuiltin tc e head)
   ; THERE IS NO ARITY ARM, and its absence is deliberate. This
@@ -14804,49 +14810,51 @@
     (let arg (nodeBChild e))
     {
       (let at (checkExprH tc arg 0))
-      {
-        (let r (showResolve tc e head arg at))
-        (if (== r (- 0 1))
+      (match (showResolve tc e head arg at)
+        ((ShowUnavailable)
           {
             (showNoRenderingDiag tc arg at)
             (nodeBuildTErrPlain 0 0 0)
           }
-          ; A refusal leaves the reserved head unchanged. Its
-          ; diagnostic is already reported; checking it again would
-          ; recurse through this same builtin.
-          (if (if (== (nodeTag e) TAG_E_APP)
-            {
-              (let h (spineHead e))
-              (if (== (nodeTag h) TAG_E_VAR)
-                (== (showIsHead (nodeAName h)) 1)
-                false)
-            }
-            false)
-            (nodeBuildTErrPlain 0 0 0)
-            {
-              (let cache (tcFormatChecked tc))
-              {
-                ; A String splice copied the argument over `e`.
-                (vecPush cache
-                  (if (== r 2)
-                    e
-                    arg))
-                (vecPush cache at)
-                {
-                  (let answer (checkExprH tc e 0))
-                  {
-                    (vecPop cache)
-                    (vecPop cache)
-                    answer
-                  }
-                }
-              }
-            }))
-      }
+        )
+        ((ShowRefused) (nodeBuildTErrPlain 0 0 0))
+        ((ShowRewritten) (showCheckRewritten tc e arg at))
+        ((ShowSpliced) (showCheckRewritten tc e e at)))
     }
   })
 
-(pub :: showResolve (-> TC ASTNode ASTNode ASTNode ASTNode Int))
+; Keep the checked argument available while checking the rewrite. A
+; direct String splice uses `e`, which now contains the argument.
+(pub :: showCheckRewritten (-> TC ASTNode ASTNode ASTNode ASTNode))
+(pub fn (showCheckRewritten tc e checked at)
+  ; The reserved head must not be checked recursively if a rewrite
+  ; leaves it unchanged. The refusal's diagnostic is already reported.
+  (if (if (== (nodeTag e) TAG_E_APP)
+    {
+      (let h (spineHead e))
+      (if (== (nodeTag h) TAG_E_VAR)
+        (== (showIsHead (nodeAName h)) 1)
+        false)
+    }
+    false)
+    (nodeBuildTErrPlain 0 0 0)
+    {
+      (let cache (tcFormatChecked tc))
+      {
+        (vecPush cache checked)
+        (vecPush cache at)
+        {
+          (let answer (checkExprH tc e 0))
+          {
+            (vecPop cache)
+            (vecPop cache)
+            answer
+          }
+        }
+      }
+    }))
+
+(pub :: showResolve (-> TC ASTNode ASTNode ASTNode ASTNode ShowOutcome))
 (pub fn (showResolve tc e head arg at0)
   ; RESOLVE FIRST. `at0` is whatever `checkExprH` checked, and that is
   ; routinely a MINTED PLACEHOLDER that is already BOUND - an
@@ -14869,7 +14877,7 @@
       (if (== (tyIsErr at) 1)
         ; poison: a diagnostic about this argument has already been
         ; reported (the cascade rule)
-        0
+        ShowRefused
         ; A subtype renders as its base: a `Positive` prints like the
         ; `Int` it constrains, so `println` needs no per-subtype
         ; renderer. Chained subtypes walk to the root (v1 declares
@@ -14879,7 +14887,7 @@
           (if (!= (nodeTag ty) TAG_T_CON)
             (if (== (nodeTag ty) TAG_T_VAR)
               (showUnknownDiag tc arg ty)
-              (- 0 1))
+              ShowUnavailable)
             (if (== (showTyGround ty) 0)
               (showUnknownDiag tc arg ty)
               {
@@ -14891,18 +14899,19 @@
                     (if (> (integerTypeCode n) 0)
                       (if (strEq n "Int")
                         (showRewriteTo tc head "Fmt" "fmtInt" (spanOf e))
-                        {
-                          (if (let (Some rendered) (showIntegerExpr tc arg n (spanOf e)))
-                            (showSplice e rendered))
-                          0
-                        })
+                        (if (let (Some rendered) (showIntegerExpr tc arg n (spanOf e)))
+                          {
+                            (showSplice e rendered)
+                            ShowRewritten
+                          }
+                          ShowRefused))
                       (if (strEq n "Float")
                         (showRewriteTo tc head "Fmt" "fmtFloat" (spanOf e))
                         (if (strEq n "Char")
                           (showRewriteGen tc e head arg ty 0)
                           (if (|| (! (isNone (findData tc n))) (! (isNone (findStruct tc n))))
                             (showRewriteGen tc e head arg ty 1)
-                            (- 0 1)))))))
+                            ShowUnavailable))))))
               }))
         }))
   })
@@ -14911,17 +14920,17 @@
 ; copied, so the parent that points at `e` now sees the argument.
 ; The argument node itself is left as it was - nothing else points
 ; at it, and an AST node is never released (MM-LIFE-2c).
-(pub :: showSplice (-> ASTNode ASTNode Int))
+(pub :: showSplice (-> ASTNode ASTNode ShowOutcome))
 (pub fn (showSplice e arg)
   {
     (for i in 0..12
       (nodeCopyWord e arg i))
-    2
+    ShowSpliced
   })
 
 ; `(if b "true" "false")` in the application's place. Word 6 is the
 ; stamp the `format#` head may have been given and is cleared with it.
-(pub :: showSpliceBool (-> ASTNode ASTNode Int))
+(pub :: showSpliceBool (-> ASTNode ASTNode ShowOutcome))
 (pub fn (showSpliceBool e arg)
   {
     (let sp (nodeSpan e))
@@ -14931,28 +14940,28 @@
       (writeNodeChild e 2 (showLit "true" sp))
       (writeNodeChild e 3 (showLit "false" sp))
       (writeNodeWord e 6 0)
-      1
+      ShowRewritten
     }
   })
 
 ; The head renamed to a library function, resolved to the spelling the
 ; program actually holds (`showHelperName`).
-(pub :: showRewriteTo (-> TC ASTNode String String Int Int))
+(pub :: showRewriteTo (-> TC ASTNode String String Int ShowOutcome))
 (pub fn (showRewriteTo tc head mod name sp)
   (if (let (Some full) (showHelperName tc mod name sp))
     {
       (writeNodeText head 1 full)
       (writeNodeWord head 6 0)
-      0
+      ShowRewritten
     }
-    0))
+    ShowRefused))
 
 ; The head renamed to the generated renderer for `ty`, generating it
 ; first when this is the type's first use. `withSeen` adds the
 ; ancestor stack as a second argument: `(format# x)` becomes
 ; `(show#T x vecNew)`, the inner application built here and the outer
 ; node `e` re-pointed at it.
-(pub :: showRewriteGen (-> TC ASTNode ASTNode ASTNode ASTNode Int Int))
+(pub :: showRewriteGen (-> TC ASTNode ASTNode ASTNode ASTNode Int ShowOutcome))
 (pub fn (showRewriteGen tc e head arg ty withSeen)
   {
     (let sp (spanOf e))
@@ -14965,15 +14974,15 @@
             (let inner (nodeBuildEApp head arg nilWords (nodeSpan e)))
             (writeNodeChild e 1 inner)
             (writeNodeChild e 2 (mkEVarAt fresh (nodeSpan e)))
-            0
+            ShowRewritten
           }
-          0)
+          ShowRefused)
         {
           (writeNodeText head 1 nm)
           (writeNodeWord head 6 0)
-          0
+          ShowRewritten
         })
-      0)
+      ShowRefused)
   })
 
 ; The name a library function is registered under in THIS program:
@@ -15013,17 +15022,20 @@
 
 ; The argument's type is not a type: absent, a variable, or a
 ; constructor applied to one.
-(pub :: showUnknownDiag (-> TC ASTNode ASTNode Int))
+(pub :: showUnknownDiag (-> TC ASTNode ASTNode ShowOutcome))
 (pub fn (showUnknownDiag tc arg at)
-  (showDiag tc (spanOf arg)
-    (concat "cannot render this argument with `format`: its type "
-      (if (nodeSame at nilNode)
-        "is not known here"
-        (if (== (nodeTag at) TAG_T_VAR)
-          "is a type variable, not a named type"
-          (concat (concat "is `" (tyRender at)) "`, which mentions a type variable"))))
-    "`format` renders by the STATIC type of its argument: bind it to a `let` with a signature, or write the type at the call - a generic function's own type variable cannot select a rendering either"
-    "a rendering is chosen at compile time from the argument's static type, and a type variable is not a type"))
+  {
+    (showDiag tc (spanOf arg)
+      (concat "cannot render this argument with `format`: its type "
+        (if (nodeSame at nilNode)
+          "is not known here"
+          (if (== (nodeTag at) TAG_T_VAR)
+            "is a type variable, not a named type"
+            (concat (concat "is `" (tyRender at)) "`, which mentions a type variable"))))
+      "`format` renders by the STATIC type of its argument: bind it to a `let` with a signature, or write the type at the call - a generic function's own type variable cannot select a rendering either"
+      "a rendering is chosen at compile time from the argument's static type, and a type variable is not a type")
+    ShowRefused
+  })
 
 (pub :: showNoRenderingDiag (-> TC ASTNode ASTNode Int))
 (pub fn (showNoRenderingDiag tc arg at)

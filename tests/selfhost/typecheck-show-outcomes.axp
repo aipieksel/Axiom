@@ -1,0 +1,172 @@
+; Show outcomes distinguish unsupported types, existing refusals and rewritten cache targets.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+; These fixtures assert that their input parses before testing semantic results.
+; Failed parses terminate at the typed non-returning trap, never a forged value.
+(:: expectParsed (-> (PResult a) a))
+(fn (expectParsed result)
+  (match result
+    ((ParseSuccess value position) value)
+    ((ParseFailed error) __indexTrap)))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: context (-> String TC))
+(fn (context source)
+  {
+    (let nodes (expectParsed (parseModule (lex source))))
+    (let units
+      (vecPush vecNew
+        (CUnit2
+          :file "renderer-options.ax"
+          :src source
+          :name (Some "")
+          :imports vecNew
+          :library false)))
+    (tcNew nodes nodes units)
+  })
+
+(:: signature (-> TC String ASTNode ()))
+(fn (signature tc name ty)
+  {
+    (let sig (nodeBuildDSig name nilWords 0 0))
+    (writeNodeChild sig 6 ty)
+    (tcCollectSig tc sig)
+    ()
+  })
+
+(:: helpers (-> TC ()))
+(fn (helpers tc)
+  {
+    (signature tc "concat" (mkTArr mkStringTy (mkTArr mkStringTy mkStringTy)))
+    (signature tc "strLen" (mkTArr mkStringTy mkIntTy))
+    (signature tc "strByte" (mkTArr mkStringTy (mkTArr mkIntTy mkIntTy)))
+    (signature tc "strFromByte" (mkTArr mkIntTy mkStringTy))
+    (signature tc "fmtInt" (mkTArr mkIntTy mkStringTy))
+    (signature tc "fmtUIntWord" (mkTArr mkIntTy mkStringTy))
+    (signature tc "fmtFloat" (mkTArr (mkTCon "Float" vecNew) mkStringTy))
+    (signature tc "vecLen" (mkTArr mkVecIntTy mkIntTy))
+    (signature tc "vecGet" (mkTArr mkVecIntTy (mkTArr mkIntTy mkIntTy)))
+    (signature tc "vecPush" (mkTArr mkVecIntTy (mkTArr mkIntTy mkVecIntTy)))
+    (signature tc "vecNew" mkVecIntTy)
+  })
+
+(:: outcome (-> ShowOutcome Int))
+(fn (outcome value)
+  (match value
+    ((ShowUnavailable) 1)
+    ((ShowRefused) 2)
+    ((ShowRewritten) 3)
+    ((ShowSpliced) 4)))
+
+(:: resolve (-> TC ASTNode ShowOutcome))
+(fn (resolve tc ty)
+  {
+    (let argument (mkEVarAt "value" 9))
+    (let head (mkEVarAt "format#" 9))
+    (showResolve tc (nodeBuildEApp head argument nilWords 9) head argument ty)
+  })
+
+(:: render (-> TC ASTNode ASTNode))
+(fn (render tc argument)
+  {
+    (let head (mkEVarAt "format#" 9))
+    (showBuiltin tc (nodeBuildEApp head argument nilWords 9) head)
+  })
+
+(:: cacheSize (-> TC Int))
+(fn (cacheSize tc)
+  (vecLen (showOutcomeTestCache tc)))
+
+(:: isString (-> ASTNode Bool))
+(fn (isString ty)
+  (&& (== (nodeTag ty) TAG_T_CON) (strEq (nodeAName ty) "String")))
+
+(:: firstCode (-> TC String))
+(fn (firstCode tc)
+  (if (> (vecLen (tcOutVec tc)) 0)
+    (diagCode (vecGet (tcOutVec tc) 0))
+    ""))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let missing (context ""))
+    (say 1 (== (outcome (resolve missing (mkTCon "Foreign" vecNew))) 1))
+    (say 2 (== (countErrorDiags (tcOutVec missing)) 0))
+    (say 3 (== (outcome (resolve missing (mkTArr mkIntTy mkIntTy))) 1))
+    (say 4 (== (outcome (resolve missing mkTErr)) 2))
+    (say 5 (== (countErrorDiags (tcOutVec missing)) 0))
+    (say 6 (== (outcome (resolve missing nilNode)) 2))
+    (say 7 (== (countErrorDiags (tcOutVec missing)) 1))
+    (say 8 (== (outcome (resolve missing (mkTVar "a"))) 2))
+    (say 9 (== (countErrorDiags (tcOutVec missing)) 2))
+    (say 10 (== (outcome (resolve missing mkIntTy)) 2))
+    (say 11 (== (countErrorDiags (tcOutVec missing)) 3))
+    (say 12 (== (outcome (resolve missing (mkTCon "UInt16" vecNew))) 2))
+    (say 13 (== (outcome (resolve missing mkCharTy)) 2))
+    (let tc (context "(data Plain (Plain))"))
+    (helpers tc)
+    (signature tc "vecPop" (mkTArr mkVecIntTy mkIntTy))
+    (say 14 (== (outcome (resolve tc mkStringTy)) 4))
+    (say 15 (== (outcome (resolve tc mkBoolTy)) 3))
+    (say 16 (== (outcome (resolve tc mkIntTy)) 3))
+    (say 17 (== (outcome (resolve tc (mkTCon "UInt16" vecNew))) 3))
+    (say 18 (== (outcome (resolve tc (mkTCon "Float" vecNew))) 3))
+    (say 19 (== (outcome (resolve tc mkCharTy)) 3))
+    (say 20 (== (outcome (resolve tc (mkTCon "Plain" vecNew))) 3))
+    (say 21 (== (countErrorDiags (tcOutVec tc)) 0))
+    (say 22 (isString (render tc (showLit "text" 9))))
+    (say 23 (== (cacheSize tc) 0))
+    (say 24 (isString (render tc (mkEVarAt "true" 9))))
+    (say 25 (== (cacheSize tc) 0))
+    (say 26 (isString (render tc (mkEInt 42))))
+    (say 27 (== (cacheSize tc) 0))
+    (let refused (context ""))
+    (say 28 (== (tyIsErr (render refused (mkEInt 1))) 1))
+    (say 29 (== (countErrorDiags (tcOutVec refused)) 1))
+    (say 30 (== (cacheSize refused) 0))
+    (let unavailable (context ""))
+    (signature unavailable "foreignValue" (mkTCon "Foreign" vecNew))
+    (say 31 (== (tyIsErr (render unavailable (mkEVarAt "foreignValue" 9))) 1))
+    (say 32 (== (countErrorDiags (tcOutVec unavailable)) 1))
+    (say 33 (strEq (firstCode unavailable) "AX3025"))
+    (let cascade (context ""))
+    (say 34 (== (tyIsErr (render cascade (mkEVarAt "missing" 9))) 1))
+    (say 35 (== (countErrorDiags (tcOutVec cascade)) 1))
+    (say 36 (strEq (firstCode cascade) "AX3001"))
+    (let cached (context ""))
+    (let prior (showLit "prior" 9))
+    (vecPush (showOutcomeTestCache cached) prior)
+    (vecPush (showOutcomeTestCache cached) mkStringTy)
+    (say 37 (isString (render cached (mkEVarAt "true" 9))))
+    (say 38 (== (cacheSize cached) 2))
+    (say 39 (nodeSame (vecGet (showOutcomeTestCache cached) 0) prior))
+    (say 40 (isString (vecGet (showOutcomeTestCache cached) 1)))
+    (let head (mkEVarAt "format#" 9))
+    (let argument (mkEInt 1))
+    (let expression (nodeBuildEApp head argument nilWords 9))
+    (say 41 (== (tyIsErr (showCheckRewritten cached expression argument mkIntTy)) 1))
+    (say 42 (== (countErrorDiags (tcOutVec cached)) 0))
+    (say 43 (== (cacheSize cached) 2))
+    (let direct (showLit "old" 9))
+    (say 44 (== (outcome (showSplice direct (showLit "new" 9))) 4))
+    (say 45 (strEq (nodeAText direct) "\"new\""))
+    0
+  })
