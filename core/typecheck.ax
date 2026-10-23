@@ -10508,11 +10508,10 @@
 ; A bare type variable answers 0: what it stands for is not known
 ; here, and the safe direction is to refuse.
 ;
-; NO type at all answers 0 for the same reason. `rgnKnownCall` asks
-; about `(nthParamTy sig i 0)`, whose fallback is 0 when the signature
-; is not an arrow - `(:: wrapBox ())` over `(fn (wrapBox x) ...)` - and
-; that 0 reached `nodeTag` as a null pointer: a `check` SIGSEGV, found
-; by scripts/check-fuzz.sh (tests/fuzz/region-nonarrow-sig.axfuzz).
+; No type at all answers 0 for the same reason. `rgnKnownCall` handles
+; a missing nthParamTy result conservatively before classification.
+; The shared AST boundary still accepts nilNode here; it cannot prove
+; a scalar type (tests/fuzz/region-nonarrow-sig.axfuzz).
 (pub :: rgTyScalar (-> TC ASTNode Int))
 (pub fn (rgTyScalar tc ty0)
   (if (nodeSame ty0 nilNode)
@@ -31328,7 +31327,9 @@
       {
         (let pty
           (if (== isArrowSig 1)
-            (nthParamTy sigTy i (freshTVar tc 0))
+            (if (let (Some declared) (nthParamTy sigTy i))
+              declared
+              (freshTVar tc 0))
             mkIntTy))
         {
           (tcBumpCounter tc)
@@ -31339,17 +31340,22 @@
       }
     }))
 
-; The i-th parameter position of an arrow chain, or `fallback` when
-; the arrows run out first.
-(pub :: nthParamTy (-> ASTNode Int ASTNode ASTNode))
-(pub fn (nthParamTy ty i fallback)
-  (if (nodeSame ty nilNode)
-    fallback
+; The i-th parameter type of an arrow chain. None means the signature
+; has no arrow/domain at that position; a present poison type stays Some.
+(pub :: nthParamTy (-> ASTNode Int (Option ASTNode)))
+(pub fn (nthParamTy ty i)
+  (if (|| (< i 0) (nodeSame ty nilNode))
+    None
     (if (!= (nodeTag ty) TAG_T_ARR)
-      fallback
+      None
       (if (== i 0)
-        (nodeAChild ty)
-        (nthParamTy (nodeBChild ty) (- i 1) fallback)))))
+        {
+          (let parameter (nodeAChild ty))
+          (if (nodeSame parameter nilNode)
+            None
+            (Some parameter))
+        }
+        (nthParamTy (nodeBChild ty) (- i 1))))))
 
 ; ==================================================================
 ; LEXICAL REGION ORIGINS (MM-RGN-3). A value may be stored only where
@@ -31558,15 +31564,19 @@
       {
         (let entFound (findFnEntAnywhere tc (nodeAName d)))
         (if (let (Some ent) entFound)
-          {
-            (let ty (tyExpandAliases tc (tyResolve (nthParamTy (fnEntTy ent) pos nilNode)) 0))
-            (if (|| (nodeSame ty nilNode) (!= (nodeTag ty) TAG_T_ARR))
-              (emitScopedCallback tc (nodeSpan d)
-                "a scoped parameter must have a declared function type")
-              (if (== (rgTyScalar tc (sigArrowResultTy ty)) 0)
-                (emitScopedCallback tc (nodeSpan d) "a scoped callback must return a scalar value")
-                0))
-          }
+          (if (let (Some declared) (nthParamTy (fnEntTy ent) pos))
+            {
+              (let ty (tyExpandAliases tc (tyResolve declared) 0))
+              (if (!= (nodeTag ty) TAG_T_ARR)
+                (emitScopedCallback tc (nodeSpan d)
+                  "a scoped parameter must have a declared function type")
+                (if (== (rgTyScalar tc (sigArrowResultTy ty)) 0)
+                  (emitScopedCallback tc (nodeSpan d)
+                    "a scoped callback must return a scalar value")
+                  0))
+            }
+            (emitScopedCallback tc (nodeSpan d)
+              "a scoped parameter must have a declared function type"))
           0)
       })
   })
@@ -33108,9 +33118,11 @@
                     (set i 0)
                     (while (< i (vecLen args))
                       {
-                        (if (&& (!= (& (rgnResultFrom f) (<< 1 i)) 0)
-                              (== (rgTyScalar tc (nthParamTy sig i nilNode)) 0))
-                          (set ok 0))
+                        (if (!= (& (rgnResultFrom f) (<< 1 i)) 0)
+                          (if (let (Some parameter) (nthParamTy sig i))
+                            (if (== (rgTyScalar tc parameter) 0)
+                              (set ok 0))
+                            (set ok 0)))
                         (set i (+ i 1))
                       })
                   })
@@ -34410,7 +34422,9 @@
       (emitCompute tc (nodeSpan d)
         (concat "compute contract names no parameter: `" (concat name "`")))
       (if (let (Some ent) entFound)
-        (if (computeWordArrow tc (nthParamTy (fnEntTy ent) pos nilNode))
+        (if (if (let (Some parameter) (nthParamTy (fnEntTy ent) pos))
+          (computeWordArrow tc parameter)
+          false)
           0
           (emitCompute tc (nodeSpan d)
             "a compute parameter requires the declared callback type (-> Int Int)"))

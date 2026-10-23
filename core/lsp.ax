@@ -3589,53 +3589,47 @@
 
 ; The struct behind a parameter: the `k`th arrow domain of the
 ; owner's signature, when it names a bare constructor type.
-(pub :: lspFieldParamStruct (-> (Vec ASTNode) String String Int String))
-;@axiom:effect(unsafe)
+(pub :: lspFieldParamStruct (-> (Vec ASTNode) String String Int (Option String)))
 (pub fn (lspFieldParamStruct decls owner name k)
   {
     (let sig (lspFindSig decls owner (- (vecLen decls) 1)))
     (if (nodeSame sig nilNode)
-      (as 0 String)
-      {
-        (let t (nthParamTy (nodeTyChild sig) k nilNode))
-        (if (nodeSame t nilNode)
-          (as 0 String)
-          (if (!= (nodeTag t) TAG_T_CON)
-            (as 0 String)
-            {
-              (let n (bareOf (nodeAName t)))
-              (if (== (lspIsUpperStart n) 1)
-                n
-                (as 0 String))
-            }))
-      })
+      None
+      (if (let (Some t) (nthParamTy (nodeTyChild sig) k))
+        (if (== (nodeTag t) TAG_T_CON)
+          {
+            (let n (bareOf (nodeAName t)))
+            (if (== (lspIsUpperStart n) 1)
+              (Some n)
+              None)
+          }
+          None)
+        None))
   })
 
 ; The struct behind a `let`: the constructor application the value
 ; builds, when its head is an upcased name.
-(pub :: lspFieldValueStruct (-> ASTNode String))
-;@axiom:effect(unsafe)
+(pub :: lspFieldValueStruct (-> ASTNode (Option String)))
 (pub fn (lspFieldValueStruct v)
   (if (nodeSame v nilNode)
-    (as 0 String)
+    None
     {
       (let h (lspSpineHead v))
       (if (nodeSame h nilNode)
-        (as 0 String)
+        None
         (if (!= (nodeTag h) TAG_E_VAR)
-          (as 0 String)
+          None
           {
             (let n (nodeAName h))
             (if (== (lspIsUpperStart n) 1)
-              n
-              (as 0 String))
+              (Some n)
+              None)
           }))
     }))
 
 ; The struct behind a base name at an offset: a parameter's declared
-; type, or a let's built value. Answers the bare name or null.
-(pub :: lspFieldBaseStruct (-> String (Vec ASTNode) String Int String))
-;@axiom:effect(unsafe)
+; type, or a let's built value. None means the struct is unknown.
+(pub :: lspFieldBaseStruct (-> String (Vec ASTNode) String Int (Option String)))
 (pub fn (lspFieldBaseStruct src decls base baseOff)
   {
     (let occs (lspNavOccurrences src decls))
@@ -3644,9 +3638,7 @@
         (let key o.key)
         (if (lspNavIsLocal key)
           (match (lspNavBinderOf occs key)
-            ((None)
-              (as 0 String)
-            )
+            ((None) None)
             ((Some b)
               {
                 (let bkind b.bkind)
@@ -3654,12 +3646,12 @@
                   (lspFieldParamStruct decls b.owner b.name b.param)
                   (if (== bkind NAV_B_LET)
                     (lspFieldValueStruct b.value)
-                    (as 0 String)))
+                    None))
               }
             ))
-          (as 0 String))
+          None)
       }
-      (as 0 String))
+      None)
   })
 
 ; A field use: `base.` ends where the word begins.
@@ -3667,20 +3659,17 @@
 (pub fn (lspHoverFieldUse src decls base baseOff wsp range)
   {
     (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
-    {
-      (let sn (lspFieldBaseStruct src decls base baseOff))
-      (if (== (as sn Int) 0)
-        0
-        {
-          (let d (lspFindStructField decls sn w))
-          (if (nodeSame d nilNode)
-            0
-            (lspHoverAtNote src decls d range None
-              (concat
-                (concat (concat (concat "field `" w) "` of `struct ") (concat (nodeAName d) "`"))
-                (lspFieldEffectsSaid (lspStructFieldNode (nodeBChildren d) w 0)))))
-        })
-    }
+    (if (let (Some sn) (lspFieldBaseStruct src decls base baseOff))
+      {
+        (let d (lspFindStructField decls sn w))
+        (if (nodeSame d nilNode)
+          0
+          (lspHoverAtNote src decls d range None
+            (concat
+              (concat (concat (concat "field `" w) "` of `struct ") (concat (nodeAName d) "`"))
+              (lspFieldEffectsSaid (lspStructFieldNode (nodeBChildren d) w 0)))))
+      }
+      0)
   })
 
 ; A field declaration: the word sits in a struct's field slot.
@@ -8518,14 +8507,14 @@
 
 ; The `k`th parameter type of the `::` signature naming `owner`:
 ; the one lookup behind a parameter's hover, and behind a
-; variable's shape. 0 for no signature or no arrow there.
-(pub :: lspShapeParamTy (-> (Vec ASTNode) String Int ASTNode))
+; variable's shape. None means no signature or no arrow there.
+(pub :: lspShapeParamTy (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspShapeParamTy decls owner k)
   {
     (let sig (lspFindSig decls owner (- (vecLen decls) 1)))
     (if (nodeSame sig nilNode)
-      nilNode
-      (nthParamTy (nodeTyChild sig) k nilNode))
+      None
+      (nthParamTy (nodeTyChild sig) k))
   })
 
 ; The arrows of a curried type: `Int` is 0, `(-> Int Int)` is 1.
@@ -8593,12 +8582,11 @@
                     {
                       (let bkind b.bkind)
                       (if (== bkind NAV_B_PARAM)
-                        {
-                          (let t (lspShapeParamTy decls b.owner b.param))
+                        (if (let (Some t) (lspShapeParamTy decls b.owner b.param))
                           (if (lspShapeIsBad t)
                             nilNode
                             t)
-                        }
+                          nilNode)
                         (if (== bkind NAV_B_LET)
                           (if (<= fuel 0)
                             nilNode
@@ -8742,7 +8730,7 @@
 ; arguments in place of the struct's parameters. The base is
 ; whatever shape the walk resolved - a parameter, a `let`, a
 ; call result - so a call result reaches its field here where
-; `lspFieldBaseStruct` answers null; that function's own
+; `lspFieldBaseStruct` answers None; that function's own
 ; migration onto this walk is the next slice.
 (pub :: lspShapeField (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int ASTNode))
 (pub fn (lspShapeField decls occs e fuel)
@@ -8835,12 +8823,11 @@
   {
     (let bkind b.bkind)
     (if (== bkind NAV_B_PARAM)
-      {
-        (let t (lspShapeParamTy decls b.owner b.param))
+      (if (let (Some t) (lspShapeParamTy decls b.owner b.param))
         (if (lspShapeIsBad t)
           nilNode
           t)
-      }
+        nilNode)
       (if (== bkind NAV_B_LET)
         {
           (let v b.value)
@@ -8935,12 +8922,9 @@
 ; type nodes carry no spans.
 (pub :: lspNavParamCode (-> (Vec ASTNode) String String Int String))
 (pub fn (lspNavParamCode decls owner name k)
-  {
-    (let t (lspShapeParamTy decls owner k))
-    (if (nodeSame t nilNode)
-      name
-      (concat name (concat " : " (tyRender t))))
-  })
+  (if (let (Some t) (lspShapeParamTy decls owner k))
+    (concat name (concat " : " (tyRender t)))
+    name))
 
 ; The line `off` sits on, without its indentation.
 (pub :: lspNavLineText (-> String Int String))
@@ -10995,13 +10979,9 @@
                   {
                     (let e (skipIdent src i n))
                     {
-                      {
-                        (let pt (nthParamTy ty k nilNode))
-                        (if (if (! (nodeSame pt nilNode))
-                          (!= (nodeTag pt) TAG_T_ERR)
-                          false)
-                          (lspViewHint out src ix e (concat ": " (tyRender pt)) 1 0 rs re))
-                      }
+                      (if (let (Some pt) (nthParamTy ty k))
+                        (if (!= (nodeTag pt) TAG_T_ERR)
+                          (lspViewHint out src ix e (concat ": " (tyRender pt)) 1 0 rs re)))
                       (set k (+ k 1))
                       (set i e)
                     }
@@ -14133,22 +14113,19 @@
 ; result. 0 when neither.
 (pub :: lspLocalTypeOf (-> String (Vec ASTNode) Int String ASTNode))
 (pub fn (lspLocalTypeOf src decls off w)
-  {
-    (let p (lspParamTypeAt src decls off w))
-    (if (! (nodeSame p nilNode))
-      p
-      {
-        (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-        (if (&& (! (nodeSame d nilNode)) (== (nodeTag d) TAG_D_FN))
-          {
-            (let sig (lspFindSig decls w (- (vecLen decls) 1)))
-            (if (nodeSame sig nilNode)
-              nilNode
-              (lspArrowResult (nodeTyChild sig)))
-          }
-          nilNode)
-      })
-  })
+  (if (let (Some parameter) (lspParamTypeAt src decls off w))
+    parameter
+    {
+      (let d (lspFindDecl decls w (- (vecLen decls) 1)))
+      (if (&& (! (nodeSame d nilNode)) (== (nodeTag d) TAG_D_FN))
+        {
+          (let sig (lspFindSig decls w (- (vecLen decls) 1)))
+          (if (nodeSame sig nilNode)
+            nilNode
+            (lspArrowResult (nodeTyChild sig)))
+        }
+        nilNode)
+    }))
 
 ; The fn whose HEADER holds `off`, and the type of the parameter `w`
 ; names in it. The header is the form opened by the `(` before the
@@ -14156,14 +14133,14 @@
 ; the parameter list is that paren's form - so a cursor inside it is
 ; on a parameter and nowhere else. Its index is the parameter's
 ; position in the fn's own list, which is what `nthParamTy` counts.
-(pub :: lspParamTypeAt (-> String (Vec ASTNode) Int String ASTNode))
+(pub :: lspParamTypeAt (-> String (Vec ASTNode) Int String (Option ASTNode)))
 (pub fn (lspParamTypeAt src decls off w)
   {
     (let n (vecLen decls))
     (let mut i 0)
-    (let mut found nilNode)
+    (let mut found (:: None (Option ASTNode)))
     {
-      (while (&& (< i n) (nodeSame found nilNode))
+      (while (&& (< i n) (isNone found))
         {
           (let d (vecGet decls i))
           {
@@ -14178,7 +14155,7 @@
                       {
                         (let sig (lspFindSig decls (nodeAName d) (- (vecLen decls) 1)))
                         (if (! (nodeSame sig nilNode))
-                          (set found (nthParamTy (nodeTyChild sig) k nilNode)))
+                          (set found (nthParamTy (nodeTyChild sig) k)))
                       })
                   })
               })
