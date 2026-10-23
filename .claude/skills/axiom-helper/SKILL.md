@@ -476,7 +476,7 @@ Key facts:
 Use `(:: main ())` for a program that runs for its effects. A procedure
 returns `()`; use an `Int` result when the value or exit status matters.
 An `if` without an else answers `()`, so it needs no filler zero.
-Propagate a `Result` with postfix `?` in a tail position.
+Propagate a `Result` with postfix `?`. The `type-system` skill says where that reaches, including a branch, a loop, a region, and a handler.
 
 
 **Functions (modern `fn` style):**
