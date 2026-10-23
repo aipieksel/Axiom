@@ -311,13 +311,13 @@ control AX3010 "a contradicted claim is never reported" \
   (if (== (nodeSpan d) (nodeSpan d))'
 
 # AX3005, a match that misses a case. Two sites: `matExhaustive`
-# answers 0 or 1 and `checkExhaustiveMatrix` reports on 0, so `>= 0`
-# accepts every matrix; the fall-through arm (no constructor arm, no
+# answers Some missing cases or None for an exhaustive matrix. Replacing
+# its answer with None accepts every matrix; the fall-through arm (no constructor arm, no
 # catch-all) is keyed on `ctorChecked`, and `(!= x x)` never holds.
 control AX3005 "every match is exhaustive" \
   tests/diagnostics/1107-match-literal-column.ax \
-  '(if (== (matExhaustive tc matrix types missOut) 1)' \
-  '(if (>= (matExhaustive tc matrix types missOut) 0)' \
+  '(if (let (Some missing) (matExhaustive tc matrix types))' \
+  '(if (let (Some missing) (:: None (Option Names)))' \
   '(if (&& (== ctorChecked 0)' \
   '(if (&& (!= ctorChecked ctorChecked)'
 
