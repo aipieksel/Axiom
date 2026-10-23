@@ -2579,20 +2579,20 @@
 (fn (splitPartPath stem i)
   (concat stem (concat ".part" (fmtIntStr i))))
 
-; Resolve `tool` on PATH, answering "" when it is not there: the
+; Resolve `tool` on PATH, answering None when it is not there: the
 ; spawn primitives take a path, and the search is `sysRunPath`'s.
-(:: resolveTool (-> String String))
+(:: resolveTool (-> String (Option String)))
 ;@axiom:effect(io)
 (fn (resolveTool name)
   (if (isSome (strFind name "/" 0))
-    name
+    (Some name)
     (resolveToolIn name (sysEnv "PATH") 0)))
 
-(:: resolveToolIn (-> String String Int String))
+(:: resolveToolIn (-> String String Int (Option String)))
 ;@axiom:effect(io)
 (fn (resolveToolIn name path from)
   (if (>= from (strLen path))
-    ""
+    None
     {
       (let colon (strFind path ":" from))
       (let end
@@ -2606,7 +2606,7 @@
             name
             (concat dir (concat "/" name))))
         (if (fileExists cand)
-          cand
+          (Some cand)
           (resolveToolIn name path (+ end 1)))
       }
     }))
@@ -2617,25 +2617,22 @@
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 (fn (spawnTool tool args)
-  {
-    (let path (resolveTool tool))
-    (if (== (strLen path) 0)
-      -1
+  (if (let (Some path) (resolveTool tool))
+    {
+      (let n (vecLen args))
       {
-        (let n (vecLen args))
+        (let v (memAlloc (* (+ n 2) 8)))
         {
-          (let v (memAlloc (* (+ n 2) 8)))
-          {
-            (memSetWord v 0 (strCStr (strDup path)))
-            (fillArgv v args 0 n)
-            (memSetWord v (+ n 1) 0)
-            (match (sysSpawn (strCStr (strDup path)) v sysEnvp)
-              ((Err e) -1)
-              ((Ok pid) pid))
-          }
+          (memSetWord v 0 (strCStr (strDup path)))
+          (fillArgv v args 0 n)
+          (memSetWord v (+ n 1) 0)
+          (match (sysSpawn (strCStr (strDup path)) v sysEnvp)
+            ((Err e) -1)
+            ((Ok pid) pid))
         }
-      })
-  })
+      }
+    }
+    -1))
 
 ; Wait for `pid`, answering its exit code (128+signal when killed).
 (:: waitTool (-> Int Int))
