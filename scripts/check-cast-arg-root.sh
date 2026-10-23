@@ -310,13 +310,16 @@ echo "--- 1. user-level cast count does not grow ---"
 # six live header observations, one live AST reference-map observation,
 # one payload nullness observation and three effective ownership ablations.
 # Live observations keep their typed owner in scope.
+# Emitter, editor, diagnostic and typed-tag probes add seven subjects:
+# six live header observations and one effective Box reference-map ablation.
+# Each header observation keeps its live typed owner in scope.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1462 ]; then
-  ok "user-level (cast count $cast_count <= 1462)"
+elif [ "$cast_count" -le 1469 ]; then
+  ok "user-level (cast count $cast_count <= 1469)"
 else
-  bad "user-level (cast count $cast_count > 1462): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1469): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -511,7 +514,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # further reference erasures: 340 to 315 under one compiler.
 # Owning annotations, interner state and typed optional metadata remove
 # 21 further reference erasures: 315 to 294 under one compiler.
-erasure_pin=294
+# Typed emitter, editor and diagnostic optional owners remove nine
+# further reference erasures: 294 to 285 under one compiler.
+erasure_pin=285
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)

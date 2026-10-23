@@ -97,6 +97,12 @@ python3 tests/tools/symbol-map-index-options.py "$axc"
 python3 tests/tools/axtag-owning-carriers.py "$axc"
 python3 tests/selfhost/parser-type-parameter-owners.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/lsp-exact-parse-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/lsp-occurrence-value-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/lsp-declaration-query-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/emitter-type-metadata-options.py --axiom "$axc"
+python3 tests/selfhost/emitter-temporary-return.py --axiom "$axc"
+python3 tests/selfhost/parser-typed-node-tag.py --axiom "$axc"
+python3 tests/selfhost/diagnostic-option-fields.py --axiom "$axc"
 python3 tests/selfhost/emitter-signature-flags.py --axiom "$axc"
 python3 tests/selfhost/checker-axtag-owners.py --axiom "$axc" --negative-controls
 python3 tests/tools/compiler-tag-consumers.py --axiom "$axc"
