@@ -36,6 +36,11 @@ gate_build_axc axc
 
 python3 tests/tools/compiler-representation.py "$axc"
 python3 tests/selfhost/typecheck-type-registry.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/typecheck-edit-position-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/typecheck-region-index-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-evidence-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-checked-type-options.py --axiom "$axc"
+python3 tests/selfhost/typecheck-optional-indices.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/typecheck-bound-scope.py --axiom "$axc"
 python3 tests/selfhost/typecheck-lookup-options.py --axiom "$axc"
 python3 tests/selfhost/typecheck-result-options.py --axiom "$axc"
