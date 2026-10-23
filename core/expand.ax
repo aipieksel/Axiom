@@ -181,7 +181,7 @@
   (fulls : (Vec String))
   (mods : ModuleImports)
   (mut qsite : Int)
-  (gens : (Vec Int))
+  (gens : GeneratedOrigins)
   (callbs : Int)
   (mut seqbinds : SeqBinds)
   (mut tplbinds : Strings)
@@ -8816,7 +8816,7 @@
 ; to. Answers nothing: the declarations are rewritten in place.
 ; ------------------------------------------------------------------
 (pub :: expandProgram
-  (-> (Vec ASTNode) (Vec ASTNode) Diags Frames Units Names Names ModuleImports Ints))
+  (-> Nodes Nodes Diags Frames Units Names Names ModuleImports GeneratedOrigins))
 (pub fn (expandProgram entryDecls decls out frames units bares fulls mods)
   {
     (let env
@@ -10671,47 +10671,38 @@
       }
     }))
 
-; What `axiom symbols` needs to say `#generated` about a row: the name
-; each generated declaration ended up with, and the macro that made it.
-; Recorded after the names are final, so a mangled module-side product
-; is recorded under the name a reader will see.
-(pub :: expRecordGens (-> MEnv (Vec ASTNode) String Int Int))
-(pub fn (expRecordGens env made macName i)
-  (if (vecIsNull env.gens)
+; Each attributed declaration owns its final spelling and the macro name.
+; Record after module qualification so every reader asks about the same name.
+(pub struct GeneratedOrigin
+  (name : String)
+  (macro : String))
+
+(pub type GeneratedOrigins (Vec GeneratedOrigin))
+
+(pub :: expRecordGens (-> MEnv Nodes String Int Int))
+(pub fn (expRecordGens env made macroName i)
+  (if (>= i (vecLen made))
     0
-    (if (>= i (vecLen made))
-      0
-      {
-        {
-          (let g (vecGet made i))
-          (let pair vecNew)
-          {
-            (vecPush pair (as (nodeAText g) Int))
-            (vecPush pair (as macName Int))
-            (vecPush env.gens (as pair Int))
-          }
-        }
-        (expRecordGens env made macName (+ i 1))
-      })))
-
-; The macro that generated `name`, or 0.
-(pub :: expGenOf (-> Ints String String))
-;@axiom:effect(unsafe)
-(pub fn (expGenOf gens name)
-  (if (== (as gens Int) 0)
-    (as 0 String)
-    (expGenOfIn gens name 0)))
-
-(pub :: expGenOfIn (-> Ints String Int String))
-;@axiom:effect(unsafe)
-(pub fn (expGenOfIn gens name i)
-  (if (>= i (vecLen gens))
-    (as 0 String)
     {
-      (let p (vecGetVec gens i))
-      (if (strEq (as (vecGet p 0) String) name)
-        (as (vecGet p 1) String)
-        (expGenOfIn gens name (+ i 1)))
+      (let declaration (vecGet made i))
+      (vecPush env.gens (GeneratedOrigin :name (nodeAText declaration) :macro macroName))
+      (expRecordGens env made macroName (+ i 1))
+    }))
+
+; A present empty macro spelling is still an attribution; None is a miss.
+(pub :: expGenOf (-> GeneratedOrigins String (Option String)))
+(pub fn (expGenOf origins name)
+  (expGenOfIn origins name 0))
+
+(pub :: expGenOfIn (-> GeneratedOrigins String Int (Option String)))
+(pub fn (expGenOfIn origins name i)
+  (if (>= i (vecLen origins))
+    None
+    {
+      (let origin (vecGet origins i))
+      (if (strEq origin.name name)
+        (Some origin.macro)
+        (expGenOfIn origins name (+ i 1)))
     }))
 
 ; Every generated entry-file `fn` claims its bare name, overriding an

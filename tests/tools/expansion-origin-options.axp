@@ -1,0 +1,162 @@
+; Generated origins own their spelling and distinguish missing attribution.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+(import Intern)
+(import core)
+(import lexer)
+(import parser)
+(import diag)
+(import namespace)
+(import expand)
+(import mir)
+(import mireval)
+(import lsp)
+
+(:: environment (-> Diags Units Nodes MEnv))
+(fn (environment diagnostics units declarations)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls declarations
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units units
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNew
+    :structBuckets vecNew))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: named (-> (Option String) String Bool))
+(fn (named answer want)
+  (if (let (Some name) answer)
+    (strEq name want)
+    false))
+
+(:: temporaryOrigins (-> () GeneratedOrigins))
+(fn (temporaryOrigins ignored)
+  (vecPush vecNew
+    (GeneratedOrigin :name (concat "temporary" "Name") :macro (concat "temporary" "Maker"))))
+
+(:: temporaryLookup (-> () (Option String)))
+(fn (temporaryLookup ignored)
+  (expGenOf (temporaryOrigins ()) "temporaryName"))
+
+(:: expanded (-> String GeneratedOrigins))
+(fn (expanded source)
+  {
+    (let parsed (parseModule (lex source)))
+    (if (pResOk parsed)
+      {
+        (let nodes (pResNodes parsed))
+        (let diagnostics (:: vecNew Diags))
+        (let origins (expandProgram nodes nodes diagnostics vecNew vecNew vecNew vecNew vecNew))
+        (if (== (countErrorDiags diagnostics) 0)
+          origins
+          vecNew)
+      }
+      vecNew)
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let origins (:: vecNew GeneratedOrigins))
+    (say 1
+      (if (let None (expGenOf origins "missing"))
+        true
+        false))
+    (vecPush origins (GeneratedOrigin :name "value" :macro "maker"))
+    (say 2 (named (expGenOf origins "value") "maker"))
+    (vecPush origins (GeneratedOrigin :name "empty" :macro ""))
+    (say 3 (named (expGenOf origins "empty") ""))
+    (vecPush origins (GeneratedOrigin :name "value" :macro "second"))
+    (say 4 (named (expGenOf origins "value") "maker"))
+    (say 5 (named (expGenOfIn origins "value" 1) "second"))
+    (say 6 (named (expGenOf (temporaryOrigins ()) "temporaryName") "temporaryMaker"))
+    (say 7 (named (temporaryLookup ()) "temporaryMaker"))
+    (say 8
+      (if (let None (expGenOfIn origins "value" 3))
+        true
+        false))
+    (let diagnostics (:: vecNew Diags))
+    (let env (environment diagnostics vecNew vecNew))
+    (let generated (nodeBuildDFn "produced" vecNew (mkEInt 3) 0))
+    (expRecordGens env (vecPush vecNew generated) (concat "owned" "Maker") 0)
+    (say 9 (named (expGenOf env.gens "produced") "ownedMaker"))
+    (say 10 (== (vecLen env.gens) 1))
+    (let qualified (nodeBuildDFn "qualified" vecNew (mkEInt 4) 0))
+    (mangleDecl qualified "M" mangleIdxNew vecNew vecNew 1)
+    (expRecordGens env (vecPush vecNew qualified) "moduleMaker" 0)
+    (say 11 (named (expGenOf env.gens "M$qualified") "moduleMaker"))
+    (say 12
+      (if (let None (expGenOf env.gens "qualified"))
+        true
+        false))
+    (let actual
+      (expanded
+        "(macro make ((make N) (:: (syntax/join generated N) (-> Int Int)) (fn ((syntax/join generated N) value) value))) (make Result) (:: main Int) (fn (main) (generatedResult 3))"))
+    (say 13 (named (expGenOf actual "generatedResult") "make"))
+    (say 14
+      (if (let None (expGenOf actual "main"))
+        true
+        false))
+    (say 15 (== (vecLen actual) 2))
+    (say 16
+      (==
+        (vecLen
+          (expanded
+            "(macro noProducts ((noProducts) (syntax/for (f (syntax/fields Empty)) (:: unused Int) (fn (unused) 1)))) (struct Empty) (noProducts) (:: main Int) (fn (main) 7)"))
+        0))
+    (say 17 (lspIsProductOf generated 0 vecNew vecNew env.gens "ownedMaker" false))
+    (say 18 (! (lspIsProductOf generated 0 vecNew vecNew env.gens "otherMaker" false)))
+    (say 19 (! (lspIsProductOf generated 0 vecNew vecNew vecNew "ownedMaker" false)))
+    (say 20
+      (!
+        (lspIsProductOf generated 0 (vecPush vecNew generated) (vecPush vecNew 0) env.gens
+          "ownedMaker" false)))
+    (say 21 (lspIsProductOf generated 0 vecNew vecNew vecNew "unused" true))
+    (say 22
+      (lspIsProductOf generated 0 vecNew vecNew
+        (vecPush vecNew (GeneratedOrigin :name "produced" :macro "")) "" false))
+    (say 23 (! (lspIsProductOf nilNode 0 vecNew vecNew env.gens "ownedMaker" true)))
+    (say 24
+      (lspIsProductOf generated 0 (vecPush vecNew generated) (vecPush vecNew 1) env.gens
+        "ownedMaker" false))
+    0
+  })
