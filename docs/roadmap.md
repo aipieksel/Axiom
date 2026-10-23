@@ -78,7 +78,7 @@ integrator would still need.
 | Item | State | Where it's specified or tested |
 |---|---|---|
 | Compiler data uses typed structures and checked effect boundaries across every phase | In progress | Typed AST and effect values cross every phase. Function registries, checker and codegen contexts, body scopes, region records, expansion frames, bindings and repetition matches keep typed owners. Exact function indexes use compact Links into owning tables. The CLI and REPL handoff rejects structural syntax edits and supplies checked function types for numeric lowering. Packed metadata, parser result carriers, alias revision tracking and a typed semantic IR remain |
-| Optional compiler lookups use typed results throughout the checker, emitter and tools | In progress | Checker scopes, function and type entries, graph searches, emitter tables, module filters, format specifiers, expansion matches and LSP buckets use `Option` for absence. Further checker index results, optional emitter state, expander builders and tool lookups remain |
+| Optional compiler lookups use typed results throughout the checker, emitter and tools | In progress | Checker scopes, function and type entries, graph searches, emitter tables, module filters, format specifiers, expansion matches and LSP buckets use `Option` for absence. Checker indexes, diagnostic witnesses, function arities and unit identities also use typed results. Match-arm state and parameter-type queries remain, alongside optional emitter state, expander builders and tool lookups |
 | Native tool arguments keep their string vector type to the syscall boundary | Done | `scripts/check-driver.sh`, `scripts/check-bootstrap.sh` |
 | Known callback arguments honour effect restrictions through forwarding and captures | Done | `tests/diagnostics/1463-callback-restrictions.ax` |
 | Opaque callback aliases preserve incomplete effect rows through forwarding, captures and mutable bindings | Done | `tests/diagnostics/1482-callback-alias-effects.ax`, `tests/selfhost/1042-callback-alias-effects.ax` |
@@ -296,5 +296,13 @@ cancellation and guarded executable-worker stack budgets. Arbitrary
 captured-closure tasks remain outside the encoded-worker design.
 Windows completion is separate from the v0.8.0 gates: compiler-wide
 type migration and an evidence-backed memory-model assessment.
+
+The v0.8.0 foundations release includes completed work on nightly, with
+proper typing and demonstrated memory soundness within the documented
+safe-language contract. The full compiler type migration, Links, inline
+vectors, Options and if-let chains belong to this scope. Database
+performance, executable footprint, feature parity and related enhancements
+are v0.8.1 work. Release still requires the compiler-wide completion and
+memory-model gates above.
 
 The maintainer cuts releases.

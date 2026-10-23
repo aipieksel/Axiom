@@ -38,7 +38,7 @@ BRIDGE = '''
   (let text (probeDiagnosticSource mode))
   (let declarations (readAstNodes (parseModuleWith (lex text) (scanAxtags text)) 1))
   (for declaration in declarations (writeNodeWord declaration 5 1))
-  (let units (vecPush vecNew (CUnit2 :file "checked-stamp.ax" :src text :name "" :imports vecNew :library false)))
+  (let units (vecPush vecNew (CUnit2 :file "checked-stamp.ax" :src text :name (Some "") :imports vecNew :library false)))
   (checkModuleTcTyped declarations declarations units)
 })
 (pub :: probeDiagnosticText (-> Int String))
