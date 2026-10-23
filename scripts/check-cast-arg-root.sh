@@ -302,13 +302,17 @@ echo "--- 1. user-level cast count does not grow ---"
 # Token and symbol-map controls add four MM-VAL-23 subjects: two live
 # header observations, one live-vector nullness observation, and a
 # child-map ablation of a copied Option. No production erasure is added.
+# Parser, macro, flow and compact-index probes add eight MM-VAL-23
+# subjects: five live header observations, two child-map ablations and one
+# deliberate vector truncation ablation. Their live typed owners stay held;
+# the unsafe mutations are effective negative controls only.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1443 ]; then
-  ok "user-level (cast count $cast_count <= 1443)"
+elif [ "$cast_count" -le 1451 ]; then
+  ok "user-level (cast count $cast_count <= 1451)"
 else
-  bad "user-level (cast count $cast_count > 1443): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1451): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -499,7 +503,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # fifty-one further reference erasures: 397 to 346 under one compiler.
 # Owning Token streams and optional symbol/AXIR lookups remove six
 # further reference erasures: 346 to 340 under one compiler.
-erasure_pin=340
+# Owning parser results, macro products and flow bindings remove 25
+# further reference erasures: 340 to 315 under one compiler.
+erasure_pin=315
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)

@@ -48,13 +48,14 @@ BRIDGE = '''
 (pub fn (probeDupDiagnostic mode capacity) {
   (let source (probeDupSource mode))
   (let parsed (parseModuleWith (lex source) (scanAxtags source)))
-  (if (pResFailed parsed) "parse failed"
-    { (let declarations (pResNodes parsed))
+  (match parsed
+    ((ParseFailed parseError1) "parse failed")
+    ((ParseSuccess parsedValue1 parsedPos1) { (let declarations parsedValue1)
       (let index (dupIdxNew (vecLen declarations) capacity))
       (for i in 0..(vecLen declarations) (dupIdxAddDecl index (vecGet declarations i) i))
       (let diagnostics (checkDuplicates index declarations vecNew 0))
       (let units (vecPush vecNew (CUnit2 :file (probeDupFile mode) :src source :name None :imports vecNew :library false)))
-      (renderDiagsUnits diagnostics units) })
+      (renderDiagsUnits diagnostics units) }))
 })
 (pub :: probeDupDiagnosticGood (-> Int Int Bool))
 (pub fn (probeDupDiagnosticGood mode capacity)

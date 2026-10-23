@@ -52,7 +52,7 @@ def main():
         refused = {
             "word-token": ('(:: bad (-> Int String)) (fn (bad token) (tokenLexeme token))', "AX3004"),
             "word-constructor": ('(:: bad Int) (fn (bad) (mkToken TK_IDENT "x" 0))', "AX3004"),
-            "word-stream": ('(:: bad (-> Ints Int)) (fn (bad tokens) (parseModule tokens))', "AX3004"),
+            "word-stream": ('(:: bad (-> Ints (PResult Nodes))) (fn (bad tokens) (parseModule tokens))', "AX3004"),
             "unchecked-lookahead": ('(:: bad (-> Tokens Int String)) (fn (bad tokens i) '
                                     '(tokenLexeme (peekToken tokens i)))', "AX3004"),
             "missing-none": ('(:: bad (-> Tokens Int String)) (fn (bad tokens i) '
