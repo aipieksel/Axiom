@@ -1603,7 +1603,7 @@
   (name : String)
   (nameLen : Int)
   (flags : (Option Ints))
-  (sigTy : ASTNode)
+  (sigTy : (Option ASTNode))
   (takesEv : Int)
   (mut owned : Int)
   (mut arity : Int)
@@ -1629,9 +1629,21 @@
 (fn (fsigFlags e)
   e.flags)
 
-(:: fsigTy (-> FSig ASTNode))
+(:: fsigTy (-> FSig (Option ASTNode)))
 (fn (fsigTy e)
   e.sigTy)
+
+(:: cgTypeNodeOpt (-> ASTNode (Option ASTNode)))
+(fn (cgTypeNodeOpt ty)
+  (if (nodeSame ty nilNode)
+    None
+    (Some ty)))
+
+(:: signatureParamTy (-> (Option ASTNode) Int (Option ASTNode)))
+(fn (signatureParamTy signature i)
+  (match signature
+    ((None) None)
+    ((Some ty) (arrowParamTy ty i))))
 
 (:: fsigTakesEv (-> FSig Int))
 (fn (fsigTakesEv e)
@@ -1785,7 +1797,7 @@
               :name (nodeAName d)
               :nameLen (strLen (nodeAName d))
               :flags (Some (nodeBWords d))
-              :sigTy (nodeTyChild d)
+              :sigTy (cgTypeNodeOpt (nodeTyChild d))
               :takesEv (cgTakesEvidence (nodeTyChild d))
               :owned 1
               :arity (- 0 1)
@@ -1826,7 +1838,7 @@
                 :name (nodeCName f)
                 :nameLen (strLen (nodeCName f))
                 :flags None
-                :sigTy (nodeBChild f)
+                :sigTy (Some (nodeBChild f))
                 :takesEv 0
                 :owned 1
                 :arity (arrowArity (nodeBChild f))
@@ -3096,21 +3108,16 @@
 ; `(addrOf v)` read as a pointer into `v`, and the caller kept `v`
 ; alive for good: 48 bytes held per call.
 (pub :: fsigResultIsWord (-> CG FSig Int))
-;@axiom:effect(unsafe)
 (pub fn (fsigResultIsWord cg e)
-  {
-    (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
-    (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_CON))
+  (if (let (Some res) (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
+    (if (!= (nodeTag res) TAG_T_CON)
       0
-      {
-        (let tFound (lookupType (cgTypes cg) (as (nodeA res) String)))
-        (if (let (Some t) tFound)
-          (if (== (eKind t) TF_WORD)
-            1
-            0)
+      (if (let (Some t) (lookupType (cgTypes cg) (nodeAName res)))
+        (if (== (eKind t) TF_WORD)
+          1
           0)
-      })
-  })
+        0))
+    0))
 
 ; A self-tail-calling function's TYPE-VARIABLE and `Int` parameters,
 ; every form: the loop's slot for such a parameter takes no retain
@@ -3126,13 +3133,13 @@
     (tyvarSlotsFrom cg (fsigTy e) (vecLen (nodeBNames d)) 0)
     0))
 
-(pub :: tyvarSlotsFrom (-> CG ASTNode Int Int Int))
+(pub :: tyvarSlotsFrom (-> CG (Option ASTNode) Int Int Int))
 (pub fn (tyvarSlotsFrom cg sigTy n i)
   (if (>= i n)
     0
     (|
       {
-        (let cls (parameterTypeClass cg (arrowParamTy sigTy i)))
+        (let cls (parameterTypeClass cg (signatureParamTy sigTy i)))
         (if (== cls 0)
           ; an `Int` slot: a word of a binding handed to it is
           ; parked there uncounted, and the binding must outlive the
@@ -3320,7 +3327,7 @@
         {
           (while (&& (< i n) (< i 19))
             {
-              (if (== (parameterTypeClass cg (arrowParamTy (fsigTy e) i)) 2)
+              (if (== (parameterTypeClass cg (signatureParamTy (fsigTy e) i)) 2)
                 (set m (| m (ownerBit i))))
               (set i (+ i 1))
             })
@@ -3513,7 +3520,7 @@
           {
             (let eFound (findFSigCg cg (nodeAName d)))
             (if (let (Some e) eFound)
-              (if (== (parameterTypeClass cg (arrowParamTy (fsigTy e) i)) 0)
+              (if (== (parameterTypeClass cg (signatureParamTy (fsigTy e) i)) 0)
                 (| (wordBit i) (ownerBit i))
                 (paramBit i))
               (paramBit i))
@@ -4472,12 +4479,12 @@
         }))
   })
 
-(pub :: selfSlotParksFrom (-> CG ASTNode ASTNode Int Names FlowEnv Int Int Int))
+(pub :: selfSlotParksFrom (-> CG ASTNode (Option ASTNode) Int Names FlowEnv Int Int Int))
 (pub fn (selfSlotParksFrom cg e sigTy n_ params env cell i)
   (if (>= i n_)
     0
     {
-      (if (== (parameterTypeClass cg (arrowParamTy sigTy i)) 0)
+      (if (== (parameterTypeClass cg (signatureParamTy sigTy i)) 0)
         (stashAdd cell (parkForms (flowMask cg (spineArgAt e i) params env))))
       (selfSlotParksFrom cg e sigTy n_ params env cell (+ i 1))
     }))
@@ -4677,7 +4684,7 @@
           {
             (let eFound (findFSigCg cg (nodeAName d)))
             (if (let (Some e) eFound)
-              (if (let (Some t) (arrowParamTy (fsigTy e) i))
+              (if (let (Some t) (signatureParamTy (fsigTy e) i))
                 (if (== (nodeTag t) TAG_T_CON)
                   (if (strEq (nodeAName t) "String")
                     1
@@ -4701,7 +4708,7 @@
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
-            (parameterTypeClass cg (arrowParamTy (fsigTy e) i))
+            (parameterTypeClass cg (signatureParamTy (fsigTy e) i))
             2)
         }))
   })
@@ -4724,17 +4731,11 @@
 ; a type variable, and -1 when there is no signature at all.
 (pub :: fnResultClass (-> CG String Int))
 (pub fn (fnResultClass cg name)
-  {
-    (let eFound (findFSigCg cg (mangledForCg cg name)))
-    (if (let (Some e) eFound)
-      {
-        (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
-        (if (nodeSame res nilNode)
-          1
-          (fldClass cg res))
-      }
-      (- 0 1))
-  })
+  (if (let (Some e) (findFSigCg cg (mangledForCg cg name)))
+    (match (fnDeclaredResultTy (fsigTy e) (fsigArity e))
+      ((None) 1)
+      ((Some res) (fldClass cg res)))
+    (- 0 1)))
 
 ; Does this expression's VALUE carry a share of its own that the
 ; frame holding it may hand back - or is it an immortal reference
@@ -14527,36 +14528,28 @@
 
 (pub :: mainReturnsResult (-> CG Int))
 (pub fn (mainReturnsResult cg)
-  ; the entry file's `main` under the spelling every lookup answers
-  ; for it
-  {
-    (let eFound (findFSigCg cg "__axiom_user_main"))
-    (if (let (Some e) eFound)
-      (if (== (isResultIntErrorTy (fsigTy e)) 0)
+  (if (let (Some e) (findFSigCg cg "__axiom_user_main"))
+    (if (let (Some ty) (fsigTy e))
+      (if (== (isResultIntErrorTy ty) 0)
         0
         (if (let (Some ee) (findFSigCg cg (mainResultErrorText cg)))
-          {
-            (let ety (fsigTy ee))
+          (if (let (Some ety) (fsigTy ee))
             (if (!= (nodeTag ety) TAG_T_ARR)
               0
               (if (|| (== (isNamedConTy (nodeAChild ety) "Err$Error") 0)
                     (== (isNamedConTy (nodeBChild ety) "String") 0))
                 0
-                {
-                  (let okEFound (lookupType (cgTypes cg) "Err$Ok"))
-                  (let errEFound (lookupType (cgTypes cg) "Err$Err"))
-                  (if (let (Some okE) okEFound)
-                    (if (let (Some errE) errEFound)
-                      (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
-                        0
-                        1)
-                      0)
+                (if (let (Some okE) (lookupType (cgTypes cg) "Err$Ok"))
+                  (if (let (Some errE) (lookupType (cgTypes cg) "Err$Err"))
+                    (if (|| (!= (eArity okE) 1) (!= (eArity errE) 1))
+                      0
+                      1)
                     0)
-                }))
-          }
+                  0)))
+            0)
           0))
       0)
-  })
+    0))
 
 ; The `@main` tail for a `Result` answer: `%r` holds the cell. `wind`
 ; selects the `Ok` tail - `ExitProcess` on Windows, `ret` everywhere
@@ -19886,22 +19879,18 @@
 (pub :: borrowedTailLeaves (-> CG String ASTNode Names (Vec ASTNode)))
 (pub fn (borrowedTailLeaves cg name body params)
   {
-    (let eFound (findFSigCg cg name))
     (let acc vecNew)
-    (if (let (Some e) eFound)
+    (if (let (Some e) (findFSigCg cg name))
       (if (== (fsigOwned e) 1)
         acc
-        {
-          (let res (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
-          (if (nodeSame res nilNode)
+        (if (let (Some res) (fnDeclaredResultTy (fsigTy e) (fsigArity e)))
+          (if (!= (fldClass cg res) 2)
             acc
-            (if (!= (fldClass cg res) 2)
+            {
+              (collectTails cg body params vecNew name acc)
               acc
-              {
-                (collectTails cg body params vecNew name acc)
-                acc
-              }))
-        })
+            })
+          acc))
       acc)
   })
 
@@ -20092,7 +20081,7 @@
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
-            (if (== (parameterTypeClass cg (arrowParamTy (fsigTy e) i)) 2)
+            (if (== (parameterTypeClass cg (signatureParamTy (fsigTy e) i)) 2)
               1
               0)
             0)
@@ -20121,13 +20110,15 @@
           (if (let (Some e) eFound)
             (if (== (fsigTakesEv e) 0)
               (- 0 1)
-              (if (let (Some tn) (arrowParamTy (fsigTy e) i))
+              (if (let (Some tn) (signatureParamTy (fsigTy e) i))
                 (if (!= (tyIsSrcVar tn) 1)
                   (- 0 1)
                   {
                     (let vars vecNew)
                     {
-                      (cgSigVarsInto (fsigTy e) vars)
+                      (if (let (Some ty) (fsigTy e))
+                        (cgSigVarsInto ty vars)
+                        0)
                       (match (strVecIdx vars (nodeAName tn))
                         ((None) (- 0 1))
                         ((Some k) k))
@@ -20912,7 +20903,12 @@
     (let _0 (memSetWord ff 0 (- 0 1)))
     (let _a
       (if (== (pairMatchOK cg scrutExpr arms) 1)
-        (if (|| (== (pairWordOnly cg (pairScrutRetTy cg scrutExpr)) 1)
+        (if (||
+              (==
+                (match (pairScrutRetTy cg scrutExpr)
+                  ((None) 0)
+                  ((Some ty) (pairWordOnly cg ty)))
+                1)
               (== (tailScrutineeReleasable node scrutExpr cg) 0))
           (cgSetPairArm cg 1)
           cg)
@@ -22057,17 +22053,17 @@
 ; arm a shape the register test can answer. Anything else keeps the
 ; boxed path.
 ; The declared result type of the function a match scrutinee calls.
-(pub :: pairScrutRetTy (-> CG ASTNode ASTNode))
+(pub :: pairScrutRetTy (-> CG ASTNode (Option ASTNode)))
 (pub fn (pairScrutRetTy cg scrutExpr)
   {
     (let hn (spineHeadName scrutExpr))
     (if (== (strLen hn) 0)
-      nilNode
+      None
       {
         (let eFound (findFSigCg cg (mangledForCg cg hn)))
         (if (let (Some e) eFound)
           (arrowResultTy (fsigTy e))
-          nilNode)
+          None)
       })
   })
 
@@ -22135,10 +22131,6 @@
       (if (== held 1)
         1
         (scrutineeReleasable node scrutExpr cg1)))
-    (let prt
-      (if (== gotPair 2)
-        (pairScrutRetTy cg1 scrutExpr)
-        nilNode))
     (let pmark (vecLen (cgPendingStrings cg1)))
     (let _p
       (if (== rel 1)
@@ -22151,7 +22143,9 @@
         0))
     (let cg2
       (if (== gotPair 2)
-        (emitPairArms arms tagR sv cell mergeB cg1 0 ff prt rel)
+        (if (let (Some prt) (pairScrutRetTy cg1 scrutExpr))
+          (emitPairArms arms tagR sv cell mergeB cg1 0 ff prt rel)
+          (cgFail cg1 "pair scrutinee has no result type: " (spineHeadName scrutExpr)))
         (emitArms arms sv cell mergeB cg1 0 ff)))
     (let _q (cgPendingTruncate cg2 pmark))
     (let _2 (emitLabel cg2 mergeB))
@@ -27627,7 +27621,7 @@
                                   (concat "(i64 " (concat argStrT (concat evStr ")")))))
                               (releaseOwnedArgs cgE fnName args argRegs 0)
                               (if (let (Some signature) (findFSigCg cgE full))
-                                (emitPairBox cgE (arrowResultTy (fsigTy signature)) r)
+                                (emitPairBox cgE (requireSignatureResult signature) r)
                                 (cgFail cg "missing pair function signature: " full))
                             }
                             (if (== (mustTailOK cgE mt0 takesEv fnName args) 1)
@@ -28021,7 +28015,10 @@
                   ; surplus arguments call the closure the function
                   ; answers, which may do anything
                   (if (let (Some sig) sigFound)
-                    (if (> (spineArity e) (arrowArity (fsigTy sig)))
+                    (if (> (spineArity e)
+                          (match (fsigTy sig)
+                            ((None) 0)
+                            ((Some ty) (arrowArity ty))))
                       true
                       {
                         (vecPush names full)
@@ -29455,13 +29452,15 @@
 ; ------------------------------------------------------------------
 ; The result of an arrow spine: the first `nodeB` that is not itself an
 ; arrow. `(-> Int (Option Int))` answers the `(Option Int)` node.
-(pub :: arrowResultTy (-> ASTNode ASTNode))
-(pub fn (arrowResultTy t)
-  (if (nodeSame t nilNode)
-    nilNode
-    (if (== (nodeTag t) TAG_T_ARR)
-      (arrowResultTy (nodeBChild t))
-      t)))
+(pub :: arrowResultTy (-> (Option ASTNode) (Option ASTNode)))
+(pub fn (arrowResultTy signature)
+  (match signature
+    ((None) None)
+    ((Some ty)
+      (if (== (nodeTag ty) TAG_T_ARR)
+        (arrowResultTy (cgTypeNodeOpt (nodeBChild ty)))
+        (Some ty))
+    )))
 
 ; Is `rt` an `(Option T)` whose `T` is a machine word?
 ;
@@ -29642,7 +29641,10 @@
                 {
                   (let sigFound (findFSigCg cg full))
                   (if (let (Some sig) sigFound)
-                    (if (== (spineArgs e 0) (arrowArity (fsigTy sig)))
+                    (if (== (spineArgs e 0)
+                          (match (fsigTy sig)
+                            ((None) 0)
+                            ((Some ty) (arrowArity ty))))
                       1
                       0)
                     0)
@@ -29761,16 +29763,23 @@
 ; longer costs the function its variant.
 ; The declared result type of `node`, or 0. What `pairPayloadClass`
 ; reads to decide whether a payload is a share or a word.
+(:: requireSignatureResult (-> FSig ASTNode))
+;@axiom:effect(io)
+(fn (requireSignatureResult signature)
+  (match (arrowResultTy (fsigTy signature))
+    ((Some ty) ty)
+    ((None)
+      {
+        (dieCodegenDiag "pair function has no result type: " (fsigName signature))
+        mkTErr
+      }
+    )))
+
 (pub :: pairRetTyOf (-> CG ASTNode (Option ASTNode)))
 (pub fn (pairRetTyOf cg node)
   (if (let (Some signature) (findFSigCg cg (nodeAName node)))
-    {
-      (let ty (arrowResultTy (fsigTy signature)))
-      (if (nodeSame ty nilNode)
-        (None)
-        (Some ty))
-    }
-    (None)))
+    (arrowResultTy (fsigTy signature))
+    None))
 
 (pub :: pairFnOK (-> CG ASTNode Int))
 (pub fn (pairFnOK cg node)
@@ -29783,7 +29792,11 @@
         (if (let (Some e) eFound)
           (if (!= (fsigTakesEv e) 0)
             0
-            (if (== (pairRetOK cg (arrowResultTy (fsigTy e))) 0)
+            (if (==
+                  (match (arrowResultTy (fsigTy e))
+                    ((None) 0)
+                    ((Some ty) (pairRetOK cg ty)))
+                  0)
               0
               {
                 (let body (nodeCChild node))
@@ -29809,7 +29822,11 @@
     (let arms (nodeBChildren node))
     (if (== (pairMatchOK cg scrutExpr arms) 0)
       0
-      (if (== (pairWordOnly cg (pairScrutRetTy cg scrutExpr)) 1)
+      (if (==
+            (match (pairScrutRetTy cg scrutExpr)
+              ((None) 0)
+              ((Some ty) (pairWordOnly cg ty)))
+            1)
         0
         (scrutineeReleasable node scrutExpr cg)))
   })
@@ -30910,8 +30927,10 @@
                 (if (!= (spineArity valExpr) (fnArityCg cg n))
                   0
                   {
-                    (let res (fnDeclaredResultTy (fsigTy e) (fnArityCg cg n)))
-                    (if (|| (nodeSame res nilNode) (!= (nodeTag res) TAG_T_VAR))
+                    (let resFound (fnDeclaredResultTy (fsigTy e) (fnArityCg cg n)))
+                    (if (match resFound
+                      ((None) true)
+                      ((Some res) (!= (nodeTag res) TAG_T_VAR)))
                       0
                       {
                         (let st (nodeBinderTyChild valExpr))
@@ -30967,7 +30986,9 @@
               {
                 (let vars vecNew)
                 {
-                  (cgSigVarsInto (fsigTy e) vars)
+                  (if (let (Some ty) (fsigTy e))
+                    (cgSigVarsInto ty vars)
+                    0)
                   (match (strVecIdx vars n)
                     ((None) (- 0 1))
                     ((Some k) k))
@@ -31796,13 +31817,15 @@
 
 ; A function may return an arrow. Peel only its declared parameters,
 ; so a nullary function returning a closure still has a reference result.
-(pub :: fnDeclaredResultTy (-> ASTNode Int ASTNode))
-(pub fn (fnDeclaredResultTy ty arity)
-  (if (|| (nodeSame ty nilNode) (<= arity 0))
-    ty
-    (if (== (nodeTag ty) TAG_T_ARR)
-      (fnDeclaredResultTy (nodeBChild ty) (- arity 1))
-      ty)))
+(pub :: fnDeclaredResultTy (-> (Option ASTNode) Int (Option ASTNode)))
+(pub fn (fnDeclaredResultTy signature arity)
+  (match signature
+    ((None) None)
+    ((Some ty)
+      (if (&& (> arity 0) (== (nodeTag ty) TAG_T_ARR))
+        (fnDeclaredResultTy (cgTypeNodeOpt (nodeBChild ty)) (- arity 1))
+        (Some ty))
+    )))
 
 ; Is this field read's declared type a machine scalar - `fldClass` 0?
 ; Resolved exactly as `emitField` will resolve it, through the
@@ -33883,7 +33906,9 @@
                 {
                   (let sigFound (findFSigCg cg (mangledForCg cg n)))
                   (if (let (Some sig) sigFound)
-                    (dropFreeTy cg (fnDeclaredResultTy (fsigTy sig) (fsigArity sig)) 16)
+                    (match (fnDeclaredResultTy (fsigTy sig) (fsigArity sig))
+                      ((None) false)
+                      ((Some ty) (dropFreeTy cg ty 16)))
                     false)
                 })
             }

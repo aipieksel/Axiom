@@ -12,7 +12,7 @@ BRIDGE = '''
   {
     (let cell (memAlloc 8))
     (memSetWord cell 0 0)
-    (selfSlotParksFrom cg call signature (spineArity call) params vecNew cell 0)
+    (selfSlotParksFrom cg call (Some signature) (spineArity call) params vecNew cell 0)
     (memGetWord cell 0)
   })
 '''

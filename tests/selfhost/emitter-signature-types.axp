@@ -1,0 +1,250 @@
+; Missing signatures remain explicit without discarding present poison or wild types.
+(import codegen)
+(import parser)
+(import typecheck)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: absent (-> (Option a) Bool))
+(fn (absent value)
+  (match value
+    ((None) true)
+    ((Some _) false)))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same value expected)
+  (match value
+    ((None) false)
+    ((Some ty) (nodeSame ty expected))))
+
+(:: signature (-> String (Option ASTNode) Int FSig))
+(fn (signature name ty arity)
+  (FSig
+    :name name
+    :nameLen (strLen name)
+    :flags None
+    :sigTy ty
+    :takesEv 0
+    :owned 0
+    :arity arity
+    :stash 0
+    :ret 0
+    :consume 0
+    :transfer 0
+    :callers 0
+    :writes 0))
+
+(:: retireSignature (-> ASTNode Int))
+(fn (retireSignature ty)
+  {
+    (let entry (signature "retired" (Some ty) 0))
+    17
+  })
+
+(:: returnedType (Option ASTNode))
+(fn (returnedType)
+  {
+    (let entry (signature "returned" (Some (mkTCon "Owned" nodesNew)) 0))
+    entry.sigTy
+  })
+
+(:: queryChecks ())
+;@axiom:effect(io)
+(fn (queryChecks)
+  {
+    (let scalar mkIntTy)
+    (let poison mkTErr)
+    (let wild (mkTVar "_"))
+    (let empty (mkTCon "" nodesNew))
+    (let arrow (mkTArr scalar (mkTArr mkStringTy wild)))
+    (let entry1 (signature "absent" None 0))
+    (say 1 (absent entry1.sigTy))
+    (let entry2 (signature "scalar" (Some scalar) 0))
+    (say 2 (same entry2.sigTy scalar))
+    (let entry3 (signature "poison" (Some poison) 0))
+    (say 3 (same entry3.sigTy poison))
+    (let entry4 (signature "wild" (Some wild) 0))
+    (say 4 (same entry4.sigTy wild))
+    (let entry5 (signature "empty" (Some empty) 0))
+    (say 5 (same entry5.sigTy empty))
+    (say 6 (absent (probeSignatureParam None 0)))
+    (say 7 (same (probeSignatureParam (Some arrow) 0) scalar))
+    (say 8 (same (probeSignatureParam (Some arrow) 1) (nodeAChild (nodeBChild arrow))))
+    (say 9 (absent (probeSignatureParam (Some arrow) 2)))
+    (say 10 (same (probeSignatureParam (Some arrow) -1) scalar))
+    (say 11 (absent (fnDeclaredResultTy None 2)))
+    (say 12 (same (fnDeclaredResultTy (Some arrow) 0) arrow))
+    (say 13 (same (fnDeclaredResultTy (Some arrow) -1) arrow))
+    (say 14 (same (fnDeclaredResultTy (Some arrow) 1) (nodeBChild arrow)))
+    (say 15 (same (fnDeclaredResultTy (Some arrow) 2) wild))
+    (say 16 (same (fnDeclaredResultTy (Some arrow) 20) wild))
+    (say 17 (same (fnDeclaredResultTy (Some poison) 2) poison))
+    (say 18 (absent (arrowResultTy None)))
+    (say 19 (same (arrowResultTy (Some arrow)) wild))
+    (say 20 (same (arrowResultTy (Some empty)) empty))
+    (say 21 (absent (arrowResultTy (Some (mkTArr scalar nilNode)))))
+    (say 22 (absent (fnDeclaredResultTy (Some (mkTArr scalar nilNode)) 1)))
+    (say 23 (same (arrowResultTy (Some poison)) poison))
+    (say 24 (same (arrowResultTy (Some wild)) wild))
+  })
+
+(:: scanChecks ())
+;@axiom:effect(io)
+(fn (scanChecks)
+  {
+    (let partial (nodeBuildDSig "partial" vecNew 0 0))
+    (let rows (scanFloatSigs (vecPush vecNew partial) vecNew 0))
+    (let missing (vecGet rows 0))
+    (say 25 (absent missing.sigTy))
+    (say 26
+      (match missing.flags
+        ((None) false)
+        ((Some flags) (== (vecLen flags) 0))))
+    (let poison mkTErr)
+    (let written (nodeBuildDSig "written" vecNew 0 0))
+    (setNodeTyChild written poison)
+    (let populated (scanFloatSigs (vecPush vecNew written) vecNew 0))
+    (let present (vecGet populated 0))
+    (say 27 (same present.sigTy poison))
+    (let extTy (mkTArr mkFloatTy mkIntTy))
+    (let signed (nodeBuildFieldExtern "api" extTy "raw_api" 0))
+    (let unsigned (nodeBuildFieldExtern "untyped" nilNode "raw_untyped" 0))
+    (let external (:: vecNew (Vec FSig)))
+    (scanExternSigs (vecPush (vecPush vecNew signed) unsigned) external 0)
+    (say 28 (== (vecLen external) 1))
+    (let row (vecGet external 0))
+    (say 29 (same row.sigTy extTy))
+    (say 30 (&& (absent row.flags) (== row.arity 1)))
+  })
+
+(:: consumerChecks ())
+;@axiom:effect(io)
+(fn (consumerChecks)
+  {
+    (let cg newCG)
+    (let params (vecPush vecNew "value"))
+    (let decl (mkDFnAt "partial" params (mkEInt 1) 0))
+    (probeSignatureContext cg decl)
+    (say 31 (== (fnResultClass cg "missing") -1))
+    (let missing (signature "partial" None 1))
+    (vecPush cg.floatSigs missing)
+    (say 32 (== (fnResultClass cg "partial") 1))
+    (say 33 (== (paramClassOf cg params 0) 1))
+    (say 34 (== (paramIsHandle cg params 0) 0))
+    (say 35 (== (tyvarSlotsFrom cg None 2 0) (| (wordBit 0) (wordBit 1))))
+    (say 36 (== (refParamOwnerBits cg "partial") 0))
+    (say 37 (== (fsigResultIsWord cg missing) 0))
+    (say 38 (== (mainReturnsResult cg) 0))
+    (say 39 (absent (pairRetTyOf cg decl)))
+    (say 40 (absent (pairScrutRetTy cg (mkEApp (mkEVar "partial") (mkEInt 1)))))
+    (say 41 (== (pairFnOK cg decl) 0))
+    (say 42 (! (dropFreeExpr cg (mkEApp (mkEVar "partial") (mkEInt 1)))))
+    (let arrow (mkTArr mkStringTy mkIntTy))
+    (let typed (signature "typed" (Some arrow) 1))
+    (vecPush cg.floatSigs typed)
+    (probeSignatureContext cg (mkDFnAt "typed" params (mkEInt 1) 0))
+    (say 43 (== (paramIsHandle cg params 0) 1))
+    (say 44 (== (paramClassOf cg params 0) 2))
+    (say 45 (== (fnResultClass cg "typed") 0))
+    (say 46 (same (pairScrutRetTy cg (mkEApp (mkEVar "typed") (mkEInt 1))) (nodeBChild arrow)))
+    (say 47 (same (pairRetTyOf cg (mkDFnAt "typed" params (mkEInt 1) 0)) (nodeBChild arrow)))
+    (let poison mkTErr)
+    (vecPush cg.floatSigs (signature "poison" (Some poison) 0))
+    (say 48 (== (fnResultClass cg "poison") 1))
+    (say 49 (same (pairScrutRetTy cg (mkEVar "poison")) poison))
+    (probeSignatureContext cg (mkDFnAt "unregistered" params (mkEInt 1) 0))
+    (say 50 (== (paramClassOf cg params 0) 2))
+    (vecPush cg.floatSigs (signature "typed" None 1))
+    (say 51 (== (fnResultClass cg "typed") 0))
+    (say 52 (absent (pairScrutRetTy cg (mkEInt 0))))
+  })
+
+(:: ownershipChecks ())
+;@axiom:effect(io)
+(fn (ownershipChecks)
+  {
+    (let ty (mkTCon "Owned" nodesNew))
+    (let before (count ty))
+    (say 53 (== (retireSignature ty) 17))
+    (say 54 (== (count ty) before))
+    (say 55
+      (match returnedType
+        ((None) false)
+        ((Some owned) (strEq (nodeAName owned) "Owned"))))
+    (let first (signature "first" (Some ty) 0))
+    (say 56 (== (count ty) (+ before 1)))
+    (say 57 (same first.sigTy ty))
+    (say 58
+      (match (fnDeclaredResultTy first.sigTy 0)
+        ((None) false)
+        ((Some value) (nodeSame value ty))))
+  })
+
+(:: resultContext (-> (Option ASTNode) CG))
+(fn (resultContext renderer)
+  {
+    (let cg newCG)
+    (let resultTy
+      (mkTCon "Err$Result" (vecPush (vecPush vecNew mkIntTy) (mkTCon "Err$Error" nodesNew))))
+    (vecPush cg.floatSigs (signature "main" (Some resultTy) 0))
+    (vecPush cg.floatSigs (signature "Err$errorText" renderer 1))
+    (addType cg.types "Err$Ok" TF_DATA 1 0 2 vecNew)
+    (addType cg.types "Err$Err" TF_DATA 1 1 2 vecNew)
+    cg
+  })
+
+(:: resultChecks ())
+;@axiom:effect(io)
+(fn (resultChecks)
+  {
+    (let cg newCG)
+    (vecPush cg.floatSigs (signature "main" None 0))
+    (say 59 (== (mainReturnsResult cg) 0))
+    (say 60 (== (mainReturnsResult (resultContext None)) 0))
+    (say 61
+      (==
+        (mainReturnsResult (resultContext (Some (mkTArr (mkTCon "Err$Error" nodesNew) mkStringTy))))
+        1))
+    (say 62
+      (== (mainReturnsResult (resultContext (Some (mkTArr (mkTCon "Err$Error" nodesNew) mkIntTy))))
+        0))
+    (let empty (mkTCon "" nodesNew))
+    (say 63 (nodeSame (probeRequireSignature (signature "empty" (Some empty) 0)) empty))
+    (let poison mkTErr)
+    (say 64 (nodeSame (probeRequireSignature (signature "poison" (Some poison) 0)) poison))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if (> sysArgc 1)
+    {
+      (probeRequireSignature (signature "unavailable" None 0))
+      0
+    }
+    {
+      (queryChecks)
+      (scanChecks)
+      (consumerChecks)
+      (ownershipChecks)
+      (resultChecks)
+      0
+    }))
