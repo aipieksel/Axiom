@@ -352,7 +352,7 @@
     }
   })
 
-; The `fn` declaration behind one `FnEnt`, or 0.
+; The `fn` declaration behind one `FnEnt`, when a definition is available.
 ;
 ; THE INDEX IS `smBuild`'s, NOT A SECOND ONE. `smCollect` already keys
 ; a map by the MANGLED name - what `tcFnsVec` holds - and hangs the
@@ -364,7 +364,7 @@
 ; stdlib probe, which is (4098/839)^2 to within 10% - this map's scans
 ; ARE the shape of that curve, and doubling them would have been paid
 ; on the largest module in the tree.
-(pub :: axirDeclFor (-> SymMaps String ASTNode))
+(pub :: axirDeclFor (-> SymMaps String (Option ASTNode)))
 (pub fn (axirDeclFor sm key)
   (saGetNode sm.prmN sm.fnD key))
 
@@ -373,15 +373,17 @@
 ; refusal is silent for the same reason: this stream reports what the
 ; compiler knows about a program, and "this lowering does not handle
 ; that shape" is a fact about the lowering.
-(pub :: axirLowered (-> ASTNode Strings Int))
-(pub fn (axirLowered d parts)
-  (if (nodeSame d nilNode)
-    0
-    (if (let (Some fnir) (mLowerFn d))
-      (if (== (vecLen (mirVerify fnir)) 0)
-        (axirBodyLines fnir parts)
+(pub :: axirLowered (-> (Option ASTNode) Strings Int))
+(pub fn (axirLowered declaration parts)
+  (match declaration
+    ((None) 0)
+    ((Some d)
+      (if (let (Some fnir) (mLowerFn d))
+        (if (== (vecLen (mirVerify fnir)) 0)
+          (axirBodyLines fnir parts)
+          0)
         0)
-      0)))
+    )))
 
 ; The whole file for one checked module.
 ;
@@ -429,13 +431,15 @@
             (if (== (strLen loc) 0)
               "-"
               loc)
-            (if (&& (== e.isEffectOp 1) (! (nodeSame opTy nilNode)))
-              (symTy opTy)
+            (if (== e.isEffectOp 1)
+              (match opTy
+                ((None) (symTy e.ty))
+                ((Some ty) (symTy ty)))
               (symTy e.ty))
             (smNidFor sm name)))
         (vecPush parts (axirArityLine e.paramCount))
-        (if (! (== (as params Int) 0))
-          (for (p k) in params
+        (if (let (Some names) params)
+          (for (p k) in names
             (vecPush parts
               (concat "param " (concat (fmtInt k) (concat " " (concat (saAxSafe p) "\n")))))))
         (if (let (Some facts) e.rgn)

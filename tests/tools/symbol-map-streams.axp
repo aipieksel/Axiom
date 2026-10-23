@@ -1,0 +1,53 @@
+; Optional lookup adapters preserve symbol, human-table and AXIR stream bytes.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import symbols)
+(import axir)
+(import diag)
+(import Vec)
+(import IO)
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let source
+      ";@axiom:effect(pure)\n(pub :: tagged (-> Int Int))\n;@axiom:restrict(no-io)\n(pub fn (tagged item) item)\n(pub :: declaredOnly (-> Int String))\n(pub fn (zero) 42)\n(pub :: invoke (-> (-> Int Int) Int Int))\n(pub fn (invoke callback value) (callback value))\n(effect Query (query :: (-> Int Int)))\n(pub :: main Int)\n(pub fn (main) (tagged zero))\n")
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let units
+          (vecPush vecNew
+            (CUnit2
+              :file "symbol-map-streams.ax"
+              :src source
+              :name None
+              :imports vecNew
+              :library false)))
+        (let tc (checkModuleTcTyped declarations declarations units))
+        ; A table entry can have facts but no source definition. Its parameter
+        ; metadata uses a numeric spelling, and AXIR has no body to lower.
+        (if (let (Some entry) (findFnEnt tc "declaredOnly"))
+          (vecPush (fnEntEparams entry) 0))
+        (let axsym (symbolsRenderGens tc 0 vecNew 1 0))
+        (let axir (axirRender tc 0 0 "darwin-aarch64"))
+        (writeStr stdout "-- diagnostics --\n")
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+        (writeStr stdout "-- axsym --\n")
+        (writeStr stdout axsym)
+        (writeStr stdout "-- human --\n")
+        (writeStr stdout (symbolsHumanTable axsym))
+        (writeStr stdout "-- axir --\n")
+        (writeStr stdout axir)
+        (writeStr stdout "-- axir roundtrip --\n")
+        (writeStr stdout (axirWrite (axirRead axir)))
+        0
+      }
+      {
+        (writeStr stderr "invalid symbol stream fixture\n")
+        1
+      })
+  })

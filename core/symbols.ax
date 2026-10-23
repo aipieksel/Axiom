@@ -411,34 +411,38 @@
       (vecGet vals i))
   })
 
-; Typed values retain their container element types through lookup.
-(:: saGetVec (-> Strings (Vec Ints) String Ints))
-;@axiom:effect(unsafe)
+; Missing keys are None. Some retains the stored vector, including an
+; empty one; lookup does not copy or mutate the parser's collections.
+(:: saGetVec (-> Strings (Vec Ints) String (Option Ints)))
 (fn (saGetVec names vals key)
   {
     (let i (saIdx names key))
     (if (< i 0)
-      (as 0 Ints)
-      (vecGet vals i))
+      None
+      (Some (vecGet vals i)))
   })
 
-(pub :: saGetNames (-> Strings (Vec Names) String Names))
-;@axiom:effect(unsafe)
+(pub :: saGetNames (-> Strings (Vec Names) String (Option Names)))
 (pub fn (saGetNames names vals key)
   {
     (let i (saIdx names key))
     (if (< i 0)
-      (as 0 Names)
-      (vecGet vals i))
+      None
+      (Some (vecGet vals i)))
   })
 
-(pub :: saGetNode (-> Strings Nodes String ASTNode))
+(pub :: saGetNode (-> Strings Nodes String (Option ASTNode)))
 (pub fn (saGetNode names vals key)
   {
     (let i (saIdx names key))
     (if (< i 0)
-      nilNode
-      (vecGet vals i))
+      None
+      {
+        (let node (vecGet vals i))
+        (if (nodeSame node nilNode)
+          None
+          (Some node))
+      })
   })
 
 ; Byte-wise ascending insertion sort, in place: stage0's effect list
@@ -860,22 +864,20 @@
 ; mutating the AST to print it - the same rule `#calls=` follows below
 ; when it sorts a copy.
 (pub :: smTags (-> SymMaps ASTNode String Int))
-;@axiom:effect(unsafe)
 (pub fn (smTags sm d name)
   {
     (let tags (nodeAxtagsWords d))
     (if (== (as tags Int) 0)
-      (saPutSoft sm.tagN sm.tagV name (as 0 (Vec Int)))
+      (saPutSoft sm.tagN sm.tagV name (:: vecNew Ints))
       (if (== (vecLen tags) 0)
         (saPutSoft sm.tagN sm.tagV name tags)
-        {
-          (let have (saGetVec sm.tagN sm.tagV name))
-          (if (== (as have Int) 0)
-            (saPut sm.tagN sm.tagV name tags)
+        (match (saGetVec sm.tagN sm.tagV name)
+          ((None) (saPut sm.tagN sm.tagV name tags))
+          ((Some have)
             (if (== (vecLen have) 0)
               (saPut sm.tagN sm.tagV name tags)
-              (saPut sm.tagN sm.tagV name (smTagsUnion have tags))))
-        }))
+              (saPut sm.tagN sm.tagV name (smTagsUnion have tags)))
+          ))))
   })
 
 ; `have` first, in its own order, then every tag of `more` whose text
@@ -1033,9 +1035,7 @@
 (pub :: smTagMetas (-> SymMaps String Strings Int))
 (pub fn (smTagMetas sm key metas)
   {
-    (let tags (saGetVec sm.tagN sm.tagV key))
-    (if (== (as tags Int) 0)
-      0
+    (if (let (Some tags) (saGetVec sm.tagN sm.tagV key))
       {
         (let mut i 0)
         (while (< i (vecLen tags))
@@ -1044,6 +1044,7 @@
             (set i (+ i 1))
           })
       })
+    0
   })
 
 ; ------------------------------------------------------------------
@@ -1278,8 +1279,19 @@
 ; `#mir-incomplete` is the per-row half of the same admission: this
 ; body called something the walk could not resolve, so its own facts
 ; are a lower bound whatever the fixpoint did.
-(:: symMirParams (-> Strings Int Int Strings))
-;@axiom:effect(unsafe)
+; A declared name at this position, or the stable numeric spelling when
+; the declaration or that parameter is unavailable.
+(:: smParamName (-> (Option Names) Int String))
+(fn (smParamName params index)
+  (match params
+    ((None) (fmtInt index))
+    ((Some names)
+      (if (&& (>= index 0) (< index (vecLen names)))
+        (vecGetStr names index)
+        (fmtInt index))
+    )))
+
+(:: symMirParams (-> (Option Names) Int Int Strings))
 (fn (symMirParams params np mask)
   {
     (let out vecNew)
@@ -1288,11 +1300,7 @@
       (while (< i np)
         {
           (if (!= (& mask (<< 1 i)) 0)
-            (vecPush out
-              (if (&& (!= (as params Int) 0) (< i (vecLen params)))
-                (vecGetStr params i)
-                (fmtInt i)))
-            (as 0 (Vec String)))
+            (vecPush out (smParamName params i)))
           (set i (+ i 1))
         })
       out
@@ -1300,14 +1308,14 @@
   })
 
 ; Push this function's `#mir-*` keys onto `metas`. `ent` is the
-; `FnEnt`, `params` its parameter names (or 0), `truncated` whether
+; `FnEnt`, `params` its optional parameter names, `truncated` whether
 ; the module's fixpoint stopped at its round cap.
 ;
 ; A function with None in its region facts has no answer - the fixpoint did not
 ; reach it - and gets NO keys at all rather than keys reading zero.
 ; "No answer" and "the answer is none" are different claims and this
 ; stream has to keep them apart.
-(pub :: symMirMetas (-> FnEnt Strings Int Strings Int))
+(pub :: symMirMetas (-> FnEnt (Option Names) Int Strings Int))
 (pub fn (symMirMetas ent params truncated metas)
   {
     (let facts (fnEntRgn ent))
@@ -1547,10 +1555,7 @@
                                 (while (<= pi top)
                                   {
                                     (if (smHasIndex eps pi 0)
-                                      (vecPush pnames
-                                        (if (&& (!= (as params Int) 0) (< pi (vecLen params)))
-                                          (vecGetStr params pi)
-                                          (fmtInt pi)))
+                                      (vecPush pnames (smParamName params pi))
                                       0)
                                     (set pi (+ pi 1))
                                   })
@@ -1612,8 +1617,10 @@
                               (if (== (strLen loc) 0)
                                 "-"
                                 loc)
-                              (if (&& (== isOp 1) (! (nodeSame opTy nilNode)))
-                                (symTy opTy)
+                              (if (== isOp 1)
+                                (match opTy
+                                  ((None) (symTy (fnEntTy e)))
+                                  ((Some ty) (symTy ty)))
                                 (symTy (fnEntTy e)))
                               (smNidFor sm name)
                               metas))
