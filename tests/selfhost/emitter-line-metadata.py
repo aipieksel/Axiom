@@ -147,8 +147,8 @@ def check(axiom, repo, source_root, work, controls_only=False):
         print(f'ok   line metadata: 30 cases at -O{level} with allocation poisoning', flush=True)
 
     erased = replace_once(original,
-        '(vecPush rows\n                  (lineRowStr fi path (lineOfIx (as ix Int) off) (colOfIx text (as ix Int) off)))',
-        '(vecPush (as rows Ints) (as (lineRowStr fi path (lineOfIx (as ix Int) off) (colOfIx text (as ix Int) off)) Int))',
+        '(vecPush rows (lineRowStr fi path (lineOfIx ix off) (colOfIx text ix off)))',
+        '(vecPush (as rows Ints) (as (lineRowStr fi path (lineOfIx ix off) (colOfIx text ix off)) Int))',
         'line row storage erasure')
     # The private control really forges a vector view, so its declaration
     # must admit that operation before runtime assertions can measure it.

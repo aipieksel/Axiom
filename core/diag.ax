@@ -321,11 +321,11 @@
 ; the bare form", because in each of those cases there is no other
 ; file this renderer could name.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagSecCross (-> Diag Int Units Ints Int))
+(pub :: diagSecCross (-> Diag Int Units SourceIndexes Int))
 (pub fn (diagSecCross d i units ixs)
   (if (== (diagSecOwn d i) 1)
     0
-    (if (|| (== (as units Int) 0) (|| (== (as ixs Int) 0) (>= (diagSecUnit d i) (vecLen units))))
+    (if (|| (>= (diagSecUnit d i) (vecLen units)) (>= (diagSecUnit d i) (vecLen ixs)))
       0
       1)))
 
@@ -701,51 +701,34 @@
   (starts : (Vec Int))
   (chars : (Vec Int)))
 
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: srcIxStarts (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (srcIxStarts x)
-  {
-    (let ix (as x SrcIx))
-    (as ix.starts Int)
-  })
-
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: srcIxStartsVec (-> Int (Vec a)))
-;@axiom:effect(unsafe)
-(pub fn (srcIxStartsVec x)
-  (as (srcIxStarts x) (Vec a)))
+(pub type SourceIndexes (Vec SrcIx))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: srcIxChars (-> Int Int))
-;@axiom:effect(unsafe)
-(pub fn (srcIxChars x)
-  {
-    (let ix (as x SrcIx))
-    (as ix.chars Int)
-  })
+(pub :: srcIxStarts (-> SrcIx Ints))
+(pub fn (srcIxStarts ix)
+  ix.starts)
 
-; The `Vec` view of the same word. The cast is at the return,
-; not the call sites - see `nodeCName`.
-(pub :: srcIxCharsVec (-> Int (Vec a)))
-;@axiom:effect(unsafe)
-(pub fn (srcIxCharsVec x)
-  (as (srcIxChars x) (Vec a)))
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: srcIxStartsVec (-> SrcIx Ints))
+(pub fn (srcIxStartsVec ix)
+  ix.starts)
 
-; A `while`, not a recursion: its depth would be the line count, and
-; this backend eliminates only self tail calls.
-;
-; A null source answers an index over the empty text rather than
-; reading `strLen` off a null handle - the unit table is allowed to
-; carry one, and the renderers below test for it at the source rather
-; than here.
-; The raw view remains available for callers with word-based indexes.
-; New counted consumers keep the typed result through its last use.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: srcIxChars (-> SrcIx Ints))
+(pub fn (srcIxChars ix)
+  ix.chars)
+
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: srcIxCharsVec (-> SrcIx Ints))
+(pub fn (srcIxCharsVec ix)
+  ix.chars)
+
+; Both entry points return a counted index. Its line and character
+; vectors remain owned through the last position query or stored table.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: srcLineIndex (-> String Int))
+(pub :: srcLineIndex (-> String SrcIx))
 (pub fn (srcLineIndex src)
-  (as (srcLineIndexTyped src) Int))
+  (srcLineIndexTyped src))
 
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: srcLineIndexTyped (-> String SrcIx))
@@ -806,13 +789,13 @@
 
 ; `lineOf` through the index. 1-based, as AXDL prints it.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: lineOfIx (-> Int Int Int))
+(pub :: lineOfIx (-> SrcIx Int Int))
 (pub fn (lineOfIx ix off)
   (+ (ixLineK (srcIxStartsVec ix) off) 1))
 
 ; `lineStartOf` through the index.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: lineStartOfIx (-> Int Int Int))
+(pub :: lineStartOfIx (-> SrcIx Int Int))
 (pub fn (lineStartOfIx ix off)
   {
     (let starts (srcIxStartsVec ix))
@@ -824,7 +807,7 @@
 ; a scan from 0. A column is at most one line long, so this is O(line),
 ; not O(offset).
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: colOfIx (-> String Int Int Int))
+(pub :: colOfIx (-> String SrcIx Int Int))
 (pub fn (colOfIx src ix off)
   (colCount src (pastBom src (lineStartOfIx ix off)) off 1))
 
@@ -832,7 +815,7 @@
 ; as `char_start`/`char_end`. `chars[k]` is the count at the start of
 ; line k, so only the current line is ever walked.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: charsToIx (-> String Int Int Int))
+(pub :: charsToIx (-> String SrcIx Int Int))
 (pub fn (charsToIx src ix off)
   {
     (let starts (srcIxStartsVec ix))
@@ -848,10 +831,10 @@
 ; below needs an arbitrary unit's index anyway - an expansion frame
 ; renders against a DIFFERENT source than the diagnostic's own.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: unitIndexes (-> Units Ints))
+(pub :: unitIndexes (-> Units SourceIndexes))
 (pub fn (unitIndexes units)
   {
-    (let out vecNew)
+    (let out (:: vecNew SourceIndexes))
     {
       (for i in 0..(vecLen units)
         (vecPush out (srcLineIndex (unitSrc (vecGet units i)))))
@@ -859,15 +842,24 @@
     }
   })
 
-; The index for a diagnostic's own unit, with the same out-of-range
-; fallback to unit 0 the renderers apply to the unit table itself.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: indexForUnit (-> Ints Int Int))
-(pub fn (indexForUnit ixs u)
-  (vecGet ixs
-    (if (< u (vecLen ixs))
-      u
-      0)))
+; A lookup preserves a present index over empty source text. Only an
+; out-of-range unit number, including a negative one, answers None.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: sourceIndexAt (-> SourceIndexes Int (Option SrcIx)))
+(pub fn (sourceIndexAt ixs unit)
+  (if (&& (>= unit 0) (< unit (vecLen ixs)))
+    (Some (vecGet ixs unit))
+    None))
+
+; Primary diagnostics fall back to the entry unit for an unknown unit.
+; The full-report path supplies a non-empty table alongside its units.
+;@axiom:restrict(no-io,no-foreign)
+;@axiom:pre((> (vecLen ixs) 0))
+(pub :: indexForUnit (-> SourceIndexes Int SrcIx))
+(pub fn (indexForUnit ixs unit)
+  (if (let (Some index) (sourceIndexAt ixs unit))
+    index
+    (vecGet ixs 0)))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: colCount (-> String Int Int Int Int))
@@ -920,7 +912,7 @@
 
 ; The same three spellings, off a line index built once per render.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: fmtSpanIx (-> String Int Int String))
+(pub :: fmtSpanIx (-> String SrcIx Int String))
 (pub fn (fmtSpanIx src ix span)
   {
     (let s (spanStart span))
@@ -1098,27 +1090,16 @@
     0
   })
 
-; The single-diagnostic form, at the arity it has always had, because
-; two checked-in fixtures call it - `tests/selfhost/640-axdl-render.ax`
-; and `645-axdl-repetition.ax`, both on the single-unit path with
-; `units` 0 - and neither is a file this change owns. It builds the
-; index for its one diagnostic, which for ONE diagnostic is the same
-; O(file) the scans it replaces cost. The report loop below calls
-; `renderDiagIx` and builds one index for the whole run instead.
+; Render one diagnostic with its own source and optional cross-unit
+; context. An empty unit table leaves cross-unit fields unresolved.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: renderDiag (-> Diag String String Units String))
-;@axiom:effect(unsafe)
 (pub fn (renderDiag d src file units)
-  (renderDiagIx d src file units (srcLineIndex src)
-    (if (== (as units Int) 0)
-      (as 0 (Vec Int))
-      (unitIndexes units))))
+  (renderDiagIx d src file units (srcLineIndex src) (unitIndexes units)))
 
-; `ix` is `src`'s line index and `ixs` the whole unit table's, both
-; built once per render - see THE LINE INDEX above. `ixs` is 0 exactly
-; when `units` is, on the single-unit path.
+; `ix` owns the primary source index; `ixs` owns one index per unit.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: renderDiagIx (-> Diag String String Units Int Ints String))
+(pub :: renderDiagIx (-> Diag String String Units SrcIx SourceIndexes String))
 (pub fn (renderDiagIx d src file units ix ixs)
   {
     (let parts vecNew)
@@ -1211,9 +1192,7 @@
           {
             (let fs (diagTraceSpan d i))
             (let fu (diagTraceUnit d i))
-            (if (!
-                  (|| (== fs 0)
-                    (|| (== (as units Int) 0) (|| (== (as ixs Int) 0) (>= fu (vecLen units))))))
+            (if (! (|| (== fs 0) (|| (< fu 0) (|| (>= fu (vecLen units)) (>= fu (vecLen ixs))))))
               {
                 (let u (vecGet units fu))
                 {
@@ -1253,7 +1232,7 @@
         {
           (let u
             (vecGet units
-              (if (< (diagUnit d) (vecLen units))
+              (if (&& (>= (diagUnit d) 0) (< (diagUnit d) (vecLen units)))
                 (diagUnit d)
                 0)))
           {

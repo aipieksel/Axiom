@@ -190,7 +190,7 @@
 ; control byte drawn as its picture, a byte that is not UTF-8 drawn as
 ; U+FFFD - one column. On well-formed text that is the old count, one
 ; column per byte that is not a continuation byte.
-(pub :: dispColAt (-> String Int Int Int))
+(pub :: dispColAt (-> String SrcIx Int Int))
 (pub fn (dispColAt src ix off)
   {
     (let mut i (pastBom src (lineStartOfIx ix off)))
@@ -367,7 +367,7 @@
 ; byte - `^` for the primary span, `-` for the related one. The run
 ; covers the span clamped to its own line and to the quoted window, and
 ; is never shorter than one column even for an empty span.
-(pub :: labelBlock (-> String Int Int Int Int Int String String String))
+(pub :: labelBlock (-> String SrcIx Int Int Int Int String String String))
 (pub fn (labelBlock src ix gw start end ch msg sgr)
   ; Clamp the underline to the window it is drawn in.
   {
@@ -769,7 +769,7 @@
 ; degradation an expansion frame with no reachable unit already takes.
 ; A related location with no span at all has nothing to underline
 ; anywhere and becomes a note too.
-(pub :: snipRowsOf (-> diag::Diag Int Units Ints SnipRows))
+(pub :: snipRowsOf (-> diag::Diag Int Units SourceIndexes SnipRows))
 (pub fn (snipRowsOf d span units ixs)
   ; The primary underline takes the diagnostic's own severity
   ; colour; a related one is always secondary.
@@ -796,7 +796,7 @@
 ; Can related location `i` be underlined in the PRIMARY snippet? It
 ; needs a span, and it needs to index the source that snippet is
 ; quoted from.
-(pub :: secDrawable (-> diag::Diag Int Units Ints Int))
+(pub :: secDrawable (-> diag::Diag Int Units SourceIndexes Int))
 ; `ixs` is unread, and deliberately: drawability is decided by
 ; `diagSecOwn` and not by `diagSecCross`, because "another unit I
 ; cannot resolve" is still another unit. Folding the two would draw
@@ -822,7 +822,7 @@
 ; asking `diagSecCross` first sent that one to `fmtSpanIx` with a null
 ; span, which is a SIGSEGV in `spanStart`. Found by
 ; `scripts/check-fuzz.sh` (tests/fuzz/render-spanless-cross.axfuzz).
-(pub :: secNoteText (-> diag::Diag Int Units Ints String))
+(pub :: secNoteText (-> diag::Diag Int Units SourceIndexes String))
 (pub fn (secNoteText d i units ixs)
   (if (== (diagSecSpan d i) 0)
     (concat (diagSecMsg d i) " (no declaration to point at)")
@@ -840,7 +840,7 @@
       (diagSecMsg d i))))
 
 ; Width of the widest line number any row will print.
-(pub :: rowsGutterWidth (-> String Int SnipRows Int))
+(pub :: rowsGutterWidth (-> String SrcIx SnipRows Int))
 (pub fn (rowsGutterWidth src ix rows)
   {
     (let mut w 1)
@@ -857,7 +857,7 @@
 
 ; The labeled blocks, in order, with a `...` row wherever two adjacent
 ; rows are more than one line apart.
-(pub :: snipBody (-> String Int Int SnipRows String))
+(pub :: snipBody (-> String SrcIx Int SnipRows String))
 (pub fn (snipBody src ix gw rows)
   {
     (let out vecNew)
@@ -885,14 +885,14 @@
 ; `&` field's name and LOC - three spellings, one decision. The
 ; parenthetical repeats fmtSpan's exact text, so the derivation is a
 ; concatenation and not a re-parse.
-(pub :: traceNoteText (-> diag::Diag Int Units Ints String))
+(pub :: traceNoteText (-> diag::Diag Int Units SourceIndexes String))
 (pub fn (traceNoteText d i units ixs)
   {
     (let base (concat (concat "in this expansion of `" (diagTraceName d i)) "`"))
     {
       (let fs (diagTraceSpan d i))
       (let fu (diagTraceUnit d i))
-      (if (|| (== fs 0) (|| (== (as units Int) 0) (>= fu (vecLen units))))
+      (if (|| (== fs 0) (|| (< fu 0) (|| (>= fu (vecLen units)) (>= fu (vecLen ixs)))))
         base
         {
           (let u (vecGet units fu))
@@ -909,12 +909,12 @@
 ; template's line under a caret - instead of the one-line note above.
 ; The note form remains for a frame with no span or no reachable
 ; unit, which is what a REPL-shaped or spanless expansion leaves.
-(pub :: traceResolvable (-> diag::Diag Int Units Int))
-(pub fn (traceResolvable d i units)
+(pub :: traceResolvable (-> diag::Diag Int Units SourceIndexes Int))
+(pub fn (traceResolvable d i units ixs)
   {
     (let fs (diagTraceSpan d i))
     (let fu (diagTraceUnit d i))
-    (if (|| (== fs 0) (|| (== (as units Int) 0) (>= fu (vecLen units))))
+    (if (|| (== fs 0) (|| (< fu 0) (|| (>= fu (vecLen units)) (>= fu (vecLen ixs)))))
       0
       1)
   })
@@ -937,13 +937,13 @@
 ; The gutter is one width for the whole report: a frame's line number
 ; can be wider than the primary's, and two blocks whose bars do not
 ; line up read as two reports.
-(pub :: traceGutterWidth (-> diag::Diag Units Ints Int Int))
+(pub :: traceGutterWidth (-> diag::Diag Units SourceIndexes Int Int))
 (pub fn (traceGutterWidth d units ixs w0)
   {
     (let mut w w0)
     {
       (for i in 0..(diagTraceCount d)
-        (if (== (traceResolvable d i units) 1)
+        (if (== (traceResolvable d i units ixs) 1)
           {
             (let u (vecGet units (diagTraceUnit d i)))
             {
@@ -956,13 +956,13 @@
     }
   })
 
-(pub :: traceBlocks (-> diag::Diag Units Ints Int String))
+(pub :: traceBlocks (-> diag::Diag Units SourceIndexes Int String))
 (pub fn (traceBlocks d units ixs gw)
   {
     (let out vecNew)
     {
       (for i in 0..(diagTraceCount d)
-        (if (== (traceResolvable d i units) 1)
+        (if (== (traceResolvable d i units ixs) 1)
           ; The FRAME's index, not the diagnostic's: this block
           ; is drawn against the macro's own source.
           {
@@ -997,7 +997,7 @@
 
 ; `ix` is `src`'s line index and `ixs` the whole unit table's, both
 ; built once per render by the caller - see THE LINE INDEX in diag.ax.
-(pub :: renderDiagHuman (-> diag::Diag String String Units Int Ints String))
+(pub :: renderDiagHuman (-> diag::Diag String String Units SrcIx SourceIndexes String))
 (pub fn (renderDiagHuman d src file units ix ixs)
   ; A span that starts AT the end of the source is the
   ; end-of-file diagnostic - an unclosed `(` is the commonest
@@ -1075,7 +1075,7 @@
                       (if (! (== (secDrawable d i units ixs) 1))
                         (vecPush acc (noteLine gw (secNoteText d i units ixs)))))
                     (for i in 0..(diagTraceCount d)
-                      (if (! (== (traceResolvable d i units) 1))
+                      (if (! (== (traceResolvable d i units ixs) 1))
                         (vecPush acc (noteLine gw (traceNoteText d i units ixs)))))
                     (catStrs acc)
                   }
@@ -1125,7 +1125,7 @@
         {
           (let u
             (vecGet units
-              (if (< (diagUnit d) (vecLen units))
+              (if (&& (>= (diagUnit d) 0) (< (diagUnit d) (vecLen units)))
                 (diagUnit d)
                 0)))
           (vecPush blocks
@@ -1292,7 +1292,7 @@
 ; counts from byte 0 on top of the four line/column scans - the widest
 ; of the three surfaces and the one that paid most. All six now read
 ; the index; `charsToIx` walks only the span's own line.
-(pub :: jsonSpan (-> String Int Int String))
+(pub :: jsonSpan (-> String SrcIx Int String))
 (pub fn (jsonSpan src ix span)
   {
     (let s (spanStart span))
@@ -1353,7 +1353,7 @@
     }
   })
 
-(pub :: jsonFixField (-> diag::Diag String Int String String))
+(pub :: jsonFixField (-> diag::Diag String SrcIx String String))
 (pub fn (jsonFixField d src ix file)
   {
     (let parts vecNew)
@@ -1395,7 +1395,7 @@
 ; ITS OWN unit - when the frame carries a span the unit table can
 ; resolve. The numbers are the same ones the AXDL LOC prints, which is
 ; what lets verify-json.py derive this array from that field.
-(pub :: jsonTraceArray (-> diag::Diag Units Ints String))
+(pub :: jsonTraceArray (-> diag::Diag Units SourceIndexes String))
 (pub fn (jsonTraceArray d units ixs)
   {
     (let parts vecNew)
@@ -1411,7 +1411,7 @@
           {
             (let fs (diagTraceSpan d i))
             (let fu (diagTraceUnit d i))
-            (if (! (|| (== fs 0) (|| (== (as units Int) 0) (>= fu (vecLen units)))))
+            (if (== (traceResolvable d i units ixs) 1)
               {
                 (let u (vecGet units fu))
                 {
@@ -1442,7 +1442,7 @@
 ; `expansion` already uses; and the label alone, with no span key at
 ; all, when the location is absent. A consumer reads the three the way
 ; it reads a spanless diagnostic: the pair is there or it is not.
-(pub :: jsonRelatedArray (-> diag::Diag String Int Units Ints String))
+(pub :: jsonRelatedArray (-> diag::Diag String SrcIx Units SourceIndexes String))
 (pub fn (jsonRelatedArray d src ix units ixs)
   {
     (let parts vecNew)
@@ -1489,7 +1489,7 @@
     }
   })
 
-(pub :: renderDiagJson (-> diag::Diag String String Units Int Ints String))
+(pub :: renderDiagJson (-> diag::Diag String String Units SrcIx SourceIndexes String))
 (pub fn (renderDiagJson d src file units ix ixs)
   {
     (let sev (diagSev d))
@@ -1539,7 +1539,7 @@
         {
           (let u
             (vecGet units
-              (if (< (diagUnit d) (vecLen units))
+              (if (&& (>= (diagUnit d) 0) (< (diagUnit d) (vecLen units)))
                 (diagUnit d)
                 0)))
           {
