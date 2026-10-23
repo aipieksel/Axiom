@@ -377,10 +377,7 @@
     {
       (let dcol (dispColAt src ix start))
       (let dw (dispWidthLine src ls le))
-      (let m
-        (if (== (as msg Int) 0)
-          ""
-          msg))
+      (let m msg)
       {
         (let dend
           (dispColAt src ix
@@ -537,53 +534,51 @@
 ; U+FFFD, the rule `jsonEsc` states for all three surfaces (2026-09-27).
 (pub :: ctlEsc (-> String String))
 (pub fn (ctlEsc s)
-  (if (== (as s Int) 0)
-    s
-    ; Start of the current escape-free run, and doubling as the "has
-    ; anything been escaped at all" flag: any escape moves it past 0.
+  ; Start of the current escape-free run, and doubling as the "has
+  ; anything been escaped at all" flag: any escape moves it past 0.
+  {
+    (let n (strLen s))
+    (let parts vecNew)
+    (let mut i 0)
+    (let mut run 0)
     {
-      (let n (strLen s))
-      (let parts vecNew)
-      (let mut i 0)
-      (let mut run 0)
-      {
-        (while (< i n)
+      (while (< i n)
+        {
+          (let b (strByte s i))
           {
-            (let b (strByte s i))
-            {
-              (let w
-                (if (< b 128)
-                  1
-                  (utf8WellFormedAt s i n)))
-              (if (|| (== w 0) (|| (< b 32) (== b 127)))
-                {
-                  (if (> i run)
-                    (vecPush parts (strSlice s run (- i run))))
-                  (vecPush parts
-                    (if (== w 0)
-                      "�"
-                      (if (== b 10)
-                        "\\n"
-                        (if (== b 9)
-                          "\\t"
-                          (if (== b 13)
-                            "\\r"
-                            (quoteUesc b))))))
-                  (set i (+ i 1))
-                  (set run i)
-                }
-                (set i (+ i w)))
-            }
-          })
-        (if (== run 0)
-          s
-          {
-            (if (> n run)
-              (vecPush parts (strSlice s run (- n run))))
-            (catStrs parts)
-          })
-      }
-    }))
+            (let w
+              (if (< b 128)
+                1
+                (utf8WellFormedAt s i n)))
+            (if (|| (== w 0) (|| (< b 32) (== b 127)))
+              {
+                (if (> i run)
+                  (vecPush parts (strSlice s run (- i run))))
+                (vecPush parts
+                  (if (== w 0)
+                    "�"
+                    (if (== b 10)
+                      "\\n"
+                      (if (== b 9)
+                        "\\t"
+                        (if (== b 13)
+                          "\\r"
+                          (quoteUesc b))))))
+                (set i (+ i 1))
+                (set run i)
+              }
+              (set i (+ i w)))
+          }
+        })
+      (if (== run 0)
+        s
+        {
+          (if (> n run)
+            (vecPush parts (strSlice s run (- n run))))
+          (catStrs parts)
+        })
+    }
+  })
 
 ; `ctlEsc` is applied to the DIAGNOSTIC'S OWN text at the point it
 ; enters a line, never to a composed one: `helpLineFix` hands
@@ -979,9 +974,7 @@
                   (vecPush out
                     (concat (concat (spacesN gw) (paint SGR_GUT "--> "))
                       (concat
-                        (concat
-                          (concat (concat (as ffile String) ":")
-                            (fmtInt (lineOfIx fix (spanStart fs))))
+                        (concat (concat (concat ffile ":") (fmtInt (lineOfIx fix (spanStart fs))))
                           ":")
                         (concat (fmtInt (colOfIx fsrc fix (spanStart fs))) "\n"))))
                   (vecPush out bar)
@@ -1477,11 +1470,7 @@
                 }
               }))
           (vecPush parts "\"label\":\"")
-          (vecPush parts
-            (jsonEsc
-              (if (== (as (diagSecMsg d i) Int) 0)
-                ""
-                (diagSecMsg d i))))
+          (vecPush parts (jsonEsc (diagSecMsg d i)))
           (vecPush parts "\"}")
         })
       (vecPush parts "]")
