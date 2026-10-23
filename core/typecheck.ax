@@ -23564,14 +23564,25 @@
 ; match. The scrutinee first; each arm's pattern binds its variables
 ; at the constructor's DECLARED field types - tyvars as written,
 ; never substituted, which is why tyCompat treats them as wildcards -
-; then the arm body; arm results are NEVER compared (stage0 keeps the
-; last arm's type). After every arm: exhaustiveness, only when no
-; catch-all arm exists and the scrutinee's type is a known data type;
+; then the arm body. Concrete arm types are joined for diagnostics;
+; the match keeps the last arm's type. After every arm: exhaustiveness,
+; only when no catch-all arm exists and the scrutinee's type is a known data type;
 ; the missing list is the declaration order, and the anchor is the
 ; SCRUTINEE. Pattern errors therefore precede body errors, and AX3005
 ; comes after everything in its match - probed order.
 ; ------------------------------------------------------------------
 (pub :: checkMatch (-> TC ASTNode Int ASTNode))
+
+; One slot per source arm. Rejected, unexpanded arms have no checked
+; result; poison, wildcard and unit types remain present results.
+(pub type ArmTypes (Vec (Option ASTNode)))
+
+; Lift an unavailable parser or checked-type handle at this boundary.
+(pub :: armTypeOpt (-> ASTNode (Option ASTNode)))
+(pub fn (armTypeOpt ty)
+  (if (nodeSame ty nilNode)
+    None
+    (Some ty)))
 
 ; ERR-PROP-4: a self-recursive call in the scrutinee of a `match`.
 ; Evaluating the scrutinee runs before any arm, so the call is never
@@ -23959,16 +23970,17 @@
               (armsCtorTy tc (nodeBChildren e) 0)
               None)) (Option ASTNode)))
         {
-          (let tys vecNew)
+          (let tys (:: vecNew ArmTypes))
           (let resTy0
             (checkArms tc (nodeBChildren e) 0 covered catchall (freshTVar tc 0) scrutTy
               (match exhTy
                 ((None) scrutTy)
                 ((Some ty) ty))
-              nilNode tys disc))
+              (:: None (Option ASTNode)) tys disc))
           {
             (let resTy
-              (if (|| (matchArmsUnit tys 0) (&& (== disc 1) (! (matchArmsAgree tc tys 0 nilNode))))
+              (if (|| (matchArmsUnit tys 0)
+                    (&& (== disc 1) (! (matchArmsAgree tc tys 0 (:: None (Option ASTNode))))))
                 {
                   (discardArms tc (nodeBChildren e) tys 0)
                   mkUnitTy
@@ -24019,7 +24031,7 @@
   })
 
 ; The declared result type of the first constructor the arms name -
-; `Color` for `((Red) 1)`, `Option a` for `((Some x) x)` - or 0 when
+; `Color` for `((Red) 1)`, `Option a` for `((Some x) x)` - or None when
 ; no arm is a constructor pattern or none resolves. The shapes are
 ; the three `checkPatternTyped` dispatches as constructors.
 (pub :: armsCtorTy (-> TC (Vec ASTNode) Int (Option ASTNode)))
@@ -24046,7 +24058,7 @@
         (armsCtorTy tc arms (+ i 1)))
     }))
 
-; The constructor a pattern names, or 0 for a binder, a literal, or
+; The constructor a pattern names, or None for a binder, a literal, or
 ; a shape that names none.
 (pub :: patCtorHeadName (-> ASTNode (Option String)))
 (pub fn (patCtorHeadName pat)
@@ -24116,7 +24128,7 @@
 ; of checking exhaustiveness over whichever type came first. Binders
 ; still bind at `scrutTy`.
 (pub :: checkArms
-  (-> TC (Vec ASTNode) Int Ints Int ASTNode ASTNode ASTNode ASTNode (Vec ASTNode) Int ASTNode))
+  (-> TC (Vec ASTNode) Int Ints Int ASTNode ASTNode ASTNode (Option ASTNode) ArmTypes Int ASTNode))
 (pub fn (checkArms tc arms i covered catchall resTy scrutTy fitTy joinTy tys disc)
   (if (>= i (vecLen arms))
     resTy
@@ -24138,7 +24150,7 @@
               "syntax/for stands in a macro template's match, not in ordinary code" 0 0
               "iteration is an expansion-time facility: move the match into a declaration macro's template, or write the arms by hand"
               "the query vocabulary is CLOSED and compiler-implemented (macro-system.md MAC-CAP-5/6): every query is answered from the declaration list at expansion time"))
-          (vecPush tys nilNode)
+          (vecPush tys (:: None (Option ASTNode)))
           (checkArms tc arms (+ i 1) covered catchall resTy scrutTy fitTy joinTy tys disc)
         }
         {
@@ -24157,7 +24169,7 @@
                 })
               {
                 (scopeTrunc (tcScopeVec tc) mark)
-                (vecPush tys t)
+                (vecPush tys (armTypeOpt t))
                 (checkArms tc arms (+ i 1) covered catchall t scrutTy fitTy
                   (armJoin tc joinTy t (nodeBChild arm) disc) tys disc)
               }
@@ -24172,54 +24184,57 @@
 ; diverging call answer. Each later arm is held to it, and the report
 ; anchors at the arm that disagrees. The match still answers its last
 ; arm's type, so a program that already checked types the same way.
-(pub :: armJoin (-> TC ASTNode ASTNode ASTNode Int ASTNode))
+(pub :: armJoin (-> TC (Option ASTNode) ASTNode ASTNode Int (Option ASTNode)))
 (pub fn (armJoin tc joinTy t body disc)
   (if (armTyOpen t)
     joinTy
-    (if (nodeSame joinTy nilNode)
-      t
-      (if (|| (tyIsUnit joinTy) (tyIsUnit t))
-        mkUnitTy
+    (if (let (Some first) joinTy)
+      (if (|| (tyIsUnit first) (tyIsUnit t))
+        (Some mkUnitTy)
         {
           ; A dropped match's arms need not agree (`checkMatch`).
-          (if (&& (== disc 0) (== (tyCompat tc joinTy t) 0))
-            (emitMismatchTy tc joinTy t (armTailSpan body)))
+          (if (&& (== disc 0) (== (tyCompat tc first t) 0))
+            (emitMismatchTy tc first t (armTailSpan body)))
           joinTy
-        }))))
+        })
+      (Some t))))
 
 ; Do the arms' types agree with the first one that says something?
-(pub :: matchArmsAgree (-> TC (Vec ASTNode) Int ASTNode Bool))
+(pub :: matchArmsAgree (-> TC ArmTypes Int (Option ASTNode) Bool))
 (pub fn (matchArmsAgree tc tys i first)
   (if (>= i (vecLen tys))
     true
     {
-      (let t (vecGet tys i))
-      (if (|| (nodeSame t nilNode) (armTyOpen t))
-        (matchArmsAgree tc tys (+ i 1) first)
-        (if (nodeSame first nilNode)
-          (matchArmsAgree tc tys (+ i 1) t)
-          (if (== (tyCompat tc first t) 0)
-            false
-            (matchArmsAgree tc tys (+ i 1) first))))
+      (let found (vecGet tys i))
+      (if (let (Some t) found)
+        (if (armTyOpen t)
+          (matchArmsAgree tc tys (+ i 1) first)
+          (if (let (Some initial) first)
+            (if (== (tyCompat tc initial t) 0)
+              false
+              (matchArmsAgree tc tys (+ i 1) first))
+            (matchArmsAgree tc tys (+ i 1) (Some t))))
+        (matchArmsAgree tc tys (+ i 1) first))
     }))
 
-(pub :: matchArmsUnit (-> (Vec ASTNode) Int Bool))
+(pub :: matchArmsUnit (-> ArmTypes Int Bool))
 (pub fn (matchArmsUnit tys i)
   (if (>= i (vecLen tys))
     false
-    (if (if (nodeSame (vecGet tys i) nilNode)
-      false
-      (tyIsUnit (vecGet tys i)))
+    (if (if (let (Some ty) (vecGet tys i))
+      (tyIsUnit ty)
+      false)
       true
       (matchArmsUnit tys (+ i 1)))))
 
-(pub :: discardArms (-> TC (Vec ASTNode) (Vec ASTNode) Int Int))
+(pub :: discardArms (-> TC (Vec ASTNode) ArmTypes Int Int))
 (pub fn (discardArms tc arms tys i)
   (if (>= i (vecLen arms))
     0
     {
-      (if (&& (< i (vecLen tys)) (! (nodeSame (vecGet tys i) nilNode)))
-        (discardToUnit tc (nodeBChild (vecGet arms i)) (vecGet tys i)))
+      (if (< i (vecLen tys))
+        (if (let (Some ty) (vecGet tys i))
+          (discardToUnit tc (nodeBChild (vecGet arms i)) ty)))
       (discardArms tc arms tys (+ i 1))
     }))
 
@@ -24233,24 +24248,24 @@
       (let tg (nodeTag e))
       {
         (let inner
-          (if (|| (== tg TAG_E_LET) (== tg TAG_E_LETM))
-            (nodeCChild e)
+          (:: (if (|| (== tg TAG_E_LET) (== tg TAG_E_LETM))
+            (armTypeOpt (nodeCChild e))
             (if (== tg TAG_E_BEGIN)
               {
                 (let v (nodeAChildren e))
                 (if (== (vecLen v) 0)
-                  nilNode
-                  (vecGet v (- (vecLen v) 1)))
+                  None
+                  (armTypeOpt (vecGet v (- (vecLen v) 1))))
               }
-              nilNode)))
-        (if (nodeSame inner nilNode)
-          (spanOf e)
+              None)) (Option ASTNode)))
+        (if (let (Some child) inner)
           {
-            (let sp (armTailSpan inner))
+            (let sp (armTailSpan child))
             (if (== sp 0)
               (spanOf e)
               sp)
-          })
+          }
+          (spanOf e))
       }
     }))
 
