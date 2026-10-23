@@ -1607,7 +1607,7 @@
   (sigTy : (Option ASTNode))
   (takesEv : Int)
   (mut owned : Int)
-  (mut arity : Int)
+  (mut arity : (Option Int))
   (mut stash : Int)
   (mut ret : Int)
   (mut consume : Int)
@@ -1662,11 +1662,11 @@
     e
   })
 
-(:: fsigArity (-> FSig Int))
+(:: fsigArity (-> FSig (Option Int)))
 (fn (fsigArity e)
   e.arity)
 
-(:: fsigSetArity (-> FSig Int FSig))
+(:: fsigSetArity (-> FSig (Option Int) FSig))
 (fn (fsigSetArity e v)
   {
     (let s e)
@@ -1801,7 +1801,7 @@
               :sigTy (cgTypeNodeOpt (nodeTyChild d))
               :takesEv (cgTakesEvidence (nodeTyChild d))
               :owned 1
-              :arity (- 0 1)
+              :arity None
               :stash 0
               :ret 0
               :consume 0
@@ -1842,7 +1842,7 @@
                 :sigTy (Some (nodeBChild f))
                 :takesEv 0
                 :owned 1
-                :arity (arrowArity (nodeBChild f))
+                :arity (Some (arrowArity (nodeBChild f)))
                 :stash 0
                 :ret 0
                 :consume 0
@@ -2208,15 +2208,22 @@
       0)
     (fnArityOf (cgDecls cg) name)))
 
+; Unknown body arity cannot match an actual application count.
+(:: fnArityMatches (-> CG String Int Bool))
+(fn (fnArityMatches cg name actual)
+  (match (fnArityCg cg name)
+    ((None) false)
+    ((Some expected) (== actual expected))))
+
 ; A signed function's parameter count, recorded by `inferOwnership`
-; from its definition; -1 for a name with no signature or no body.
-(pub :: fnArityCg (-> CG String Int))
+; from its definition; None for a name with no signature or no body.
+(pub :: fnArityCg (-> CG String (Option Int)))
 (pub fn (fnArityCg cg name)
   {
     (let eFound (findFSigCg cg (mangledForCg cg name)))
     (if (let (Some e) eFound)
       (fsigArity e)
-      (- 0 1))
+      None)
   })
 
 ; ------------------------------------------------------------------
@@ -2598,7 +2605,7 @@
           0
           (if (==
                 {
-                  (let _a (fsigSetArity e (vecLen (nodeBNames d))))
+                  (let _a (fsigSetArity e (Some (vecLen (nodeBNames d)))))
                   (tailOwned cg (nodeCChild d) (nodeBNames d) vecNew)
                 }
                 1)
@@ -3321,20 +3328,23 @@
   {
     (let eFound (findFSigCg cg (mangledForCg cg name)))
     (if (let (Some e) eFound)
-      {
-        (let n (fnArityCg cg name))
-        (let mut i 0)
-        (let mut m 0)
-        {
-          (while (&& (< i n) (< i 19))
+      (match (fnArityCg cg name)
+        ((None) 0)
+        ((Some n)
+          {
+            (let mut i 0)
+            (let mut m 0)
             {
-              (if (== (parameterTypeClass cg (signatureParamTy (fsigTy e) i)) 2)
-                (set m (| m (ownerBit i))))
-              (set i (+ i 1))
-            })
-          m
-        }
-      }
+              (while (&& (< i n) (< i 19))
+                {
+                  (if (== (parameterTypeClass cg (signatureParamTy (fsigTy e) i)) 2)
+                    (set m (| m (ownerBit i))))
+                  (set i (+ i 1))
+                })
+              m
+            }
+          }
+        ))
       0)
   })
 
@@ -4824,7 +4834,7 @@
                           0
                           (if (hasType (cgTypes cg) name)
                             0
-                            (if (== (spineArity e) (fnArityCg cg name))
+                            (if (fnArityMatches cg name (spineArity e))
                               1
                               0))))
                     }))
@@ -30901,7 +30911,7 @@
             0
             (if (|| (! (hasFSigCg cg (mangledForCg cg n))) (!= (fnResultClass cg n) 1))
               0
-              (if (!= (spineArity valExpr) (fnArityCg cg n))
+              (if (! (fnArityMatches cg n (spineArity valExpr)))
                 0
                 {
                   (let st (nodeBinderTyChild valExpr))
@@ -30947,7 +30957,7 @@
             {
               (let eFound (findFSigCg cg (mangledForCg cg n)))
               (if (let (Some e) eFound)
-                (if (!= (spineArity valExpr) (fnArityCg cg n))
+                (if (! (fnArityMatches cg n (spineArity valExpr)))
                   0
                   {
                     (let resFound (fnDeclaredResultTy (fsigTy e) (fnArityCg cg n)))
@@ -31838,13 +31848,23 @@
 
 ; A function may return an arrow. Peel only its declared parameters,
 ; so a nullary function returning a closure still has a reference result.
-(pub :: fnDeclaredResultTy (-> (Option ASTNode) Int (Option ASTNode)))
+(pub :: fnDeclaredResultTy (-> (Option ASTNode) (Option Int) (Option ASTNode)))
 (pub fn (fnDeclaredResultTy signature arity)
+  (match arity
+    ((None)
+      (match signature
+        ((None) None)
+        ((Some ty) (Some ty)))
+    )
+    ((Some count) (fnDeclaredResultTyKnown signature count))))
+
+(:: fnDeclaredResultTyKnown (-> (Option ASTNode) Int (Option ASTNode)))
+(fn (fnDeclaredResultTyKnown signature arity)
   (match signature
     ((None) None)
     ((Some ty)
       (if (&& (> arity 0) (== (nodeTag ty) TAG_T_ARR))
-        (fnDeclaredResultTy (cgTypeNodeOpt (nodeBChild ty)) (- arity 1))
+        (fnDeclaredResultTyKnown (cgTypeNodeOpt (nodeBChild ty)) (- arity 1))
         (Some ty))
     )))
 

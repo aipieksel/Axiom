@@ -120,7 +120,7 @@ def check(compiler, root, work):
     local = dict(env, AXIOM_PATH=os.pathsep.join((str(work / 'positive-O0-modules'), str(root / 'core'))))
     for label, declaration, code in [
         ('raw-signature-type', '(:: bad (-> FSig ASTNode)) (fn (bad entry) entry.sigTy)', 'AX3004'),
-        ('raw-result-type', '(:: bad ASTNode) (fn (bad) (fnDeclaredResultTy None 1))', 'AX3004'),
+        ('raw-result-type', '(:: bad ASTNode) (fn (bad) (fnDeclaredResultTy None (Some 1)))', 'AX3004'),
         ('raw-parameter-input', '(:: bad Int) (fn (bad) (tyvarSlotsFrom newCG nilNode 1 0))', 'AX3004'),
         ('missing-signature-none', '(:: bad (-> FSig ASTNode)) (fn (bad entry) (match entry.sigTy ((Some ty) ty)))', 'AX3005'),
         ('missing-result-none', '(:: bad ASTNode) (fn (bad) (match (arrowResultTy None) ((Some ty) ty)))', 'AX3005'),

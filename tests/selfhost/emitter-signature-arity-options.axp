@@ -1,0 +1,164 @@
+; Unknown signature arity is distinct from a known nullary body.
+(import codegen)
+(import parser)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs value expected)
+  (match value
+    ((None) false)
+    ((Some actual) (== actual expected))))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found expected)
+  (match found
+    ((None) false)
+    ((Some node) (nodeSame node expected))))
+
+(:: signature (-> String (Option Int) ASTNode FSig))
+(fn (signature name arity ty)
+  (FSig
+    :name name
+    :nameLen (strLen name)
+    :flags None
+    :sigTy (Some ty)
+    :takesEv 0
+    :owned 1
+    :arity arity
+    :stash 0
+    :ret 0
+    :consume 0
+    :transfer 0
+    :callers 0
+    :writes 0))
+
+(:: readArity (-> FSig Int))
+(fn (readArity entry)
+  (match (probeGetArity entry)
+    ((None) 0)
+    ((Some _) 17)))
+
+(:: retireArity (-> (Option Int) Int))
+(fn (retireArity arity)
+  {
+    (let entry (signature "retired" arity (mkTCon "Int" nodesNew)))
+    17
+  })
+
+(:: returnedArity (-> (Option Int) (Option Int)))
+(fn (returnedArity arity)
+  {
+    (let entry (signature "returned" arity (mkTCon "Int" nodesNew)))
+    (probeGetArity entry)
+  })
+
+(:: retireReturnedArity (-> (Option Int) Int))
+(fn (retireReturnedArity arity)
+  (match (returnedArity arity)
+    ((None) 0)
+    ((Some _) 17)))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let cg newCG)
+    (let word (mkTCon "Int" nodesNew))
+    (let text (mkTCon "String" nodesNew))
+    (let arrow (mkTArr text word))
+    (say 1 (isNone (fnArityCg cg "missing")))
+    (let unknown (signature "unknown" None arrow))
+    (let zero (signature "zero" (Some 0) arrow))
+    (let one (signature "one" (Some 1) arrow))
+    (set cg.floatSigs (vecPush (vecPush (vecPush vecNew unknown) zero) one))
+    (say 2 (isNone unknown.arity))
+    (say 3 (isNone (fnArityCg cg "unknown")))
+    (say 4 (indexIs (fnArityCg cg "zero") 0))
+    (say 5 (indexIs (fnArityCg cg "one") 1))
+    (say 6 (! (probeArityMatches cg "unknown" 0)))
+    (say 7 (! (probeArityMatches cg "missing" -1)))
+    (say 8 (probeArityMatches cg "zero" 0))
+    (say 9 (! (probeArityMatches cg "zero" 1)))
+    (say 10 (probeArityMatches cg "one" 1))
+    (say 11 (! (probeArityMatches cg "one" 0)))
+    (say 12 (== (refParamOwnerBits cg "unknown") 0))
+    (say 13 (== (refParamOwnerBits cg "zero") 0))
+    (say 14 (== (refParamOwnerBits cg "one") (ownerBit 0)))
+    (say 15 (== (fnResultClass cg "unknown") 2))
+    (say 16 (== (fnResultClass cg "zero") 2))
+    (say 17 (== (fnResultClass cg "one") 0))
+    (say 18 (isNone (fnDeclaredResultTy None None)))
+    (say 19 (same (fnDeclaredResultTy (Some arrow) None) arrow))
+    (say 20 (same (fnDeclaredResultTy (Some arrow) (Some 0)) arrow))
+    (say 21 (same (fnDeclaredResultTy (Some arrow) (Some 1)) word))
+    (say 22 (same (fnDeclaredResultTy (Some arrow) (Some 20)) word))
+    (let poison mkTErr)
+    (say 23 (same (fnDeclaredResultTy (Some poison) None) poison))
+    (say 24 (same (fnDeclaredResultTy (Some poison) (Some 1)) poison))
+    (let wild (mkTVar "_"))
+    (say 25 (same (fnDeclaredResultTy (Some wild) (Some 0)) wild))
+    (let empty (mkTCon "" nodesNew))
+    (say 26 (same (fnDeclaredResultTy (Some empty) None) empty))
+    (say 27 (isNone (fnDeclaredResultTy (Some (mkTArr text nilNode)) (Some 1))))
+    (let written (nodeBuildDSig "declared" vecNew 0 0))
+    (setNodeTyChild written arrow)
+    (let scanned (vecGet (scanFloatSigs (vecPush vecNew written) vecNew 0) 0))
+    (say 28 (isNone scanned.arity))
+    (probeSetArity unknown (Some 0))
+    (say 29 (indexIs (fnArityCg cg "unknown") 0))
+    (probeSetArity unknown (Some 3))
+    (say 30 (indexIs (fnArityCg cg "unknown") 3))
+    (probeIndexArities cg)
+    (say 31 (indexIs (fnArityCg cg "unknown") 3))
+    (probeSetArity unknown None)
+    (say 32 (isNone (fnArityCg cg "unknown")))
+    (say 33 (indexIs (fnArityCg cg "zero") 0))
+    (let carrier (Some (- sysArgc 1)))
+    (let before (count carrier))
+    (let held (signature "held" None word))
+    (probeSetArity held carrier)
+    (say 34 (== (count carrier) (+ before 1)))
+    (say 35 (== (readArity held) 17))
+    (say 36 (== (count carrier) (+ before 1)))
+    (probeSetArity held None)
+    (say 37 (== (count carrier) before))
+    (say 38 (== (retireArity carrier) 17))
+    (say 39 (== (count carrier) before))
+    (say 40 (== (retireReturnedArity carrier) 17))
+    (say 41 (== (count carrier) before))
+    (say 42 (== (readArity held) 0))
+    (let zeroItem (nodeBuildFieldExtern "zero" word "raw_zero" 0))
+    (let oneItem (nodeBuildFieldExtern "one" arrow "raw_one" 0))
+    (let partial (nodeBuildFieldExtern "partial" nilNode "raw_partial" 0))
+    (let items (vecPush (vecPush (vecPush vecNew zeroItem) oneItem) partial))
+    (let external (:: vecNew (Vec FSig)))
+    (scanExternSigs items external 0)
+    (say 43 (== (vecLen external) 2))
+    (say 44 (indexIs (probeGetArity (vecGet external 0)) 0))
+    (say 45 (indexIs (probeGetArity (vecGet external 1)) 1))
+    (say 46 (isNone (findFSig external "raw_partial")))
+    (let extCG newCG)
+    (set extCG.floatSigs external)
+    (probeIndexArities extCG)
+    (say 47 (probeArityMatches extCG "raw_zero" 0))
+    0
+  })
