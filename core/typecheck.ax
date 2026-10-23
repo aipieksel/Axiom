@@ -28590,42 +28590,39 @@
 
 (pub :: checkOneContract (-> TC ASTNode Int (Option ASTNode) Int))
 (pub fn (checkOneContract tc d t resTy)
-  {
-    (let p (contractExprOf t))
-    (if (nodeSame p nilNode)
-      (emitContractMalformed tc t (contractSpanOf t)
-        (if (== (strLen (contractTextOf t)) 0)
-          "states a contract with no expression"
-          "is not one expression, and a contract is exactly one"))
+  (if (let (Some p) (contractExprOf t))
+    {
+      (let mark (vecLen (tcScopeVec tc)))
+      (let _r
+        (if (strEq (contractKeyOf t) "post")
+          (if (let (Some resultType) resTy)
+            (pushScope (tcScopeVec tc) "result" 0 (contractSpanOf t) resultType)
+            0)
+          0))
+      (let _i
+        (tcSetContractTag tc
+          (if (strEq (contractKeyOf t) "pre")
+            (Some ContractPre)
+            (Some ContractPost))))
       {
-        (let mark (vecLen (tcScopeVec tc)))
-        (let _r
-          (if (strEq (contractKeyOf t) "post")
-            (if (let (Some resultType) resTy)
-              (pushScope (tcScopeVec tc) "result" 0 (contractSpanOf t) resultType)
-              0)
-            0))
-        (let _i
-          (tcSetContractTag tc
-            (if (strEq (contractKeyOf t) "pre")
-              (Some ContractPre)
-              (Some ContractPost))))
+        (let ty (checkExprH tc p 0))
         {
-          (let ty (checkExprH tc p 0))
-          {
-            (tcSetContractTag tc None)
-            (scopeTrunc (tcScopeVec tc) mark)
-            (if (== (tyCompat tc mkBoolTy ty) 0)
-              (emitContractMalformed tc t (contractSpanOf t)
-                (concat
-                  (concat (concat (concat "is the `" (contractKeyOf t)) "` on `")
-                    (concat (bareOf (nodeAName d)) "` and has type `"))
-                  (concat (tyRender ty) "`, not `Bool`"))))
-            (checkContractPurity tc d t p resTy)
-          }
+          (tcSetContractTag tc None)
+          (scopeTrunc (tcScopeVec tc) mark)
+          (if (== (tyCompat tc mkBoolTy ty) 0)
+            (emitContractMalformed tc t (contractSpanOf t)
+              (concat
+                (concat (concat (concat "is the `" (contractKeyOf t)) "` on `")
+                  (concat (bareOf (nodeAName d)) "` and has type `"))
+                (concat (tyRender ty) "`, not `Bool`"))))
+          (checkContractPurity tc d t p resTy)
         }
-      })
-  })
+      }
+    }
+    (emitContractMalformed tc t (contractSpanOf t)
+      (if (== (strLen (contractTextOf t)) 0)
+        "states a contract with no expression"
+        "is not one expression, and a contract is exactly one"))))
 
 ; (4): the contract's OWN effect row, walked with `result` bound so
 ; that a `post` naming it is a local read and not a reference to some

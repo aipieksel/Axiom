@@ -1,0 +1,188 @@
+(import core)
+(import lexer)
+(import parser)
+(import expand)
+(import typecheck)
+(import diag)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+; option probes begin
+(:: queried (-> String (Option ASTNode)))
+(fn (queried source)
+  {
+    (let scanned (scanAxtags source))
+    (let tags (axtagSlice scanned 0 (vecLen scanned)))
+    (if (== (vecLen tags) 1)
+      (contractExprOf (vecGet tags 0))
+      None)
+  })
+
+(:: tagged (-> (Option ASTNode) Int Bool))
+(fn (tagged value tag)
+  (match value
+    ((None) false)
+    ((Some expression) (== (nodeTag expression) tag))))
+
+(:: named (-> (Option ASTNode) String Bool))
+(fn (named value name)
+  (match value
+    ((None) false)
+    ((Some expression) (strEq (nodeAName expression) name))))
+
+(:: owned (Option ASTNode))
+(fn (owned)
+  (queried (strDup ";@axiom:pre(\"owned\")\n")))
+
+(:: condition (-> ASTNode ASTNode))
+(fn (condition lowered)
+  (nodeBChild (nodeAChild lowered)))
+
+(:: conditionNamed (-> Nodes Int String Bool))
+(fn (conditionNamed checks index expected)
+  (if (< index (vecLen checks))
+    {
+      (let expression (condition (vecGet checks index)))
+      (if (== (nodeTag expression) TAG_E_VAR)
+        (strEq (nodeAName expression) expected)
+        false)
+    }
+    false))
+
+(:: bodyRetained (-> ASTNode ASTNode Bool))
+(fn (bodyRetained declaration original)
+  (if (== (nodeTag (nodeCChild declaration)) TAG_E_BEGIN)
+    {
+      (let statements (nodeAChildren (nodeCChild declaration)))
+      (if (> (vecLen statements) 0)
+        (nodeSame (vecGet statements (- (vecLen statements) 1)) original)
+        false)
+    }
+    false))
+
+(:: runOptions ())
+;@axiom:effect(io)
+(fn (runOptions)
+  {
+    (say 1 (isNone (queried ";@axiom:pre\n")))
+    (say 2 (isNone (queried ";@axiom:pre()\n")))
+    (say 3 (isNone (queried ";@axiom:pre(  )\n")))
+    (say 4 (isNone (queried ";@axiom:pre((> n 0)\n")))
+    (say 5 (isNone (queried ";@axiom:pre(true false)\n")))
+    (say 6 (named (queried ";@axiom:pre(true)\n") "true"))
+    (say 7 (named (queried ";@axiom:post(false)\n") "false"))
+    (say 8
+      (if (let (Some expression) (queried ";@axiom:pre(())\n"))
+        (isUnitLit expression)
+        false))
+    (say 9 (named (queried ";@axiom:pre(\"\")\n") "\"\""))
+    (say 10 (tagged (queried ";@axiom:pre(7)\n") TAG_E_INT))
+    (say 11 (named (queried ";@axiom:pre(unknown)\n") "unknown"))
+    (let escaped owned)
+    (for i in 0..32
+      (strDup "fresh allocation overwrites reusable freed payloads"))
+    (say 12 (named escaped "\"owned\""))
+    (say 13
+      (if (let (Some expression) (queried "prefix\n;@axiom:pre(true)\n"))
+        (== (spanStart (nodeSpan expression)) 19)
+        false))
+    (let text
+      ";@axiom:pre(true)\n;@axiom:pre()\n;@axiom:post(false)\n;@axiom:pre(unknown)\n;@axiom:post(())\n;@axiom:pre(true trailing)\n")
+    (let scanned (scanAxtags text))
+    (let tags (axtagSlice scanned 0 (vecLen scanned)))
+    (let original (mkEInt 7))
+    (let declaration (nodeBuildDFn "f" vecNew original 0))
+    (let pres (:: vecNew Nodes))
+    (let posts (:: vecNew Nodes))
+    (expSplitContracts declaration tags 0 pres posts)
+    (say 14 (== (vecLen pres) 2))
+    (say 15 (== (vecLen posts) 2))
+    (say 16 (conditionNamed pres 0 "true"))
+    (say 17 (conditionNamed pres 1 "unknown"))
+    (say 18 (conditionNamed posts 0 "false"))
+    (say 19
+      (if (> (vecLen posts) 1)
+        (isUnitLit (condition (vecGet posts 1)))
+        false))
+    (say 20
+      (if (> (vecLen pres) 1)
+        (< (spanStart (nodeSpan (vecGet pres 0))) (spanStart (nodeSpan (vecGet pres 1))))
+        false))
+    (let badScanned (scanAxtags ";@axiom:pre()\n;@axiom:post(true trailing)\n"))
+    (let badTags (axtagSlice badScanned 0 (vecLen badScanned)))
+    (let badPres (:: vecNew Nodes))
+    (let badPosts (:: vecNew Nodes))
+    (expSplitContracts declaration badTags 0 badPres badPosts)
+    (say 21 (&& (== (vecLen badPres) 0) (== (vecLen badPosts) 0)))
+    (expLowerOne declaration vecNew)
+    (say 22 (nodeSame (nodeCChild declaration) original))
+    (expLowerOne declaration badTags)
+    (say 23 (nodeSame (nodeCChild declaration) original))
+    (let goodTags (axtagSlice scanned 0 1))
+    (expLowerOne declaration goodTags)
+    (say 24 (== (nodeTag (nodeCChild declaration)) TAG_E_BEGIN))
+    (say 25 (bodyRetained declaration original))
+    (say 26 (tagged (queried ";@axiom:pre(0)\n") TAG_E_INT))
+    (say 27
+      (if (let (Some expression) (queried ";@axiom:pre(7)\n"))
+        (== (nodeA expression) 7)
+        false))
+  })
+
+; option probes end
+; diagnostics begin
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let scanned (scanAxtags source))
+    (let parsed (parseModuleWith (lex source) scanned))
+    (if (pResFailed parsed)
+      (println (concat "PARSE_FAILURE " name))
+      {
+        (let nodes (pResNodes parsed))
+        (let units
+          (vecPush vecNew
+            (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+        (expLowerContracts nodes (contractSigIndex nodes) 0)
+        (let tc (checkModuleTcTyped nodes nodes units))
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      })
+  })
+
+(:: runDiagnostics ())
+;@axiom:effect(io)
+(fn (runDiagnostics)
+  {
+    (checkSource "contract-valid.ax"
+      ";@axiom:pre(true)\n;@axiom:post((> result 0))\n(pub :: f (-> Int Int))\n(pub fn (f n) n)\n")
+    (checkSource "contract-empty.ax"
+      ";@axiom:pre\n;@axiom:post()\n(pub :: f Int)\n(pub fn (f) 1)\n")
+    (checkSource "contract-whitespace.ax" ";@axiom:pre(  )\n(pub :: f Int)\n(pub fn (f) 1)\n")
+    (checkSource "contract-malformed.ax"
+      ";@axiom:pre((> n 0)\n(pub :: f (-> Int Int))\n(pub fn (f n) n)\n")
+    (checkSource "contract-trailing.ax" ";@axiom:pre(true false)\n(pub :: f Int)\n(pub fn (f) 1)\n")
+    (checkSource "contract-poison.ax" ";@axiom:pre(unknown)\n(pub :: f Int)\n(pub fn (f) 1)\n")
+    (checkSource "contract-unit.ax" ";@axiom:pre(())\n(pub :: f Int)\n(pub fn (f) 1)\n")
+    (checkSource "contract-order.ax"
+      ";@axiom:pre()\n;@axiom:pre(true trailing)\n;@axiom:post(result)\n(pub :: f Int)\n(pub fn (f) 1)\n")
+    (checkSource "contract-purity.ax"
+      "(pub data Box (Wrap Int) (Empty))\n(pub :: boxed (-> Int Int))\n(pub fn (boxed n) (match (Wrap n) ((Wrap x) x) ((Empty) 0)))\n;@axiom:pre((> (boxed n) 0))\n(pub :: f (-> Int Int))\n(pub fn (f n) n)\n")
+  })
+
+; diagnostics end
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (runOptions)
+    (writeStr stdout "DIAGNOSTICS\n")
+    (runDiagnostics)
+    0
+  })
