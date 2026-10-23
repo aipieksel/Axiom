@@ -115,12 +115,12 @@
 ; ------------------------------------------------------------------
 ; Types: what the binding carries, and how each side spells it
 ; ------------------------------------------------------------------
-; The `data`/`struct` declaration named `name` in the entry, or 0.
-(:: rbDataDecl (-> (Vec ASTNode) String ASTNode))
+; The last entry-file data/struct declaration named `name`, when present.
+(:: rbDataDecl (-> Nodes String (Option ASTNode)))
 (fn (rbDataDecl decls name)
   {
     (let mut i 0)
-    (let mut found nilNode)
+    (let mut found (:: None (Option ASTNode)))
     {
       (while (< i (vecLen decls))
         {
@@ -128,7 +128,7 @@
             (let d (vecGet decls i))
             (if (&& (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))
                   (&& (== (nodeModule d) 0) (strEq (nodeAName d) name)))
-              (set found d))
+              (set found (Some d)))
           }
           (set i (+ i 1))
         })
@@ -285,9 +285,9 @@
       (let n (nodeAName t))
       (if (|| (strEq n "Option") (strEq n "Err$Result"))
         1
-        (if (nodeSame (rbDataDecl decls n) nilNode)
-          0
-          1))
+        (if (isSome (rbDataDecl decls n))
+          1
+          0))
     }
     0))
 
@@ -319,39 +319,42 @@
           }
           {
             (let d (rbDataDecl decls n))
-            (if (! (nodeSame d nilNode))
-              (if (== (nodeTag d) TAG_D_STRUCT)
-                ; one constructor, the struct's name, named fields
-                {
-                  (let fs (nodeBChildren d))
-                  (let tys vecNew)
-                  (let names vecNew)
-                  (let mut i 0)
+            (match d
+              ((None) ())
+              ((Some d)
+                (if (== (nodeTag d) TAG_D_STRUCT)
+                  ; one constructor, the struct's name, named fields
                   {
-                    (while (< i (vecLen fs))
+                    (let fs (nodeBChildren d))
+                    (let tys vecNew)
+                    (let names vecNew)
+                    (let mut i 0)
+                    {
+                      (while (< i (vecLen fs))
+                        {
+                          (vecPush tys (nodeTyChild (vecGet fs i)))
+                          (vecPush names (nodeAName (vecGet fs i)))
+                          (set i (+ i 1))
+                        })
+                      (vecPush out (rbCtor n tys (Some names)))
+                    }
+                  }
+                  {
+                    (let cs (nodeBChildren d))
+                    (let vars (nodeTyNames d))
+                    (let mut i 0)
+                    (while (< i (vecLen cs))
                       {
-                        (vecPush tys (nodeTyChild (vecGet fs i)))
-                        (vecPush names (nodeAName (vecGet fs i)))
+                        {
+                          (let c (vecGet cs i))
+                          (vecPush out
+                            (rbCtor (nodeAName c) (rbSubstAll (nodeTyChildren c) vars args)
+                              (rbFieldNames c)))
+                        }
                         (set i (+ i 1))
                       })
-                    (vecPush out (rbCtor n tys (Some names)))
-                  }
-                }
-                {
-                  (let cs (nodeBChildren d))
-                  (let vars (nodeTyNames d))
-                  (let mut i 0)
-                  (while (< i (vecLen cs))
-                    {
-                      {
-                        (let c (vecGet cs i))
-                        (vecPush out
-                          (rbCtor (nodeAName c) (rbSubstAll (nodeTyChildren c) vars args)
-                            (rbFieldNames c)))
-                      }
-                      (set i (+ i 1))
-                    })
-                }))
+                  })
+              ))
           }))
       out
     }
@@ -687,8 +690,9 @@
             (if (&& (== (nodeTag d) TAG_D_FN) (rbNamed pubNames (nodeAName d)))
               {
                 (let sigd (rbFindSig decls (nodeAName d) 0))
-                (if (! (nodeSame sigd nilNode))
-                  (rbCollectInst decls (nodeTyChild sigd) insts seen))
+                (match sigd
+                  ((None) 0)
+                  ((Some sigd) (rbCollectInst decls (nodeTyChild sigd) insts seen)))
               })
           }
           (set i (+ i 1))
@@ -909,11 +913,13 @@
 (fn (rbIsStructType decls t)
   {
     (let d (rbDataDecl decls (nodeAName t)))
-    (if (nodeSame d nilNode)
-      0
-      (if (== (nodeTag d) TAG_D_STRUCT)
-        1
-        0))
+    (match d
+      ((None) 0)
+      ((Some d)
+        (if (== (nodeTag d) TAG_D_STRUCT)
+          1
+          0)
+      ))
   })
 
 ; ` a0 a1 ..`
@@ -1140,69 +1146,82 @@
     (let sigd (rbFindSig decls (nodeAName f) 0))
     {
       (let ty
-        (if (nodeSame sigd nilNode)
-          nilNode
-          (nodeTyChild sigd)))
+        (match sigd
+          ((None) None)
+          ((Some signature)
+            {
+              (let ty (nodeTyChild signature))
+              (if (nodeSame ty nilNode)
+                None
+                (Some ty))
+            }
+          )))
       (if (rbIsRustIdent name)
-        (if (nodeSame ty nilNode)
-          {
-            (vecPush notes
-              (concat "// `" (concat name "`: no `(pub :: name Type)` signature to bind it by\n")))
-            0
-          }
-          {
-            (let params (rbParamTypes ty vecNew))
-            (let res (sigResultOf ty))
-            (let names (nodeBNames f))
-            (if (strStartsWith name "axh_")
-              {
-                (vecPush raws (rbRawDecl name params))
-                0
-              }
-              {
-                (let bad (rbFirstUnsupported decls params res))
-                (if (> (strLen bad) 0)
-                  {
-                    (vecPush notes
-                      (concat "// `"
-                        (concat name
-                          (concat "`: `"
-                            (concat (rbSpellType ty) (concat "` names " (concat bad "\n")))))))
-                    0
-                  }
-                  (if (!= (vecLen params) (vecLen names))
+        (match ty
+          ((None)
+            {
+              (vecPush notes
+                (concat "// `"
+                  (concat name "`: no `(pub :: name Type)` signature to bind it by\n")))
+              0
+            }
+          )
+          ((Some ty)
+            {
+              (let params (rbParamTypes ty vecNew))
+              (let res (sigResultOf ty))
+              (let names (nodeBNames f))
+              (if (strStartsWith name "axh_")
+                {
+                  (vecPush raws (rbRawDecl name params))
+                  0
+                }
+                {
+                  (let bad (rbFirstUnsupported decls params res))
+                  (if (> (strLen bad) 0)
                     {
                       (vecPush notes
                         (concat "// `"
-                          (concat name "`: the signature and the definition disagree on arity\n")))
+                          (concat name
+                            (concat "`: `"
+                              (concat (rbSpellType ty) (concat "` names " (concat bad "\n")))))))
                       0
                     }
-                    ; The BINDERS are interpolated too, and by the same
-                    ; `rbSnake` that let the function's own name through:
-                    ; `(pub fn (badParam n/*z) ..)` reached the generated
-                    ; file as `pub fn bad_param(n/*z: i64)` and
-                    ; `raw::badParam(n/*z)`. `rbSigLine`, `rbArgLets`,
-                    ; `rbArgRels` and `rbArgList` all spell them, so the
-                    ; check is here, where the wrapper is decided on.
-                    {
-                      (let badParam (rbFirstUnspellable names))
-                      (if (> (strLen badParam) 0)
-                        {
-                          (vecPush notes
-                            (concat "// `"
-                              (concat name
-                                (concat "`: its parameter `"
-                                  (concat badParam "` is not a Rust identifier\n")))))
-                          0
-                        }
-                        {
-                          (vecPush raws (rbRawDecl name params))
-                          (vecPush wraps (rbWrapper decls name ty params res names))
-                          0
-                        })
-                    }))
-              })
-          })
+                    (if (!= (vecLen params) (vecLen names))
+                      {
+                        (vecPush notes
+                          (concat "// `"
+                            (concat name
+                              "`: the signature and the definition disagree on arity\n")))
+                        0
+                      }
+                      ; The BINDERS are interpolated too, and by the same
+                      ; `rbSnake` that let the function's own name through:
+                      ; `(pub fn (badParam n/*z) ..)` reached the generated
+                      ; file as `pub fn bad_param(n/*z: i64)` and
+                      ; `raw::badParam(n/*z)`. `rbSigLine`, `rbArgLets`,
+                      ; `rbArgRels` and `rbArgList` all spell them, so the
+                      ; check is here, where the wrapper is decided on.
+                      {
+                        (let badParam (rbFirstUnspellable names))
+                        (if (> (strLen badParam) 0)
+                          {
+                            (vecPush notes
+                              (concat "// `"
+                                (concat name
+                                  (concat "`: its parameter `"
+                                    (concat badParam "` is not a Rust identifier\n")))))
+                            0
+                          }
+                          {
+                            (vecPush raws (rbRawDecl name params))
+                            (vecPush wraps (rbWrapper decls name ty params res names))
+                            0
+                          })
+                      }))
+                })
+            }
+          ))
         {
           (vecPush notes
             (concat "// `"
@@ -1213,14 +1232,14 @@
     }
   })
 
-(:: rbFindSig (-> (Vec ASTNode) String Int ASTNode))
+(:: rbFindSig (-> Nodes String Int (Option ASTNode)))
 (fn (rbFindSig decls name i)
   (if (>= i (vecLen decls))
-    nilNode
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_SIG) (strEq (nodeAName d) name))
-        d
+        (Some d)
         (rbFindSig decls name (+ i 1)))
     }))
 
