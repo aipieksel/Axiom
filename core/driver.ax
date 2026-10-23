@@ -150,7 +150,7 @@
   "-relocation-model=pic")
 
 ; Optimise `llPath` into `<base>.opt.ll`, answering the path llc should
-; read.
+; read in Ok, or the failing optimiser exit status in Err.
 ;
 ; A MISSING `opt` is a warning and the unoptimised IR is used; a PRESENT
 ; `opt` that fails is fatal. That distinction is stage0's and it is
@@ -158,13 +158,13 @@
 ; is not always installed - and it has to be survivable, because
 ; without its tail-call pass a stage2 compiling its own source
 ; overflows its stack.
-(pub :: runOpt (-> String Int String String))
+(pub :: runOpt (-> String Int String (Result String Int)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (runOpt llPath optLevel outPath)
   (if (<= optLevel 0)
-    llPath
+    (Ok llPath)
     {
       (let lvl
         (if (> optLevel 3)
@@ -189,11 +189,11 @@
             {
               (writeStderrStr
                 "warning: `opt` not found on PATH; building without mid-level optimisation (deeply recursive code may exhaust the stack)\n")
-              llPath
+              (Ok llPath)
             }
             (if (!= rc 0)
-              ""
-              outPath))
+              (Err rc)
+              (Ok outPath)))
         }
       }
     }))
@@ -2853,14 +2853,15 @@
           (if (isErr (writeFile llPath ir))
             (toolFailDiag "could not write LLVM IR"
               "check that the output directory exists and is writable")
-            {
-              (let toAssemble (runOpt llPath optLevel optPath))
-              (if (== (strLen toAssemble) 0)
+            (match (runOpt llPath optLevel optPath)
+              ((Err status)
                 {
                   (unwrapOr (removeFile llPath) 0)
                   (toolFailDiag "opt failed"
                     "`opt` is optional - a PATH without it warns and builds - so this is a failure of the one that is installed")
                 }
+              )
+              ((Ok toAssemble)
                 {
                   (let splitRc
                     (if (&& (> (cgJobs) 1)
@@ -2892,8 +2893,8 @@
                         rc
                       }
                     })
-                })
-            })
+                }
+              )))
         }
       })
   })
