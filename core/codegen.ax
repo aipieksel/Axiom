@@ -2607,9 +2607,9 @@
   })
 
 ; Is every value `e` can answer owned? `params` are the enclosing
-; function's parameters; `env` is a flat name/flag vector of the
+; function's parameters; `env` owns the names and flags of the
 ; `let` bindings and match binders in scope.
-(pub :: tailOwned (-> CG ASTNode Names Ints Int))
+(pub :: tailOwned (-> CG ASTNode Names FlowEnv Int))
 (pub fn (tailOwned cg e params env)
   (if (nodeSame e nilNode)
     1
@@ -2620,12 +2620,12 @@
         1
         (if (== tg TAG_E_VAR)
           {
-            (let k
-              (if (== (nodeDefScope e) 1)
-                (- 0 1)
-                (envFlagOf env (nodeAName e))))
-            (if (>= k 0)
-              k
+            (let found
+              (:: (if (== (nodeDefScope e) 1)
+                None
+                (envFlagOf env (nodeAName e))) (Option Int)))
+            (if (let (Some flag) found)
+              flag
               (if (&& (!= (nodeDefScope e) 1) (>= (paramIndexIn params (nodeAName e) 0) 0))
                 0
                 ; a nullary constructor is an immediate: owned,
@@ -2676,7 +2676,7 @@
     }))
 
 ; An application's ownership, by its head.
-(pub :: tailOwnedApp (-> CG ASTNode Names Ints Int))
+(pub :: tailOwnedApp (-> CG ASTNode Names FlowEnv Int))
 (pub fn (tailOwnedApp cg e params env)
   {
     (let hd (spineHead e))
@@ -2715,7 +2715,7 @@
                         (|| (strEq n "__load8") (|| (strEq n "__argv") (strEq n "__alloc"))))
                     0
                     1)
-                  (if (|| (>= (envFlagOf env n) 0) (>= (paramIndexIn params n 0) 0))
+                  (if (|| (isSome (envFlagOf env n)) (>= (paramIndexIn params n 0) 0))
                     ; Known reference results obey the closure return contract.
                     (if (!= (fldClass cg (checkedValueTy e)) 0)
                       1
@@ -2734,7 +2734,7 @@
       })
   })
 
-(pub :: tailOwnedArgsAll (-> CG ASTNode Int Names Ints Int Int))
+(pub :: tailOwnedArgsAll (-> CG ASTNode Int Names FlowEnv Int Int))
 (pub fn (tailOwnedArgsAll cg e n_ params env i)
   (if (>= i n_)
     1
@@ -2742,7 +2742,7 @@
       (tailOwnedArgsAll cg e n_ params env (+ i 1))
       0)))
 
-(pub :: tailOwnedArms (-> CG (Vec ASTNode) Names Ints Int Int))
+(pub :: tailOwnedArms (-> CG (Vec ASTNode) Names FlowEnv Int Int))
 (pub fn (tailOwnedArms cg arms params env i)
   (if (>= i (vecLen arms))
     1
@@ -2768,30 +2768,36 @@
     (+ 1 (spineArity (nodeAChild e)))
     0))
 
-; The flat name/flag environment: innermost binding wins, -1 when
-; the name is not bound.
-(pub :: envFlagOf (-> Ints String Int))
-(pub fn (envFlagOf env name)
-  (envFlagFrom env name (- (vecLen env) 2)))
+; One immutable local binding owns its spelling and scalar flow flag.
+; Copies and memo snapshots may share these rows; later shadows append.
+(pub struct FlowBinding
+  (name : String)
+  (flag : Int))
 
-(pub :: envFlagFrom (-> Ints String Int Int))
-;@axiom:effect(unsafe)
+(pub type FlowEnv (Vec FlowBinding))
+
+; Innermost binding wins. A present zero or negative flag remains present.
+(pub :: envFlagOf (-> FlowEnv String (Option Int)))
+(pub fn (envFlagOf env name)
+  (envFlagFrom env name (- (vecLen env) 1)))
+
+(pub :: envFlagFrom (-> FlowEnv String Int (Option Int)))
 (pub fn (envFlagFrom env name i)
   (if (< i 0)
-    (- 0 1)
-    (if (strEq (as (vecGet env i) String) name)
-      (as (vecGet env (+ i 1)) Int)
-      (envFlagFrom env name (- i 2)))))
+    None
+    {
+      (let binding (vecGet env i))
+      (if (strEq binding.name name)
+        (Some binding.flag)
+        (envFlagFrom env name (- i 1)))
+    }))
 
-(pub :: envWith (-> Ints String Int Ints))
+(pub :: envWith (-> FlowEnv String Int FlowEnv))
 (pub fn (envWith env name flag)
   {
-    (let v (vecAppendFrom env vecNew 0))
-    {
-      (vecPush v (as name Int))
-      (vecPush v flag)
-      v
-    }
+    (let v (:: (vecAppendFrom env vecNew 0) FlowEnv))
+    (vecPush v (FlowBinding :name name :flag flag))
+    v
   })
 
 ; The arms' binders with their flows: a binder of a REFERENCE field
@@ -2799,17 +2805,17 @@
 ; a binder of a SCALAR field carries nothing - `(ICons x r)`'s `x` is
 ; a number, and a function summing it answered "a word of the list",
 ; so no caller ever released one.
-(pub :: envWithPat (-> CG Ints ASTNode Int Ints))
+(pub :: envWithPat (-> CG FlowEnv ASTNode Int FlowEnv))
 (pub fn (envWithPat cg env pat flag)
   {
-    (let v (vecAppendFrom env vecNew 0))
+    (let v (:: (vecAppendFrom env vecNew 0) FlowEnv))
     {
       (envPushPat cg v pat flag)
       v
     }
   })
 
-(pub :: envPushPat (-> CG Ints ASTNode Int Int))
+(pub :: envPushPat (-> CG FlowEnv ASTNode Int Int))
 (pub fn (envPushPat cg v pat flag)
   (if (nodeSame pat nilNode)
     0
@@ -2817,8 +2823,7 @@
       (let tag (nodeTag pat))
       (if (== tag TAG_E_VAR)
         {
-          (vecPush v (as (nodeA pat) Int))
-          (vecPush v flag)
+          (vecPush v (FlowBinding :name (nodeAName pat) :flag flag))
           0
         }
         (if (== tag TAG_E_APP)
@@ -2837,7 +2842,7 @@
             0)))
     }))
 
-(pub :: envPushPatArgs (-> CG Ints ASTNode Int (Option TypeEntry) Int Int Int))
+(pub :: envPushPatArgs (-> CG FlowEnv ASTNode Int (Option TypeEntry) Int Int Int))
 (pub fn (envPushPatArgs cg v pat n_ entry flag i)
   (if (>= i n_)
     0
@@ -2860,7 +2865,7 @@
       }
     }))
 
-(pub :: envPushPatVec (-> CG Ints (Vec ASTNode) Int Int Int))
+(pub :: envPushPatVec (-> CG FlowEnv (Vec ASTNode) Int Int Int))
 (pub fn (envPushPatVec cg v subs flag i)
   (if (== (as subs Int) 0)
     0
@@ -2871,20 +2876,19 @@
         (envPushPatVec cg v subs flag (+ i 1))
       })))
 
-(pub :: envWithAll (-> Ints Names Int Ints))
+(pub :: envWithAll (-> FlowEnv Names Int FlowEnv))
 (pub fn (envWithAll env names flag)
   {
-    (let v (vecAppendFrom env vecNew 0))
+    (let v (:: (vecAppendFrom env vecNew 0) FlowEnv))
     (envPushAll v names flag 0)
   })
 
-(pub :: envPushAll (-> Ints Names Int Int Ints))
+(pub :: envPushAll (-> FlowEnv Names Int Int FlowEnv))
 (pub fn (envPushAll v names flag i)
   (if (>= i (vecLen names))
     v
     {
-      (vecPush v (as (vecGet names i) Int))
-      (vecPush v flag)
+      (vecPush v (FlowBinding :name (vecGet names i) :flag flag))
       (envPushAll v names flag (+ i 1))
     }))
 
@@ -3332,9 +3336,9 @@
   })
 
 ; The mask of parameters whose reference may be (part of) `e`'s
-; value, in the form it has here. `env` is a flat name/mask vector
+; value, in the form it has here. `env` is an owning name/mask environment
 ; for `let` bindings and match binders.
-(pub :: flowMask (-> CG ASTNode Names Ints Int))
+(pub :: flowMask (-> CG ASTNode Names FlowEnv Int))
 (pub fn (flowMask cg e params env)
   (if (nodeSame e nilNode)
     0
@@ -3342,9 +3346,9 @@
       (let tg (nodeTag e))
       (if (== tg TAG_E_VAR)
         {
-          (let k (envFlagOf env (nodeAName e)))
-          (if (>= k 0)
-            (& k (- MUST_BIT 1))
+          (let found (envFlagOf env (nodeAName e)))
+          (if (let (Some flag) found)
+            (& flag (- MUST_BIT 1))
             (paramFlowBit cg params (paramIndexIn params (nodeAName e) 0)))
         }
         (if (== tg TAG_E_FIELD)
@@ -3399,7 +3403,7 @@
 ; load would otherwise read as an owner word of whatever the caller
 ; passed - a `Vec`'s data block, which made every `vecPush` look like a
 ; park of its vector.
-(pub :: rmwFlow (-> CG ASTNode ASTNode ASTNode Names Ints Int))
+(pub :: rmwFlow (-> CG ASTNode ASTNode ASTNode Names FlowEnv Int))
 (pub fn (rmwFlow cg v addr idx params env)
   (if (nodeSame v nilNode)
     0
@@ -3500,7 +3504,7 @@
           }))
     }))
 
-(pub :: flowMaskApp (-> CG ASTNode Names Ints Int))
+(pub :: flowMaskApp (-> CG ASTNode Names FlowEnv Int))
 (pub fn (flowMaskApp cg e params env)
   {
     (let hd (spineHead e))
@@ -3543,7 +3547,7 @@
                         0))
                     (if (isPrimName n)
                       0
-                      (if (|| (>= (envFlagOf env n) 0) (>= (paramIndexIn params n 0) 0))
+                      (if (|| (isSome (envFlagOf env n)) (>= (paramIndexIn params n 0) 0))
                         ; A proven identity callback returns its own counted share.
                         (if (flowIdentityCallback cg n)
                           0
@@ -3564,7 +3568,7 @@
 ; construction to what its arguments carried - what the result may
 ; share storage with, for the word-taking heads: a slice shares its
 ; parent's bytes, a constructor holds its arguments.
-(pub :: aliasFlow (-> CG ASTNode Names Ints Int))
+(pub :: aliasFlow (-> CG ASTNode Names FlowEnv Int))
 (pub fn (aliasFlow cg e params env)
   (| (flowMask cg e params env)
     (if (nodeSame e nilNode)
@@ -3586,7 +3590,7 @@
             })
         }))))
 
-(pub :: aliasFlowAll (-> CG ASTNode Int Names Ints Int Int))
+(pub :: aliasFlowAll (-> CG ASTNode Int Names FlowEnv Int Int))
 (pub fn (aliasFlowAll cg e n_ params env i)
   (if (>= i n_)
     0
@@ -3703,7 +3707,7 @@
     }))
 
 ; OR over the spine's arguments, `n_` of them.
-(pub :: flowMaskAll (-> CG ASTNode Int Names Ints Int Int))
+(pub :: flowMaskAll (-> CG ASTNode Int Names FlowEnv Int Int))
 (pub fn (flowMaskAll cg e n_ params env i)
   (if (>= i n_)
     0
@@ -3712,7 +3716,7 @@
 ; What a callee's RET mask makes of the arguments: a parameter it
 ; answers as it arrived keeps the argument's form; one it answers as a
 ; word launders it.
-(pub :: flowMaskSel (-> CG ASTNode Int Names Ints Int Int Int))
+(pub :: flowMaskSel (-> CG ASTNode Int Names FlowEnv Int Int Int))
 (pub fn (flowMaskSel cg e n_ params env mask i)
   (if (>= i n_)
     0
@@ -3733,7 +3737,7 @@
       }
       (flowMaskSel cg e n_ params env mask (+ i 1)))))
 
-(pub :: flowMaskArms (-> CG (Vec ASTNode) Names Ints Int Int Int))
+(pub :: flowMaskArms (-> CG (Vec ASTNode) Names FlowEnv Int Int Int))
 (pub fn (flowMaskArms cg arms params env scrut i)
   (if (>= i (vecLen arms))
     0
@@ -3753,7 +3757,7 @@
 ; Walk the whole body and OR into `cell` word 0 the parameters some
 ; part of whose reference is parked beyond the frame uncounted, and
 ; into word 1 the ones `__retainref`/`__retain` counted.
-(pub :: flowStashes (-> CG ASTNode Names Ints Int Int))
+(pub :: flowStashes (-> CG ASTNode Names FlowEnv Int Int))
 (pub fn (flowStashes cg e params env cell)
   (if (nodeSame e nilNode)
     0
@@ -3916,7 +3920,7 @@
 ; those - and one parameter only. `(__retainref r.name)` retains the
 ; field, not the record `r` whose park it would otherwise cancel;
 ; `(__retainref (if c s t))` retains one of two, and cancels neither.
-(pub :: countFlow (-> CG ASTNode Names Ints Int))
+(pub :: countFlow (-> CG ASTNode Names FlowEnv Int))
 (pub fn (countFlow cg e params env)
   {
     (let m (mustFlow cg e params env))
@@ -3929,7 +3933,7 @@
 ; recorded as must (`MUST_BIT` on its environment flag - its own
 ; initialiser was one of these), a `cast` of one; anything else - a
 ; field, a match binder, a join, a call - 0.
-(pub :: mustFlow (-> CG ASTNode Names Ints Int))
+(pub :: mustFlow (-> CG ASTNode Names FlowEnv Int))
 (pub fn (mustFlow cg e params env)
   (if (nodeSame e nilNode)
     0
@@ -3937,10 +3941,10 @@
       (let tg (nodeTag e))
       (if (== tg TAG_E_VAR)
         {
-          (let k (envFlagOf env (nodeAName e)))
-          (if (>= k 0)
-            (if (!= (& k MUST_BIT) 0)
-              (& k (- MUST_BIT 1))
+          (let found (envFlagOf env (nodeAName e)))
+          (if (let (Some flag) found)
+            (if (!= (& flag MUST_BIT) 0)
+              (& flag (- MUST_BIT 1))
               0)
             (paramFlowBit cg params (paramIndexIn params (nodeAName e) 0)))
         }
@@ -4002,29 +4006,26 @@
 ; `inferFlowsPass` opens around each function's two walks. The second
 ; walk of a `body` then asks each binding under it the same question
 ; under the same `env` the first walk did, and reads the answer the
-; first walk paid for. `env` is compared word for word; its names are
-; the AST's own strings, so a word-for-word match binds the same names
+; first walk paid for. `env` compares name identity and flag values; its names are
+; the AST's own strings, so an identical key binds the same names
 ; to the same flags, and a miss only costs the walk. The answers are
 ; the unmemoised walk's: the compiler's IR is byte-identical with and
 ; without it, and the nests above cost +0.3 / +0.4 / +0.4 MiB.
-(pub :: mutFlag (-> CG String ASTNode ASTNode Names Ints Int))
+(pub :: mutFlag (-> CG String ASTNode ASTNode Names FlowEnv Int))
 (pub fn (mutFlag cg name init body params env)
   {
     (let memo (mutMemoEntries cg))
     (let depth (cgMutMemoDepth cg))
     {
-      (let at
-        (if (== depth 0)
+      (let found
+        (:: (if (== depth 0)
           {
             (vecClear memo)
-            (- 0 1)
+            None
           }
-          (mutMemoFind memo name init body params env 0)))
-      (if (>= at 0)
-        {
-          (let item (vecGet memo at))
-          item.flag
-        }
+          (mutMemoFind memo name init body params env 0)) (Option MutMemoEntry)))
+      (if (let (Some item) found)
+        item.flag
         {
           (cgSetMutMemoDepth cg (+ depth 1))
           {
@@ -4044,17 +4045,18 @@
   (init : ASTNode)
   (name : String)
   (params : Names)
-  (env : Ints)
+  (env : FlowEnv)
   (flag : Int))
 
 (:: mutMemoEntries (-> CG (Vec MutMemoEntry)))
 (fn (mutMemoEntries cg)
   cg.pairState.mutMemo)
 
-(pub :: mutMemoFind (-> (Vec MutMemoEntry) String ASTNode ASTNode Names Ints Int Int))
+(pub :: mutMemoFind
+  (-> (Vec MutMemoEntry) String ASTNode ASTNode Names FlowEnv Int (Option MutMemoEntry)))
 (pub fn (mutMemoFind memo name init body params env at)
   (if (>= at (vecLen memo))
-    (- 0 1)
+    None
     {
       (let item (vecGet memo at))
       (if (&& (nodeSame item.body body)
@@ -4062,24 +4064,26 @@
               (&& (addrEq (addrOf item.name) (addrOf name))
                 (&& (addrEq (addrOf item.params) (addrOf params))
                   (&& (== (vecLen item.env) (vecLen env)) (== (mutMemoEnvEq item.env env 0) 1))))))
-        at
+        (Some item)
         (mutMemoFind memo name init body params env (+ at 1)))
     }))
 
-(pub :: mutMemoEnvEq (-> Ints Ints Int Int))
+(pub :: mutMemoEnvEq (-> FlowEnv FlowEnv Int Int))
 (pub fn (mutMemoEnvEq saved env i)
   (if (>= i (vecLen env))
     1
-    (if (== (vecGet saved i) (vecGet env i))
-      (mutMemoEnvEq saved env (+ i 1))
-      0)))
+    {
+      (let previous (vecGet saved i))
+      (let current (vecGet env i))
+      (if (&& (addrEq (addrOf previous.name) (addrOf current.name)) (== previous.flag current.flag))
+        (mutMemoEnvEq saved env (+ i 1))
+        0)
+    }))
 
-(pub :: mutMemoAdd (-> (Vec MutMemoEntry) String ASTNode ASTNode Names Ints Int Int))
+(pub :: mutMemoAdd (-> (Vec MutMemoEntry) String ASTNode ASTNode Names FlowEnv Int Int))
 (pub fn (mutMemoAdd memo name init body params env flag)
   {
-    (let snapshot vecNew)
-    (for i in 0..(vecLen env)
-      (vecPush snapshot (vecGet env i)))
+    (let snapshot (:: (vecAppendFrom env vecNew 0) FlowEnv))
     (vecPush memo
       (MutMemoEntry :body body :init init :name name :params params :env snapshot :flag flag))
     flag
@@ -4101,7 +4105,7 @@
 (pub fn (mutMemoClose cg)
   (cgSetMutMemoDepth cg 0))
 
-(pub :: mutFlagIter (-> CG String ASTNode Names Ints Int Int Int))
+(pub :: mutFlagIter (-> CG String ASTNode Names FlowEnv Int Int Int))
 (pub fn (mutFlagIter cg name body params env f k)
   {
     (let f2 (| f (setFlows cg name body params (envWith env name f))))
@@ -4112,7 +4116,7 @@
 
 ; OR of the flows of every `(set name v)` under `e`; a nested binding
 ; of the same name is not distinguished (conservative).
-(pub :: setFlows (-> CG String ASTNode Names Ints Int))
+(pub :: setFlows (-> CG String ASTNode Names FlowEnv Int))
 (pub fn (setFlows cg name e params env)
   (if (nodeSame e nilNode)
     0
@@ -4174,7 +4178,7 @@
                                 0)))))))))))))
     }))
 
-(pub :: setFlowsVec (-> CG String (Vec ASTNode) Names Ints Int Int))
+(pub :: setFlowsVec (-> CG String (Vec ASTNode) Names FlowEnv Int Int))
 (pub fn (setFlowsVec cg name v params env i)
   (if (== (as v Int) 0)
     0
@@ -4182,7 +4186,7 @@
       0
       (| (setFlows cg name (vecGet v i) params env) (setFlowsVec cg name v params env (+ i 1))))))
 
-(pub :: setFlowsArms (-> CG String (Vec ASTNode) Names Ints Int Int Int))
+(pub :: setFlowsArms (-> CG String (Vec ASTNode) Names FlowEnv Int Int Int))
 (pub fn (setFlowsArms cg name arms params env scrut i)
   (if (== (as arms Int) 0)
     0
@@ -4196,7 +4200,7 @@
 
 ; A `let`'s environment flag: its flow, marked must when the
 ; initialiser must be what it flows from.
-(pub :: letFlag (-> CG ASTNode Names Ints Int))
+(pub :: letFlag (-> CG ASTNode Names FlowEnv Int))
 (pub fn (letFlag cg init params env)
   {
     (let f (flowMask cg init params env))
@@ -4264,7 +4268,7 @@
     }
   })
 
-(pub :: flowStashesVec (-> CG (Vec ASTNode) Names Ints Int Int Int))
+(pub :: flowStashesVec (-> CG (Vec ASTNode) Names FlowEnv Int Int Int))
 (pub fn (flowStashesVec cg v params env cell i)
   (if (== (as v Int) 0)
     0
@@ -4275,7 +4279,7 @@
         (flowStashesVec cg v params env cell (+ i 1))
       })))
 
-(pub :: flowStashesArms (-> CG (Vec ASTNode) Names Ints Int Int Int Int))
+(pub :: flowStashesArms (-> CG (Vec ASTNode) Names FlowEnv Int Int Int Int))
 (pub fn (flowStashesArms cg arms params env cell scrut i)
   (if (>= i (vecLen arms))
     0
@@ -4300,7 +4304,7 @@
 ; each argument's FORM; a constructor: what its WORD fields park; a
 ; raw store: its value; a cast: nothing of itself (its consumer
 ; decides).
-(pub :: flowStashesApp (-> CG ASTNode Names Ints Int Int))
+(pub :: flowStashesApp (-> CG ASTNode Names FlowEnv Int Int))
 (pub fn (flowStashesApp cg e params env cell)
   {
     (let hd (spineHead e))
@@ -4385,7 +4389,7 @@
                           ; what it is handed
                           (stashAdd cell (parkForms (flowMaskAll cg e n_ params env 0)))
                           0)))))
-                (if (|| (>= (envFlagOf env n) 0) (>= (paramIndexIn params n 0) 0))
+                (if (|| (isSome (envFlagOf env n)) (>= (paramIndexIn params n 0) 0))
                   (if (flowIdentityCallback cg n)
                     0
                     (stashAdd cell (parkForms (flowMaskAll cg e n_ params env 0))))
@@ -4413,7 +4417,7 @@
       })
   })
 
-(pub :: flowStashesArgsRegions (-> CG ASTNode Int Names Ints Int Int Int))
+(pub :: flowStashesArgsRegions (-> CG ASTNode Int Names FlowEnv Int Int Int))
 (pub fn (flowStashesArgsRegions cg e n_ params env cell i)
   (if (>= i n_)
     0
@@ -4434,7 +4438,7 @@
 ; would release the old reference under it (`(i1 (concat ..) (cast
 ; Int s) (- n 1))`). Every self call is treated so; a non-tail one
 ; parks conservatively.
-(pub :: selfSlotParks (-> CG ASTNode ASTNode Int Names Ints Int Int))
+(pub :: selfSlotParks (-> CG ASTNode ASTNode Int Names FlowEnv Int Int))
 (pub fn (selfSlotParks cg e hd n_ params env cell)
   {
     (let d (cgCurDecl cg))
@@ -4452,7 +4456,7 @@
         }))
   })
 
-(pub :: selfSlotParksFrom (-> CG ASTNode ASTNode Int Names Ints Int Int Int))
+(pub :: selfSlotParksFrom (-> CG ASTNode ASTNode Int Names FlowEnv Int Int Int))
 (pub fn (selfSlotParksFrom cg e sigTy n_ params env cell i)
   (if (>= i n_)
     0
@@ -4466,7 +4470,7 @@
 ; an argument's arrival half is parked if the callee parks a typed
 ; arrival there, its word half if the callee parks a word there; a
 ; parked word is parked in both forms of what it was a word of.
-(pub :: stashSel (-> CG ASTNode Int Names Ints Int Int Int))
+(pub :: stashSel (-> CG ASTNode Int Names FlowEnv Int Int Int))
 (pub fn (stashSel cg e n_ params env mask i)
   (if (>= i n_)
     0
@@ -4498,7 +4502,7 @@
       }
       (stashSel cg e n_ params env mask (+ i 1)))))
 
-(pub :: flowStashesArgs (-> CG ASTNode Int Names Ints Int Int Int))
+(pub :: flowStashesArgs (-> CG ASTNode Int Names FlowEnv Int Int Int))
 (pub fn (flowStashesArgs cg e n_ params env cell i)
   (if (>= i n_)
     0
@@ -4511,7 +4515,7 @@
 ; is stored in them; reference fields retain (event 6), and a
 ; type-variable field retains under its witness when the value is a
 ; typed reference - a word laundered into one parks.
-(pub :: flowStashesFields (-> CG TypeEntry ASTNode Int Names Ints Int Int Int))
+(pub :: flowStashesFields (-> CG TypeEntry ASTNode Int Names FlowEnv Int Int Int))
 (pub fn (flowStashesFields cg entry e n_ params env cell i)
   (if (>= i n_)
     0
@@ -4528,7 +4532,7 @@
       }
     }))
 
-(pub :: flowStashesFieldsVec (-> CG TypeEntry (Vec ASTNode) Names Ints Int Int Int))
+(pub :: flowStashesFieldsVec (-> CG TypeEntry (Vec ASTNode) Names FlowEnv Int Int Int))
 (pub fn (flowStashesFieldsVec cg entry args params env cell i)
   (if (>= i (vecLen args))
     0
@@ -4592,7 +4596,7 @@
 ; What a lambda body parks by capture: the `let`-bound locals it
 ; mentions, with their flows - a parameter captured directly takes a
 ; share (`emitLambda` retains reference parameters it captures).
-(pub :: lamCaptureMask (-> CG ASTNode Names Ints Int))
+(pub :: lamCaptureMask (-> CG ASTNode Names FlowEnv Int))
 (pub fn (lamCaptureMask cg body params env)
   (| (lamCaptureFrom body env 0) (lamParamCaptures cg body params 0)))
 
@@ -4683,16 +4687,18 @@
         }))
   })
 
-(pub :: lamCaptureFrom (-> ASTNode Ints Int Int))
-;@axiom:effect(unsafe)
+(pub :: lamCaptureFrom (-> ASTNode FlowEnv Int Int))
 (pub fn (lamCaptureFrom body env i)
-  (if (>= (+ i 1) (vecLen env))
+  (if (>= i (vecLen env))
     0
-    (|
-      (if (== (mentions (as (vecGet env i) String) body) 1)
-        (& (as (vecGet env (+ i 1)) Int) (- MUST_BIT 1))
-        0)
-      (lamCaptureFrom body env (+ i 2)))))
+    {
+      (let binding (vecGet env i))
+      (|
+        (if (== (mentions binding.name body) 1)
+          (& binding.flag (- MUST_BIT 1))
+          0)
+        (lamCaptureFrom body env (+ i 1)))
+    }))
 
 ; The declared result class of the named global: `fldClass` of its
 ; signature's result - 0 a word, 2 a reference, 1 unclassifiable or
@@ -4728,7 +4734,7 @@
 
 ; Joins are queried after emission restores their symbol scopes. Keep the
 ; bindings inside the expression so a local callback still resolves locally.
-(:: valueOwnedRefIn (-> CG ASTNode Ints Int))
+(:: valueOwnedRefIn (-> CG ASTNode FlowEnv Int))
 (fn (valueOwnedRefIn cg e env)
   (if (nodeSame e nilNode)
     0
@@ -4744,7 +4750,7 @@
           (if (nodeSame head nilNode)
             false
             (&& (== (nodeTag head) TAG_E_VAR)
-              (&& (!= (nodeDefScope head) 1) (>= (envFlagOf env (nodeAName head)) 0)))))
+              (&& (!= (nodeDefScope head) 1) (isSome (envFlagOf env (nodeAName head)))))))
         (if (&& (! localHead) (== (argIsDirectCon cg e) 1))
           1
           (if (== tg TAG_E_STR)
@@ -4753,11 +4759,11 @@
               {
                 (let name (nodeAName e))
                 (let scoped
-                  (if (== (nodeDefScope e) 1)
-                    (- 0 1)
-                    (envFlagOf env name)))
-                (if (>= scoped 0)
-                  scoped
+                  (:: (if (== (nodeDefScope e) 1)
+                    None
+                    (envFlagOf env name)) (Option Int)))
+                (if (let (Some flag) scoped)
+                  flag
                   (if (&& (!= (nodeDefScope e) 1) (isLocalValue cg name))
                     0
                     (if (hasType (cgTypes cg) name)
@@ -4818,7 +4824,7 @@
                           0)))))))))
       })))
 
-(pub :: valueOwnedRefArms (-> CG (Vec ASTNode) Ints Int Int))
+(pub :: valueOwnedRefArms (-> CG (Vec ASTNode) FlowEnv Int Int))
 (pub fn (valueOwnedRefArms cg arms env i)
   (if (>= i (vecLen arms))
     (if (== i 0)
@@ -19740,7 +19746,7 @@
       acc)
   })
 
-(pub :: collectTails (-> CG ASTNode Names Ints String (Vec ASTNode) Int))
+(pub :: collectTails (-> CG ASTNode Names FlowEnv String (Vec ASTNode) Int))
 (pub fn (collectTails cg e params env self acc)
   (if (nodeSame e nilNode)
     0
@@ -19814,7 +19820,7 @@
                           }))))))))))
     }))
 
-(pub :: collectTailsArms (-> CG (Vec ASTNode) Names Ints String (Vec ASTNode) Int Int))
+(pub :: collectTailsArms (-> CG (Vec ASTNode) Names FlowEnv String (Vec ASTNode) Int Int))
 (pub fn (collectTailsArms cg arms params env self acc i)
   (if (>= i (vecLen arms))
     0
