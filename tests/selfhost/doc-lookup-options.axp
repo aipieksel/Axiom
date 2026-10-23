@@ -1,0 +1,106 @@
+; Missing documentation facts differ from index zero and empty root paths.
+(import core)
+(import parser)
+(import doc)
+(import IO)
+(import Str)
+(import Sys)
+(import Vec)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs value expected)
+  (match value
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: textIs (-> (Option String) String Bool))
+(fn (textIs value expected)
+  (match value
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: count (-> Strings Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: discardIndex (-> Strings Int))
+(fn (discardIndex values)
+  (match (docIndexOf values "first")
+    ((None) -1)
+    ((Some index) index)))
+
+(:: pathMatches (-> (Option String) String Bool))
+(fn (pathMatches value expected)
+  (if (strEq expected "ABSENT")
+    (isNone value)
+    (textIs value expected)))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let values (vecPush (vecPush vecNew "first") "second"))
+    (say 1 (indexIs (docIndexOf values "first") 0))
+    (say 2 (indexIs (docIndexOf values "second") 1))
+    (say 3 (isNone (docIndexOf values "missing")))
+    (say 4 (isNone (docIndexOf vecNew "")))
+    (say 5 (indexIs (docIndexOf (vecPush vecNew "") "") 0))
+    (say 6 (indexIs (docIndexOf (vecPush values "first") "first") 0))
+    (say 7 (textIs (docDeclKind (markPub (nodeBuildDSig "value" vecNew 0 0))) "value"))
+    (say 8 (textIs (docDeclKind (markPub (nodeBuildDMacro "m" vecNew (mkEInt 0) 0))) "macro"))
+    (say 9 (textIs (docDeclKind (markPub (nodeBuildDData "D" vecNew 0 0))) "data"))
+    (say 10 (textIs (docDeclKind (markPub (nodeBuildDStruct "S" vecNew vecNew 0))) "struct"))
+    (say 11 (textIs (docDeclKind (markPub (nodeBuildDAlias "T" (mkEInt 0) vecNew 0))) "type"))
+    (say 12 (textIs (docDeclKind (nodeBuildDEffect "E" vecNew vecNew 0)) "effect"))
+    (say 13 (isNone (docDeclKind (nodeBuildDSig "private" vecNew 0 0))))
+    (say 14 (isNone (docDeclKind (markPub (nodeBuildDFn "f" vecNew (mkEInt 0) 0)))))
+    (say 15 (isNone (docDeclKind (mkEInt 0))))
+    (say 16 (strEq (docDirOf "README.md") ""))
+    (say 17 (strEq (docDepthPrefix "index.html") ""))
+    (say 18 (strEq (docAbsolute "") (docAbsolute ".")))
+    (let pages
+      (DocSet
+        :root ""
+        :out ""
+        :srcs (vecPush (vecPush vecNew "README.md") "docs/README.md")
+        :outs (vecPush (vecPush vecNew "about.html") "index.html")
+        :titles (vecPush (vecPush vecNew "About") "Start")
+        :modFiles vecNew
+        :modOuts vecNew
+        :modNames vecNew
+        :modNamed vecNew))
+    (let context (DocCtx :pages pages :srcDir "" :prefix ""))
+    (say 19 (strEq (docLink context "README.md#part") "about.html#part"))
+    (say 20 (strEq (docLink context "missing.md#part") "file://missing.md#part"))
+    (say 21 (strEq (docLink context "#part") "#part"))
+    (say 22
+      (strEq (docNavGroup pages "" "index.html" 0 "Start")
+        "<h2>Start</h2>\n<ul>\n<li><a href=\"index.html\" class=\"here\">Start</a></li>\n<li><a href=\"about.html\">About</a></li>\n</ul>\n"))
+    (let refs (count values))
+    (discardIndex values)
+    (let before live)
+    (for i in 0..20
+      (discardIndex values))
+    (let after live)
+    (say 23 (== refs (count values)))
+    (say 24 (== before after))
+    (say 25 (pathMatches docFindRoot (sysArg 1)))
+    (say 26 (pathMatches docStdlibDir (sysArg 2)))
+    (let mut entered false)
+    (if (let (Some path) docFindRoot)
+      (set entered (> (strLen path) 0)))
+    (say 27
+      (if entered
+        (! (strEq (sysArg 1) "ABSENT"))
+        (strEq (sysArg 1) "ABSENT")))
+  })

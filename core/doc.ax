@@ -126,18 +126,18 @@
 ; ------------------------------------------------------------------
 ; Links
 ; ------------------------------------------------------------------
-; The index of `s` in `v`, or -1.
-(pub :: docIndexOf (-> Strings String Int))
+; The first matching index, including zero, or None.
+(pub :: docIndexOf (-> Strings String (Option Int)))
 (pub fn (docIndexOf v s)
   {
     (let n (vecLen v))
     (let mut i 0)
-    (let mut at (- 0 1))
+    (let mut at (:: None (Option Int)))
     {
-      (while (&& (< i n) (< at 0))
+      (while (&& (< i n) (isNone at))
         {
           (if (strEq (vecGet v i) s)
-            (set at i))
+            (set at (Some i)))
           (set i (+ i 1))
         })
       at
@@ -170,12 +170,9 @@
               (concat (concat c.srcDir "/") path))))
         {
           (let ds c.pages)
-          {
-            (let at (docIndexOf ds.srcs resolved))
-            (if (>= at 0)
-              (concat (concat c.prefix (vecGet ds.outs at)) frag)
-              (concat (concat "file://" (concat ds.root resolved)) frag))
-          }
+          (if (let (Some at) (docIndexOf ds.srcs resolved))
+            (concat (concat c.prefix (vecGet ds.outs at)) frag)
+            (concat (concat "file://" (concat ds.root resolved)) frag))
         }
       }
     }))
@@ -249,13 +246,9 @@
           (let order docStartOrder)
           (while (< i (vecLen order))
             {
-              (let at (docIndexOf ds.srcs (vecGet order i)))
-              {
-                (if (>= at 0)
-                  (vecPush frags
-                    (docNavItem prefix (vecGet ds.outs at) (vecGet ds.titles at) here)))
-                (set i (+ i 1))
-              }
+              (if (let (Some at) (docIndexOf ds.srcs (vecGet order i)))
+                (vecPush frags (docNavItem prefix (vecGet ds.outs at) (vecGet ds.titles at) here)))
+              (set i (+ i 1))
             })
         }
         (while (< i (vecLen ds.srcs))
@@ -418,30 +411,30 @@
 ; ------------------------------------------------------------------
 ; Modules
 ; ------------------------------------------------------------------
-; The kind a public declaration is listed under, or "" for one the
+; The kind a public declaration is listed under, or None for one the
 ; reference leaves out. The same set `examples/axdoc/axdoc.ax`
 ; reads: a `(pub :: …)` signature, a public `macro`, `data`, `struct`
 ; or `type`, and every `effect`, which is exported whether or not it
 ; says `pub`.
-(pub :: docDeclKind (-> ASTNode String))
+(pub :: docDeclKind (-> ASTNode (Option String)))
 (pub fn (docDeclKind d)
   {
     (let tag (nodeTag d))
     (if (== tag TAG_D_EFFECT)
-      "effect"
+      (Some "effect")
       (if (!= (nodeVis d) 1)
-        ""
+        None
         (if (== tag TAG_D_SIG)
-          "value"
+          (Some "value")
           (if (== tag TAG_D_MACRO)
-            "macro"
+            (Some "macro")
             (if (== tag TAG_D_DATA)
-              "data"
+              (Some "data")
               (if (== tag TAG_D_STRUCT)
-                "struct"
+                (Some "struct")
                 (if (== tag TAG_D_ALIAS)
-                  "type"
-                  "")))))))
+                  (Some "type")
+                  None)))))))
   })
 
 ; The parsed declarations of `path`, or an empty vector with a line
@@ -520,16 +513,14 @@
             {
               (let d (vecGet decls j))
               {
-                {
-                  (let kind (docDeclKind d))
-                  (if (! (|| (== (strLen kind) 0) (== (nodeSpan d) 0)))
+                (if (let (Some kind) (docDeclKind d))
+                  (if (!= (nodeSpan d) 0)
                     {
                       (if (== count 0)
                         (vecPush frags "<h2 id=\"public-names\">Public names</h2>\n"))
                       (set count (+ count 1))
                       (vecPush frags (docDeclSection ds ctx src decls kind d))
-                    })
-                }
+                    }))
                 (set j (+ j 1))
               }
             })
@@ -554,17 +545,18 @@
       (let mut n 0)
       {
         (for d in decls
-          (if (! (|| (== (strLen (docDeclKind d)) 0) (== (nodeSpan d) 0)))
-            {
-              (let o (lspFormStart src (spanStart (nodeSpan d))))
-              (if (== (strLen (docCommentMarked src o)) 0)
-                {
-                  (writeStr stdout
-                    (concat (concat (concat path ":") (fmtInt (+ (lspLineOfIx ix o) 1)))
-                      (concat (concat ": " (nodeAName d)) "\n")))
-                  (set n (+ n 1))
-                })
-            }))
+          (if (let (Some _) (docDeclKind d))
+            (if (!= (nodeSpan d) 0)
+              {
+                (let o (lspFormStart src (spanStart (nodeSpan d))))
+                (if (== (strLen (docCommentMarked src o)) 0)
+                  {
+                    (writeStr stdout
+                      (concat (concat (concat path ":") (fmtInt (+ (lspLineOfIx ix o) 1)))
+                        (concat (concat ": " (nodeAName d)) "\n")))
+                    (set n (+ n 1))
+                  })
+              })))
         n
       }
     }
@@ -639,24 +631,24 @@
 (pub fn (docRootOk root)
   (fileExists (concat root "docs/README.md")))
 
-; The directory holding the set, slash-terminated, or "". `AXIOM_DOC`
+; The directory holding the set, slash-terminated, or None. `AXIOM_DOC`
 ; when it is set; otherwise beside the executable, resolved through
 ; `PATH` when the shell handed over a bare name, the way the library
 ; is found.
-(pub :: docFindRoot String)
+(pub :: docFindRoot (Option String))
 ;@axiom:effect(io)
 (pub fn (docFindRoot)
   {
     (let env (sysEnv "AXIOM_DOC"))
     (if (> (strLen env) 0)
       (if (docRootOk (pathWithSlash env))
-        (pathWithSlash env)
-        "")
+        (Some (pathWithSlash env))
+        None)
       {
         (let exe (pathDir (sysArg 0)))
         (let cands vecNew)
         (let mut i 0)
-        (let mut found "")
+        (let mut found (:: None (Option String)))
         {
           (if (== (strLen exe) 0)
             {
@@ -669,10 +661,10 @@
             })
           (vecPush cands (concat exe "../"))
           (vecPush cands (concat exe "../../"))
-          (while (&& (< i (vecLen cands)) (== (strLen found) 0))
+          (while (&& (< i (vecLen cands)) (isNone found))
             {
               (if (docRootOk (vecGet cands i))
-                (set found (vecGet cands i)))
+                (set found (Some (vecGet cands i))))
               (set i (+ i 1))
             })
           found
@@ -706,19 +698,19 @@
       })
   })
 
-; The library's directory, slash-terminated, or "".
-(pub :: docStdlibDir String)
+; The library's directory, slash-terminated, or None.
+(pub :: docStdlibDir (Option String))
 ;@axiom:effect(io)
 (pub fn (docStdlibDir)
   {
     (let dirs stdlibSearchDirs)
     (let mut i 0)
-    (let mut found "")
+    (let mut found (:: None (Option String)))
     {
-      (while (&& (< i (vecLen dirs)) (== (strLen found) 0))
+      (while (&& (< i (vecLen dirs)) (isNone found))
         {
           (if (isDir (vecGetStr dirs i))
-            (set found (vecGetStr dirs i)))
+            (set found (Some (vecGetStr dirs i))))
           (set i (+ i 1))
         })
       found
@@ -860,25 +852,22 @@
         (docAddRoot root srcs outs titles "CHANGELOG.md" "changelog.html")
         (docAddRoot root srcs outs titles "examples/README.md" "examples.html")
         ; The library.
-        {
-          (let lib docStdlibDir)
-          (if (== (strLen lib) 0)
-            (writeStderrStr "warning: no standard library found; set AXIOM_STDLIB to render it\n")
+        (if (let (Some lib) docStdlibDir)
+          {
+            (let acc vecNew)
             {
-              (let acc vecNew)
-              {
-                (let rels (docWalk lib "" acc))
-                (for rel in rels
-                  {
-                    (vecPush modFiles (concat lib rel))
-                    (vecPush modOuts
-                      (concat (concat "stdlib/" (strSlice rel 0 (- (strLen rel) 3))) ".html"))
-                    (vecPush modNames (docModuleName rel))
-                    (vecPush modNamed 0)
-                  })
-              }
-            })
-        }
+              (let rels (docWalk lib "" acc))
+              (for rel in rels
+                {
+                  (vecPush modFiles (concat lib rel))
+                  (vecPush modOuts
+                    (concat (concat "stdlib/" (strSlice rel 0 (- (strLen rel) 3))) ".html"))
+                  (vecPush modNames (docModuleName rel))
+                  (vecPush modNamed 0)
+                })
+            }
+          }
+          (writeStderrStr "warning: no standard library found; set AXIOM_STDLIB to render it\n"))
         ; The operands: `.ax` modules under `modules/`, `.md` pages at
         ; the root, rendered as a `docs/` page would be.
         {
@@ -949,45 +938,42 @@
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (docMain)
-  {
-    (let root docFindRoot)
-    (if (== (strLen root) 0)
-      (die
-        "error: no documentation set found: set AXIOM_DOC to a directory holding docs/, or run the compiler from an install or a source checkout\n"
-        1)
-      {
-        (let ds
-          (docBuildSet (pathWithSlash (docAbsolute root)) (pathWithSlash (docAbsolute docOutDir))))
-        (if (hasFlagAnywhere "doc" "--missing")
+  (if (let (Some root) docFindRoot)
+    {
+      (let ds
+        (docBuildSet (pathWithSlash (docAbsolute root)) (pathWithSlash (docAbsolute docOutDir))))
+      (if (hasFlagAnywhere "doc" "--missing")
+        {
+          (let mut n 0)
           {
-            (let mut n 0)
+            (for i in 0..(vecLen ds.modFiles)
+              (set n (+ n (docMissingIn (vecGet ds.modFiles i)))))
+            (if (> n 0)
+              (sysExitWith 1)
+              0)
+          }
+        }
+        {
+          (match (makeDirAll ds.out)
+            ((Ok _) ())
+            ((Err _) (die (concat (concat "error: cannot create " ds.out) "\n") 1)))
+          (docWrite ds "style.css" docStyle)
+          (for i in 0..(vecLen ds.srcs)
+            (docRenderPage ds i))
+          (for i in 0..(vecLen ds.modFiles)
+            (docRenderModule ds i))
+          (docRenderLanguage ds)
+          {
+            (let index (concat ds.out "index.html"))
             {
-              (for i in 0..(vecLen ds.modFiles)
-                (set n (+ n (docMissingIn (vecGet ds.modFiles i)))))
-              (if (> n 0)
-                (sysExitWith 1)
-                0)
+              (writeStr stdout (concat index "\n"))
+              (if (hasFlagAnywhere "doc" "--no-open")
+                0
+                (docOpen index))
             }
           }
-          {
-            (match (makeDirAll ds.out)
-              ((Ok _) ())
-              ((Err _) (die (concat (concat "error: cannot create " ds.out) "\n") 1)))
-            (docWrite ds "style.css" docStyle)
-            (for i in 0..(vecLen ds.srcs)
-              (docRenderPage ds i))
-            (for i in 0..(vecLen ds.modFiles)
-              (docRenderModule ds i))
-            (docRenderLanguage ds)
-            {
-              (let index (concat ds.out "index.html"))
-              {
-                (writeStr stdout (concat index "\n"))
-                (if (hasFlagAnywhere "doc" "--no-open")
-                  0
-                  (docOpen index))
-              }
-            }
-          })
-      })
-  })
+        })
+    }
+    (die
+      "error: no documentation set found: set AXIOM_DOC to a directory holding docs/, or run the compiler from an install or a source checkout\n"
+      1)))
