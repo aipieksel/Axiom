@@ -14,7 +14,7 @@ run_checked = SUPPORT['run_checked']
 replace_once = SUPPORT['replace_once']
 check_output = SUPPORT['check_output']
 BRIDGES = '''
-(pub :: probeLambdaType (-> CG ASTNode CG))
+(pub :: probeLambdaType (-> CG (Option ASTNode) CG))
 (pub fn (probeLambdaType cg ty) (cgSetLambdaType cg ty))
 (pub :: probeFunctionTypes (-> CG FunctionTypes CG))
 (pub fn (probeFunctionTypes cg types) (cgSetFunctionFloats cg (Some (functionFloatIndex types))))

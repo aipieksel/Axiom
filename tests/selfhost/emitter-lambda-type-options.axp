@@ -1,0 +1,152 @@
+; Lambda metadata owns optional arrows and preserves conservative missing results.
+(import codegen)
+(import parser)
+(import typecheck)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found expected)
+  (match found
+    ((None) false)
+    ((Some ty) (nodeSame ty expected))))
+
+(:: descriptor (-> (Option ASTNode) LamDesc))
+(fn (descriptor arrow)
+  (mkLamDesc "probe" (vecPush vecNew "x") (mkEVar "x") vecNew vecNew arrow))
+
+(:: retireDescriptor (-> ASTNode Int))
+(fn (retireDescriptor arrow)
+  {
+    (let desc (descriptor (Some arrow)))
+    17
+  })
+
+(:: retireContext (-> ASTNode Int))
+(fn (retireContext arrow)
+  {
+    (let cg newCG)
+    (probeLambdaSet cg (Some arrow))
+    19
+  })
+
+(:: returnedArrow (Option ASTNode))
+(fn (returnedArrow)
+  {
+    (let desc (descriptor (Some (mkTArr (mkTCon "Owned" nodesNew) mkIntTy))))
+    desc.arrow
+  })
+
+(:: queryChecks ())
+;@axiom:effect(io)
+(fn (queryChecks)
+  {
+    (let cg newCG)
+    (say 1 (isNone (probeLambdaGet cg)))
+    (let missing (descriptor None))
+    (say 2 (isNone missing.arrow))
+    (let result mkStringTy)
+    (let arrow (mkTArr mkFloatTy result))
+    (let present (descriptor (Some arrow)))
+    (say 3 (same present.arrow arrow))
+    (say 4 (== (lambdaParamIsFloat present.arrow 0) 1))
+    (probeLambdaSet cg (Some arrow))
+    (say 5 (same (probeLambdaGet cg) arrow))
+    (say 6 (== (paramIsFloat cg 0) 1))
+    (say 7 (== (paramIsFloat cg 1) 0))
+    (say 8 (== (lambdaParamIsFloat None 0) 0))
+    (say 9 (== (lambdaParamIsFloat present.arrow -1) 1))
+    (let nested (Some (mkTArr mkIntTy (mkTArr mkFloatTy result))))
+    (say 10 (== (lambdaParamIsFloat nested 0) 0))
+    (say 11 (== (lambdaParamIsFloat nested 1) 1))
+    (say 12 (== (lambdaParamIsFloat nested 2) 0))
+    (let poison mkTErr)
+    (let wild (mkTVar "_"))
+    (let empty (mkTCon "" nodesNew))
+    (say 13 (== (lambdaParamIsFloat (Some poison) 0) 0))
+    (say 14 (== (lambdaParamIsFloat (Some wild) 0) 0))
+    (say 15 (== (lambdaParamIsFloat (Some empty) 0) 0))
+    (say 16 (isNone (probeLambdaResult None)))
+    (say 17 (same (probeLambdaResult present.arrow) result))
+    (say 18 (isNone (probeLambdaResult (Some (mkTArr mkIntTy nilNode)))))
+    (say 19 (same (probeLambdaResult (Some (mkTArr mkIntTy poison))) poison))
+    (say 20 (same (probeLambdaResult (Some (mkTArr mkIntTy wild))) wild))
+    (say 21 (== (parameterTypeClass cg (probeLambdaResult None)) 1))
+    (say 22 (== (parameterTypeClass cg (probeLambdaResult present.arrow)) 2))
+    (say 23 (== (parameterTypeClass cg (probeLambdaResult (Some (mkTArr mkIntTy mkIntTy)))) 0))
+    (say 24 (== (parameterTypeClass cg (probeLambdaResult (Some (mkTArr mkIntTy poison)))) 1))
+    (say 25 (== (parameterTypeClass cg (probeLambdaResult (Some (mkTArr mkIntTy wild)))) 1))
+    (say 26 (same (probeLambdaResult (Some (mkTArr mkIntTy empty))) empty))
+  })
+
+(:: ownershipChecks ())
+;@axiom:effect(io)
+(fn (ownershipChecks)
+  {
+    (let arrow (mkTArr mkFloatTy mkStringTy))
+    (let before (count arrow))
+    (say 27 (== (retireDescriptor arrow) 17))
+    (say 28 (== (count arrow) before))
+    (say 29 (== (retireContext arrow) 19))
+    (say 30 (== (count arrow) before))
+    (let cg newCG)
+    (probeLambdaSet cg (Some arrow))
+    (say 31 (== (count arrow) (+ before 1)))
+    (probeLambdaSet cg (Some arrow))
+    (say 32 (== (count arrow) (+ before 1)))
+    (probeLambdaSet cg None)
+    (say 33 (== (count arrow) before))
+    (let poison mkTErr)
+    (probeLambdaSet cg (Some poison))
+    (say 34 (same (probeLambdaGet cg) poison))
+    (probeLambdaSet cg None)
+    (say 35 (isNone (probeLambdaGet cg)))
+    (say 36
+      (match returnedArrow
+        ((None) false)
+        ((Some owned) (strEq (nodeAName (nodeAChild owned)) "Owned"))))
+  })
+
+(:: producerChecks ())
+;@axiom:effect(io)
+(fn (producerChecks)
+  {
+    (let cg newCG)
+    (let unknown (nodeBuildELam (vecPush vecNew "x") (mkEVar "x") 0 0))
+    (emitLambda unknown cg)
+    (let first (vecGet cg.pendingLams 0))
+    (say 37 (isNone first.arrow))
+    (let known (nodeBuildELam (vecPush vecNew "x") (mkEVar "x") 0 0))
+    (let arrow (mkTArr mkFloatTy mkFloatTy))
+    (setNodeBinderTyChild known arrow)
+    (emitLambda known cg)
+    (let second (vecGet cg.pendingLams 1))
+    (say 38 (same second.arrow arrow))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (queryChecks)
+    (ownershipChecks)
+    (producerChecks)
+    0
+  })

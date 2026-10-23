@@ -1395,11 +1395,9 @@
     ty
     nilNode))
 
-(:: cgLambdaType (-> CG ASTNode))
+(:: cgLambdaType (-> CG (Option ASTNode)))
 (fn (cgLambdaType cg)
-  (if (let (Some ty) cg.pairState.lambdaArrow)
-    ty
-    nilNode))
+  cg.pairState.lambdaArrow)
 
 (:: cgSetPairResultType (-> CG (Option ASTNode) CG))
 (fn (cgSetPairResultType cg value)
@@ -1485,12 +1483,10 @@
     cg
   })
 
-(:: cgSetLambdaType (-> CG ASTNode CG))
+(:: cgSetLambdaType (-> CG (Option ASTNode) CG))
 (fn (cgSetLambdaType cg ty)
   {
-    (set cg.pairState.lambdaArrow (if (nodeSame ty nilNode)
-      (None)
-      (Some ty)))
+    (set cg.pairState.lambdaArrow ty)
     cg
   })
 
@@ -5337,18 +5333,26 @@
 ; A lifted lambda has a checked arrow rather than a named function's
 ; flag vector. Read the parameter through its pins, which may have
 ; been fixed by a later call before the body reaches emission.
-(pub :: lambdaParamIsFloat (-> ASTNode Int Int))
-(pub fn (lambdaParamIsFloat arrow i)
-  (if (nodeSame arrow nilNode)
-    0
-    {
-      (let ty (tyResolve arrow))
-      (if (!= (nodeTag ty) TAG_T_ARR)
-        0
-        (if (<= i 0)
-          (tyIsBareFloat (tyResolve (nodeAChild ty)))
-          (lambdaParamIsFloat (nodeBChild ty) (- i 1))))
-    }))
+(:: lambdaResultType (-> (Option ASTNode) (Option ASTNode)))
+(fn (lambdaResultType signature)
+  (match signature
+    ((None) None)
+    ((Some arrow) (cgTypeNodeOpt (nodeBChild arrow)))))
+
+(pub :: lambdaParamIsFloat (-> (Option ASTNode) Int Int))
+(pub fn (lambdaParamIsFloat signature i)
+  (match signature
+    ((None) 0)
+    ((Some arrow)
+      {
+        (let ty (tyResolve arrow))
+        (if (!= (nodeTag ty) TAG_T_ARR)
+          0
+          (if (<= i 0)
+            (tyIsBareFloat (tyResolve (nodeAChild ty)))
+            (lambdaParamIsFloat (cgTypeNodeOpt (nodeBChild ty)) (- i 1))))
+      }
+    )))
 
 (pub :: paramFloatByName (-> CG String Int))
 (pub fn (paramFloatByName cg name)
@@ -20068,7 +20072,7 @@
 (pub :: curParamRefClass (-> CG Int Int))
 (pub fn (curParamRefClass cg i)
   (if (== (cgLiftedLambda cg) 1)
-    (if (let (Some parameter) (arrowParamTy (cgLambdaType cg) i))
+    (if (let (Some parameter) (signatureParamTy (cgLambdaType cg) i))
       (if (== (fldClass cg (tyResolve parameter)) 2)
         1
         0)
@@ -21263,9 +21267,9 @@
   (body : ASTNode)
   (captures : Names)
   (flags : Ints)
-  (arrow : ASTNode))
+  (arrow : (Option ASTNode)))
 
-(pub :: mkLamDesc (-> String Strings ASTNode Names Ints ASTNode LamDesc))
+(pub :: mkLamDesc (-> String Strings ASTNode Names Ints (Option ASTNode) LamDesc))
 (pub fn (mkLamDesc lname lparams body capNames capFloats resultTy)
   (LamDesc
     :name lname
@@ -21369,7 +21373,8 @@
               (retainParamCaps cg capNames capRegs 0)
               (storeCaps cg pr capRegs 0)
               (vecPush (cgPendingLams cg)
-                (mkLamDesc lname lparams body capNames capFloats (nodeBinderTyChild node)))
+                (mkLamDesc lname lparams body capNames capFloats
+                  (cgTypeNodeOpt (nodeBinderTyChild node))))
               (cgSetResult cg pr)
               (cgSetResultFloat cg 0)
               cg
@@ -21489,9 +21494,9 @@
     (let capFloats d.flags)
     (let checkedTy d.arrow)
     (let resultTy
-      (if (nodeSame checkedTy nilNode)
-        nilNode
-        (tyResolve (nodeBChild checkedTy))))
+      (match (lambdaResultType checkedTy)
+        ((None) None)
+        ((Some ty) (Some (tyResolve ty)))))
     (let savedSelf (cgTcoName cg))
     (let savedTails (cgTailRetain cg))
     {
@@ -21538,7 +21543,7 @@
               {
                 (let _t
                   (cgSetTailRetain cg1c
-                    (if (!= (fldClass cg1c resultTy) 0)
+                    (if (!= (parameterTypeClass cg1c resultTy) 0)
                       {
                         (let tails vecNew)
                         {
@@ -21554,7 +21559,7 @@
                     {
                       (cgSetTailRetain cg2 savedTails)
                       (cgSetTcoName cg2 savedSelf)
-                      (cgSetLambdaType cg2 nilNode)
+                      (cgSetLambdaType cg2 None)
                       (cgSetRegionDepth
                         (cgSetLiftedLambda (emitLine (emitLine (closeAllocaMark cg2) ret) "}") 0)
                         rgnSaved)
@@ -22217,12 +22222,7 @@
   (if (== (cgLiftedLambda cg) 1)
     {
       (let lamTy (cgLambdaType cg))
-      (if (==
-            (fldClass cg
-              (if (nodeSame lamTy nilNode)
-                nilNode
-                (nodeBChild lamTy)))
-            2)
+      (if (== (parameterTypeClass cg (lambdaResultType lamTy)) 2)
         (slotTailCovered cg e)
         0)
     }
@@ -22696,12 +22696,7 @@
             {
               (let cgR
                 (if (&& (== (cgLiftedLambda cg) 1)
-                      (==
-                        (fldClass cg
-                          (if (nodeSame lamTy nilNode)
-                            nilNode
-                            (nodeBChild lamTy)))
-                        1))
+                      (== (parameterTypeClass cg (lambdaResultType lamTy)) 1))
                   (emitRcIfBitOf cg v 1 "%__evwa.h" 1)
                   (emitRetainOf cg v)))
               {
@@ -32523,12 +32518,7 @@
         (if (== (cgLiftedLambda cg) 1)
           {
             (let lamTy (cgLambdaType cg))
-            (if (==
-                  (fldClass cg
-                    (if (nodeSame lamTy nilNode)
-                      nilNode
-                      (nodeBChild lamTy)))
-                  2)
+            (if (== (parameterTypeClass cg (lambdaResultType lamTy)) 2)
               (slotTailCovered cg body)
               0)
           }
