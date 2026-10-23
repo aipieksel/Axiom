@@ -495,8 +495,11 @@
                       (if (let (Some src) srcOpt)
                         {
                           (let pr (parseModuleWith (lex src) (scanAxtags src)))
-                          (if (pResOk pr)
-                            (set missing (lspPreflight (pResNodes pr) tcode entryDir seen)))
+                          (match pr
+                            ((ParseFailed parseError1) ())
+                            ((ParseSuccess parsedValue1 parsedPos1)
+                              (set missing (lspPreflight parsedValue1 tcode entryDir seen))
+                            ))
                         }
                         (set missing name))
                     }
@@ -717,19 +720,23 @@
                                     (if (isNone lexD)
                                       (parseModuleWith toks (scanAxtags src))
                                       (pErr 0)))
-                                  (if (|| (isSome lexD) (pResFailed pr))
-                                    {
-                                      (let d
-                                        (if (let (Some ld) lexD)
-                                          ld
-                                          (parseErrDiag toks pr src)))
+                                  (match pr
+                                    ((ParseFailed parseError1)
                                       {
-                                        (diagSetUnit d unit)
-                                        (set failure (Some d))
+                                        (let d
+                                          (if (let (Some ld) lexD)
+                                            ld
+                                            (parseErrDiag toks (ParseFailed parseError1) src)))
+                                        {
+                                          (diagSetUnit d unit)
+                                          (set failure (Some d))
+                                        }
                                       }
-                                    }
-                                    (set failure (lspWorkspacePreflight workspace (pResNodes pr)
-                                                   tcode entryDir units unit)))
+                                    )
+                                    ((ParseSuccess parsedValue1 parsedPos1)
+                                      (set failure (lspWorkspacePreflight workspace parsedValue1
+                                                     tcode entryDir units unit))
+                                    ))
                                 }
                               }
                             }
@@ -772,122 +779,126 @@
           (if (isNone lexD)
             (parseModuleWith toks (scanAxtags src))
             (pErr 0)))
-        (if (|| (isSome lexD) (pResFailed pr))
-          ; A parse failure now carries a code and a span, so the editor
-          ; gets a squiggle ON the offending token instead of one
-          ; spanless note at the top of the file. That was this port's
-          ; first consumer: before it, every typo anywhere in a file
-          ; reported identically, at line 1.
-          (jsonArrPush jsonArr
-            (lspDiagJson
-              (if (let (Some ld) lexD)
-                ld
-                (parseErrDiag toks pr src))
-              src (lspLineIndex src) (lspPathToUri path)))
-          {
-            (let decls (pResNodes pr))
-            (let tcode (checkedTargetCode hostTarget))
-            (let entryDir (pathDir path))
-            (let units
-              {
-                (let v vecNew)
-                {
-                  (vecPush v
-                    (CUnit2
-                      :file path
-                      :src src
-                      :name None
-                      :imports vecNew
-                      :library (pathInStdlib path)))
-                  v
-                }
-              })
+        (match pr
+          ((ParseFailed parseError2)
+            ; A parse failure now carries a code and a span, so the editor
+            ; gets a squiggle ON the offending token instead of one
+            ; spanless note at the top of the file. That was this port's
+            ; first consumer: before it, every typo anywhere in a file
+            ; reported identically, at line 1.
+            (jsonArrPush jsonArr
+              (lspDiagJson
+                (if (let (Some ld) lexD)
+                  ld
+                  (parseErrDiag toks (ParseFailed parseError2) src))
+                src (lspLineIndex src) (lspPathToUri path)))
+          )
+          ((ParseSuccess parsedValue2 parsedPos2)
             {
-              (let failure (lspWorkspacePreflight workspace decls tcode entryDir units 0))
-              (if (isSome failure)
-                (if (let (Some fd) failure)
-                  (if (== (diagUnit fd) 0)
-                    (jsonArrPush jsonArr
-                      (lspDiagJson fd src (lspLineIndex src) (lspPathToUri path)))
-                    jsonArr)
-                  jsonArr)
-                ; Same order as `compileFile`: expansion, then the
-                ; checker. An editor that reported a different set
-                ; of diagnostics from `axiom check` on the same file
-                ; would be worse than one that reported none.
-                ; Expansion's refusals are published ALONE when it
-                ; refused. Running the checker over a tree
-                ; expansion gave up on can crash it, and a server
-                ; that dies is a server that stops answering the
-                ; editor.
-                ; Once, not per diagnostic: `lspPathToUri`
-                ; is IO, and a related location names the
-                ; document being published.
-                ;
-                ; The lints are taken FIRST, while `decls` is
-                ; still the tree the author wrote:
-                ; `expandProgram` rewrites it in place, and a
-                ; lint over the rewritten tree broke both of
-                ; `lspLintDoc`'s promises - it saw what macros
-                ; expand to, and it walked their output, which
-                ; is a DAG. A macro that uses its parameter
-                ; twice, nested 115 deep, is 2^115 paths through
-                ; a few thousand nodes; `axiom check` answered in
-                ; a second and the server never answered again
-                ; (found by `scripts/lib/lspfuzz.py`).
-                ; Warnings a `nolint` tag quiets go
-                ; here, where `axiom check` drops them
-                ; too (`nolintQuietDiags`), so the
-                ; editor and the terminal agree.
+              (let decls parsedValue2)
+              (let tcode (checkedTargetCode hostTarget))
+              (let entryDir (pathDir path))
+              (let units
                 {
-                  (let lints (lspLintRaw src decls))
-                  (let bares vecNew)
-                  (let fulls vecNew)
-                  (let mods vecNew)
+                  (let v vecNew)
                   {
-                    (let allDecls (resolveImports decls bares fulls mods tcode entryDir units))
+                    (vecPush v
+                      (CUnit2
+                        :file path
+                        :src src
+                        :name None
+                        :imports vecNew
+                        :library (pathInStdlib path)))
+                    v
+                  }
+                })
+              {
+                (let failure (lspWorkspacePreflight workspace decls tcode entryDir units 0))
+                (if (isSome failure)
+                  (if (let (Some fd) failure)
+                    (if (== (diagUnit fd) 0)
+                      (jsonArrPush jsonArr
+                        (lspDiagJson fd src (lspLineIndex src) (lspPathToUri path)))
+                      jsonArr)
+                    jsonArr)
+                  ; Same order as `compileFile`: expansion, then the
+                  ; checker. An editor that reported a different set
+                  ; of diagnostics from `axiom check` on the same file
+                  ; would be worse than one that reported none.
+                  ; Expansion's refusals are published ALONE when it
+                  ; refused. Running the checker over a tree
+                  ; expansion gave up on can crash it, and a server
+                  ; that dies is a server that stops answering the
+                  ; editor.
+                  ; Once, not per diagnostic: `lspPathToUri`
+                  ; is IO, and a related location names the
+                  ; document being published.
+                  ;
+                  ; The lints are taken FIRST, while `decls` is
+                  ; still the tree the author wrote:
+                  ; `expandProgram` rewrites it in place, and a
+                  ; lint over the rewritten tree broke both of
+                  ; `lspLintDoc`'s promises - it saw what macros
+                  ; expand to, and it walked their output, which
+                  ; is a DAG. A macro that uses its parameter
+                  ; twice, nested 115 deep, is 2^115 paths through
+                  ; a few thousand nodes; `axiom check` answered in
+                  ; a second and the server never answered again
+                  ; (found by `scripts/lib/lspfuzz.py`).
+                  ; Warnings a `nolint` tag quiets go
+                  ; here, where `axiom check` drops them
+                  ; too (`nolintQuietDiags`), so the
+                  ; editor and the terminal agree.
+                  {
+                    (let lints (lspLintRaw src decls))
+                    (let bares vecNew)
+                    (let fulls vecNew)
+                    (let mods vecNew)
                     {
-                      (let ftbl vecNew)
-                      (let eds
-                        {
-                          (let v vecNew)
-                          {
-                            (expandProgram decls allDecls v ftbl units bares fulls mods)
-                            v
-                          }
-                        })
+                      (let allDecls (resolveImports decls bares fulls mods tcode entryDir units))
                       {
-                        (let ds
-                          (if (> (countErrorDiags eds) 0)
-                            (orderDiags eds)
-                            (orderDiags
-                              (expMergeInto eds
-                                {
-                                  (let cds
-                                    (nolintQuietDiags decls (checkModule decls allDecls units)))
-                                  {
-                                    (expAttachFrames cds ftbl units)
-                                    cds
-                                  }
-                                }))))
-                        {
-                          (let out jsonArr)
-                          (let ix (lspLineIndex src))
-                          (let uri (lspPathToUri path))
+                        (let ftbl vecNew)
+                        (let eds
                           {
-                            (for d in ds
-                              (if (== (diagUnit d) 0)
-                                (jsonArrPush out (lspDiagJson d src ix uri))))
-                            (lspJsonAppend out lints 0)
-                            out
+                            (let v vecNew)
+                            {
+                              (expandProgram decls allDecls v ftbl units bares fulls mods)
+                              v
+                            }
+                          })
+                        {
+                          (let ds
+                            (if (> (countErrorDiags eds) 0)
+                              (orderDiags eds)
+                              (orderDiags
+                                (expMergeInto eds
+                                  {
+                                    (let cds
+                                      (nolintQuietDiags decls (checkModule decls allDecls units)))
+                                    {
+                                      (expAttachFrames cds ftbl units)
+                                      cds
+                                    }
+                                  }))))
+                          {
+                            (let out jsonArr)
+                            (let ix (lspLineIndex src))
+                            (let uri (lspPathToUri path))
+                            {
+                              (for d in ds
+                                (if (== (diagUnit d) 0)
+                                  (jsonArrPush out (lspDiagJson d src ix uri))))
+                              (lspJsonAppend out lints 0)
+                              out
+                            }
                           }
                         }
                       }
                     }
-                  }
-                })
+                  })
+              }
             }
-          })
+          ))
       }
     }
   })
@@ -2328,26 +2339,26 @@
 ;; The declarations of `src` for a request to read: its parse, or the
 ;; declarations that still parse around its errors. Word 0 is always
 ;; 1 and word 1 the declarations.
-(pub :: lspParse (-> String Int))
+(pub :: lspParse (-> String (PResult Nodes)))
 (pub fn (lspParse src)
   {
     (let toks (lex src))
     (let tags (scanAxtags src))
     {
       (let pr (parseModuleWith toks tags))
-      (if (pResFailed pr)
-        (lspRecover src toks tags)
-        pr)
+      (match pr
+        ((ParseFailed parseError2) (lspRecover src toks tags))
+        ((ParseSuccess parsedValue2 parsedPos2) pr))
     }
   })
 
 ;; Whether `lspParse` had to drop tokens to answer.
-(pub :: lspParseLossy (-> Int Bool))
+(pub :: lspParseLossy (-> (PResult Nodes) Bool))
 (pub fn (lspParseLossy pr)
   (== (pResPos pr) (- 0 2)))
 
 ;; The recovered parse of a document whose own parse failed.
-(pub :: lspRecover (-> String Tokens (Vec AxtagEnt) Int))
+(pub :: lspRecover (-> String Tokens (Vec AxtagEnt) (PResult Nodes)))
 (pub fn (lspRecover src toks tags)
   {
     (let fixed (lspRecoverStrings src toks 0))
@@ -2368,13 +2379,17 @@
           {
             (let r (lspRepairForm (lspRecSlice flat (vecGet bounds i) (vecGet bounds (+ i 1)))))
             {
-              (if (pResFailed r)
-                (set drop 1)
-                {
-                  (if (== (pResPos r) (- 0 2))
-                    (set drop 1))
-                  (lspRecAppend decls (pResNodes r))
-                })
+              (match r
+                ((ParseFailed parseError3)
+                  (set drop 1)
+                )
+                ((ParseSuccess parsedValue3 parsedPos3)
+                  {
+                    (if (== parsedPos3 (- 0 2))
+                      (set drop 1))
+                    (lspRecAppend decls parsedValue3)
+                  }
+                ))
               (set i (+ i 2))
             }
           })
@@ -2633,16 +2648,18 @@
 ;; One top-level form's parse, repaired where it fails. Word 0 is 0
 ;; when no repair made it parse. Word 2 is -1 when a repair only added
 ;; tokens, and -2 when it dropped some of the form's own.
-(pub :: lspRepairForm (-> Tokens Int))
+(pub :: lspRepairForm (-> Tokens (PResult Nodes)))
 (pub fn (lspRepairForm toks)
   {
     (let pr (parseModuleWith toks vecNew))
-    (if (pResOk pr)
-      pr
-      (lspRepairStep toks pr vecNew 32 (lspRecRealCount toks)))
+    (match pr
+      ((ParseFailed parseError4)
+        (lspRepairStep toks (ParseFailed parseError4) vecNew 32 (lspRecRealCount toks))
+      )
+      ((ParseSuccess parsedValue4 parsedPos4) pr))
   })
 
-(pub :: lspRepairStep (-> Tokens Int Ints Int Int Int))
+(pub :: lspRepairStep (-> Tokens (PResult Nodes) Ints Int Int (PResult Nodes)))
 (pub fn (lspRepairStep toks pr tried left want)
   (if (<= left 0)
     pr
@@ -2652,12 +2669,16 @@
         pr
         {
           (let pr2 (parseModuleWith next vecNew))
-          (if (pResOk pr2)
-            (pOk (pResNodes pr2)
-              (if (== (lspRecRealCount next) want)
-                (- 0 1)
-                (- 0 2)))
-            (lspRepairStep next pr2 tried (- left 1) want))
+          (match pr2
+            ((ParseFailed parseError5)
+              (lspRepairStep next (ParseFailed parseError5) tried (- left 1) want)
+            )
+            ((ParseSuccess parsedValue5 parsedPos5)
+              (pOk parsedValue5
+                (if (== (lspRecRealCount next) want)
+                  (- 0 1)
+                  (- 0 2)))
+            ))
         })
     }))
 
@@ -3389,61 +3410,63 @@
 (pub fn (lspDefinition workspace src uri params gen)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonNull
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError6) jsonNull)
+      ((ParseSuccess parsedValue6 parsedPos6)
         {
-          (let off (lspOffsetOf src ix (jsonGet params "position")))
+          (let decls parsedValue6)
+          (let ix (lspLineIndex src))
           {
-            (let w (lspWordAt src off))
-            (if (== (strLen w) 0)
-              jsonNull
-              ; A LOCAL BINDING FIRST - a `let`, a parameter, a
-              ; pattern variable - because a local shadows a
-              ; declaration of the same name, which is the
-              ; language's rule and SECTION NAV's. 0 means the word
-              ; is not one, and the two lookups below then answer
-              ; exactly as they did before.
-              {
-                (let loc (lspNavLocalDefinition src uri ix decls off))
-                (if (!= loc 0)
-                  loc
-                  {
-                    (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-                    (if (! (nodeSame d nilNode))
-                      (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
-                        (lspRange src (nodeSpan d)))
-                      ; A CONSTRUCTOR THIS DOCUMENT DECLARES, before
-                      ; any import is resolved. `lspFindDecl` matches
-                      ; whole declarations and never looks inside a
-                      ; `data`'s constructor list, which is the only
-                      ; place `Circle` is written.
-                      {
-                        (let c (lspCtorDefinition src uri decls w))
-                        (if (!= c 0)
-                          c
-                          ; A GENERATED NAME, last: the cache the
-                          ; fill wrote at `didOpen`/`didChange`.
-                          ; Firing here - after every raw-tree and
-                          ; import lookup misses - is what keeps
-                          ; every answer given before standing, and
-                          ; reading a string is what keeps this arm
-                          ; on MAC-TOOL-3's side of expansion.
-                          {
-                            (let imp
-                              (lspDefinitionImported workspace (lspUriToPath uri) src decls w))
-                            (if (jsonIsNull imp)
-                              (lspGenDefinition gen uri src w)
-                              imp)
-                          })
-                      })
-                  })
-              })
+            (let off (lspOffsetOf src ix (jsonGet params "position")))
+            {
+              (let w (lspWordAt src off))
+              (if (== (strLen w) 0)
+                jsonNull
+                ; A LOCAL BINDING FIRST - a `let`, a parameter, a
+                ; pattern variable - because a local shadows a
+                ; declaration of the same name, which is the
+                ; language's rule and SECTION NAV's. 0 means the word
+                ; is not one, and the two lookups below then answer
+                ; exactly as they did before.
+                {
+                  (let loc (lspNavLocalDefinition src uri ix decls off))
+                  (if (!= loc 0)
+                    loc
+                    {
+                      (let d (lspFindDecl decls w (- (vecLen decls) 1)))
+                      (if (! (nodeSame d nilNode))
+                        (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range"
+                          (lspRange src (nodeSpan d)))
+                        ; A CONSTRUCTOR THIS DOCUMENT DECLARES, before
+                        ; any import is resolved. `lspFindDecl` matches
+                        ; whole declarations and never looks inside a
+                        ; `data`'s constructor list, which is the only
+                        ; place `Circle` is written.
+                        {
+                          (let c (lspCtorDefinition src uri decls w))
+                          (if (!= c 0)
+                            c
+                            ; A GENERATED NAME, last: the cache the
+                            ; fill wrote at `didOpen`/`didChange`.
+                            ; Firing here - after every raw-tree and
+                            ; import lookup misses - is what keeps
+                            ; every answer given before standing, and
+                            ; reading a string is what keeps this arm
+                            ; on MAC-TOOL-3's side of expansion.
+                            {
+                              (let imp
+                                (lspDefinitionImported workspace (lspUriToPath uri) src decls w))
+                              (if (jsonIsNull imp)
+                                (lspGenDefinition gen uri src w)
+                                imp)
+                            })
+                        })
+                    })
+                })
+            }
           }
         }
-      })
+      ))
   })
 
 ; The second lookup: resolve this document's imports through
@@ -3961,94 +3984,97 @@
 (pub fn (lspHover workspace src uri params gen)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonNull
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError7) jsonNull)
+      ((ParseSuccess parsedValue7 parsedPos7)
         {
-          (let off (lspOffsetOf src ix (jsonGet params "position")))
+          (let decls parsedValue7)
+          (let ix (lspLineIndex src))
           {
-            (let tag (lspTagHover src ix off))
-            (if (isSome (lspAxqlLitAt src off))
-              (lspAxqlHover src ix off)
-              (if (jsonIsNull tag)
-                {
-                  (let wsp (lspWordSpan src off))
-                  (if (== wsp 0)
-                    ; Not on a word: `::`, `->` and `..` still mean
-                    ; something, and answer from the lexicon.
-                    {
-                      (let psp (lspPunctSpan src off))
-                      (if (== psp 0)
-                        jsonNull
-                        (lspLexHover
-                          (strSlice src (spanStart psp) (- (spanEnd psp) (spanStart psp)))
-                          (lspRangeIx src ix psp)))
-                    }
-                    ; A local binding first, for the reason `definition`
-                    ; asks it first: a local shadows a declaration of the
-                    ; same name. 0 means the word is not one.
-                    {
-                      (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
-                      (let range (lspRangeIx src ix wsp))
+            (let off (lspOffsetOf src ix (jsonGet params "position")))
+            {
+              (let tag (lspTagHover src ix off))
+              (if (isSome (lspAxqlLitAt src off))
+                (lspAxqlHover src ix off)
+                (if (jsonIsNull tag)
+                  {
+                    (let wsp (lspWordSpan src off))
+                    (if (== wsp 0)
+                      ; Not on a word: `::`, `->` and `..` still mean
+                      ; something, and answer from the lexicon.
                       {
-                        (let fld (lspHoverField src decls wsp range))
-                        (if (!= fld 0)
-                          fld
-                          {
-                            (let local (lspNavLocalHover src decls ix wsp))
-                            (if (!= local 0)
-                              local
-                              {
-                                (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-                                (if (! (nodeSame d nilNode))
-                                  (lspHoverAt src decls d range None)
-                                  ; A CONSTRUCTOR is read at the `data` that
-                                  ; declares it - the whole form, so its siblings
-                                  ; and its field types are in the tooltip - with
-                                  ; one line naming which of them is under the
-                                  ; cursor. The `range` stays the WORD, which is
-                                  ; what the rest of this function's header says.
-                                  {
-                                    (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
-                                    (if (nodeSame (lspCtorNodeOf dat w) nilNode)
-                                      ; A GENERATED NAME next, for `definition`'s
-                                      ; reason: after every lookup misses, from
-                                      ; the cache string, expanding nothing. Then
-                                      ; the module an import names, then the
-                                      ; language itself.
-                                      {
-                                        (let hov
-                                          (lspHoverImported workspace (lspUriToPath uri) src decls
-                                            w range))
-                                        (if (jsonIsNull hov)
-                                          {
-                                            (let g (lspGenHover gen src w range))
-                                            (if (jsonIsNull g)
-                                              {
-                                                (let m
-                                                  (lspModuleHover workspace (lspUriToPath uri) src
-                                                    decls w range))
-                                                (if (jsonIsNull m)
-                                                  (lspLexHover w range)
-                                                  m)
-                                              }
-                                              g)
-                                          }
-                                          hov)
-                                      }
-                                      (lspHoverAtNote src decls dat range None (lspCtorNote dat w)))
-                                  })
-                              })
-                          })
+                        (let psp (lspPunctSpan src off))
+                        (if (== psp 0)
+                          jsonNull
+                          (lspLexHover
+                            (strSlice src (spanStart psp) (- (spanEnd psp) (spanStart psp)))
+                            (lspRangeIx src ix psp)))
                       }
-                    })
-                }
-                tag))
+                      ; A local binding first, for the reason `definition`
+                      ; asks it first: a local shadows a declaration of the
+                      ; same name. 0 means the word is not one.
+                      {
+                        (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
+                        (let range (lspRangeIx src ix wsp))
+                        {
+                          (let fld (lspHoverField src decls wsp range))
+                          (if (!= fld 0)
+                            fld
+                            {
+                              (let local (lspNavLocalHover src decls ix wsp))
+                              (if (!= local 0)
+                                local
+                                {
+                                  (let d (lspFindDecl decls w (- (vecLen decls) 1)))
+                                  (if (! (nodeSame d nilNode))
+                                    (lspHoverAt src decls d range None)
+                                    ; A CONSTRUCTOR is read at the `data` that
+                                    ; declares it - the whole form, so its siblings
+                                    ; and its field types are in the tooltip - with
+                                    ; one line naming which of them is under the
+                                    ; cursor. The `range` stays the WORD, which is
+                                    ; what the rest of this function's header says.
+                                    {
+                                      (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
+                                      (if (nodeSame (lspCtorNodeOf dat w) nilNode)
+                                        ; A GENERATED NAME next, for `definition`'s
+                                        ; reason: after every lookup misses, from
+                                        ; the cache string, expanding nothing. Then
+                                        ; the module an import names, then the
+                                        ; language itself.
+                                        {
+                                          (let hov
+                                            (lspHoverImported workspace (lspUriToPath uri) src
+                                              decls w range))
+                                          (if (jsonIsNull hov)
+                                            {
+                                              (let g (lspGenHover gen src w range))
+                                              (if (jsonIsNull g)
+                                                {
+                                                  (let m
+                                                    (lspModuleHover workspace (lspUriToPath uri)
+                                                      src decls w range))
+                                                  (if (jsonIsNull m)
+                                                    (lspLexHover w range)
+                                                    m)
+                                                }
+                                                g)
+                                            }
+                                            hov)
+                                        }
+                                        (lspHoverAtNote src decls dat range None
+                                          (lspCtorNote dat w)))
+                                    })
+                                })
+                            })
+                        }
+                      })
+                  }
+                  tag))
+            }
           }
         }
-      })
+      ))
   })
 
 ; The hover object for declaration `d`, whose spans index `dsrc` and
@@ -4506,28 +4532,30 @@
 (pub fn (lspDocumentSymbols src)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonArr
-      {
-        (let decls (pResNodes pr))
-        (let out jsonArr)
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError8) jsonArr)
+      ((ParseSuccess parsedValue8 parsedPos8)
         {
-          (for n in decls
-            (if (&& (lspWantsSymbol (nodeTag n))
-                  (&& (!= (nodeSpan n) 0) (== (expIsJoinMarker (nodeAName n)) 0)))
-              ; A `(syntax/join a b)` name parses to the marker
-              ; string "syntax/join a b" (space-joined). The
-              ; outline reads the RAW parse tree - deliberately,
-              ; see the header - so a half-written derive macro's
-              ; marker would otherwise publish its space-bearing
-              ; spelling to the editor. Skipped: the expander is
-              ; what resolves or refuses it, and either way the
-              ; marker is not a name anyone can navigate to.
-              (jsonArrPush out (lspSymbolJson src ix n))))
-          out
+          (let decls parsedValue8)
+          (let out jsonArr)
+          (let ix (lspLineIndex src))
+          {
+            (for n in decls
+              (if (&& (lspWantsSymbol (nodeTag n))
+                    (&& (!= (nodeSpan n) 0) (== (expIsJoinMarker (nodeAName n)) 0)))
+                ; A `(syntax/join a b)` name parses to the marker
+                ; string "syntax/join a b" (space-joined). The
+                ; outline reads the RAW parse tree - deliberately,
+                ; see the header - so a half-written derive macro's
+                ; marker would otherwise publish its space-bearing
+                ; spelling to the editor. Skipped: the expander is
+                ; what resolves or refuses it, and either way the
+                ; marker is not a name anyone can navigate to.
+                (jsonArrPush out (lspSymbolJson src ix n))))
+            out
+          }
         }
-      })
+      ))
   })
 
 ; ------------------------------------------------------------------
@@ -4802,16 +4830,19 @@
             (let pr (lspParse src))
             {
               (lspComplKeywords out seen prefix)
-              (if (pResOk pr)
-                {
-                  (let decls (pResNodes pr))
+              (match pr
+                ((ParseFailed parseError9) ())
+                ((ParseSuccess parsedValue9 parsedPos9)
                   {
-                    (lspComplContract out seen src decls
-                      (lspOffsetOf src ix (jsonGet params "position")) prefix)
-                    (lspComplLocal out seen src decls prefix)
-                    (lspComplImported workspace out seen (lspUriToPath uri) src decls prefix)
+                    (let decls parsedValue9)
+                    {
+                      (lspComplContract out seen src decls
+                        (lspOffsetOf src ix (jsonGet params "position")) prefix)
+                      (lspComplLocal out seen src decls prefix)
+                      (lspComplImported workspace out seen (lspUriToPath uri) src decls prefix)
+                    }
                   }
-                })
+                ))
               (lspComplList out)
             }
           }))
@@ -5787,40 +5818,43 @@
         {
           {
             (let pr (parseModuleWith (lex (vecGet todo at)) (scanAxtags (vecGet todo at))))
-            (if (pResOk pr)
-              {
-                (let decls (pResNodes pr))
-                (let mut i 0)
-                (while (&& (! found) (< i (vecLen decls)))
-                  {
+            (match pr
+              ((ParseFailed parseError10) ())
+              ((ParseSuccess parsedValue10 parsedPos10)
+                {
+                  (let decls parsedValue10)
+                  (let mut i 0)
+                  (while (&& (! found) (< i (vecLen decls)))
                     {
-                      (let d (vecGet decls i))
-                      (if (== (nodeTag d) TAG_D_IMPORT)
-                        {
-                          (let name (nodeAName d))
-                          (if (! (lspSeenHas seen name))
-                            {
-                              (vecPush seen name)
+                      {
+                        (let d (vecGet decls i))
+                        (if (== (nodeTag d) TAG_D_IMPORT)
+                          {
+                            (let name (nodeAName d))
+                            (if (! (lspSeenHas seen name))
                               {
-                                (let dependency
-                                  (lspWorkspaceModulePath workspace name tcode entryDir))
-                                (if (> (strLen dependency) 0)
-                                  (if (strEq (pathClean dependency) (pathClean changed))
-                                    (set found true)
-                                    {
-                                      (let overlay (lspWorkspacePath workspace dependency))
-                                      (vecPush todo
-                                        (if (let (Some o) overlay)
-                                          (unitSrc o)
-                                          (lspWorkspaceFile workspace dependency)))
-                                    }))
-                              }
-                            })
-                        })
-                    }
-                    (set i (+ i 1))
-                  })
-              })
+                                (vecPush seen name)
+                                {
+                                  (let dependency
+                                    (lspWorkspaceModulePath workspace name tcode entryDir))
+                                  (if (> (strLen dependency) 0)
+                                    (if (strEq (pathClean dependency) (pathClean changed))
+                                      (set found true)
+                                      {
+                                        (let overlay (lspWorkspacePath workspace dependency))
+                                        (vecPush todo
+                                          (if (let (Some o) overlay)
+                                            (unitSrc o)
+                                            (lspWorkspaceFile workspace dependency)))
+                                      }))
+                                }
+                              })
+                          })
+                      }
+                      (set i (+ i 1))
+                    })
+                }
+              ))
           }
           (set at (+ at 1))
         })
@@ -7726,20 +7760,22 @@
 ;; around its errors.
 (pub :: lspNavParse (-> String (Vec ASTNode)))
 (pub fn (lspNavParse src)
-  (readAstNodes (lspParse src) 1))
+  (match (lspParse src)
+    ((ParseFailed error) vecNew)
+    ((ParseSuccess declarations after) declarations)))
 
 ;; The same, or 0 when reading the document meant dropping some of its
 ;; tokens: a rename over that tree would leave the dropped references
 ;; spelt the old way.
 (pub :: lspNavParseExact (-> String (Vec ASTNode)))
-;@axiom:effect(unsafe)
 (pub fn (lspNavParseExact src)
-  {
-    (let pr (lspParse src))
-    (if (lspParseLossy pr)
-      (as 0 Nodes)
-      (pResNodes pr))
-  })
+  (match (lspParse src)
+    ((ParseFailed error) nilNodes)
+    ((ParseSuccess declarations position)
+      (if (== position (- 0 2))
+        nilNodes
+        declarations)
+    )))
 
 ; ------------------------------------------------------------------
 ; JSON shapes.
@@ -10382,46 +10418,49 @@
 (pub fn (lspSignatureHelp workspace src uri params)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonNull
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError11) jsonNull)
+      ((ParseSuccess parsedValue11 parsedPos11)
         {
-          (let o (lspViewCallAt src (lspOffsetOf src ix (jsonGet params "position"))))
-          (if (< o 0)
-            jsonNull
-            ; Three forms that open with a declared name and are not
-            ; calls to it, cheapest question first: a keyword head; a
-            ; `fn` HEADER, `(fn (add x y) ...)`, whose first identifier
-            ; is the name being declared (measured: it answered its own
-            ; signature with the second parameter active); and a head
-            ; that resolves to a LOCAL spelled like a declared `fn`,
-            ; which the scope-aware walk decides (`lspNavLocalIndex`).
-            {
-              (let head (lspViewHeadAt src o))
-              (let hs (lspViewHeadStart src o))
-              (if (|| (== (strLen head) 0)
-                    (|| (== (strVecHas lspKeywords head) 1)
-                      (|| (lspViewIsFnHeader decls hs)
-                        (lspNavLocalIndexHas (lspNavLocalIndex src decls o (+ o 1)) hs))))
-                jsonNull
-                {
-                  (let local (lspViewSigLocal src decls head))
+          (let decls parsedValue11)
+          (let ix (lspLineIndex src))
+          {
+            (let o (lspViewCallAt src (lspOffsetOf src ix (jsonGet params "position"))))
+            (if (< o 0)
+              jsonNull
+              ; Three forms that open with a declared name and are not
+              ; calls to it, cheapest question first: a keyword head; a
+              ; `fn` HEADER, `(fn (add x y) ...)`, whose first identifier
+              ; is the name being declared (measured: it answered its own
+              ; signature with the second parameter active); and a head
+              ; that resolves to a LOCAL spelled like a declared `fn`,
+              ; which the scope-aware walk decides (`lspNavLocalIndex`).
+              {
+                (let head (lspViewHeadAt src o))
+                (let hs (lspViewHeadStart src o))
+                (if (|| (== (strLen head) 0)
+                      (|| (== (strVecHas lspKeywords head) 1)
+                        (|| (lspViewIsFnHeader decls hs)
+                          (lspNavLocalIndexHas (lspNavLocalIndex src decls o (+ o 1)) hs))))
+                  jsonNull
                   {
-                    (let found
-                      (if (== local 0)
-                        (lspViewSigImported workspace (lspUriToPath uri) src decls head)
-                        local))
-                    (if (== found 0)
-                      jsonNull
-                      (lspViewSigHelp found
-                        (lspViewActiveArg src o (lspOffsetOf src ix (jsonGet params "position")))))
-                  }
-                })
-            })
+                    (let local (lspViewSigLocal src decls head))
+                    {
+                      (let found
+                        (if (== local 0)
+                          (lspViewSigImported workspace (lspUriToPath uri) src decls head)
+                          local))
+                      (if (== found 0)
+                        jsonNull
+                        (lspViewSigHelp found
+                          (lspViewActiveArg src o
+                            (lspOffsetOf src ix (jsonGet params "position")))))
+                    }
+                  })
+              })
+          }
         }
-      })
+      ))
   })
 
 ; The offset of the head identifier of the form at `o` - the byte
@@ -10868,55 +10907,57 @@
 (pub fn (lspInlayHints workspace src uri params)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonArr
-      ; The heads that are locals - a parameter or a `let`
-      ; spelled like a declared `fn` - over the same
-      ; declarations the range meets, so `(fn (apply k v) (k
-      ; v))` beside a top-level `k` labels nothing.
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
-        (let n (strLen src))
-        (let range (jsonGet params "range"))
+    (match pr
+      ((ParseFailed parseError12) jsonArr)
+      ((ParseSuccess parsedValue12 parsedPos12)
+        ; The heads that are locals - a parameter or a `let`
+        ; spelled like a declared `fn` - over the same
+        ; declarations the range meets, so `(fn (apply k v) (k
+        ; v))` beside a top-level `k` labels nothing.
         {
-          (let rs
-            (if (== range 0)
-              0
-              (lspOffsetOf src ix (jsonGet range "start"))))
-          (let re
-            (if (== range 0)
-              n
-              (lspOffsetOf src ix (jsonGet range "end"))))
-          (let fns (lspViewFnIndexFor workspace (lspUriToPath uri) src decls))
-          (let sigs (lspViewSigIndex decls))
-          (let locals (lspNavLocalIndex src decls rs re))
-          (let occs (lspNavOccurrences src decls))
-          (let out jsonArr)
-          (let mut i 0)
+          (let decls parsedValue12)
+          (let ix (lspLineIndex src))
+          (let n (strLen src))
+          (let range (jsonGet params "range"))
           {
-            (while (< i (vecLen decls))
-              {
-                (let d (vecGet decls i))
+            (let rs
+              (if (== range 0)
+                0
+                (lspOffsetOf src ix (jsonGet range "start"))))
+            (let re
+              (if (== range 0)
+                n
+                (lspOffsetOf src ix (jsonGet range "end"))))
+            (let fns (lspViewFnIndexFor workspace (lspUriToPath uri) src decls))
+            (let sigs (lspViewSigIndex decls))
+            (let locals (lspNavLocalIndex src decls rs re))
+            (let occs (lspNavOccurrences src decls))
+            (let out jsonArr)
+            (let mut i 0)
+            {
+              (while (< i (vecLen decls))
                 {
-                  (if (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0))
-                    {
-                      (let lo (spanStart (nodeSpan d)))
-                      (let hi (lspViewNextDeclStart decls i n))
-                      (if (&& (< lo re) (> hi rs))
-                        {
-                          (lspViewHintsHeader out src ix d (lspViewIdxFind sigs (nodeAName d)) rs
-                            re)
-                          (lspViewHintsExpr out src ix fns locals decls occs (nodeCChild d) rs re)
-                        })
-                    })
-                  (set i (+ i 1))
-                }
-              })
-            out
+                  (let d (vecGet decls i))
+                  {
+                    (if (&& (== (nodeTag d) TAG_D_FN) (!= (nodeSpan d) 0))
+                      {
+                        (let lo (spanStart (nodeSpan d)))
+                        (let hi (lspViewNextDeclStart decls i n))
+                        (if (&& (< lo re) (> hi rs))
+                          {
+                            (lspViewHintsHeader out src ix d (lspViewIdxFind sigs (nodeAName d)) rs
+                              re)
+                            (lspViewHintsExpr out src ix fns locals decls occs (nodeCChild d) rs re)
+                          })
+                      })
+                    (set i (+ i 1))
+                  }
+                })
+              out
+            }
           }
         }
-      })
+      ))
   })
 
 ; Where the declaration after `i` begins, or the document length.
@@ -11629,38 +11670,40 @@
 (pub fn (lspDocumentLinks workspace src uri)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonArr
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
-        (let n (strLen src))
-        (let tcode (checkedTargetCode hostTarget))
-        (let entryDir (pathDir (lspUriToPath uri)))
-        (let out jsonArr)
+    (match pr
+      ((ParseFailed parseError13) jsonArr)
+      ((ParseSuccess parsedValue13 parsedPos13)
         {
-          (for d in decls
-            (if (&& (== (nodeTag d) TAG_D_IMPORT) (!= (nodeSpan d) 0))
-              {
-                (let p (lspWorkspaceModulePath workspace (nodeAName d) tcode entryDir))
-                (if (! (== (strLen p) 0))
-                  {
-                    (let s (spanStart (nodeSpan d)))
-                    (let mut e (spanStart (nodeSpan d)))
+          (let decls parsedValue13)
+          (let ix (lspLineIndex src))
+          (let n (strLen src))
+          (let tcode (checkedTargetCode hostTarget))
+          (let entryDir (pathDir (lspUriToPath uri)))
+          (let out jsonArr)
+          {
+            (for d in decls
+              (if (&& (== (nodeTag d) TAG_D_IMPORT) (!= (nodeSpan d) 0))
+                {
+                  (let p (lspWorkspaceModulePath workspace (nodeAName d) tcode entryDir))
+                  (if (! (== (strLen p) 0))
                     {
-                      (while (if (< e n)
-                        (|| (isIdentChar (strByte src e)) (== (strByte src e) 46))
-                        false)
-                        (set e (+ e 1)))
-                      (jsonArrPush out
-                        (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix (mkSpan s e)))
-                          "target" (jsonStr (lspPathToUri p))))
-                    }
-                  })
-              }))
-          out
+                      (let s (spanStart (nodeSpan d)))
+                      (let mut e (spanStart (nodeSpan d)))
+                      {
+                        (while (if (< e n)
+                          (|| (isIdentChar (strByte src e)) (== (strByte src e) 46))
+                          false)
+                          (set e (+ e 1)))
+                        (jsonArrPush out
+                          (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix (mkSpan s e)))
+                            "target" (jsonStr (lspPathToUri p))))
+                      }
+                    })
+                }))
+            out
+          }
         }
-      })
+      ))
   })
 
 ; ------------------------------------------------------------------
@@ -11699,14 +11742,17 @@
             (if (> (strLen src) 0)
               {
                 (let pr (lspParse src))
-                (if (pResOk pr)
-                  {
-                    (let decls (pResNodes pr))
+                (match pr
+                  ((ParseFailed parseError14) ())
+                  ((ParseSuccess parsedValue14 parsedPos14)
                     {
-                      (lspViewSymsLocal out seen query uri src decls)
-                      (lspViewSymsImported workspace out seen query (lspUriToPath uri) src decls)
+                      (let decls parsedValue14)
+                      {
+                        (lspViewSymsLocal out seen query uri src decls)
+                        (lspViewSymsImported workspace out seen query (lspUriToPath uri) src decls)
+                      }
                     }
-                  })
+                  ))
               })
             (set j (+ j 1))
           }
@@ -12209,22 +12255,24 @@
     (let tokens (lex src))
     (let tags (scanAxtags src))
     (let pr (parseModuleWith tokens tags))
-    (if (pResFailed pr)
-      0
-      {
-        (let decls (pResNodes pr))
-        (let edit (lspOrganizeEdit src uri decls tokens tags))
-        (if (== edit 0)
-          0
-          (if (let (Some expanded) (lspFixExpand workspace (lspUriToPath uri) src decls))
-            (if (|| (> (countErrorDiags expanded.diags) 0) (lspOrganizeConflict expanded.decls))
-              0
-              (jsonObjPut
-                (jsonObjPut (jsonObjPut jsonObj "title" (jsonStr "Organise imports")) "kind"
-                  (jsonStr "source.organizeImports"))
-                "edit" edit))
-            0))
-      })
+    (match pr
+      ((ParseFailed parseError15) 0)
+      ((ParseSuccess parsedValue15 parsedPos15)
+        {
+          (let decls parsedValue15)
+          (let edit (lspOrganizeEdit src uri decls tokens tags))
+          (if (== edit 0)
+            0
+            (if (let (Some expanded) (lspFixExpand workspace (lspUriToPath uri) src decls))
+              (if (|| (> (countErrorDiags expanded.diags) 0) (lspOrganizeConflict expanded.decls))
+                0
+                (jsonObjPut
+                  (jsonObjPut (jsonObjPut jsonObj "title" (jsonStr "Organise imports")) "kind"
+                    (jsonStr "source.organizeImports"))
+                  "edit" edit))
+              0))
+        }
+      ))
   })
 
 (pub :: lspOrganizeConflict (-> (Vec ASTNode) Bool))
@@ -12437,64 +12485,66 @@
 (pub fn (lspCodeActionLocal workspace src uri params)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
-    (if (pResFailed pr)
-      jsonArr
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError16) jsonArr)
+      ((ParseSuccess parsedValue16 parsedPos16)
         {
-          (let want (lspRangeSpan src ix (jsonGet params "range")))
-          (let rawVis (lspWrittenVis decls))
+          (let decls parsedValue16)
+          (let ix (lspLineIndex src))
           {
-            (let extract (lspExtractAction src uri decls ix want))
-            (let lintRecs (lspLintRecs src decls))
-            (let path (lspUriToPath uri))
-            (let out jsonArr)
+            (let want (lspRangeSpan src ix (jsonGet params "range")))
+            (let rawVis (lspWrittenVis decls))
             {
-              (let ex (lspFixExpand workspace path src decls))
+              (let extract (lspExtractAction src uri decls ix want))
+              (let lintRecs (lspLintRecs src decls))
+              (let path (lspUriToPath uri))
+              (let out jsonArr)
               {
-                (if (let (Some ex) ex)
-                  {
-                    (let eds ex.diags)
+                (let ex (lspFixExpand workspace path src decls))
+                {
+                  (if (let (Some ex) ex)
                     {
-                      (let tc
-                        (:: (if (> (countErrorDiags eds) 0)
-                          None
-                          (Some (checkModuleTc decls ex.decls ex.units))) (Option TC)))
+                      (let eds ex.diags)
                       {
-                        (let ds
-                          (if (let (Some checked) tc)
-                            (orderDiags
-                              (expMergeInto eds
-                                {
-                                  (let cds (tcOutVec checked))
-                                  {
-                                    (expAttachFrames cds ex.frames ex.units)
-                                    cds
-                                  }
-                                }))
-                            (orderDiags eds)))
+                        (let tc
+                          (:: (if (> (countErrorDiags eds) 0)
+                            None
+                            (Some (checkModuleTc decls ex.decls ex.units))) (Option TC)))
                         {
-                          (lspQuickfixes out ds src uri ix want)
-                          (if (let (Some checked) tc)
-                            (lspSigAssists out decls rawVis (lspViewSigIndex decls)
-                              (lspFixEntryIndex (tcFnsVec checked)) src uri ix want))
-                          (lspNameAssists out ds src uri ix want decls path ex.decls ex.units)
-                          (lspLintAssists out src uri ix decls lintRecs want)
-                          (lspUnhandledAssists out ds src uri ix want decls)
+                          (let ds
+                            (if (let (Some checked) tc)
+                              (orderDiags
+                                (expMergeInto eds
+                                  {
+                                    (let cds (tcOutVec checked))
+                                    {
+                                      (expAttachFrames cds ex.frames ex.units)
+                                      cds
+                                    }
+                                  }))
+                              (orderDiags eds)))
+                          {
+                            (lspQuickfixes out ds src uri ix want)
+                            (if (let (Some checked) tc)
+                              (lspSigAssists out decls rawVis (lspViewSigIndex decls)
+                                (lspFixEntryIndex (tcFnsVec checked)) src uri ix want))
+                            (lspNameAssists out ds src uri ix want decls path ex.decls ex.units)
+                            (lspLintAssists out src uri ix decls lintRecs want)
+                            (lspUnhandledAssists out ds src uri ix want decls)
+                          }
                         }
                       }
                     }
-                  }
-                  ())
-                (if (! (== extract 0))
-                  (jsonArrPush out extract))
-                out
+                    ())
+                  (if (! (== extract 0))
+                    (jsonArrPush out extract))
+                  out
+                }
               }
             }
           }
         }
-      })
+      ))
   })
 
 ; The bytes a `range` parameter covers, as a span. A request with no
@@ -13356,14 +13406,16 @@
             (vecPush seen mod)
             {
               (let pr (parseModuleWith (lex text) (scanAxtags text)))
-              (if (pResFailed pr)
-                0
-                (if (lspFixDeclaresPub (pResNodes pr) name)
-                  {
-                    (vecPush found mod)
-                    0
-                  }
-                  0))
+              (match pr
+                ((ParseFailed parseError17) 0)
+                ((ParseSuccess parsedValue17 parsedPos17)
+                  (if (lspFixDeclaresPub parsedValue17 name)
+                    {
+                      (vecPush found mod)
+                      0
+                    }
+                    0)
+                ))
             }
           }
           0)
@@ -14078,34 +14130,36 @@
 (pub fn (lspTypeDefinition workspace src uri params)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonNull
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError18) jsonNull)
+      ((ParseSuccess parsedValue18 parsedPos18)
         {
-          (let off (lspOffsetOf src ix (jsonGet params "position")))
+          (let decls parsedValue18)
+          (let ix (lspLineIndex src))
           {
-            (let wsp (lspWordSpan src off))
-            (if (== wsp 0)
-              jsonNull
-              {
-                (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
+            (let off (lspOffsetOf src ix (jsonGet params "position")))
+            {
+              (let wsp (lspWordSpan src off))
+              (if (== wsp 0)
+                jsonNull
                 {
-                  (let t (lspLocalTypeOf src decls off w))
-                  (if (! (nodeSame t nilNode))
-                    (lspTypeLocation workspace (lspUriToPath uri) src uri decls "" t)
-                    {
-                      (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
-                      (if (! (nodeSame dat nilNode))
-                        (lspLocationJson uri src (nodeSpan dat))
-                        (lspTypeLocation workspace (lspUriToPath uri) src uri decls w nilNode))
-                    })
-                }
-              })
+                  (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
+                  {
+                    (let t (lspLocalTypeOf src decls off w))
+                    (if (! (nodeSame t nilNode))
+                      (lspTypeLocation workspace (lspUriToPath uri) src uri decls "" t)
+                      {
+                        (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
+                        (if (! (nodeSame dat nilNode))
+                          (lspLocationJson uri src (nodeSpan dat))
+                          (lspTypeLocation workspace (lspUriToPath uri) src uri decls w nilNode))
+                      })
+                  }
+                })
+            }
           }
         }
-      })
+      ))
   })
 
 ; The type node this document alone can answer for the word at `off`:
@@ -14522,33 +14576,35 @@
 (pub fn (lspCodeLens src uri)
   {
     (let pr (lspParse src))
-    (if (pResFailed pr)
-      jsonArr
-      {
-        (let decls (pResNodes pr))
-        (let out jsonArr)
-        (let ix (lspLineIndex src))
-        (let n (vecLen (pResNodes pr)))
+    (match pr
+      ((ParseFailed parseError19) jsonArr)
+      ((ParseSuccess parsedValue19 parsedPos19)
         {
-          (for i in 0..n
-            {
-              (let d (vecGet decls i))
-              (if (! (== (nodeSpan d) 0))
-                (if (&& (== (nodeTag d) TAG_D_FN)
-                      (&& (strEq (nodeAName d) "main") (== (vecLen (nodeBNames d)) 0)))
-                  (jsonArrPush out
-                    (lspLensJson (lspRangeIx src ix (nodeSpan d)) "▶ Run" "axiom.run"
-                      (jsonArrPush jsonArr (jsonStr (lspUriToPath uri)))))
-                  (if (&& (== (nodeTag d) TAG_D_MACRO) (== (nodeVis d) 1))
+          (let decls parsedValue19)
+          (let out jsonArr)
+          (let ix (lspLineIndex src))
+          (let n (vecLen parsedValue19))
+          {
+            (for i in 0..n
+              {
+                (let d (vecGet decls i))
+                (if (! (== (nodeSpan d) 0))
+                  (if (&& (== (nodeTag d) TAG_D_FN)
+                        (&& (strEq (nodeAName d) "main") (== (vecLen (nodeBNames d)) 0)))
                     (jsonArrPush out
-                      (lspLensJson (lspRangeIx src ix (nodeSpan d)) "Expand macro"
-                        "axiom.expandMacro"
-                        (jsonArrPush (jsonArrPush jsonArr (jsonStr uri))
-                          (lspPosIx src ix (spanStart (nodeSpan d)))))))))
-            })
-          out
+                      (lspLensJson (lspRangeIx src ix (nodeSpan d)) "▶ Run" "axiom.run"
+                        (jsonArrPush jsonArr (jsonStr (lspUriToPath uri)))))
+                    (if (&& (== (nodeTag d) TAG_D_MACRO) (== (nodeVis d) 1))
+                      (jsonArrPush out
+                        (lspLensJson (lspRangeIx src ix (nodeSpan d)) "Expand macro"
+                          "axiom.expandMacro"
+                          (jsonArrPush (jsonArrPush jsonArr (jsonStr uri))
+                            (lspPosIx src ix (spanStart (nodeSpan d)))))))))
+              })
+            out
+          }
         }
-      })
+      ))
   })
 
 (pub :: lspLensJson (-> Int String String Int Int))
@@ -14600,14 +14656,16 @@
 (pub fn (lspGenFill workspace path src)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
-    (if (pResFailed pr)
-      "[]"
-      {
-        (let calls (lspGenCallSites (pResNodes pr)))
-        (if (== (vecLen calls) 0)
-          "[]"
-          (jsonWrite (lspGenEntries workspace path src (pResNodes pr) calls)))
-      })
+    (match pr
+      ((ParseFailed parseError20) "[]")
+      ((ParseSuccess parsedValue20 parsedPos20)
+        {
+          (let calls (lspGenCallSites parsedValue20))
+          (if (== (vecLen calls) 0)
+            "[]"
+            (jsonWrite (lspGenEntries workspace path src parsedValue20 calls)))
+        }
+      ))
   })
 
 ; Indices of the top-level declarations that are macro invocations
@@ -14670,20 +14728,22 @@
 (pub fn (lspGenOneCall workspace path src decls idx out)
   {
     (let pr2 (parseModuleWith (lex src) (scanAxtags src)))
-    (if (pResFailed pr2)
-      0
-      {
-        (let decls2 (lspKeepOneCall (pResNodes pr2) idx))
+    (match pr2
+      ((ParseFailed parseError21) 0)
+      ((ParseSuccess parsedValue21 parsedPos21)
         {
-          (let before (lspDeclHandles decls2))
-          (let wasCall (lspDeclIsCall decls2))
-          (if (let (Some ex) (lspFixExpand workspace path src decls2))
-            (if (> (countErrorDiags ex.diags) 0)
-              0
-              (lspGenCollect src decls idx decls2 before wasCall ex.gens out))
-            0)
+          (let decls2 (lspKeepOneCall parsedValue21 idx))
+          {
+            (let before (lspDeclHandles decls2))
+            (let wasCall (lspDeclIsCall decls2))
+            (if (let (Some ex) (lspFixExpand workspace path src decls2))
+              (if (> (countErrorDiags ex.diags) 0)
+                0
+                (lspGenCollect src decls idx decls2 before wasCall ex.gens out))
+              0)
+          }
         }
-      })
+      ))
   })
 
 ; Every product of this one call into the answer: the invocation's
@@ -14968,18 +15028,20 @@
 (pub fn (lspExpandMacro workspace src uri params)
   {
     (let pr (parseModuleWith (lex src) (scanAxtags src)))
-    (if (pResFailed pr)
-      jsonNull
-      {
-        (let decls (pResNodes pr))
-        (let ix (lspLineIndex src))
+    (match pr
+      ((ParseFailed parseError22) jsonNull)
+      ((ParseSuccess parsedValue22 parsedPos22)
         {
-          (let site (lspMacroSiteAt src decls (lspOffsetOf src ix (jsonGet params "position"))))
-          (if (< site 0)
-            jsonNull
-            (lspExpandAt workspace (lspUriToPath uri) src decls site))
+          (let decls parsedValue22)
+          (let ix (lspLineIndex src))
+          {
+            (let site (lspMacroSiteAt src decls (lspOffsetOf src ix (jsonGet params "position"))))
+            (if (< site 0)
+              jsonNull
+              (lspExpandAt workspace (lspUriToPath uri) src decls site))
+          }
         }
-      })
+      ))
   })
 
 ; The INDEX of the invocation or macro declaration whose name or form
@@ -15039,41 +15101,43 @@
     {
       (let byCall (== (nodeTag site) TAG_D_MACROCALL))
       (let macName (nodeAName site))
-      (if (pResFailed pr2)
-        jsonNull
-        {
-          (let decls2
-            (if byCall
-              (lspKeepOneCall (pResNodes pr2) idx)
-              (pResNodes pr2)))
+      (match pr2
+        ((ParseFailed parseError23) jsonNull)
+        ((ParseSuccess parsedValue23 parsedPos23)
           {
-            (let before (lspDeclHandles decls2))
-            (let wasCall (lspDeclIsCall decls2))
-            (if (let (Some ex) (lspFixExpand workspace path src decls2))
-              (if (> (countErrorDiags ex.diags) 0)
-                jsonNull
-                {
-                  (let gens ex.gens)
-                  (let parts vecNew)
-                  (let n (vecLen decls2))
+            (let decls2
+              (if byCall
+                (lspKeepOneCall parsedValue23 idx)
+                parsedValue23))
+            {
+              (let before (lspDeclHandles decls2))
+              (let wasCall (lspDeclIsCall decls2))
+              (if (let (Some ex) (lspFixExpand workspace path src decls2))
+                (if (> (countErrorDiags ex.diags) 0)
+                  jsonNull
                   {
-                    (for i in 0..n
-                      {
-                        (let g (vecGet decls2 i))
-                        (if (lspIsProductOf g i before wasCall gens macName byCall)
-                          {
-                            (if (> (vecLen parts) 0)
-                              (vecPush parts "\n\n"))
-                            (vecPush parts (lspRenderDecl g 0))
-                          })
-                      })
-                    (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr macName)) "expansion"
-                      (jsonStr (catStrs parts)))
-                  }
-                })
-              jsonNull)
+                    (let gens ex.gens)
+                    (let parts vecNew)
+                    (let n (vecLen decls2))
+                    {
+                      (for i in 0..n
+                        {
+                          (let g (vecGet decls2 i))
+                          (if (lspIsProductOf g i before wasCall gens macName byCall)
+                            {
+                              (if (> (vecLen parts) 0)
+                                (vecPush parts "\n\n"))
+                              (vecPush parts (lspRenderDecl g 0))
+                            })
+                        })
+                      (jsonObjPut (jsonObjPut jsonObj "name" (jsonStr macName)) "expansion"
+                        (jsonStr (catStrs parts)))
+                    }
+                  })
+                jsonNull)
+            }
           }
-        })
+        ))
     }
   })
 

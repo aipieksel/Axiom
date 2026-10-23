@@ -922,11 +922,9 @@
 ; and for the same reason: the REPL's error line joins bare messages
 ; and the prompt IS the invocation site a frame would point back at.
 ;
-; Answers a PResult-shaped record: ok, the rendered type Str, and
-; the count of `Type error:` lines it printed (nonzero means the
-; caller stops).
+; The rendered type, or None after reporting a parse or type error.
 ; ------------------------------------------------------------------
-(pub :: typeExprAgainst (-> String String Int))
+(pub :: typeExprAgainst (-> String String (Option String)))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (typeExprAgainst declsSrc exprLine)
@@ -934,129 +932,137 @@
     (let toks (lex exprLine))
     {
       (let er (parseExpr toks 0))
-      (if (pResFailed er)
-        {
-          (replStyled REPL_ERROR "Parse error: the line does not parse as an expression\n")
-          (pErr 0)
-        }
-        {
-          (let dtoks (lex declsSrc))
+      (match er
+        ((ParseFailed parseError1)
           {
-            (let dr (parseDecls dtoks 0 vecNew))
-            (if (pResFailed dr)
-              {
-                (replStyled REPL_ERROR "Error: the accumulated declarations no longer parse\n")
-                (pErr 0)
-              }
-              ; `impl`s are LOWERED before the expression is
-              ; typed. `replCompile` has always done this on the
-              ; way to emission, so an implementation typed at
-              ; the prompt ran correctly and was rejected before
-              ; it got the chance: `(sz 5)` answered `no
-              ; implementation of `Sz` for `Int`` about one
-              ; sitting two lines above it.
-              ;
-              ; Imports and expansion now run here too, in the
-              ; order the file path uses: resolve, expand, lower,
-              ; check. The expression itself is expanded with the
-              ; same call, because a macro invocation at the
-              ; prompt - `(println "n={n}")` - is an EXPRESSION,
-              ; and typing it unexpanded asks about a name no
-              ; program ever contains.
-              ;
-              ; The expression rides into expansion as a
-              ; synthetic declaration and rides back out as its
-              ; body. There is no expression-level entry point
-              ; into the expander and there should not be one:
-              ; `expandProgram` is what the file path calls, so
-              ; routing the prompt through it is what keeps the
-              ; two agreeing about hygiene, budgets and
-              ; refusals. `expandDeclsIn` rewrites a body in
-              ; place, which is why the handle taken before the
-              ; call still answers after it.
-              ; The mangling records and the module filters are
-              ; kept and handed to expansion, rather than thrown
-              ; away as three `vecNew`s were: `:type` and the
-              ; eval half must agree about the program, and a
-              ; loaded module carrying a declaration-macro
-              ; invocation (MAC-EXP-16) is exactly a program the
-              ; one would refuse and the other compile.
-              ; Expansion's diagnostics are COLLECTED, not
-              ; discarded into a fresh Vec. Discarded, a line
-              ; whose macro refused still printed a type -
-              ; `(println "unclosed {x")` answered `type : Int`
-              ; and only then failed in the eval half, which
-              ; reads as the prompt contradicting itself.
-              {
-                (let decls (pResNodes dr))
-                (let units
+            (replStyled REPL_ERROR "Parse error: the line does not parse as an expression\n")
+            None
+          }
+        )
+        ((ParseSuccess parsedValue1 parsedPos1)
+          {
+            (let dtoks (lex declsSrc))
+            {
+              (let dr (parseDecls dtoks 0 vecNew))
+              (match dr
+                ((ParseFailed parseError2)
                   {
-                    (let v vecNew)
-                    {
-                      (vecPush v
-                        (CUnit2
-                          :file "<repl>"
-                          :src declsSrc
-                          :name None
-                          :imports vecNew
-                          :library false))
-                      v
-                    }
-                  })
-                {
-                  (let probe (mkDFnAt "__repl_type_probe" vecNew (readAstNode er 1) 0))
+                    (replStyled REPL_ERROR "Error: the accumulated declarations no longer parse\n")
+                    None
+                  }
+                )
+                ((ParseSuccess parsedValue2 parsedPos2)
+                  ; `impl`s are LOWERED before the expression is
+                  ; typed. `replCompile` has always done this on the
+                  ; way to emission, so an implementation typed at
+                  ; the prompt ran correctly and was rejected before
+                  ; it got the chance: `(sz 5)` answered `no
+                  ; implementation of `Sz` for `Int`` about one
+                  ; sitting two lines above it.
+                  ;
+                  ; Imports and expansion now run here too, in the
+                  ; order the file path uses: resolve, expand, lower,
+                  ; check. The expression itself is expanded with the
+                  ; same call, because a macro invocation at the
+                  ; prompt - `(println "n={n}")` - is an EXPRESSION,
+                  ; and typing it unexpanded asks about a name no
+                  ; program ever contains.
+                  ;
+                  ; The expression rides into expansion as a
+                  ; synthetic declaration and rides back out as its
+                  ; body. There is no expression-level entry point
+                  ; into the expander and there should not be one:
+                  ; `expandProgram` is what the file path calls, so
+                  ; routing the prompt through it is what keeps the
+                  ; two agreeing about hygiene, budgets and
+                  ; refusals. `expandDeclsIn` rewrites a body in
+                  ; place, which is why the handle taken before the
+                  ; call still answers after it.
+                  ; The mangling records and the module filters are
+                  ; kept and handed to expansion, rather than thrown
+                  ; away as three `vecNew`s were: `:type` and the
+                  ; eval half must agree about the program, and a
+                  ; loaded module carrying a declaration-macro
+                  ; invocation (MAC-EXP-16) is exactly a program the
+                  ; one would refuse and the other compile.
+                  ; Expansion's diagnostics are COLLECTED, not
+                  ; discarded into a fresh Vec. Discarded, a line
+                  ; whose macro refused still printed a type -
+                  ; `(println "unclosed {x")` answered `type : Int`
+                  ; and only then failed in the eval half, which
+                  ; reads as the prompt contradicting itself.
                   {
-                    (let _pp (vecPush decls probe))
-                    {
-                      (let tbares vecNew)
-                      (let tfulls vecNew)
-                      (let tmods vecNew)
+                    (let decls parsedValue2)
+                    (let units
                       {
-                        (let allDecls
-                          (resolveImports decls tbares tfulls tmods (checkedTargetCode hostTarget)
-                            "." units))
+                        (let v vecNew)
                         {
-                          (let exDiags vecNew)
+                          (vecPush v
+                            (CUnit2
+                              :file "<repl>"
+                              :src declsSrc
+                              :name None
+                              :imports vecNew
+                              :library false))
+                          v
+                        }
+                      })
+                    {
+                      (let probe (mkDFnAt "__repl_type_probe" vecNew parsedValue1 0))
+                      {
+                        (let _pp (vecPush decls probe))
+                        {
+                          (let tbares vecNew)
+                          (let tfulls vecNew)
+                          (let tmods vecNew)
                           {
-                            (let _ex
-                              (expandProgram decls allDecls exDiags vecNew (as 0 Units) tbares
-                                tfulls tmods))
-                            (if (> (countErrorDiags exDiags) 0)
+                            (let allDecls
+                              (resolveImports decls tbares tfulls tmods
+                                (checkedTargetCode hostTarget) "." units))
+                            {
+                              (let exDiags vecNew)
                               {
-                                (printTypeErrors exDiags 0)
-                                (pErr 0)
-                              }
-                              ; `before` is taken AFTER the module walk, so the
-                              ; probe's own pass over the expression is not
-                              ; counted twice - only what `checkExpr` adds is
-                              ; printed.
-                              {
-                                (let tc (checkModuleTc allDecls allDecls units))
-                                {
-                                  (let before (vecLen (tcOutVec tc)))
+                                (let _ex
+                                  (expandProgram decls allDecls exDiags vecNew (as 0 Units) tbares
+                                    tfulls tmods))
+                                (if (> (countErrorDiags exDiags) 0)
                                   {
-                                    (let ty (checkExpr tc (nodeCChild probe)))
-                                    {
-                                      (let after (tcOutVec tc))
-                                      (if (> (vecLen after) before)
-                                        {
-                                          (printTypeErrors after before)
-                                          (pErr 0)
-                                        }
-                                        (pOk (tyRender ty) 0))
-                                    }
+                                    (printTypeErrors exDiags 0)
+                                    None
                                   }
-                                }
-                              })
+                                  ; `before` is taken AFTER the module walk, so the
+                                  ; probe's own pass over the expression is not
+                                  ; counted twice - only what `checkExpr` adds is
+                                  ; printed.
+                                  {
+                                    (let tc (checkModuleTc allDecls allDecls units))
+                                    {
+                                      (let before (vecLen (tcOutVec tc)))
+                                      {
+                                        (let ty (checkExpr tc (nodeCChild probe)))
+                                        {
+                                          (let after (tcOutVec tc))
+                                          (if (> (vecLen after) before)
+                                            {
+                                              (printTypeErrors after before)
+                                              None
+                                            }
+                                            (Some (tyRender ty)))
+                                        }
+                                      }
+                                    }
+                                  })
+                              }
+                            }
                           }
                         }
                       }
                     }
                   }
-                }
-              })
+                ))
+            }
           }
-        })
+        ))
     }
   })
 
@@ -1173,102 +1179,91 @@
 ; line, and compileFile exits. Import resolution still dies if the
 ; stdlib itself is unreachable, which is an environment failure, not
 ; a line failure; recorded.
-; Answers ok+IR, or prints the failure and answers pErr.
+; Compile without exiting on a source failure.
 ; ------------------------------------------------------------------
-; Compile, WITHOUT printing on failure: `pOk`+IR, or `pErr`+the
-; diagnostics vector (empty when the wrapper itself did not even
-; PARSE, which the caller reads as "no detail to give"). Split out of
-; `replCompile` on 2026-08-31 so `replCompileExpr` could inspect a
-; failure - specifically, ask whether it is the one AX3042 the io
-; retry answers - before anything reaches stdout. `replCompile` below
-; is this function plus the printing that used to be its only shape;
-; every other caller (`:llvm`, and `replCompileExpr`'s own retry) goes
-; through it unchanged.
-(pub :: replTryCompile (-> String Int))
+; A compile result owns emitted IR or its diagnostics. A wrapper that
+; cannot be parsed carries an empty diagnostic vector. Callers can inspect
+; a missing IO declaration before printing a failure and choosing a retry.
+(pub data ReplCompileResult
+  (ReplCompiled String)
+  (ReplCompileFailed (Vec diag::Diag)))
+
+(pub :: replTryCompile (-> String ReplCompileResult))
 ;@axiom:effect(io)
 ;@axiom:effect(unsafe)
 (pub fn (replTryCompile wrapper)
   {
     (let pr (parseModuleWith (lex wrapper) (scanAxtags wrapper)))
-    (if (pResFailed pr)
-      ; NOT `pErr`: `pErr`'s own argument is a PARSER POSITION (its
-      ; `value` field is hardcoded 0, `parser.ax:771`), not a payload
-      ; slot - `(pErr vecNew)` compiled clean (both are `Int`) and put
-      ; the diag vector in the wrong word, so every caller reading
-      ; `(memGetWord tr 1)` got 0 back. Measured: `replIoRetryNeeded`
-      ; then called `vecLen` on that 0 and every compile failure
-      ; through `replCompileExpr` - IO-performing or not - crashed the
-      ; REPL with SIGSEGV (exit 139) the moment `:type` succeeded and
-      ; the compile step began. `pErrWith` puts the vector where
-      ; `pOk` already puts ITS payload (`value`, word 1), which is
-      ; what every reader here expects.
-      (pErrWith vecNew)
-      ; The REPL compiles and RUNS, so it needs the same expansion
-      ; the file path gets. When expansion lived in codegen this
-      ; came for free; now it does not, and without this line a
-      ; macro defined at the prompt emitted a call to a symbol
-      ; nothing defines - `use of undefined value '@twice'`.
-      ; The frame table is discarded here on purpose: the REPL's
-      ; error line joins bare MESSAGES (`joinDiagMsgs`), its
-      ; goldens pin those bytes, and the prompt IS the invocation
-      ; site the frame would point back at.
-      {
-        (let decls (pResNodes pr))
-        (let tcode (checkedTargetCode hostTarget))
-        (let bares vecNew)
-        (let fulls vecNew)
-        (let mods vecNew)
-        (let units
-          {
-            (let v vecNew)
-            {
-              (vecPush v
-                (CUnit2 :file "<repl>" :src wrapper :name None :imports vecNew :library false))
-              v
-            }
-          })
+    (match pr
+      ((ParseFailed parseError3)
+        ; The wrapper did not parse, so there are no checker diagnostics.
+        (ReplCompileFailed vecNew)
+      )
+      ((ParseSuccess parsedValue3 parsedPos3)
+        ; The REPL compiles and RUNS, so it needs the same expansion
+        ; the file path gets. When expansion lived in codegen this
+        ; came for free; now it does not, and without this line a
+        ; macro defined at the prompt emitted a call to a symbol
+        ; nothing defines - `use of undefined value '@twice'`.
+        ; The frame table is discarded here on purpose: the REPL's
+        ; error line joins bare MESSAGES (`joinDiagMsgs`), its
+        ; goldens pin those bytes, and the prompt IS the invocation
+        ; site the frame would point back at.
         {
-          (let allDecls (resolveImports decls bares fulls mods tcode "." units))
-          {
-            (let eds
-              {
-                (let v vecNew)
-                {
-                  (expandProgram decls allDecls v vecNew (as 0 Units) bares fulls mods)
-                  v
-                }
-              })
+          (let decls parsedValue3)
+          (let tcode (checkedTargetCode hostTarget))
+          (let bares vecNew)
+          (let fulls vecNew)
+          (let mods vecNew)
+          (let units
             {
-              ; The same sealed handoff `build` uses: the emitter sees the
-              ; declarations the final check accepted, and only those.
-              (let checked (checkExpandedProgram decls allDecls units))
-              (let ds (expMergeInto eds checked.diagnostics))
-              (if (> (countErrorDiags ds) 0)
-                (pErrWith ds)
-                (pOk (emitCheckedProgram (checkedProgramOf checked) bares fulls tcode false) 0))
+              (let v vecNew)
+              {
+                (vecPush v
+                  (CUnit2 :file "<repl>" :src wrapper :name None :imports vecNew :library false))
+                v
+              }
+            })
+          {
+            (let allDecls (resolveImports decls bares fulls mods tcode "." units))
+            {
+              (let eds
+                {
+                  (let v vecNew)
+                  {
+                    (expandProgram decls allDecls v vecNew (as 0 Units) bares fulls mods)
+                    v
+                  }
+                })
+              {
+                ; The same sealed handoff `build` uses: the emitter sees the
+                ; declarations the final check accepted, and only those.
+                (let checked (checkExpandedProgram decls allDecls units))
+                (let ds (expMergeInto eds checked.diagnostics))
+                (if (> (countErrorDiags ds) 0)
+                  (ReplCompileFailed ds)
+                  (ReplCompiled
+                    (emitCheckedProgram (checkedProgramOf checked) bares fulls tcode false)))
+              }
             }
           }
         }
-      })
+      ))
   })
 
-(pub :: replCompile (-> String Int))
+(pub :: replCompile (-> String (Option String)))
 ;@axiom:effect(io)
 (pub fn (replCompile wrapper)
-  {
-    (let tr (replTryCompile wrapper))
-    (if (pResOk tr)
-      tr
+  (match (replTryCompile wrapper)
+    ((ReplCompiled ir) (Some ir))
+    ((ReplCompileFailed diagnostics)
       {
-        (let ds (pResVec tr))
-        {
-          (if (== (vecLen ds) 0)
-            (replStyled REPL_ERROR "Error: parsing failed\n")
-            (replStyled REPL_ERROR (concat "Error: " (joinDiagMsgs ds))))
-          (pErr 0)
-        }
-      })
-  })
+        (if (== (vecLen diagnostics) 0)
+          (replStyled REPL_ERROR "Error: parsing failed\n")
+          (replStyled REPL_ERROR (concat "Error: " (joinDiagMsgs diagnostics))))
+        None
+      }
+    )))
 
 ; Is `ds` EXACTLY the one AX3042 `replWrapper`'s missing IO tag draws
 ; on `__repl_result`? Checked by code AND by name, not by code alone:
@@ -1299,25 +1294,21 @@
 ; `llc`/`cc` invocation, so the untagged attempt is a second parse and
 ; typecheck, not a second link. Only an IO-performing expression pays
 ; for both.
-(pub :: replCompileExpr (-> String String String Int))
+(pub :: replCompileExpr (-> String String String (Option String)))
 ;@axiom:effect(io)
 (pub fn (replCompileExpr declsSrc exprLine tyStr)
-  {
-    (let tr (replTryCompile (replWrapper declsSrc exprLine tyStr 0)))
-    (if (pResOk tr)
-      tr
-      (if (replIoRetryNeeded (pResVec tr))
+  (match (replTryCompile (replWrapper declsSrc exprLine tyStr 0))
+    ((ReplCompiled ir) (Some ir))
+    ((ReplCompileFailed diagnostics)
+      (if (replIoRetryNeeded diagnostics)
         (replCompile (replWrapper declsSrc exprLine tyStr 1))
         {
-          (let ds (pResVec tr))
-          {
-            (if (== (vecLen ds) 0)
-              (replStyled REPL_ERROR "Error: parsing failed\n")
-              (replStyled REPL_ERROR (concat "Error: " (joinDiagMsgs ds))))
-            (pErr 0)
-          }
-        }))
-  })
+          (if (== (vecLen diagnostics) 0)
+            (replStyled REPL_ERROR "Error: parsing failed\n")
+            (replStyled REPL_ERROR (concat "Error: " (joinDiagMsgs diagnostics))))
+          None
+        })
+    )))
 
 (pub :: joinDiagMsgs (-> (Vec diag::Diag) String))
 (pub fn (joinDiagMsgs ds)
@@ -1538,20 +1529,22 @@
 (pub fn (replExpr declsSrc line)
   {
     (let tr (typeExprAgainst declsSrc line))
-    (if (pResFailed tr)
-      0
-      {
-        (let tyStr (pResText tr))
+    (match tr
+      ((None) 0)
+      ((Some parsedValue6)
         {
-          (replStyled REPL_MUTED (concat (concat "type : " tyStr) "\n"))
+          (let tyStr parsedValue6)
           {
-            (let cr (replCompileExpr declsSrc line tyStr))
-            (if (pResFailed cr)
-              0
-              (replEval (pResText cr)))
+            (replStyled REPL_MUTED (concat (concat "type : " tyStr) "\n"))
+            {
+              (let cr (replCompileExpr declsSrc line tyStr))
+              (match cr
+                ((None) 0)
+                ((Some parsedValue8) (replEval parsedValue8)))
+            }
           }
         }
-      })
+      ))
   })
 
 ; If `src` ends in a newline right at `pos`, the position past it;
@@ -1642,44 +1635,46 @@
 (pub fn (replDropMatching src tag name)
   {
     (let dr (parseDecls (lex src) 0 vecNew))
-    (if (pResFailed dr)
-      src
-      {
-        (let decls (pResNodes dr))
-        (let spans (replTopLevelSpans src))
-        (let mut out "")
-        (let mut cursor 0)
-        (let mut i 0)
+    (match dr
+      ((ParseFailed parseError9) src)
+      ((ParseSuccess parsedValue9 parsedPos9)
         {
-          (while (&& (< i (vecLen decls)) (< i (vecLen spans)))
-            {
+          (let decls parsedValue9)
+          (let spans (replTopLevelSpans src))
+          (let mut out "")
+          (let mut cursor 0)
+          (let mut i 0)
+          {
+            (while (&& (< i (vecLen decls)) (< i (vecLen spans)))
               {
-                (let d (vecGet decls i))
-                (if (&& (== (nodeTag d) tag) (strEq (nodeAName d) name))
-                  ; The declaration's own span, extended back over the
-                  ; `;@axiom:` lines above it: a redefinition
-                  ; withdraws the claims written about the definition
-                  ; it replaces, exactly as rewriting the function in
-                  ; a file would. Without this the old function's
-                  ; `restrict(no-io)` was left above whatever
-                  ; declaration came next in `declsSrc`.
-                  {
-                    (let sp (vecGet spans i))
+                {
+                  (let d (vecGet decls i))
+                  (if (&& (== (nodeTag d) tag) (strEq (nodeAName d) name))
+                    ; The declaration's own span, extended back over the
+                    ; `;@axiom:` lines above it: a redefinition
+                    ; withdraws the claims written about the definition
+                    ; it replaces, exactly as rewriting the function in
+                    ; a file would. Without this the old function's
+                    ; `restrict(no-io)` was left above whatever
+                    ; declaration came next in `declsSrc`.
                     {
-                      (let s (replTagRunStart src (spanStart sp)))
-                      (let e (spanEnd sp))
+                      (let sp (vecGet spans i))
                       {
-                        (set out (concat out (strSlice src cursor (- s cursor))))
-                        (set cursor (replSkipNl src e))
+                        (let s (replTagRunStart src (spanStart sp)))
+                        (let e (spanEnd sp))
+                        {
+                          (set out (concat out (strSlice src cursor (- s cursor))))
+                          (set cursor (replSkipNl src e))
+                        }
                       }
-                    }
-                  })
-              }
-              (set i (+ i 1))
-            })
-          (concat out (strSlice src cursor (- (strLen src) cursor)))
+                    })
+                }
+                (set i (+ i 1))
+              })
+            (concat out (strSlice src cursor (- (strLen src) cursor)))
+          }
         }
-      })
+      ))
   })
 
 ; `declsSrc` with every earlier top-level decl that `newDecls` is
@@ -1751,42 +1746,44 @@
     ; wrapper leaves it.
     (let program (concat replPrelude (replStripTrailingTags src)))
     (let dr (parseModuleWith (lex program) (scanAxtags program)))
-    (if (pResFailed dr)
-      0
-      {
-        (let decls (pResNodes dr))
-        (let units
-          {
-            (let v vecNew)
+    (match dr
+      ((ParseFailed parseError10) 0)
+      ((ParseSuccess parsedValue10 parsedPos10)
+        {
+          (let decls parsedValue10)
+          (let units
             {
-              (vecPush v
-                (CUnit2 :file "<repl>" :src program :name None :imports vecNew :library false))
-              v
-            }
-          })
-        (let tbares vecNew)
-        (let tfulls vecNew)
-        (let tmods vecNew)
-        (let allDecls
-          (resolveImports decls tbares tfulls tmods (checkedTargetCode hostTarget) "." units))
-        (let exDiags vecNew)
-        (let _ex (expandProgram decls allDecls exDiags vecNew (as 0 Units) tbares tfulls tmods))
-        (if (> (countErrorDiags exDiags) 0)
-          {
-            (printTypeErrors exDiags 0)
-            1
-          }
-          {
-            (let checked (checkExpandedProgram decls allDecls units))
-            (let kept (replDiagsButDeferred checked.diagnostics vecNew 0))
-            (if (> (countErrorDiags kept) 0)
+              (let v vecNew)
               {
-                (printTypeErrors kept 0)
-                1
+                (vecPush v
+                  (CUnit2 :file "<repl>" :src program :name None :imports vecNew :library false))
+                v
               }
-              0)
-          })
-      })
+            })
+          (let tbares vecNew)
+          (let tfulls vecNew)
+          (let tmods vecNew)
+          (let allDecls
+            (resolveImports decls tbares tfulls tmods (checkedTargetCode hostTarget) "." units))
+          (let exDiags vecNew)
+          (let _ex (expandProgram decls allDecls exDiags vecNew (as 0 Units) tbares tfulls tmods))
+          (if (> (countErrorDiags exDiags) 0)
+            {
+              (printTypeErrors exDiags 0)
+              1
+            }
+            {
+              (let checked (checkExpandedProgram decls allDecls units))
+              (let kept (replDiagsButDeferred checked.diagnostics vecNew 0))
+              (if (> (countErrorDiags kept) 0)
+                {
+                  (printTypeErrors kept 0)
+                  1
+                }
+                0)
+            })
+        }
+      ))
   })
 
 ; `ds` without the deferred code, in order.
@@ -1805,48 +1802,57 @@
 (pub fn (replDecl declsSrc line)
   {
     (let dr (parseDecls (lex line) 0 vecNew))
-    (if (pResFailed dr)
-      {
-        (replStyled REPL_ERROR "Parse error: the declaration does not parse\n")
-        declsSrc
-      }
-      {
-        (let decls (pResNodes dr))
+    (match dr
+      ((ParseFailed parseError11)
         {
-          (let candidate (concat (concat (replDeclsSrcDropping declsSrc decls) line) "\n"))
-          (if (pResFailed (parseDecls (lex candidate) 0 vecNew))
-            {
-              (replStyled REPL_ERROR
-                "Parse error: imports must precede all definitions; use :reset before starting a new import header\n")
-              declsSrc
-            }
-            ; A declaration is checked as it is typed, as `check`
-            ; would check the file it will become: one the compiler
-            ; refuses is reported and not kept, so the session never
-            ; holds what a program could not.
-            (if (!= (replCheckDecls candidate) 0)
-              ; the tags typed above it would otherwise sit above
-              ; whatever is declared next (`replTagRunStart`)
-              (replStripTrailingTags declsSrc)
-              {
-                (if (== (vecLen decls) 0)
-                  (replStyled REPL_ACCENT "OK\n")
-                  {
-                    (let d (vecGet decls 0))
-                    {
-                      (let tag (nodeTag d))
-                      (if (|| (== tag TAG_D_FN) (== tag TAG_D_SIG))
-                        (replStyled REPL_ACCENT (concat (concat "OK: " (nodeAName d)) " defined\n"))
-                        (if (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))
-                          (replStyled REPL_ACCENT
-                            (concat (concat "OK: data " (nodeAName d)) " defined\n"))
-                          (replStyled REPL_ACCENT "OK\n")))
-                    }
-                  })
-                candidate
-              }))
+          (replStyled REPL_ERROR "Parse error: the declaration does not parse\n")
+          declsSrc
         }
-      })
+      )
+      ((ParseSuccess parsedValue11 parsedPos11)
+        {
+          (let decls parsedValue11)
+          {
+            (let candidate (concat (concat (replDeclsSrcDropping declsSrc decls) line) "\n"))
+            (match (parseDecls (lex candidate) 0 vecNew)
+              ((ParseFailed parseError12)
+                {
+                  (replStyled REPL_ERROR
+                    "Parse error: imports must precede all definitions; use :reset before starting a new import header\n")
+                  declsSrc
+                }
+              )
+              ((ParseSuccess parsedValue12 parsedPos12)
+                ; A declaration is checked as it is typed, as `check`
+                ; would check the file it will become: one the compiler
+                ; refuses is reported and not kept, so the session never
+                ; holds what a program could not.
+                (if (!= (replCheckDecls candidate) 0)
+                  ; the tags typed above it would otherwise sit above
+                  ; whatever is declared next (`replTagRunStart`)
+                  (replStripTrailingTags declsSrc)
+                  {
+                    (if (== (vecLen decls) 0)
+                      (replStyled REPL_ACCENT "OK\n")
+                      {
+                        (let d (vecGet decls 0))
+                        {
+                          (let tag (nodeTag d))
+                          (if (|| (== tag TAG_D_FN) (== tag TAG_D_SIG))
+                            (replStyled REPL_ACCENT
+                              (concat (concat "OK: " (nodeAName d)) " defined\n"))
+                            (if (|| (== tag TAG_D_DATA) (== tag TAG_D_STRUCT))
+                              (replStyled REPL_ACCENT
+                                (concat (concat "OK: data " (nodeAName d)) " defined\n"))
+                              (replStyled REPL_ACCENT "OK\n")))
+                        }
+                      })
+                    candidate
+                  })
+              ))
+          }
+        }
+      ))
   })
 
 ; ------------------------------------------------------------------
@@ -1943,23 +1949,25 @@
     }
     {
       (let tr (typeExprAgainst declsSrc arg))
-      (if (pResFailed tr)
-        0
-        {
-          (replStyled REPL_TEXT
-            (catStrs
-              {
-                (let v vecNew)
+      (match tr
+        ((None) 0)
+        ((Some parsedValue13)
+          {
+            (replStyled REPL_TEXT
+              (catStrs
                 {
-                  (vecPush v arg)
-                  (vecPush v " : ")
-                  (vecPush v (pResText tr))
-                  (vecPush v "\n")
-                  v
-                }
-              }))
-          0
-        })
+                  (let v vecNew)
+                  {
+                    (vecPush v arg)
+                    (vecPush v " : ")
+                    (vecPush v parsedValue13)
+                    (vecPush v "\n")
+                    v
+                  }
+                }))
+            0
+          }
+        ))
     }))
 
 ; :load - the whole file must parse; type errors refuse the load;
@@ -1982,84 +1990,94 @@
         }
         {
           (let pr (parseModuleWith (lex src) (scanAxtags src)))
-          (if (pResFailed pr)
-            {
-              (replStyled REPL_ERROR "Parse error: the file does not parse\n")
-              declsSrc
-            }
-            (if (pResFailed (parseDecls (lex (concat (concat declsSrc src) "\n")) 0 vecNew))
+          (match pr
+            ((ParseFailed parseError14)
               {
-                (replStyled REPL_ERROR
-                  "Parse error: loaded imports must precede session definitions; use :reset before loading this module\n")
+                (replStyled REPL_ERROR "Parse error: the file does not parse\n")
                 declsSrc
               }
-              ; `:load` used to hand `decls` to `checkModule`
-              ; TWICE - as the entry file and as the whole
-              ; program - so a file's imports were never
-              ; resolved and every name they provide was
-              ; undefined. Measured before this line: 196 of the
-              ; 219 corpus files `check` accepts were refused by
-              ; `:load`, which is nearly all of them, because
-              ; almost every file imports something.
-              ;
-              ; The entry directory is the LOADED FILE's, not
-              ; the process's: `:load tests/selfhost/x.ax` has
-              ; to find the modules sitting beside it, the same
-              ; way `check` does. `replCompile` passes "." for
-              ; the opposite reason - its wrapper has no file.
-              ;
-              ; Expansion comes with it. A loaded file may
-              ; define macros and `impl`s, and checking the
-              ; unexpanded list reports an implementation's body
-              ; as undefined names.
-              {
-                (let decls (pResNodes pr))
-                (let tcode (checkedTargetCode hostTarget))
-                (let bares vecNew)
-                (let fulls vecNew)
-                (let mods vecNew)
-                (let units
+            )
+            ((ParseSuccess parsedValue14 parsedPos14)
+              (match (parseDecls (lex (concat (concat declsSrc src) "\n")) 0 vecNew)
+                ((ParseFailed parseError15)
                   {
-                    (let v vecNew)
-                    {
-                      (vecPush v
-                        (CUnit2
-                          :file arg
-                          :src src
-                          :name None
-                          :imports vecNew
-                          :library (pathInStdlib arg)))
-                      v
-                    }
-                  })
-                {
-                  (let allDecls (resolveImports decls bares fulls mods tcode (pathDir arg) units))
+                    (replStyled REPL_ERROR
+                      "Parse error: loaded imports must precede session definitions; use :reset before loading this module\n")
+                    declsSrc
+                  }
+                )
+                ((ParseSuccess parsedValue15 parsedPos15)
+                  ; `:load` used to hand `decls` to `checkModule`
+                  ; TWICE - as the entry file and as the whole
+                  ; program - so a file's imports were never
+                  ; resolved and every name they provide was
+                  ; undefined. Measured before this line: 196 of the
+                  ; 219 corpus files `check` accepts were refused by
+                  ; `:load`, which is nearly all of them, because
+                  ; almost every file imports something.
+                  ;
+                  ; The entry directory is the LOADED FILE's, not
+                  ; the process's: `:load tests/selfhost/x.ax` has
+                  ; to find the modules sitting beside it, the same
+                  ; way `check` does. `replCompile` passes "." for
+                  ; the opposite reason - its wrapper has no file.
+                  ;
+                  ; Expansion comes with it. A loaded file may
+                  ; define macros and `impl`s, and checking the
+                  ; unexpanded list reports an implementation's body
+                  ; as undefined names.
                   {
-                    (let eds
+                    (let decls parsedValue14)
+                    (let tcode (checkedTargetCode hostTarget))
+                    (let bares vecNew)
+                    (let fulls vecNew)
+                    (let mods vecNew)
+                    (let units
                       {
                         (let v vecNew)
                         {
-                          (expandProgram decls allDecls v vecNew (as 0 Units) bares fulls mods)
+                          (vecPush v
+                            (CUnit2
+                              :file arg
+                              :src src
+                              :name None
+                              :imports vecNew
+                              :library (pathInStdlib arg)))
                           v
                         }
                       })
                     {
-                      (let ds (orderDiags (expMergeInto eds (checkModule decls allDecls units))))
-                      (if (> (countErrorDiags ds) 0)
+                      (let allDecls
+                        (resolveImports decls bares fulls mods tcode (pathDir arg) units))
+                      {
+                        (let eds
+                          {
+                            (let v vecNew)
+                            {
+                              (expandProgram decls allDecls v vecNew (as 0 Units) bares fulls mods)
+                              v
+                            }
+                          })
                         {
-                          (printTypeErrors ds 0)
-                          declsSrc
+                          (let ds
+                            (orderDiags (expMergeInto eds (checkModule decls allDecls units))))
+                          (if (> (countErrorDiags ds) 0)
+                            {
+                              (printTypeErrors ds 0)
+                              declsSrc
+                            }
+                            {
+                              (if (> (vecLen ds) 0)
+                                (printTypeErrors ds 0))
+                              (replStyled REPL_ACCENT (concat (concat "OK: Loaded '" arg) "'\n"))
+                              (concat (concat declsSrc src) "\n")
+                            })
                         }
-                        {
-                          (if (> (vecLen ds) 0)
-                            (printTypeErrors ds 0))
-                          (replStyled REPL_ACCENT (concat (concat "OK: Loaded '" arg) "'\n"))
-                          (concat (concat declsSrc src) "\n")
-                        })
+                      }
                     }
                   }
-                }
-              }))
+                ))
+            ))
         })
     }))
 
@@ -2073,18 +2091,22 @@
     }
     {
       (let tr (typeExprAgainst declsSrc arg))
-      (if (pResFailed tr)
-        0
-        {
-          (let cr (replCompileExpr declsSrc arg (pResText tr)))
-          (if (pResFailed cr)
-            0
-            {
-              (replOut "Generated LLVM IR:\n")
-              (replOut (pResText cr))
-              0
-            })
-        })
+      (match tr
+        ((None) 0)
+        ((Some parsedValue16)
+          {
+            (let cr (replCompileExpr declsSrc arg parsedValue16))
+            (match cr
+              ((None) 0)
+              ((Some parsedValue18)
+                {
+                  (replOut "Generated LLVM IR:\n")
+                  (replOut parsedValue18)
+                  0
+                }
+              ))
+          }
+        ))
     }))
 
 ; ------------------------------------------------------------------
@@ -2582,15 +2604,18 @@
     (replOut "Definitions in scope:\n")
     {
       (let dr (parseDecls (lex declsSrc) 0 vecNew))
-      (if (pResOk dr)
-        {
-          (let decls (pResNodes dr))
-          (for d in decls
-            (if (|| (== (nodeTag d) TAG_D_FN)
-                  (|| (== (nodeTag d) TAG_D_SIG)
-                    (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))))
-              (replOut (concat (concat "  " (nodeAName d)) "\n"))))
-        })
+      (match dr
+        ((ParseFailed parseError19) ())
+        ((ParseSuccess parsedValue19 parsedPos19)
+          {
+            (let decls parsedValue19)
+            (for d in decls
+              (if (|| (== (nodeTag d) TAG_D_FN)
+                    (|| (== (nodeTag d) TAG_D_SIG)
+                      (|| (== (nodeTag d) TAG_D_DATA) (== (nodeTag d) TAG_D_STRUCT))))
+                (replOut (concat (concat "  " (nodeAName d)) "\n"))))
+          }
+        ))
     }
     0
   })
