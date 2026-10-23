@@ -412,18 +412,28 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # accounts for 204 changed metadata rows, including removal of raw-reader
 # Unsafe operations. No IO, Block, Spawn or Entropy row changes, arrives or
 # leaves; incomplete and higher-order effect counts remain unchanged.
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3666 "exactly Alloc,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 496 "Alloc,IO,Mut"
-have "$(bucket "$work/main.axsym" 'Mut')" 283 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 377 "exactly Alloc"
+# Comparing 53f7c2a8 with 4ee86a21 using the same compiler adds 30
+# functions, removes none and changes 14 existing rows. Typed Option
+# helpers gain Alloc and lose several raw Unsafe operations. Propagation
+# adds typed expansion helpers; Vec adds vecGrowsInPlace and vecMoveTo.
+# emitMemStatFn, emitRegionCell and emitRegionSeq gain IO through the new
+# reserveSupported query: arenaStaticBytes reads the heap-ceiling command
+# line setting. reserveSupported is the fourth added IO-bearing row.
+# No existing IO requirement is removed; incomplete and parameter marks
+# remain unchanged. The library delta is confined to the two Vec helpers
+# and vecReserveExactly moving its trusted Unsafe work into vecMoveTo.
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3686 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 500 "Alloc,IO,Mut"
+have "$(bucket "$work/main.axsym" 'Mut')" 284 "exactly Mut"
+have "$(bucket "$work/main.axsym" 'Alloc')" 384 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 80 "Alloc,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Unsafe')" 100 "exactly Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 79 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Unsafe')" 98 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 34 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 34 "Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 14 "Alloc,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 16 "Alloc,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Unsafe')" 18 "Alloc,IO,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Mut,Unsafe')" 0 "IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Unsafe')" 12 "IO,Unsafe"
@@ -447,7 +457,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2458 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2457 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 32 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"
@@ -480,9 +490,9 @@ done
 lrows="$(grep -c '^F ' "$work/lib.axsym" || true)"
 (( lrows >= 300 )) && ok "$lrows stdlib functions listed (floor 300)" \
   || fail "only $lrows stdlib functions listed; the floor is 300"
-have "$(bucket "$work/lib.axsym" 'Alloc,Mut')" 745 "exactly Alloc,Mut"
+have "$(bucket "$work/lib.axsym" 'Alloc,Mut')" 746 "exactly Alloc,Mut"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO,Mut')" 315 "Alloc,IO,Mut"
-have "$(bucket "$work/lib.axsym" 'Mut')" 179 "exactly Mut"
+have "$(bucket "$work/lib.axsym" 'Mut')" 180 "exactly Mut"
 have "$(bucket "$work/lib.axsym" 'Alloc')" 190 "exactly Alloc"
 have "$(bucket "$work/lib.axsym" 'Alloc,IO')" 27 "Alloc,IO"
 have "$(bucket "$work/lib.axsym" 'IO')" 17 "exactly IO"

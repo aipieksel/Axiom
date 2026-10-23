@@ -45,7 +45,10 @@ def field_negative_control(compiler, repo, env, work):
         if source.is_file() and source.name != "typecheck.ax":
             (overlay / source.name).symlink_to(source)
     source = (repo / "core/typecheck.ax").read_text()
-    pattern = re.compile(r"(\(Some\s+\(if \(< j \(vecLen tys\)\)\s+\(vecGet tys j\)\s+)mkTErr(\)\))")
+    pattern = re.compile(
+        r"(\(Some\s+\(if \(< index \(vecLen ctor\.fieldTys\)\)\s+"
+        r"\(vecGet ctor\.fieldTys index\)\s+)mkTErr(\)\))"
+    )
     if len(pattern.findall(source)) != 1:
         raise SystemExit("field poison control no longer matches its single implementation site")
     (overlay / "typecheck.ax").write_text(pattern.sub(lambda m: m[1] + "mkSilentWild" + m[2], source))
