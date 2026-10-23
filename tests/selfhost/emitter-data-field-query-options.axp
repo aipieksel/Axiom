@@ -1,0 +1,108 @@
+; Data-field queries preserve index zero, order and resolved constructor identity.
+(import codegen)
+(import parser)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import Sys)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say i good)
+  (println
+    (concat (fmtInt i)
+      (if good
+        " true"
+        " false"))))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs found expected)
+  (match found
+    ((None) false)
+    ((Some actual) (== actual expected))))
+
+(:: fieldIs (-> (Option ASTNode) Int Int Bool))
+(fn (fieldIs found offset floating)
+  (match found
+    ((None) false)
+    ((Some field) (&& (== (nodeA field) offset) (== (nodeB field) floating)))))
+
+(:: entry (-> String Int (Option Names) Ints TypeEntry))
+(fn (entry name kind names flags)
+  (vecGet (addTypeNamed vecNew name kind 0 0 0 flags names None) 0))
+
+(:: checks ())
+;@axiom:effect(io)
+(fn (checks)
+  {
+    (let names (vecPush (vecPush (vecPush (vecPush vecNew "shared") "second") "shared") ""))
+    (say 1 (isNone (dataFieldIndexIn vecNew "shared" 0)))
+    (say 2 (indexIs (dataFieldIndexIn names "shared" 0) 0))
+    (say 3 (indexIs (dataFieldIndexIn names "second" 0) 1))
+    (say 4 (indexIs (dataFieldIndexIn names "shared" 1) 2))
+    (say 5 (isNone (dataFieldIndexIn names "missing" 0)))
+    (say 6 (isNone (dataFieldIndexIn names "shared" 4)))
+    (say 7 (isNone (dataFieldIndexIn names "shared" 20)))
+    (say 8 (indexIs (dataFieldIndexIn names "" 0) 3))
+    (let unknown (entry "Unknown" TF_DATA None vecNew))
+    (let empty (entry "Empty" TF_DATA (Some vecNew) vecNew))
+    (let alpha (entry "Alpha" TF_DATA (Some names) (vecPush vecNew 1)))
+    (let betaNames (vecPush (vecPush vecNew "first") "shared"))
+    (let beta (entry "Beta" TF_DATA (Some betaNames) (vecPush (vecPush vecNew 1) 0)))
+    (let other (entry "Other" TF_STRUCT (Some names) (vecPush vecNew 0)))
+    (say 9 (isNone (probeDataFieldOf unknown "shared")))
+    (say 10 (isNone (probeDataFieldOf empty "shared")))
+    (say 11 (isNone (probeDataFieldOf alpha "missing")))
+    (say 12 (fieldIs (probeDataFieldOf alpha "shared") 0 1))
+    (say 13 (fieldIs (probeDataFieldOf alpha "second") 1 0))
+    (say 14 (fieldIs (probeDataFieldOf alpha "") 3 0))
+    (let registry (vecPush (vecPush vecNew alpha) beta))
+    (say 15 (isNone (findDataField vecNew "shared")))
+    (say 16 (isNone (findDataField (vecPush vecNew other) "shared")))
+    (say 17 (fieldIs (findDataField registry "shared") 0 1))
+    (say 18 (fieldIs (findDataFieldFrom registry "shared" 1) 1 0))
+    (say 19 (isNone (findDataFieldFrom registry "shared" 2)))
+    (say 20 (isNone (findDataFieldFrom registry "shared" 20)))
+    (say 21 (fieldIs (findDataField (vecPush (vecPush vecNew unknown) alpha) "shared") 0 1))
+    (say 22 (fieldIs (findDataField (vecPush (vecPush vecNew empty) alpha) "shared") 0 1))
+    (say 23 (fieldIs (findDataField (vecPush (vecPush vecNew other) alpha) "shared") 0 1))
+    (say 24 (fieldIs (findDataField (vecPush (vecPush vecNew beta) alpha) "shared") 1 0))
+    (let plain (nodeBuildEField (mkEInt 0) "shared" 0 0))
+    (say 25 (fieldIs (probeResolveDataField registry plain) 0 1))
+    (let stamped (setNodeBinderTyText (nodeBuildEField (mkEInt 0) "shared" 0 0) "Beta"))
+    (say 26 (fieldIs (probeResolveDataField registry stamped) 1 0))
+    (let missingStamp (setNodeBinderTyText (nodeBuildEField (mkEInt 0) "shared" 0 0) "Missing"))
+    (say 27 (isNone (probeResolveDataField registry missingStamp)))
+    (let missingField (setNodeBinderTyText (nodeBuildEField (mkEInt 0) "second" 0 0) "Beta"))
+    (say 28 (isNone (probeResolveDataField registry missingField)))
+    (let unnamed (entry "" TF_DATA (Some betaNames) vecNew))
+    (let emptyStamp (setNodeBinderTyText (nodeBuildEField (mkEInt 0) "shared" 0 0) ""))
+    (say 29 (fieldIs (probeResolveDataField (vecPush registry unnamed) emptyStamp) 1 0))
+    (say 30 (fieldIs (findDataField registry "") 3 0))
+    (vecPush names "later")
+    (say 31 (fieldIs (probeDataFieldOf alpha "later") 4 0))
+    (say 32 (fieldIs (findDataField registry "later") 4 0))
+    (say 33 (indexIs (dataFieldIndexIn names "later" 4) 4))
+    (say 34
+      (fieldIs (probeDataFieldOf (entry "NoFlags" TF_DATA (Some betaNames) vecNew) "shared") 1 0))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if (> sysArgc 1)
+    (if (== sysArgc 2)
+      {
+        (dataFieldIndexIn (vecPush vecNew "value") "value" -1)
+        0
+      }
+      {
+        (emitField (nodeBuildEField (mkEInt 0) "missing" 0 0) newCG)
+        0
+      })
+    {
+      (checks)
+      0
+    }))

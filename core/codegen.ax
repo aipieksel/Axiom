@@ -23333,16 +23333,16 @@
         ; index + 1 where a struct's is index - a struct carries no
         ; tag. stage0 searches every data type, first match winning.
         {
-          (let di (resolveDataField (cgTypes cgB) node))
-          (if (nodeSame di nilNode)
-            (cgFail cg "unknown struct field: " (nodeBName node))
+          (let diFound (resolveDataField (cgTypes cgB) node))
+          (if (let (Some di) diFound)
             {
               (let cgL (loadWordAt cgB base (+ (nodeA di) 1)))
               {
                 (cgSetResultFloat cgL (nodeB di))
                 cgL
               }
-            })
+            }
+            (cgFail cg "unknown struct field: " (nodeBName node)))
         }
         {
           (let cgL (loadStructFieldAt cgB base (nodeA fi) (nodeTyChild fi)))
@@ -23355,10 +23355,10 @@
   })
 
 ; A data constructor's named field as an inert (index, floatFlag)
-; node, or 0. Searched in registry order, first match winning.
+; node when found. Searched in registry order, first match winning.
 ; The checker stamps a resolved constructor on a typed data-field read.
 ; Its entry supplies the correct slot and Float flag across modules.
-(:: resolveDataField (-> (Vec TypeEntry) ASTNode ASTNode))
+(:: resolveDataField (-> (Vec TypeEntry) ASTNode (Option ASTNode)))
 ;@axiom:effect(unsafe)
 (fn (resolveDataField types node)
   (if (== (nodeBinderTy node) 0)
@@ -23367,33 +23367,33 @@
       (let entryFound (lookupType types (as (nodeBinderTy node) String)))
       (if (let (Some entry) entryFound)
         (dataFieldOfEntry entry (nodeBName node))
-        nilNode)
+        None)
     }))
 
-(:: dataFieldOfEntry (-> TypeEntry String ASTNode))
+(:: dataFieldOfEntry (-> TypeEntry String (Option ASTNode)))
 (fn (dataFieldOfEntry entry name)
   (match (eFieldNamesVec entry)
-    ((None) nilNode)
+    ((None) None)
     ((Some names)
-      {
-        (let i (dataFieldIndexIn names name 0))
-        (if (< i 0)
-          nilNode
-          (nodeBuildFieldOffset i
-            (if (< i (vecLen (eFieldFlagsVec entry)))
-              (vecGet (eFieldFlagsVec entry) i)
-              0)))
-      }
+      (match (dataFieldIndexIn names name 0)
+        ((None) None)
+        ((Some i)
+          (Some
+            (nodeBuildFieldOffset i
+              (if (< i (vecLen (eFieldFlagsVec entry)))
+                (vecGet (eFieldFlagsVec entry) i)
+                0)))
+        ))
     )))
 
-(pub :: findDataField (-> (Vec TypeEntry) String ASTNode))
+(pub :: findDataField (-> (Vec TypeEntry) String (Option ASTNode)))
 (pub fn (findDataField types fname)
   (findDataFieldFrom types fname 0))
 
-(pub :: findDataFieldFrom (-> (Vec TypeEntry) String Int ASTNode))
+(pub :: findDataFieldFrom (-> (Vec TypeEntry) String Int (Option ASTNode)))
 (pub fn (findDataFieldFrom types fname i)
   (if (>= i (vecLen types))
-    nilNode
+    None
     {
       (let e (vecGet types i))
       (if (!= (eKind e) TF_DATA)
@@ -23401,24 +23401,24 @@
         (match (eFieldNamesVec e)
           ((None) (findDataFieldFrom types fname (+ i 1)))
           ((Some names)
-            {
-              (let j (dataFieldIndexIn names fname 0))
-              (if (< j 0)
-                (findDataFieldFrom types fname (+ i 1))
-                (nodeBuildFieldOffset j
-                  (if (< j (vecLen (eFieldFlagsVec e)))
-                    (vecGet (eFieldFlagsVec e) j)
-                    0)))
-            }
+            (match (dataFieldIndexIn names fname 0)
+              ((None) (findDataFieldFrom types fname (+ i 1)))
+              ((Some j)
+                (Some
+                  (nodeBuildFieldOffset j
+                    (if (< j (vecLen (eFieldFlagsVec e)))
+                      (vecGet (eFieldFlagsVec e) j)
+                      0)))
+              ))
           )))
     }))
 
-(pub :: dataFieldIndexIn (-> Names String Int Int))
+(pub :: dataFieldIndexIn (-> Names String Int (Option Int)))
 (pub fn (dataFieldIndexIn names fname i)
   (if (>= i (vecLen names))
-    (- 0 1)
+    None
     (if (strEq (vecGetStr names i) fname)
-      i
+      (Some i)
       (dataFieldIndexIn names fname (+ i 1)))))
 
 ; The field of a TAG_E_FIELD / TAG_E_SETF node, as the inert
