@@ -1,0 +1,87 @@
+; Module lookup absence, valid unit zero and import visibility remain distinct.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: parsed (-> String Nodes))
+(fn (parsed source)
+  (match (parseModule (lex source))
+    ((ParseFailed error) __indexTrap)
+    ((ParseSuccess declarations position) declarations)))
+
+(:: declaration (-> String (Option String) ASTNode))
+(fn (declaration source moduleName)
+  {
+    (let node (vecGet (parsed source) 0))
+    (if (let (Some name) moduleName)
+      (writeNodeText node 8 name))
+    node
+  })
+
+(:: unit (-> (Option String) CUnit2))
+(fn (unit name)
+  (CUnit2 :file "module.ax" :src "" :name name :imports vecNew :library false))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs found expected)
+  (match found
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: importChecks (-> Nodes String Strings Diags))
+(fn (importChecks declarations moduleName names)
+  {
+    (let out vecNew)
+    (checkImportNameList moduleName names 9 declarations out 0 0)
+    out
+  })
+
+(:: diagnosticIs (-> Diags Int String Bool))
+(fn (diagnosticIs diagnostics index message)
+  (if (< index (vecLen diagnostics))
+    (&& (strEq (diagCode (vecGet diagnostics index)) "AX3023")
+      (strEq (diagMsg (vecGet diagnostics index)) message))
+    false))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: renderImport (-> String String Strings ()))
+;@axiom:effect(io)
+(fn (renderImport file moduleName names)
+  {
+    (let source "(import Owner (visible hidden missing))")
+    (let sp (tokenSpan (vecGet (lex source) 2)))
+    (let declarations
+      (vecPush
+        (vecPush (vecPush vecNew (declaration "(pub fn (visible) 1)" (Some "Owner")))
+          (declaration "(fn (hidden) 2)" (Some "Owner")))
+        (declaration "(pub fn (unnamed) 3)" (Some ""))))
+    (let out vecNew)
+    (let units
+      (vecPush vecNew (CUnit2 :file file :src source :name None :imports vecNew :library false)))
+    (checkImportNameList moduleName names sp declarations out 0 0)
+    (println file)
+    (writeStr stdout (renderDiagsUnits out units))
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (renderImport "visible.ax" "Owner" (vecPush vecNew "visible"))
+    (renderImport "private.ax" "Owner" (vecPush vecNew "hidden"))
+    (renderImport "missing.ax" "Owner" (vecPush vecNew "missing"))
+    (renderImport "combined.ax" "Owner"
+      (vecPush (vecPush (vecPush vecNew "visible") "hidden") "missing"))
+    (renderImport "wrong-module.ax" "Other" (vecPush vecNew "visible"))
+    (renderImport "empty-module.ax" "" (vecPush vecNew "unnamed"))
+    (renderImport "no-names.ax" "Owner" vecNew)
+  })

@@ -2976,8 +2976,8 @@
     {
       {
         (let n (vecGetStr names i))
-        (if (== (declaredInModule allDecls modName n 0) 1)
-          (if (! (== (exportedFromModule allDecls modName n 0) 1))
+        (if (declaredInModule allDecls modName n 0)
+          (if (! (exportedFromModule allDecls modName n 0))
             (importDiag out unit sp
               (concat (concat (concat (concat "module `" modName) "` declares `") n)
                 "` but does not export it")
@@ -3002,28 +3002,28 @@
     0
   })
 
-(pub :: declaredInModule (-> (Vec ASTNode) String String Int Int))
+(pub :: declaredInModule (-> (Vec ASTNode) String String Int Bool))
 (pub fn (declaredInModule allDecls modName n i)
   (if (>= i (vecLen allDecls))
-    0
+    false
     {
       (let d (vecGet allDecls i))
       (if (&& (isSome (nodeModuleOpt d))
             (&& (strEq (nodeModuleName d) modName) (moduleDeclNames d n)))
-        1
+        true
         (declaredInModule allDecls modName n (+ i 1)))
     }))
 
-(pub :: exportedFromModule (-> (Vec ASTNode) String String Int Int))
+(pub :: exportedFromModule (-> (Vec ASTNode) String String Int Bool))
 (pub fn (exportedFromModule allDecls modName n i)
   (if (>= i (vecLen allDecls))
-    0
+    false
     {
       (let d (vecGet allDecls i))
       (if (&& (== (nodeVis d) 1)
             (&& (isSome (nodeModuleOpt d))
               (&& (strEq (nodeModuleName d) modName) (moduleDeclExports d n))))
-        1
+        true
         (exportedFromModule allDecls modName n (+ i 1)))
     }))
 
@@ -12544,17 +12544,19 @@
 (pub :: unitIndexFor (-> Units (Option String) Int))
 (pub fn (unitIndexFor units m)
   (if (let (Some moduleName) m)
-    (unitIndexForFrom units moduleName 0)
+    (match (unitIndexForFrom units moduleName 0)
+      ((None) 0)
+      ((Some index) index))
     0))
 
-(pub :: unitIndexForFrom (-> Units String Int Int))
+(pub :: unitIndexForFrom (-> Units String Int (Option Int)))
 (pub fn (unitIndexForFrom units m i)
   (if (>= i (vecLen units))
-    0
+    None
     (if (unitIsEntry (vecGet units i))
       (unitIndexForFrom units m (+ i 1))
       (if (unitNameIs (vecGet units i) m)
-        i
+        (Some i)
         (unitIndexForFrom units m (+ i 1))))))
 
 (pub :: emitDiag (-> TC diag::Diag Int))
