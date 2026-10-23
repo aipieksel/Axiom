@@ -172,7 +172,7 @@ export interface StatusRow {
 }
 
 export const STATUS_SOLID: StatusRow[] = [
-  { feature: 'Functions & types', status: 'Complete', note: 'Curried calls, checked generics, aliases, fixed-width integers and explicit `as` conversions.' },
+  { feature: 'Functions & types', status: 'Complete', note: 'Curried calls, checked generics, aliases, fixed-width integers, word structs, `Option` and explicit `as` conversions.' },
   { feature: 'ADTs / data types', status: 'Complete', note: 'Sums with positional or named fields.' },
   { feature: 'Pattern matching (`match`)', status: 'Complete', note: 'Nested, exhaustive, checked in every function.' },
   { feature: 'Structs', status: 'Complete', note: 'Named construction, per-field `mut`, generic parameters, automatic rendering.' },
@@ -186,11 +186,11 @@ export const STATUS_SOLID: StatusRow[] = [
 export const STATUS_LIMITS: StatusRow[] = [
   { feature: 'Effects', status: 'Enforced; unresolved calls marked', note: 'Constructor allocation contributes Alloc; calls the compiler cannot resolve are marked incomplete.' },
   { feature: 'Macros', status: 'Complete', note: 'Scope-based hygiene, binding-aware literals and repeated-binder constraints. Templates cannot generate `import` or nested `macro` declarations.' },
-  { feature: 'Concurrency', status: 'Language form, two lowerings', note: '`parallel`, channels, a mutex and task pools; `taskFold` reclaims each delivered answer under an explicit scalar-only callback contract.' },
-  { feature: 'Region syntax', status: 'Checked lexical scopes and inferred escape checks', note: 'Scalar results may leave a region; references stay within its lifetime.' },
+  { feature: 'Concurrency', status: 'Language form, two lowerings', note: 'Processes or threads, with the same results. Channels, mutexes and bounded task pools join words in order. A `String` stays with its owner.' },
+  { feature: 'Region syntax', status: 'Checked lexical scopes and inferred escape checks', note: 'Typed regions: each reference has an origin, and an escape is refused. A scalar may leave. Promoting an owned reference out is still ahead.' },
   { feature: 'Resource ownership', status: 'Functional', note: 'Files, sockets, terminal modes, channels and mutexes close or free themselves when their last owner lets go.' },
   { feature: 'FFI', status: 'Functional', note: 'Rust through `extern` blocks, sealed owners and callbacks borrowed for the call.' },
-  { feature: 'Standard library', status: 'Functional', note: 'Collections, cryptography, optional binary obfuscation, dates, JSON, networking and an embedded database.' },
+  { feature: 'Standard library', status: 'Functional', note: 'Vectors, links, cryptography, dates, JSON, networking, tasks and an embedded database.' },
   { feature: 'Contracts', status: 'Functional', note: 'Checked preconditions and postconditions, shown in editor tooltips and the library reference.' },
   { feature: 'Error handling', status: 'Functional; adopted at the syscall seam', note: '`Result`, the postfix `?`, and handlers that skip a bad record without unwinding.' },
   { feature: 'Editor support', status: 'Functional', note: 'Language server, formatter, semantic highlighting, tree-sitter grammar and VS Code extension.' },

@@ -146,8 +146,10 @@ Process exit and unrecovered traps skip cleanup callbacks
 (`MM-EXEC-17`, `MM-EXEC-20`). The operating system reclaiming a
 descriptor does not establish that application cleanup ran.
 
-Not yet: recursive typed promotion and typed sibling task regions
-remain planned under `MM-RGN-7` ([roadmap](roadmap.md)).
+Checked regions track a reference's origin and refuse an escape
+(`AX3059`, `AX3060`). Not yet: promoting an owned reference out of a
+region, and typed sibling task regions, under `MM-RGN-7`
+([roadmap](roadmap.md)).
 
 ### Sharing
 
