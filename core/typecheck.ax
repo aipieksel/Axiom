@@ -24891,14 +24891,14 @@
 ;
 ; A machine-applicable fix is a byte-range substitution in the file
 ; the diagnostic names (docs/diagnostics.md, `~>`), and the checker
-; holds every unit's source: word 13 is the unit table, word 1 of each
-; entry its text. Only the ENTRY file is ever offered one from here. A
+; holds every unit's source in its typed unit table. Only the entry
+; file is ever offered one from here. A
 ; diagnostic on an imported module's declaration renders against that
 ; module's bytes, and a fix into a file the request did not name is an
 ; edit the editor would apply to the wrong document - lsp.ax's
 ; `lspQuickfixes` keeps unit 0 for the same reason. `tcEntrySrc`
-; answers "" outside unit 0, and every fix site reads "" as "keep the
-; prose help alone".
+; answers None outside unit 0 or without an entry unit. An empty file
+; remains Some empty text; the source scanners find no edit position.
 ;
 ; The scanners below are `lspFormEnd`'s, with the same string, char,
 ; comment and identifier skips, so a `)` inside a literal or a comment
@@ -24906,20 +24906,15 @@
 ; checker is what knows WHICH form: the language server only carries
 ; what the diagnostic already says.
 ; ------------------------------------------------------------------
-(pub :: tcEntrySrc (-> TC String))
+(pub :: tcEntrySrc (-> TC (Option String)))
 (pub fn (tcEntrySrc tc)
   (if (!= (tcCurUnit tc) 0)
-    ""
+    None
     {
       (let units (tcUnits tc))
-      (if (== (as units Int) 0)
-        ""
-        (if (== (vecLen units) 0)
-          ""
-          {
-            (let u (vecGet units 0))
-            (unitSrc u)
-          }))
+      (if (== (vecLen units) 0)
+        None
+        (Some (unitSrc (vecGet units 0))))
     }))
 
 ; The byte just past the `)` closing the form that opens at `o`, or
@@ -25117,23 +25112,21 @@
 (pub :: matchFixHelps (-> TC diag::Diag (Vec ASTNode) ASTNode ASTNode NodesRows Names ()))
 (pub fn (matchFixHelps tc d arms scrutTy scrut matrix missing)
   {
-    (let src (tcEntrySrc tc))
     (let mut offered false)
-    (if (let (Some close) (if (== (strLen src) 0)
-      None
-      (matchCloseAt src scrut arms)))
-      (if (let (Some indent) (matchArmIndent src scrut arms))
-        {
-          (let text (missingArmsText tc scrutTy matrix missing indent))
-          (if (> (strLen text) 0)
-            {
-              (diagAddFixHelp d "add the missing arms, each a `todo` until it is written"
-                (mkSpan close close) text)
-              (set offered true)
-              (if (isNone (findFnEnt tc "todo"))
-                (importTodoHelp tc d src))
-            })
-        }))
+    (if (let (Some src) (tcEntrySrc tc))
+      (if (let (Some close) (matchCloseAt src scrut arms))
+        (if (let (Some indent) (matchArmIndent src scrut arms))
+          {
+            (let text (missingArmsText tc scrutTy matrix missing indent))
+            (if (> (strLen text) 0)
+              {
+                (diagAddFixHelp d "add the missing arms, each a `todo` until it is written"
+                  (mkSpan close close) text)
+                (set offered true)
+                (if (isNone (findFnEnt tc "todo"))
+                  (importTodoHelp tc d src))
+              })
+          })))
     (if (! offered)
       (diagAddHelp d "add the missing arms, or a wildcard `_` arm to catch the rest"))
     ()
@@ -28959,7 +28952,6 @@
   (if (== (nodeSpan d) 0)
     0
     {
-      (let src (tcEntrySrc tc))
       (let dg
         (mkDiag SEV_ERROR "AX3042" "undeclared-effect" (nodeSpan d)
           (concat (concat (concat "`" (bareOf (nodeAName d))) "` performs ")
@@ -28967,9 +28959,9 @@
           None None))
       {
         (let at
-          (if (== (strLen src) 0)
-            None
-            (effectTagInsertAt src (spanStart (nodeSpan d)))))
+          (if (let (Some src) (tcEntrySrc tc))
+            (effectTagInsertAt src (spanStart (nodeSpan d)))
+            None))
         {
           {
             (let tag (concat ";@axiom:effect(" (concat (strLower name) ")")))
@@ -29156,7 +29148,6 @@
       (if (== (nodeSpan d) 0)
         0
         {
-          (let src (tcEntrySrc tc))
           (let dg
             (mkDiag SEV_ERROR "AX3073" "undeclared-unsafe" sp
               (concat (concat (concat "`" (bareOf (nodeAName d))) "` ")
@@ -29164,9 +29155,9 @@
               None None))
           {
             (let at
-              (if (== (strLen src) 0)
-                None
-                (effectTagInsertAt src (spanStart (nodeSpan d)))))
+              (if (let (Some src) (tcEntrySrc tc))
+                (effectTagInsertAt src (spanStart (nodeSpan d)))
+                None))
             {
               (if (let (Some position) at)
                 (diagAddFixHelp dg "write `;@axiom:effect(unsafe)` above the declaration"

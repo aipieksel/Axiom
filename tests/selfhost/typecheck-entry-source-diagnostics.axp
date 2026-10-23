@@ -1,0 +1,86 @@
+; Exact output probe shared with the unmodified entry-source implementation.
+(import core)
+(import parser)
+(import typecheck)
+(import diag)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: context (-> (Option String) TC))
+(fn (context source)
+  {
+    (let units (:: vecNew Units))
+    (if (let (Some text) source)
+      (vecPush units
+        (CUnit2 :file "source.ax" :src text :name None :imports vecNew :library false)))
+    (tcNew vecNew vecNew units)
+  })
+
+(:: matchProbe (-> (Option String) Int Diag))
+(fn (matchProbe source unit)
+  {
+    (let tc (context source))
+    (set tc.curUnit unit)
+    (let scrutinee (mkEVarAt "x" (mkSpan 7 8)))
+    (let arm (nodeBuildMArm (nodeBuildPCon0 "None" 0 0 (mkSpan 12 16)) (mkEInt 0) 0 0))
+    (let arms (vecPush vecNew arm))
+    (let matrix (vecPush vecNew (vecPush vecNew (nodeAChild arm))))
+    (let d (mkDiagBase 0 "AX3005" "non-exhaustive-match" (mkSpan 7 8) "probe" None))
+    (matchFixHelps tc d arms (mkTCon "Option" (vecPush vecNew mkIntTy)) scrutinee matrix
+      (vecPush vecNew "Some"))
+    d
+  })
+
+(:: effectProbe (-> (Option String) Int Bool Diag))
+(fn (effectProbe source unit unsafe)
+  {
+    (let tc (context source))
+    (set tc.curUnit unit)
+    (let d (nodeBuildDFn "main" vecNew (mkEInt 0) (mkSpan 5 9)))
+    (if unsafe
+      (emitUndeclaredUnsafe tc d (mkEVarAt "__load8" (mkSpan 12 19)) 0 vecNew 0)
+      (emitUndeclaredEffect tc d "IO"))
+    (vecGet (tcOutVec tc) 0)
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let matching "(match x\n ((None) 0))")
+    (let function "(fn (main) (__load8 0 0))")
+    (for mode in 0..6
+      {
+        (let unit
+          (if (== mode 3)
+            1
+            (if (== mode 5)
+              -1
+              0)))
+        (let matchSource
+          (if (== mode 1)
+            None
+            (Some
+              (if (== mode 2)
+                ""
+                (if (== mode 4)
+                  "macro main"
+                  matching)))))
+        (let functionSource
+          (if (== mode 1)
+            None
+            (Some
+              (if (== mode 2)
+                ""
+                (if (== mode 4)
+                  "macro main"
+                  function)))))
+        (println "case {mode} match")
+        (println (renderDiag (matchProbe matchSource unit) matching "source.ax" vecNew))
+        (println "case {mode} effect")
+        (println (renderDiag (effectProbe functionSource unit false) function "source.ax" vecNew))
+        (println "case {mode} unsafe")
+        (println (renderDiag (effectProbe functionSource unit true) function "source.ax" vecNew))
+      })
+  })
