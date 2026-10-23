@@ -53,6 +53,8 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/gate.sh"
 gate_init
 
+python3 "$repo_root/tests/tools/repl-history-search-options.py" --axiom "$axiom" --work "$work/search-options" || exit 1
+
 failed=0
 checks=0
 

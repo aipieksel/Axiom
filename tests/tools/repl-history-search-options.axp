@@ -1,0 +1,83 @@
+(import IO)
+(import Fmt)
+(import Sys)
+
+(:: searchSay (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (searchSay index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: searchIndexIs (-> (Option Int) Int Bool))
+(fn (searchIndexIs result expected)
+  (match result
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: searchHist (-> Strings Hist))
+(fn (searchHist entries)
+  (Hist :entries entries :path "" :cap 1000 :pos (vecLen entries) :draft "" :persist 0))
+
+(:: searchRing Hist)
+(fn (searchRing)
+  (searchHist
+    (vecPush
+      (vecPush (vecPush (vecPush vecNew (strDup "hit old")) (strDup "body\nhit inner"))
+        (strDup "hit new"))
+      (strDup "Other"))))
+
+(:: searchReturned (Option Int))
+(fn (searchReturned)
+  (histFindBack searchRing "inner" (Some 3)))
+
+(:: searchHistCount (-> Hist Int))
+;@axiom:effect(unsafe)
+(fn (searchHistCount h)
+  (__load64 (as h Int) -2))
+
+(:: searchStringCount (-> String Int))
+;@axiom:effect(unsafe)
+(fn (searchStringCount s)
+  (__load64 (as s Int) -2))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let h searchRing)
+    (let empty (searchHist vecNew))
+    (let blank (searchHist (vecPush vecNew "")))
+    (searchSay 1 (isNone (histSearchTop empty)))
+    (searchSay 2 (searchIndexIs (histSearchTop blank) 0))
+    (searchSay 3 (searchIndexIs (histSearchTop h) 3))
+    (searchSay 4 (searchIndexIs (histFindBack h "hit" (histSearchTop h)) 2))
+    (searchSay 5 (searchIndexIs (histFindBack h "hit" (Some 1)) 1))
+    (searchSay 6 (searchIndexIs (histFindBack h "hit" (Some 0)) 0))
+    (searchSay 7 (isNone (histFindBack h "missing" (histSearchTop h))))
+    (searchSay 8 (isNone (histFindBack h "hit" None)))
+    (searchSay 9 (isNone (histFindBack h "hit" (Some (- 0 1)))))
+    (searchSay 10 (searchIndexIs (histFindBack h "hit" (Some 999)) 2))
+    (searchSay 11 (searchIndexIs (histFindBack h "" (histSearchTop h)) 3))
+    (searchSay 12 (isNone (histFindBack h "HIT" (histSearchTop h))))
+    (searchSay 13 (searchIndexIs (histFindBack h "" (Some 0)) 0))
+    (searchSay 14 (isNone (histFindBack empty "" (Some 0))))
+    (searchSay 15 (isNone (histFindBack empty "" (histSearchTop empty))))
+    (searchSay 16 (searchIndexIs (histFindBack blank "" (Some 0)) 0))
+    (searchSay 17 (isNone (histFindBack blank "missing" (Some 0))))
+    (searchSay 18 (searchIndexIs (histFindBack h "Other" (Some 9223372036854775807)) 3))
+    (searchSay 19 (isNone (histFindBack h "" (Some (- (- 0 9223372036854775807) 1)))))
+    (searchSay 20 (searchIndexIs searchReturned 1))
+    (searchSay 21 (&& (== h.pos 4) (&& (== (histLen h) 4) (strEq h.draft ""))))
+    (let hCount (searchHistCount h))
+    (histFindBack h "hit" (Some 3))
+    (histSearchTop h)
+    (searchSay 22 (== (searchHistCount h) hCount))
+    (let entry (vecGet h.entries 1))
+    (let entryCount (searchStringCount entry))
+    (histFindBack h "inner" (Some 3))
+    (searchSay 23 (== (searchStringCount entry) entryCount))
+    (searchSay 24 (searchIndexIs (histFindBack h "body\nhit" (Some 3)) 1))
+  })

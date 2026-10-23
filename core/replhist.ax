@@ -154,9 +154,10 @@
 ;                                          so an editor may call it on
 ;                                          every edit without asking
 ;
-;   histSearchTop   (-> Hist Int)          where a fresh Ctrl-R starts
-;   histFindBack    (-> Hist String Int Int)  needle, from -> index or -1
-;                                          (a repeated Ctrl-R passes at-1)
+;   histSearchTop   (-> Hist (Option Int)) newest entry, None for an empty ring
+;   histFindBack    (-> Hist String (Option Int) (Option Int))
+;                                          needle, cursor -> matched index
+;                                          None means an exhausted search
 ;   histFlatten     (-> String String String) entry, separator -> one row
 ;
 ; The browse pair answers "did it move" rather than the text, and the
@@ -768,14 +769,20 @@
 ; ------------------------------------------------------------------
 ; REVERSE INCREMENTAL SEARCH - Ctrl-R.
 ; ------------------------------------------------------------------
-; The index a fresh Ctrl-R starts from: the newest entry, or -1 for an
-; empty ring.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: histSearchTop (-> Hist Int))
+; The index a fresh Ctrl-R starts from: the newest entry, or None for an
+; empty ring. Some 0 identifies the oldest and possibly only entry.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: histSearchTop (-> Hist (Option Int)))
 (pub fn (histSearchTop h)
-  (- (histLen h) 1))
+  {
+    (let n (histLen h))
+    (if (== n 0)
+      None
+      (Some (- n 1)))
+  })
 
-; The greatest index <= `from` whose entry CONTAINS `needle`, or -1.
+; The greatest index at or before the cursor whose entry contains
+; `needle`, or None when no entry matches. A None cursor is exhausted.
 ;
 ; `strFind` searches the whole entry string, so a needle on the third
 ; line of a multi-line entry matches - which is the behaviour a user
@@ -784,32 +791,31 @@
 ; empty-needle rule (Str.ax:599-603) gives readline's other behaviour for
 ; free: Ctrl-R with nothing typed yet matches the most recent entry.
 ;
-; A repeated Ctrl-R passes `(- at 1)`, so stepping is the caller's and
-; this stays a pure function of (ring, needle, from). Case-SENSITIVE:
+; A repeated Ctrl-R passes Some (at - 1), or None after index zero, so
+; stepping is the caller's and this stays a pure function of
+; (ring, needle, from). Case-SENSITIVE:
 ; the corpus is Axiom source and its identifiers are case-sensitive.
-; Not `no-alloc`, TRANSITIVELY: this body allocates nothing itself,
-; and `strFind` - which it calls once per ring entry - answers
-; `(Option Int)` and allocates the `Some` (`MM-EXEC-9a`).
+; Returning a match allocates Some. strFind also allocates its Some
+; result once per matching entry (MM-EXEC-9a).
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: histFindBack (-> Hist String Int Int))
+(pub :: histFindBack (-> Hist String (Option Int) (Option Int)))
 (pub fn (histFindBack h needle from)
-  {
-    (let n (histLen h))
-    {
-      (let mut i
-        (if (>= from n)
-          (- n 1)
-          from))
-      (let mut found (- 0 1))
+  (match from
+    ((None) None)
+    ((Some start)
       {
-        (while (&& (< found 0) (>= i 0))
+        (let n (histLen h))
+        (let mut i
+          (if (>= start n)
+            (- n 1)
+            start))
+        (let mut found (:: None (Option Int)))
+        (while (&& (isNone found) (>= i 0))
           {
             (if (let (Some _) (strFind (histAt h i) needle 0))
-              (set found i)
-              ())
+              (set found (Some i)))
             (set i (- i 1))
           })
         found
       }
-    }
-  })
+    )))
