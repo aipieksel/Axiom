@@ -1,0 +1,59 @@
+; Cast recovery keeps missing-value and target/source refusal order unchanged.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let units
+          (vecPush vecNew
+            (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+        (let tc (checkModuleTcTyped declarations declarations units))
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      }
+      (writeStr stderr (concat "invalid cast source diagnostic fixture: " (concat name "\n"))))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "cast-missing-operand.ax"
+      "(pub :: example Int) (pub fn (example) (__ascribe Int))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-literal-target.ax"
+      "(pub :: example Int) (pub fn (example) (__ascribe 7))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-surplus-measure.ax"
+      "(pub :: example Int) (pub fn (example) (sizeof Int missing surplus))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-unit-source.ax"
+      "(pub :: example Int) (pub fn (example) (as () Int))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-unit-target.ax"
+      "(pub :: example ()) (pub fn (example) (as 7 ()))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-missing-numeric-float.ax"
+      "(pub :: example Float) (pub fn (example) (__as_numeric Float))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-missing-numeric-byte.ax"
+      "(pub :: example UInt8) (pub fn (example) (__as_numeric UInt8))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-present-nonnumeric.ax"
+      "(pub :: example Float) (pub fn (example) (__as_numeric Float \"text\"))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-missing-ascription.ax"
+      "(pub :: example String) (pub fn (example) (__ascribe String))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-present-ascription.ax"
+      "(pub :: example String) (pub fn (example) (__ascribe String 7))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-poison-source.ax"
+      "(pub :: example String) (pub fn (example) (as missing String))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-forged-source.ax"
+      "(pub :: example String) (pub fn (example) (as 7 String))\n(pub :: main Int) (pub fn (main) 0)\n")
+    (checkSource "cast-valid-measure-and-number.ax"
+      "(pub :: example Float) (pub fn (example) (__as_numeric Float 7))\n(pub :: main Int) (pub fn (main) (+ (sizeof Int) (alignof Float)))\n")
+    0
+  })

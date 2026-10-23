@@ -11411,10 +11411,13 @@
             0))))
   })
 
-(pub :: rewriteNumericAs (-> TC ASTNode ASTNode ASTNode ()))
+(pub :: rewriteNumericAs (-> TC ASTNode ASTNode (Option ASTNode) ()))
 (pub fn (rewriteNumericAs tc e target source)
   {
-    (let from (asNumericKind tc source))
+    (let from
+      (match source
+        ((None) 0)
+        ((Some sourceType) (asNumericKind tc sourceType))))
     (let to (asNumericKind tc target))
     (let primitive
       (if (&& (== from 1) (== to 2))
@@ -11423,12 +11426,19 @@
           "__floatToInt"
           "")))
     (let head (spineHead e))
-    (let fromInt (tyIntegerCode tc source))
+    (let fromInt
+      (match source
+        ((None) 0)
+        ((Some sourceType) (tyIntegerCode tc sourceType))))
     (let toInt (tyIntegerCode tc target))
     (if (|| (&& (> fromInt 0) (!= fromInt 64)) (&& (> toInt 0) (!= toInt 64)))
       {
         (if (|| (== from 0) (== to 0))
-          (emitMismatch tc "a numeric type" (tyRender source) (spanOf (spineArgAt e 1))))
+          (emitMismatch tc "a numeric type"
+            (match source
+              ((None) "{unknown}")
+              ((Some sourceType) (tyRender sourceType)))
+            (spanOf (spineArgAt e 1))))
         (writeNodeWord head 3
           (+
             (*
@@ -11444,7 +11454,11 @@
       (if (== (strLen primitive) 0)
         {
           (if (&& (== to 2) (== from 0))
-            (emitMismatchTy tc mkFloatTy source (spanOf (spineArgAt e 1))))
+            (match source
+              ((None) (emitMismatch tc "Float" "{unknown}" (spanOf (spineArgAt e 1))))
+              ((Some sourceType)
+                (emitMismatchTy tc mkFloatTy sourceType (spanOf (spineArgAt e 1)))
+              )))
           (if (== to 2)
             (writeNodeChild (nodeAChild e) 2 (mkEVarAt "Float" (spanOf (spineArgAt e 0)))))
           (writeNodeText head 1 "cast")
@@ -16231,22 +16245,30 @@
       ; keeps its evidence).
       {
         (let args (spineArgVec e vecNew))
+        ; None is a form with no source value, including sizeof/alignof.
+        ; Some keeps a checked poison or inference type present.
         (let srcTy
-          {
+          (:: {
             (let srcTy0
-              (if (>= (vecLen args) 2)
-                {
-                  (let value (vecGet args 1))
-                  (let target (castTargetTy tc (vecGet args 0)))
-                  (if (&& (== (nodeTag value) TAG_E_LAM) (== (nodeTag target) TAG_T_ARR))
-                    (checkLamAgainst tc value target)
-                    (groundArgByDecl tc (checkExprH tc value 0) (Some target) (spanOf value)))
-                }
-                nilNode))
-            (if (== (isPendingNode srcTy0) 1)
-              (groundStandalone tc srcTy0 (spanOf (vecGet args 1)))
-              srcTy0)
-          })
+              (:: (if (>= (vecLen args) 2)
+                (Some
+                  {
+                    (let value (vecGet args 1))
+                    (let target (castTargetTy tc (vecGet args 0)))
+                    (if (&& (== (nodeTag value) TAG_E_LAM) (== (nodeTag target) TAG_T_ARR))
+                      (checkLamAgainst tc value target)
+                      (groundArgByDecl tc (checkExprH tc value 0) (Some target) (spanOf value)))
+                  })
+                None) (Option ASTNode)))
+            (match srcTy0
+              ((None) None)
+              ((Some sourceType)
+                (Some
+                  (if (== (isPendingNode sourceType) 1)
+                    (groundStandalone tc sourceType (spanOf (vecGet args 1)))
+                    sourceType))
+              ))
+          } (Option ASTNode)))
         {
           (checkCastArgs tc args e 2 (vecLen args))
           ; `sizeof` and `alignof` take one TYPE and answer a constant, so
@@ -16344,16 +16366,17 @@
                 {
                   (let targetTy (castTargetTy tc (vecGet args 0)))
                   {
-                    (if (&& (>= (vecLen args) 2) (|| (tyIsUnit targetTy) (tyIsUnit srcTy)))
-                      (emitDiag tc
-                        (diagSetLabel
-                          (mkDiagNote SEV_ERROR "AX3139" "unit-cast" (spanOf (vecGet args 1))
-                            (if (tyIsUnit targetTy)
-                              "`as` cannot convert to `()`: it has one value and carries no information"
-                              "`as` cannot convert from `()`: it has one value and carries no information")
-                            0 0 "convert a value that carries information, or drop the cast"
-                            "a cast through `()` answers the unit word 0 whatever the value was, so the conversion could only lose what it was given")
-                          "a cast through `()`")))
+                    (if (let (Some sourceType) srcTy)
+                      (if (&& (>= (vecLen args) 2) (|| (tyIsUnit targetTy) (tyIsUnit sourceType)))
+                        (emitDiag tc
+                          (diagSetLabel
+                            (mkDiagNote SEV_ERROR "AX3139" "unit-cast" (spanOf (vecGet args 1))
+                              (if (tyIsUnit targetTy)
+                                "`as` cannot convert to `()`: it has one value and carries no information"
+                                "`as` cannot convert from `()`: it has one value and carries no information")
+                              0 0 "convert a value that carries information, or drop the cast"
+                              "a cast through `()` answers the unit word 0 whatever the value was, so the conversion could only lose what it was given")
+                            "a cast through `()`"))))
                     (let subBase
                       (if (&& (! (nodeSame targetTy nilNode)) (== (nodeTag targetTy) TAG_T_CON))
                         (tySubtypeBase tc targetTy)
@@ -16364,23 +16387,30 @@
                         ; from a word answer (1) and region freshness (2).
                         ; No proof is minted for surplus applications.
                         (setNodeResWord e
-                          (if (&& (== (vecLen args) 2) (== (castSameTy tc targetTy srcTy) 1))
-                            3
-                            0))
+                          (match srcTy
+                            ((None) 0)
+                            ((Some sourceType)
+                              (if (&& (== (vecLen args) 2)
+                                    (== (castSameTy tc targetTy sourceType) 1))
+                                3
+                                0)
+                            )))
                         ; Keep the target checked in this scope. Resolving
                         ; its written alias again after the body is checked
                         ; could capture a nominal type from another module.
-                        (if (>= (vecLen args) 2)
-                          {
-                            (castNoteForge tc e targetTy srcTy (vecGet args 1))
-                            (castCheckWordRead tc targetTy srcTy (spanOf (vecGet args 1)))
-                          })
+                        (if (let (Some sourceType) srcTy)
+                          (if (>= (vecLen args) 2)
+                            {
+                              (castNoteForge tc e targetTy sourceType (vecGet args 1))
+                              (castCheckWordRead tc targetTy sourceType (spanOf (vecGet args 1)))
+                            }))
                         (if (== (asNumericKind tc targetTy) 2)
                           (writeNodeChild (nodeAChild e) 2
                             (mkEVarAt "Float" (spanOf (vecGet args 0)))))
                         (if (strEq hname "__ascribe")
-                          (if (== (tyCompat tc srcTy targetTy) 0)
-                            (emitMismatchTy tc targetTy srcTy (spanOf (vecGet args 1))))
+                          (if (let (Some sourceType) srcTy)
+                            (if (== (tyCompat tc sourceType targetTy) 0)
+                              (emitMismatchTy tc targetTy sourceType (spanOf (vecGet args 1)))))
                           (if (strEq hname "__as_numeric")
                             (rewriteNumericAs tc e targetTy srcTy)))
                         targetTy
