@@ -489,13 +489,8 @@
 ;
 ; Found 2026-08-16, with the AXDL and JSON halves of the same hole;
 ; `tests/diagnostics/478-json-control-bytes.ax` pins all three.
-; A diagnostic with no label carries 0 rather than an empty String, and
-; every caller downstream already tests for it (`renderDiagJson` does,
-; at the `diagLabel` read). Walking one here read `strLen` off a null
-; handle and took the whole renderer down with SIGSEGV - a crash that
-; only the human surface showed, because it is the only one that walks
-; a label unconditionally. Answer the null back and let the existing
-; tests keep deciding what an absent label prints as.
+; Diagnostic label readers handle their Option before escaping text.
+; The null guard remains for other legacy callers of this text helper.
 ;
 ; PERFORMANCE, 2026-08-24, after an audit reproduced it: this used to
 ; rebuild the whole answer on every input byte -
@@ -782,7 +777,14 @@
     (let rows vecNew)
     {
       (vecPush rows
-        (SnipRow :span span :ch 94 :msg (ctlEsc (diagLabel d)) :sgr (sgrForSev (diagSev d))))
+        (SnipRow
+          :span span
+          :ch 94
+          :msg
+            (if (let (Some label) (diagLabel d))
+              (ctlEsc label)
+              "")
+          :sgr (sgrForSev (diagSev d))))
       (for i in 0..(diagSecCount d)
         (if (== (secDrawable d i units ixs) 1)
           (vecPush rows
@@ -1085,9 +1087,9 @@
                     {
                       (for i in 0..(diagHelpCount d)
                         (vecPush acc
-                          (if (== (diagHelpFixSpan d i) 0)
-                            (helpLineEsc gw (diagHelpMsg d i))
-                            (helpLineFix gw (diagHelpMsg d i) (diagHelpFixText d i)))))
+                          (if (let (Some fix) (diagHelpFix d i))
+                            (helpLineFix gw (diagHelpMsg d i) fix.text)
+                            (helpLineEsc gw (diagHelpMsg d i)))))
                       (vecPush acc
                         (helpLine gw
                           (concat (concat "run `axiom explain " code) "` for a full explanation")))
@@ -1358,22 +1360,19 @@
     (let mut count 0)
     {
       (for i in 0..(diagHelpCount d)
-        {
-          (let span (diagHelpFixSpan d i))
-          (if (!= span 0)
-            {
-              (if (> count 0)
-                (vecPush parts ","))
-              (vecPush parts "{\"file\":\"")
-              (vecPush parts (jsonEsc file))
-              (vecPush parts "\",\"span\":")
-              (vecPush parts (jsonSpan src ix span))
-              (vecPush parts ",\"replacement\":\"")
-              (vecPush parts (jsonEsc (diagHelpFixText d i)))
-              (vecPush parts "\"}")
-              (set count (+ count 1))
-            })
-        })
+        (if (let (Some fix) (diagHelpFix d i))
+          {
+            (if (> count 0)
+              (vecPush parts ","))
+            (vecPush parts "{\"file\":\"")
+            (vecPush parts (jsonEsc file))
+            (vecPush parts "\",\"span\":")
+            (vecPush parts (jsonSpan src ix fix.span))
+            (vecPush parts ",\"replacement\":\"")
+            (vecPush parts (jsonEsc fix.text))
+            (vecPush parts "\"}")
+            (set count (+ count 1))
+          }))
       (if (== count 0)
         ""
         (concat (concat ",\"fixes\":[" (catStrs parts)) "]"))
@@ -1516,9 +1515,9 @@
               ; one exists, so JSON carries `"label"` only there too -
               ; a consumer distinguishes "no label" from "empty label".
               (concat (concat "\"span\":" (jsonSpan src ix span))
-                (if (== (as (diagLabel d) Int) 0)
-                  ","
-                  (concat (concat ",\"label\":\"" (jsonEsc (diagLabel d))) "\",")))))
+                (if (let (Some label) (diagLabel d))
+                  (concat (concat ",\"label\":\"" (jsonEsc label)) "\",")
+                  ","))))
           (concat (concat "\"related\":" (jsonRelatedArray d src ix units ixs)) ","))
         (concat (concat "\"notes\":" (jsonNoteArray d)) ","))
       (concat

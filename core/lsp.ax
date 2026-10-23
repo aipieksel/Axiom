@@ -350,24 +350,12 @@
       ; declared, and `AX2004`'s carries the whole reason a construct
       ; was removed. The message's FIRST line is unchanged by this,
       ; which is what tests/lsp/expected-diagnostics.txt pins.
-      ; A DIAGNOSTIC WITH NO LABEL CARRIES 0, NOT "" - the trap
-      ; render.ax's own header records, where walking one read
-      ; `strLen` off a null handle and took the renderer down with
-      ; SIGSEGV. `renderDiagJson` tests for it at the same read; so
-      ; does this. Found again here the same way, by the gate: 070 and
-      ; 080 both carried a diagnostic with no label, and the server
-      ; exited -11 on both.
-      {
-        (let lab
-          (if (== (as (diagLabel d) Int) 0)
-            ""
-            (diagLabel d)))
+      (if (let (Some lab) (diagLabel d))
         (if (! (== (strLen lab) 0))
           {
             (vecPush parts "\n\n")
             (vecPush parts lab)
-          })
-      }
+          }))
       (for i in 0..(diagNoteCount d)
         {
           (vecPush parts "\n\nnote: ")
@@ -12611,19 +12599,17 @@
     (let n (diagHelpCount d))
     {
       (for i in 0..n
-        {
-          (let fsp (diagHelpFixSpan d i))
-          (if (&& (!= fsp 0) (|| (lspSpanMeets (diagSpan d) want) (lspSpanMeets fsp want)))
-            (jsonArrPush out (lspQuickfixJson d i fsp src uri ix)))
-        })
+        (if (let (Some fix) (diagHelpFix d i))
+          (if (|| (lspSpanMeets (diagSpan d) want) (lspSpanMeets fix.span want))
+            (jsonArrPush out (lspQuickfixJson d i fix src uri ix)))))
       0
     }
   })
 
 ; `isPreferred` because a fix the compiler wrote is the fix; an editor
 ; binds its "apply preferred fix" key to exactly this flag.
-(pub :: lspQuickfixJson (-> diag::Diag Int Int String String Ints Int))
-(pub fn (lspQuickfixJson d i fsp src uri ix)
+(pub :: lspQuickfixJson (-> diag::Diag Int DFix String String Ints Int))
+(pub fn (lspQuickfixJson d i fix src uri ix)
   (jsonObjPut
     (jsonObjPut
       (jsonObjPut
@@ -12631,7 +12617,7 @@
           (jsonStr "quickfix"))
         "diagnostics" (jsonArrPush jsonArr (lspDiagJson d src ix uri)))
       "isPreferred" (jsonBool 1))
-    "edit" (lspEditJson uri (lspRangeIx src ix fsp) (diagHelpFixText d i))))
+    "edit" (lspEditJson uri (lspRangeIx src ix fix.span) fix.text)))
 
 ; A `WorkspaceEdit` of one `TextEdit` in one document.
 (pub :: lspEditJson (-> String Int String Int))

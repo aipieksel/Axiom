@@ -59,7 +59,7 @@
 ;   slug   — Str, the wording-independent kebab-case identifier
 ;   span   — Span of the primary location, 0 when there is none
 ;   msg    — Str, the human message (rendered quoted)
-;   label  — Str, the PRIMARY span's own label, 0 when there is none
+;   label  — the primary span's optional label
 ;   unit   — which source file the spans index (see below)
 ;   secs   — Vec of DLabel, or 0: related locations
 ;   notes  — Vec of Str, or 0
@@ -104,7 +104,7 @@
   (slug : String)
   (span : Int)
   (msg : String)
-  (mut label : String)
+  (mut label : (Option String))
   (mut unit : Int)
   (mut secs : (Option (Vec DLabel)))
   (mut notes : (Option Strings))
@@ -139,14 +139,16 @@
   (msg : String)
   (unit : Int))
 
-; One help. `fixSpan` non-zero makes it MACHINE-APPLICABLE: it names a
-; span and the text to put there, and renders `?LOC:"msg"~>"repl"`
-; rather than a bare `?"msg"` - the whole point of the form being that a
-; tool can apply it without parsing the English.
+; A machine-applicable edit owns its replacement, including an empty
+; replacement for deletion. A help without an edit carries None.
+; The packed span stays numeric; zero is not an applicable location.
+(pub struct DFix
+  (span : Int)
+  (text : String))
+
 (pub struct DHelp
   (msg : String)
-  (mut fixSpan : Int)
-  (fixText : String))
+  (mut fix : (Option DFix)))
 
 ; One expansion frame: the macro's name, the span of its DECLARATION,
 ; and the unit that span indexes. `span` 0 means the frame carries a
@@ -164,7 +166,7 @@
 ; constructor application contributed nothing to the effect row
 ; (`MM-EXEC-9a`); `no-io` and `no-foreign` are unchanged.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: mkDiagBase (-> Int String String Int String String Diag))
+(pub :: mkDiagBase (-> Int String String Int String (Option String) Diag))
 (pub fn (mkDiagBase sev code slug span msg label)
   (Diag
     :sev sev
@@ -208,7 +210,7 @@
   d.msg)
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagLabel (-> Diag String))
+(pub :: diagLabel (-> Diag (Option String)))
 (pub fn (diagLabel d)
   d.label)
 
@@ -219,11 +221,11 @@
 
 ; Returns the diagnostic, so it wraps a constructor at an emission site
 ; without the site having to name a local.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
+;@axiom:restrict(no-io,no-foreign)
 (pub :: diagSetLabel (-> Diag String Diag))
 (pub fn (diagSetLabel d s)
   {
-    (set d.label s)
+    (set d.label (Some s))
     d
   })
 
@@ -356,21 +358,34 @@
     h.msg
   })
 
+; The packed span's zero value has no source location. A malformed public
+; DFix with that span is also inapplicable, never a span to dereference.
+;@axiom:restrict(no-io,no-alloc,no-foreign)
+(pub :: diagHelpFix (-> Diag Int (Option DFix)))
+(pub fn (diagHelpFix d i)
+  {
+    (let h (vecGet (diagHelpList d) i))
+    (if (let (Some fix) h.fix)
+      (if (== fix.span 0)
+        None
+        h.fix)
+      None)
+  })
+
+; The scalar compatibility query preserves the packed-span boundary.
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: diagHelpFixSpan (-> Diag Int Int))
 (pub fn (diagHelpFixSpan d i)
-  {
-    (let h (vecGet (diagHelpList d) i))
-    h.fixSpan
-  })
+  (if (let (Some fix) (diagHelpFix d i))
+    fix.span
+    0))
 
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: diagHelpFixText (-> Diag Int String))
+;@axiom:restrict(no-io,no-foreign)
+(pub :: diagHelpFixText (-> Diag Int (Option String)))
 (pub fn (diagHelpFixText d i)
-  {
-    (let h (vecGet (diagHelpList d) i))
-    h.fixText
-  })
+  (if (let (Some fix) (diagHelpFix d i))
+    (Some fix.text)
+    None))
 
 ;@axiom:restrict(no-io,no-alloc,no-foreign)
 (pub :: diagTraceCount (-> Diag Int))
@@ -451,15 +466,24 @@
 
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: diagAddHelp (-> Diag String Diag))
-;@axiom:effect(unsafe)
 (pub fn (diagAddHelp d s)
-  (diagAddFixHelp d s 0 (as 0 String)))
+  (diagAddHelpEntry d (DHelp :msg s :fix None)))
 
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: diagAddFixHelp (-> Diag String Int String Diag))
 (pub fn (diagAddFixHelp d msg fixSpan fixText)
+  (diagAddHelpEntry d
+    (DHelp
+      :msg msg
+      :fix
+        (if (== fixSpan 0)
+          None
+          (Some (DFix :span fixSpan :text fixText))))))
+
+;@axiom:restrict(no-io,no-foreign)
+(pub :: diagAddHelpEntry (-> Diag DHelp Diag))
+(pub fn (diagAddHelpEntry d h)
   {
-    (let h (DHelp :msg msg :fixSpan fixSpan :fixText fixText))
     (if (let (Some v) d.helps)
       (vecPush v h)
       {
@@ -488,7 +512,7 @@
   (if (let (Some hs) d.helps)
     {
       (for h in hs
-        (set h.fixSpan 0))
+        (set h.fix None))
       0
     }
     0))
@@ -549,18 +573,11 @@
 (pub :: mkDiagFix2 (-> Int String String Int String Int a b Int c d Diag))
 ;@axiom:effect(unsafe)
 (pub fn (mkDiagFix2 sev code slug span msg relSpan relMsg help fixSpan fixText help2)
-  ; The optional strings arrive as TYPE VARIABLES - `0` means
-  ; absent, so the position genuinely carries both, and the cast
-  ; at consumption is the boundary marker MM-ALLOC-20's
-  ; convention asks for.
-  ; The absent label is the 0 sentinel, spelled with the cast the
-  ; optional-string convention uses (MM-ALLOC-20). It is a null
-  ; `String` - a forging cast (R-B6) - and it is made here, beside the
-  ; convention's other casts, rather than in `mkDiagBase`: a header
-  ; whose only work is one construction has no unsafe operation of its
-  ; own to declare.
+  ; Legacy producer arguments still use zero for absent optional text.
+  ; The casts are confined to this adapter; the record owns typed Options.
+  ; Migrating those producer APIs is separate from the stored representation.
   {
-    (let d (mkDiagBase sev code slug span msg (as 0 String)))
+    (let d (mkDiagBase sev code slug span msg None))
     {
       (if (! (== relSpan 0))
         (diagAddSecondary d relSpan (as relMsg String)))
@@ -1130,8 +1147,8 @@
       ; AXDL line - `#` is this compiler's field, added so the human
       ; renderer's label has a machine-readable counterpart to be
       ; checked against rather than only a golden.
-      (if (! (== (as (diagLabel d) Int) 0))
-        (pushQ parts " #" (diagLabel d)))
+      (if (let (Some label) (diagLabel d))
+        (pushQ parts " #" label))
       ; Then, in stage0's emission order: related spans, notes, helps,
       ; expansion frames. Each repeats.
       ; A related location has three spellings, and which one it takes
@@ -1176,19 +1193,16 @@
       (for i in 0..(diagNoteCount d)
         (pushQ parts " !" (diagNote d i)))
       (for i in 0..(diagHelpCount d)
-        (if (== (diagHelpFixSpan d i) 0)
-          ; `?LOC:"msg"~>"repl"` when the help carries a span and a
-          ; replacement, plain `?"msg"` otherwise - the two shapes
-          ; stage0's renderer chooses between.
-          (pushQ parts " ?" (diagHelpMsg d i))
+        (if (let (Some fix) (diagHelpFix d i))
           {
             (vecPush parts " ?")
-            (vecPush parts (fmtSpanIx src ix (diagHelpFixSpan d i)))
+            (vecPush parts (fmtSpanIx src ix fix.span))
             (vecPush parts ":")
             (vecPush parts (quoteStr (diagHelpMsg d i)))
             (vecPush parts "~>")
-            (vecPush parts (quoteStr (diagHelpFixText d i)))
-          }))
+            (vecPush parts (quoteStr fix.text))
+          }
+          (pushQ parts " ?" (diagHelpMsg d i))))
       ; A frame's LOC carries its FILE, unlike every other field on
       ; the line: the span indexes the macro's own unit, not the
       ; diagnostic's. Span 0 - or no unit table to resolve against,
