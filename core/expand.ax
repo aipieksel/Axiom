@@ -741,48 +741,47 @@
         1
         0))))
 
-(pub :: expFindMacro (-> MEnv String ASTNode))
+(pub :: expFindMacro (-> MEnv String (Option ASTNode)))
 (pub fn (expFindMacro env name)
   {
     (let site (expSiteName env))
     (let qm (expModOf name))
     (if (!= (as qm Int) 0)
       (expFindMacroQual (expMacrosVec env) (bareOf name) qm site (- (vecLen (expMacrosVec env)) 1))
-      {
-        (let mac (expFindMacroIn (expMacrosVec env) name site (- (vecLen (expMacrosVec env)) 1)))
-        (if (nodeSame mac nilNode)
-          nilNode
-          ; MAC-HYG-8's third hole: an imported macro used to
-          ; outrank an entry-file FUNCTION of the same name at
-          ; every call site - silently when the arities agreed.
-          ; Function resolution is local-first, then the entry
-          ; file's bare declarations (`findFnEnt`), so a bare
-          ; invocation whose name a bare `fn`/`::` declares is the
-          ; function's - unless the macro belongs to the site's
-          ; own module, whose local names win there for the same
-          ; reason. `isMacroName` in the checker applies the
-          ; identical veto; the two have to agree.
+      (match (expFindMacroIn (expMacrosVec env) name site (- (vecLen (expMacrosVec env)) 1))
+        ((None) None)
+        ; MAC-HYG-8's third hole: an imported macro used to
+        ; outrank an entry-file FUNCTION of the same name at
+        ; every call site - silently when the arities agreed.
+        ; Function resolution is local-first, then the entry
+        ; file's bare declarations (`findFnEnt`), so a bare
+        ; invocation whose name a bare `fn`/`::` declares is the
+        ; function's - unless the macro belongs to the site's
+        ; own module, whose local names win there for the same
+        ; reason. `isMacroName` in the checker applies the
+        ; identical veto; the two have to agree.
+        ((Some mac)
           (if (&& (!= (nodeModule mac) 0)
                 (&& (== (expSameMod (nodeModuleName mac) site) 0)
                   (== (expDeclNamed (expDeclsVec env) name 0) 1)))
-            nilNode
-            mac))
-      })
+            None
+            (Some mac))
+        )))
   })
 
 ; The backward walk for a QUALIFIED reference: name and module both,
 ; visible when exported or when the invocation site IS that module.
-(pub :: expFindMacroQual (-> (Vec ASTNode) String String String Int ASTNode))
+(pub :: expFindMacroQual (-> (Vec ASTNode) String String String Int (Option ASTNode)))
 (pub fn (expFindMacroQual ms bare qm site i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let m (vecGet ms i))
       (if (&& (strEq (nodeAName m) bare)
             (&& (!= (nodeModule m) 0)
               (&& (strEq (nodeModuleName m) qm)
                 (|| (== (nodeVis m) 1) (&& (!= (as site Int) 0) (strEq site qm))))))
-        m
+        (Some m)
         (expFindMacroQual ms bare qm site (- i 1)))
     }))
 
@@ -800,16 +799,16 @@
 ; public macro whose template invokes a private one of its own module
 ; still expands from outside. That is the same definition-site rule
 ; `expQualify` applies to a template's free identifiers.
-(pub :: expFindMacroIn (-> (Vec ASTNode) String String Int ASTNode))
+(pub :: expFindMacroIn (-> (Vec ASTNode) String String Int (Option ASTNode)))
 (pub fn (expFindMacroIn ms name site i)
   (if (< i 0)
-    nilNode
+    None
     {
       (let m (vecGet ms i))
       (if (&& (strEq (nodeAName m) name)
             (|| (== (nodeVis m) 1)
               (|| (== (nodeModule m) 0) (&& (!= (as site Int) 0) (strEq (nodeModuleName m) site)))))
-        m
+        (Some m)
         (expFindMacroIn ms name site (- i 1)))
     }))
 
@@ -4799,13 +4798,14 @@
             "`asm` needs at least one arm, such as `(asm (aarch64 \"nop\"))`")
           (mkEInt 0)
         }
-        {
-          (let mac (expFindMacro env (nodeAName e)))
-          (if (nodeSame mac nilNode)
+        (match (expFindMacro env (nodeAName e))
+          ((None)
             (if (expStructNeedsLabels e env bs)
               (expNamedBad env (nodeSpan e)
                 "a struct with fields is constructed with labels; use a lambda or named field holes to make a callable constructor")
               e)
+          )
+          ((Some mac)
             (if (!= (nodeFieldNamesWord mac) 0)
               (if (expMacHasExprRule mac)
                 (expandRuleApp mac (expSrcSpelling (nodeAName e)) vecNew env bs (nodeSpan e))
@@ -4827,8 +4827,8 @@
                     (nodeSpan e))
                   (mkEInt 0)
                 }
-                (expandInstantiate mac vecNew env bs (nodeSpan e)))))
-        }))))
+                (expandInstantiate mac vecNew env bs (nodeSpan e))))
+          ))))))
 
 ; ------------------------------------------------------------------
 ; An application whose head names a macro.
@@ -4882,12 +4882,9 @@
             (if (&& (strEq (nodeAName head) "!") (== (spineArgs e 0) 1))
               (nodeBuildEIf (expandExpr (nodeBChild e) env bs) (mkEVarAt "false" (nodeSpan e))
                 (mkEVarAt "true" (nodeSpan e)) (nodeSpan e))
-              {
-                (let mac (expFindMacro env (nodeAName head)))
-                (if (nodeSame mac nilNode)
-                  (expandAppOrHole e env bs)
-                  (expandMacroApp e head mac env bs))
-              }))))
+              (match (expFindMacro env (nodeAName head))
+                ((None) (expandAppOrHole e env bs))
+                ((Some mac) (expandMacroApp e head mac env bs)))))))
     }))
 
 ; ------------------------------------------------------------------
@@ -9382,14 +9379,15 @@
       (let _s (set env.site (nodeModule d)))
       {
         (let r
-          {
-            (let mac (expFindMacro env (nodeAName d)))
-            (if (nodeSame mac nilNode)
+          (match (expFindMacro env (nodeAName d))
+            ((None)
               (expDeclCallErr env d
                 (concat (concat "`" (expSrcSpelling (nodeAName d)))
                   "` is neither a declaration keyword nor a visible macro")
                 "a top-level form is a declaration - fn, ::, data, struct, type, effect, import, macro - or an invocation of a declaration macro"
                 "this used to be a bare `syntax error` that also stopped the parse at the first unknown head, hiding every later diagnostic in the file")
+            )
+            ((Some mac)
               (if (|| (== (nodeFieldNamesWord mac) 0) (! (expMacHasDeclRule mac)))
                 (expDeclCallErr env d
                   (concat (concat "macro `" (expSrcSpelling (nodeAName d)))
@@ -9423,8 +9421,8 @@
                       (writeNodeWord d 3 1)
                       0
                     })
-                }))
-          })
+                })
+            )))
         {
           (set env.site prevSite)
           r
@@ -11795,7 +11793,7 @@
   (if (!= (nodeTag head) TAG_E_VAR)
     false
     (if (|| (&& (== (expBound bs (nodeAName head)) 1) (== (nodeDefScope head) 0))
-          (! (nodeSame (expFindMacro env (nodeAName head)) nilNode)))
+          (isSome (expFindMacro env (nodeAName head))))
       false
       (match (expNamedStructDecl env head)
         ((ExpStructFound decl) (> (vecLen (nodeBChildren decl)) 0))
