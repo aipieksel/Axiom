@@ -3110,7 +3110,7 @@
 ; alone read `--target=linux-x86_64` as an input filename and answered
 ; `cannot read input`.
 ; How many SEPARATE arguments this flag consumes after itself: 1 for a
-; value flag, 0 for a boolean, -1 when the name is not a flag at all.
+; value flag, 0 for a boolean, None when the name is not a flag at all.
 ;
 ; Kept as a table rather than inferred: there is no way to tell a
 ; boolean from a value-taking flag by looking at the flag. A scan that
@@ -3121,11 +3121,11 @@
 ;
 ; as the VALUE of `--emit-llvm` and find no positional after it.
 ;
-; The -1 arm makes an unrecognised flag an ERROR rather than something
+; The None arm makes an unrecognised flag an ERROR rather than something
 ; silently stepped over. Skipping is indistinguishable from accepting:
 ; `axiom check --bogus f.ax` would print OK and exit 0, and a mistyped
 ; `--diagnostic-formt=json` would quietly produce human output.
-(pub :: flagArity (-> String Int))
+(pub :: flagArity (-> String (Option Int)))
 (pub fn (flagArity a)
   (if (|| (strEq a "--input")
         (|| (strEq a "--output")
@@ -3141,7 +3141,7 @@
                             (|| (strEq a "--jobs")
                               (|| (strEq a "--diagnostic-format")
                                 (|| (strEq a "--out") (strEq a "--emit")))))))))))))))
-    1
+    (Some 1)
     (if (|| (|| (strEq a "--obfuscate") (strEq a "--alloc-poison"))
           (|| (strEq a "--emit-llvm")
             (|| (strEq a "--emit-staticlib")
@@ -3157,8 +3157,8 @@
                             (|| (strEq a "--version")
                               (|| (strEq a "-V")
                                 (|| (strEq a "--no-open") (strEq a "--missing"))))))))))))))
-      0
-      (- 0 1))))
+      (Some 0)
+      None)))
 
 ; `--name=value` split into its two halves.
 (pub :: flagNamePart (-> String String))
@@ -3171,11 +3171,12 @@
 (pub fn (flagHasValuePart a)
   (isSome (strFindByte a 61 0)))
 
-(pub :: flagValuePart (-> String String))
+; No equals sign is None; an equals sign with no suffix is Some "".
+(pub :: flagValuePart (-> String (Option String)))
 (pub fn (flagValuePart a)
   (if (let (Some e) (strFindByte a 61 0))
-    (strSlice a (+ e 1) (- (strLen a) (+ e 1)))
-    ""))
+    (Some (strSlice a (+ e 1) (- (strLen a) (+ e 1))))
+    None))
 
 ; Is this argument written as a flag at all? A bare `-` is not: it names
 ; standard input by convention, and refusing it here would be a worse
@@ -3210,9 +3211,15 @@
           ; this point means every flag in argv is in the table.
           (if (flagHasValuePart a)
             (positionalIndex (+ from 1))
-            (if (== (flagArity a) 1)
-              (positionalIndex (+ from 2))
-              (positionalIndex (+ from 1))))
+            (match (flagArity a)
+              ((None) (positionalIndex (+ from 1)))
+              ((Some arity)
+                (positionalIndex
+                  (+ from
+                    (if (== arity 1)
+                      2
+                      1)))
+              )))
           from))
     }))
 
@@ -3510,12 +3517,16 @@
             (let name (flagNamePart a))
             (if (strEq name want)
               true
-              (if (&& (== (flagArity name) 1)
-                    (if (flagHasValuePart a)
-                      false
-                      true))
-                (hasFlagAnywhereFrom cmd want (+ i 2) endOpts)
-                (hasFlagAnywhereFrom cmd want (+ i 1) endOpts)))
+              (match (flagArity name)
+                ((None) (hasFlagAnywhereFrom cmd want (+ i 1) endOpts))
+                ((Some arity)
+                  (hasFlagAnywhereFrom cmd want
+                    (+ i
+                      (if (&& (== arity 1) (! (flagHasValuePart a)))
+                        2
+                        1))
+                    endOpts)
+                )))
           }))
     }))
 
@@ -3562,32 +3573,33 @@
               endOpts))
           {
             (let name (flagNamePart a))
-            {
-              (let ar (flagArity name))
-              (if (< ar 0)
-                (usageError (concat "error: unrecognised flag `" (concat name "`\n")))
-                (if (&& (== ar 0) (flagHasValuePart a))
-                  (usageError
-                    (concat (concat "error: `" (concat name "` takes no value, but `"))
-                      (concat (flagValuePart a) "` was given\n")))
-                  (if (&& (== ar 1)
-                        (if (flagHasValuePart a)
-                          false
-                          true))
-                    (if (>= (+ i 1) sysArgc)
+            (match (flagArity name)
+              ((None) (usageError (concat "error: unrecognised flag `" (concat name "`\n"))))
+              ((Some arity)
+                (match (flagValuePart a)
+                  ((Some value)
+                    (if (== arity 0)
                       (usageError
-                        (concat "error: a value is required for `"
-                          (concat name "` but none was given\n")))
+                        (concat (concat "error: `" (concat name "` takes no value, but `"))
+                          (concat value "` was given\n")))
                       {
-                        (checkFlagValue name (sysArg (+ i 1)))
-                        (checkArgsFrom cmd (+ i 2) endOpts)
+                        (checkFlagValue name value)
+                        (checkArgsFrom cmd (+ i 1) endOpts)
                       })
-                    {
-                      (if (flagHasValuePart a)
-                        (checkFlagValue name (flagValuePart a)))
-                      (checkArgsFrom cmd (+ i 1) endOpts)
-                    })))
-            }
+                  )
+                  ((None)
+                    (if (== arity 1)
+                      (if (>= (+ i 1) sysArgc)
+                        (usageError
+                          (concat "error: a value is required for `"
+                            (concat name "` but none was given\n")))
+                        {
+                          (checkFlagValue name (sysArg (+ i 1)))
+                          (checkArgsFrom cmd (+ i 2) endOpts)
+                        })
+                      (checkArgsFrom cmd (+ i 1) endOpts))
+                  ))
+              ))
           }))
     }))
 

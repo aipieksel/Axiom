@@ -763,8 +763,8 @@ done
 # multi-line body into its neighbours and read nothing of a one-line
 # one (measured while writing this: 27 words against 12). `flagArity`
 # answers two questions and only the first is mirrored, so its range
-# ends at the `1` that arm answers with - and that cut keeps the `(if`
-# wrapper of the `(if COND 1 ...)` shape, which `valueFlag` never had:
+# ends at the `(Some 1)` that arm answers with - and that cut keeps the `(if`
+# wrapper of the `(if COND (Some 1) ...)` shape, which `valueFlag` never had:
 # the comparison strips one leading `(if` from the driver side, which
 # is the whole of the normalisation, so a reordering or a renamed flag
 # still fails it.
@@ -823,7 +823,7 @@ body = t[j + 1:]
 assert body.endswith(")"), body[-40:]
 # A split extraction ends mid-definition at the cut, so its last
 # character is the cut's own close paren, not the function's to drop:
-# `flagArity`'s range ends at the `1` that arm answers with, keeping
+# `flagArity`'s range ends at the `(Some 1)` that arm answers with, keeping
 # the condition's final `)`. A whole-definition extraction ends at the
 # function, whose final close is the function's own.
 if endre:
@@ -836,7 +836,7 @@ PY
 # Extraction errors must fail the check rather than comparing two empty
 # command substitutions, or counting an unreadable ablation as a mismatch.
 if ! drv_chain="$(argv_chain "$repo_root/core/driver.ax" flagArity '
-    1')" || ! code_chain="$(argv_chain "$repo_root/core/codegen.ax" valueFlag)"; then
+    (Some 1)')" || ! code_chain="$(argv_chain "$repo_root/core/codegen.ax" valueFlag)"; then
   bad "could not extract both value-flag chains"
 else
   # flagArity has an outer (if wrapper; valueFlag carries its condition.
@@ -862,7 +862,7 @@ fi
 if cp "$repo_root/core/driver.ax" "$work/driver-abl.ax" \
     && sed 's/"--heap-ceiling"/"--no-such-flag"/' "$work/driver-abl.ax" > "$work/driver-abl2.ax" \
     && ablated_chain="$(argv_chain "$work/driver-abl2.ax" flagArity '
-    1')" \
+    (Some 1)')" \
     && code_chain="$(argv_chain "$repo_root/core/codegen.ax" valueFlag)" \
     && [[ "${ablated_chain#(if}" != "$code_chain" ]]; then
   ok "ablation: a value flag renamed on the driver's side is refused"
