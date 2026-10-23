@@ -1,0 +1,139 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import diag)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: parse (-> String Nodes))
+(fn (parse source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) __indexTrap)
+    ((ParseSuccess nodes _) nodes)))
+
+(:: diagnostic (-> String String Int Diag))
+(fn (diagnostic code message span)
+  (mkDiagBase 1 code "fixture" span message None))
+
+(:: at (-> String String Int))
+(fn (at source needle)
+  (match (strFind source needle 0)
+    ((None) __indexTrap)
+    ((Some i) i)))
+
+(:: request (-> String String ()))
+;@axiom:effect(io)
+(fn (request title source)
+  {
+    (println "CASE {title}")
+    (let workspace (lspWorkspaceNew vecNew vecNew vecNew))
+    (let uri "file:///tmp/axiom-assist-fixtures/Main.ax")
+    (let range
+      (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+        (lspPos source (strLen source))))
+    (let params
+      (jsonObjPut (jsonObjPut jsonObj "range" range) "context"
+        (jsonObjPut jsonObj "diagnostics" jsonArr)))
+    (println (jsonWrite (lspInlayHints workspace source uri params)))
+    (println (jsonWrite (lspSemanticTokens source)))
+    (println (jsonWrite (lspCodeAction workspace source uri params)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (request "signed" "(:: plus (-> Int Int Int))\n(fn (plus x y) (+ x y))\n(fn (use) (plus 1 2))")
+    (request "unsigned" "(fn (value x) (+ x 1))\n(fn (use) (value 2))")
+    (request "unresolved" "(fn (value) missing)")
+    (println "CASE imports")
+    (let uri "file:///tmp/axiom-assist-fixtures/Main.ax")
+    (println (jsonWrite (lspImportEdit "" uri (lspLineIndex "") vecNew "Peer" "value")))
+    (let whole "(import Peer)")
+    (println
+      (jsonWrite (lspImportEdit whole uri (lspLineIndex whole) (parse whole) "Peer" "value")))
+    (let listed "(import Other (x))\n(fn (use) x)")
+    (println
+      (jsonWrite (lspImportEdit listed uri (lspLineIndex listed) (parse listed) "Peer" "value")))
+    (let peer ";;; Peer documentation\n(pub fn (value) 1)")
+    (let uris (vecPush (vecPush vecNew uri) "file:///tmp/axiom-assist-fixtures/Peer.ax"))
+    (let texts (vecPush (vecPush vecNew whole) peer))
+    (let workspace
+      (lspWorkspaceNew uris texts (vecPush (vecPush (vecPush (vecPush vecNew 1) 1) 1) 1)))
+    (println
+      (jsonWrite
+        (lspModuleHover workspace "/tmp/axiom-assist-fixtures/Main.ax" whole (parse whole) "Peer"
+          jsonObj)))
+    (println
+      (jsonWrite
+        (lspModuleHover workspace "/tmp/axiom-assist-fixtures/Main.ax" whole (parse whole)
+          "Missing" jsonObj)))
+    (println "CASE lint")
+    (let lintSource "(fn (value) { (let unused 7) 1 })")
+    (let lintDecls (parse lintSource))
+    (let lintOut jsonArr)
+    (let want (mkSpan 0 (strLen lintSource)))
+    (lspLintAssists lintOut lintSource uri (lspLineIndex lintSource) lintDecls
+      (lspLintRecs lintSource lintDecls) want)
+    (println (jsonWrite lintOut))
+    (let absentLint jsonArr)
+    (lspNolintOffer absentLint lintSource uri (lspLineIndex lintSource) lintDecls want
+      "lint-unused-let" "missing" want "unused" vecNew)
+    (println (jsonWrite absentLint))
+    (println "CASE effect")
+    (let effectSource "(effect Stop (stop :: (-> Int Int)))")
+    (let effectDecls (parse effectSource))
+    (let effectWant (mkSpan 0 (strLen effectSource)))
+    (let diagnostics (vecPush vecNew (diagnostic "AX3053" "unhandled effect `Stop`" effectWant)))
+    (let effectOut jsonArr)
+    (lspUnhandledAssists effectOut diagnostics effectSource uri (lspLineIndex effectSource)
+      effectWant effectDecls)
+    (println (jsonWrite effectOut))
+    (let absentEffect jsonArr)
+    (lspUnhandledAssists absentEffect diagnostics effectSource uri (lspLineIndex effectSource)
+      effectWant vecNew)
+    (println (jsonWrite absentEffect))
+    (println "CASE public")
+    (let privateSource "(fn (value) 1)")
+    (let privateDecl (vecGet (parse privateSource) 0))
+    (writeNodeText privateDecl 8 "Peer")
+    (let units
+      (vecPush
+        (vecPush vecNew
+          (CUnit2
+            :file "/tmp/axiom-assist-fixtures/Main.ax"
+            :src whole
+            :name None
+            :imports vecNew
+            :library false))
+        (CUnit2
+          :file "/tmp/axiom-assist-fixtures/Peer.ax"
+          :src privateSource
+          :name (Some "Peer")
+          :imports vecNew
+          :library false)))
+    (let publicOut jsonArr)
+    (lspPublicAssist publicOut (diagnostic "AX3023" "`Peer` does not export `value`" (mkSpan 0 1))
+      whole uri (lspLineIndex whole) (parse whole) (vecPush vecNew privateDecl) units vecNew)
+    (println (jsonWrite publicOut))
+    (let absentPublic jsonArr)
+    (lspPublicAssist absentPublic
+      (diagnostic "AX3023" "`Absent` does not export `value`" (mkSpan 0 1)) whole uri
+      (lspLineIndex whole) (parse whole) (vecPush vecNew privateDecl) units vecNew)
+    (println (jsonWrite absentPublic))
+    (println "CASE extract")
+    (let extractSource "(fn (value) (+ 1 2))")
+    (let ws (at extractSource "(+ 1 2)"))
+    (let selected (mkSpan ws (+ ws 7)))
+    (let extractOut jsonArr)
+    (let edit
+      (lspExtractAction extractSource uri (parse extractSource) (lspLineIndex extractSource)
+        selected))
+    (println (jsonWrite edit))
+    (println
+      (jsonWrite (lspExtractAction extractSource uri vecNew (lspLineIndex extractSource) selected)))
+    0
+  })

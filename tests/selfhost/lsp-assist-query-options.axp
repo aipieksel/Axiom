@@ -1,0 +1,240 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found expected)
+  (match found
+    ((None) false)
+    ((Some node) (nodeSame node expected))))
+
+(:: index (-> (Option Int) Int Bool))
+(fn (index found expected)
+  (match found
+    ((None) false)
+    ((Some i) (== i expected))))
+
+(:: fnNode (-> String Int ASTNode))
+(fn (fnNode name span)
+  (mkDFnAt name vecNew (mkEInt 1) span))
+
+(:: stampModule (-> ASTNode String ASTNode))
+(fn (stampModule node module)
+  {
+    (writeNodeText node 8 module)
+    node
+  })
+
+(:: parse (-> String Nodes))
+(fn (parse source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) __indexTrap)
+    ((ParseSuccess nodes _) nodes)))
+
+(:: at (-> String String Int))
+(fn (at source needle)
+  (match (strFind source needle 0)
+    ((None) __indexTrap)
+    ((Some i) i)))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: retire (-> (Vec (Option (Vec LspNamedNode))) ()))
+(fn (retire nodes)
+  {
+    (let found (lspViewIdxFind nodes "value"))
+    (isSome found)
+    ()
+  })
+
+(:: escaped (Option ASTNode))
+(fn (escaped)
+  {
+    (let nodes lspViewIdxNew)
+    (lspViewIdxAdd nodes "value" (fnNode (strDup "escaped") (mkSpan 0 7)))
+    (lspViewIdxFind nodes "value")
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let nodes lspViewIdxNew)
+    (say 1 (isNone (lspViewIdxFind nodes "missing")))
+    (say 2 (isNone (vecGet nodes (lspViewIdxSlot "missing"))))
+    (say 3 (== (lspViewIdxSlot "ab") (lspViewIdxSlot "bA")))
+    (lspViewIdxAdd nodes "bA" (fnNode "collision" (mkSpan 0 9)))
+    (say 4 (isNone (lspViewIdxFind nodes "ab")))
+    (let imported (stampModule (fnNode "Peer$value" (mkSpan 0 5)) "Peer"))
+    (lspViewIdxAdd nodes "value" imported)
+    (say 5 (same (lspViewIdxFind nodes "value") imported))
+    (let local (fnNode "value" 0))
+    (lspViewIdxAdd nodes "value" local)
+    (say 6 (same (lspViewIdxFind nodes "value") local))
+    (let remoteLast (stampModule (fnNode "Other$value" (mkSpan 8 13)) "Other"))
+    (lspViewIdxAdd nodes "value" remoteLast)
+    (say 7 (same (lspViewIdxFind nodes "value") local))
+    (let localLast (fnNode "value" (mkSpan 16 21)))
+    (lspViewIdxAdd nodes "value" localLast)
+    (say 8 (same (lspViewIdxFind nodes "value") localLast))
+    (let remotes lspViewIdxNew)
+    (lspViewIdxAdd remotes "value" imported)
+    (lspViewIdxAdd remotes "value" remoteLast)
+    (say 9 (same (lspViewIdxFind remotes "value") remoteLast))
+    (say 10 (isNone (lspViewIdxFind nodes "absent")))
+    (let emptyModule (stampModule (fnNode "value" (mkSpan 24 29)) ""))
+    (lspViewIdxAdd remotes "value" emptyModule)
+    (say 11 (same (lspViewIdxFind remotes "value") emptyModule))
+    (lspViewIdxAdd nodes "" local)
+    (say 12 (same (lspViewIdxFind nodes "") local))
+    (let poison mkTErr)
+    (let poisonSig (setNodeTyChild (mkDSigAt "poison" vecNew (mkSpan 0 6)) poison))
+    (lspViewIdxAdd nodes "poison" poisonSig)
+    (say 13 (same (lspViewIdxFind nodes "poison") poisonSig))
+    (let emptySlot (lspViewIdxSlot "empty"))
+    (vecSet nodes emptySlot (Some (:: vecNew (Vec LspNamedNode))))
+    (say 14
+      (&& (isNone (lspViewIdxFind nodes "empty"))
+        (match (vecGet nodes emptySlot)
+          ((None) false)
+          ((Some bucket) (== (vecLen bucket) 0)))))
+    (let before (count localLast))
+    (retire nodes)
+    (say 15 (== (count localLast) before))
+    (let held (lspViewIdxFind nodes "value"))
+    (say 16 (== (count localLast) (+ before 1)))
+    (let child escaped)
+    (for i in 0..16
+      (strDup "owning indexed result"))
+    (say 17
+      (match child
+        ((None) false)
+        ((Some node) (strEq (nodeAName node) "escaped"))))
+    (say 18 (isNone (lspLintOwnerDecl vecNew "owner" 0)))
+    (let first (fnNode "owner" (mkSpan 0 5)))
+    (let last (fnNode "owner" (mkSpan 8 13)))
+    (let pair (vecPush (vecPush vecNew first) last))
+    (say 19 (same (lspLintOwnerDecl pair "owner" 0) first))
+    (say 20
+      (same (lspLintOwnerDecl (vecPush (vecPush vecNew (fnNode "owner" 0)) first) "owner" 0) first))
+    (say 21 (same (lspLintOwnerDecl (vecPush vecNew poisonSig) "poison" 0) poisonSig))
+    (say 22 (same (lspLintOwnerDecl pair "owner" 1) last))
+    (say 23 (isNone (lspFindEffect vecNew "Stop" -1)))
+    (let effectFirst (nodeBuildDEffect "Stop" vecNew vecNew (mkSpan 0 4)))
+    (let effectLast (nodeBuildDEffect "Stop" vecNew vecNew (mkSpan 8 12)))
+    (say 24
+      (same (lspFindEffect (vecPush (vecPush vecNew effectFirst) effectLast) "Stop" 1) effectLast))
+    (say 25
+      (same
+        (lspFindEffect
+          (vecPush (vecPush vecNew effectFirst) (nodeBuildDEffect "Stop" vecNew vecNew 0)) "Stop" 1)
+        effectFirst))
+    (say 26
+      (same
+        (lspFindEffect (vecPush (vecPush vecNew effectFirst) (fnNode "Stop" (mkSpan 8 12))) "Stop"
+          1)
+        effectFirst))
+    (say 27 (isNone (lspFixFindImport vecNew "Peer" -1)))
+    (let importFirst (mkDImportAt "Peer" vecNew (mkSpan 0 4)))
+    (let importLast (mkDImportAt "Peer" (vecPush vecNew "value") (mkSpan 8 12)))
+    (say 28 (same (lspFixFindImport (vecPush vecNew importFirst) "Peer" 0) importFirst))
+    (say 29
+      (same (lspFixFindImport (vecPush (vecPush vecNew importFirst) importLast) "Peer" 1)
+        importLast))
+    (say 30
+      (same
+        (lspFixFindImport (vecPush (vecPush vecNew importFirst) (mkDImportAt "Peer" vecNew 0))
+          "Peer" 1)
+        importFirst))
+    (say 31
+      (same
+        (lspFixFindImport (vecPush (vecPush vecNew importFirst) (fnNode "Peer" (mkSpan 8 12)))
+          "Peer" 1)
+        importFirst))
+    (say 32 (isNone (lspFixLastImport vecNew -1)))
+    (say 33
+      (same (lspFixLastImport (vecPush (vecPush vecNew importFirst) importLast) 1) importLast))
+    (say 34
+      (same
+        (lspFixLastImport (vecPush (vecPush vecNew importFirst) (mkDImportAt "Other" vecNew 0)) 1)
+        importFirst))
+    (say 35 (isNone (lspFixDeclIn vecNew "Peer" "value" -1)))
+    (say 36 (same (lspFixDeclIn (vecPush vecNew imported) "Peer" "value" 0) imported))
+    (say 37 (isNone (lspFixDeclIn (vecPush vecNew imported) "Other" "value" 0)))
+    (let importedLast (stampModule (fnNode "Alias$value" (mkSpan 8 13)) "Peer"))
+    (say 38
+      (same (lspFixDeclIn (vecPush (vecPush vecNew imported) importedLast) "Peer" "value" 1)
+        importedLast))
+    (say 39 (isNone (lspFixDeclIn (vecPush vecNew local) "Peer" "value" 0)))
+    (say 40 (same (lspFixDeclIn (vecPush vecNew emptyModule) "" "value" 0) emptyModule))
+    (say 41
+      (same
+        (lspFixDeclIn
+          (vecPush (vecPush vecNew imported) (stampModule (fnNode "Peer$value" 0) "Peer")) "Peer"
+          "value" 1)
+        imported))
+    (say 42 (isNone (lspFixFnDeclIn vecNew 0 20 0)))
+    (say 43 (same (lspFixFnDeclIn pair 0 20 0) first))
+    (say 44 (same (lspFixFnDeclIn (vecPush vecNew first) 0 1 0) first))
+    (say 45 (isNone (lspFixFnDeclIn (vecPush vecNew last) 0 8 0)))
+    (say 46 (isNone (lspFixFnDeclIn (vecPush vecNew effectFirst) 0 20 0)))
+    (let source "(fn (value) (+ 1 2))")
+    (let ws (at source "(+ 1 2)"))
+    (let we (+ ws 7))
+    (say 47 (isNone (lspFixFnFormAt source vecNew ws we)))
+    (say 48 (index (lspFixFnFormAt source (parse source) ws we) 0))
+    (say 49 (isNone (lspFixFnFormAt source (parse source) ws (+ (strLen source) 1))))
+    (say 50 (isNone (lspFixFnDeclIn (vecPush vecNew local) 0 20 0)))
+    (let header "(:: f (-> Int Int))\n(fn (f x) x)")
+    (let declarations (parse header))
+    (let function (vecGet declarations 1))
+    (let signature (vecGet declarations 0))
+    (let absentHints jsonArr)
+    (lspViewHintsHeader absentHints header (lspLineIndex header) function None 0 (strLen header))
+    (say 51 (== (jsonArrLen absentHints) 0))
+    (let emptyHints jsonArr)
+    (lspViewHintsHeader emptyHints header (lspLineIndex header) function
+      (Some (mkDSigAt "f" vecNew (mkSpan 0 1))) 0 (strLen header))
+    (say 52 (== (jsonArrLen emptyHints) 0))
+    (let poisonHints jsonArr)
+    (lspViewHintsHeader poisonHints header (lspLineIndex header) function
+      (Some (setNodeTyChild (mkDSigAt "f" vecNew (mkSpan 0 1)) (mkTArr poison mkIntTy))) 0
+      (strLen header))
+    (say 53 (== (jsonArrLen poisonHints) 1))
+    (let hints jsonArr)
+    (lspViewHintsHeader hints header (lspLineIndex header) function (Some signature) 0
+      (strLen header))
+    (say 54 (== (jsonArrLen hints) 2))
+    (let unit mkUnitTy)
+    (let unitSignature (setNodeTyChild (mkDSigAt "unit" vecNew (mkSpan 0 4)) unit))
+    (lspViewIdxAdd nodes "unit" unitSignature)
+    (say 55
+      (match (lspViewIdxFind nodes "unit")
+        ((None) false)
+        ((Some node) (nodeSame (nodeTyChild node) unit))))
+    (say 56
+      (!= (lspImportEdit "" "file:///tmp/assist.ax" (lspLineIndex "") vecNew "Peer" "value") 0))
+    (let wholeImport "(import Peer)")
+    (say 57
+      (==
+        (lspImportEdit wholeImport "file:///tmp/assist.ax" (lspLineIndex wholeImport)
+          (parse wholeImport) "Peer" "value")
+        0))
+    (let indexOnly lspViewIdxNew)
+    (lspViewIdxAdd indexOnly "value" local)
+    (say 58 (same (lspViewIdxFind indexOnly "value") local))
+    0
+  })
