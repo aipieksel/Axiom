@@ -3023,7 +3023,6 @@
                               "axiom version - print the version\n\nUSAGE:\n  axiom version\n  axiom --version\n"
                               usageText)))))))))))))))
 
-; The value of `--name` / `--name=value`, or "" when absent.
 ; Every `--link-search DIR` and `--link-lib NAME` on the command line,
 ; rendered as the `cc` arguments they become.
 ;
@@ -3075,26 +3074,27 @@
         })
     }))
 
-(pub :: flagValue (-> String Int String))
+; First supplied value, including empty; None when missing or not found.
+(pub :: flagValue (-> String Int (Option String)))
 ;@axiom:effect(io)
 (pub fn (flagValue name from)
   (flagValueAt name from sysArgc))
 
-(pub :: flagValueAt (-> String Int Int String))
+(pub :: flagValueAt (-> String Int Int (Option String)))
 ;@axiom:effect(io)
 (pub fn (flagValueAt name i n)
   (if (>= i n)
-    ""
+    None
     {
       (let a (sysArg i))
       (if (strEq a name)
         (if (< (+ i 1) n)
-          (sysArg (+ i 1))
-          "")
+          (Some (sysArg (+ i 1)))
+          None)
         {
           (let eq (concat name "="))
           (if (strStartsWith a eq)
-            (strSlice a (strLen eq) (- (strLen a) (strLen eq)))
+            (Some (strSlice a (strLen eq) (- (strLen a) (strLen eq))))
             (flagValueAt name (+ i 1) n))
         })
     }))
@@ -3306,33 +3306,42 @@
   ; because the alternative is a partial function, and a compiler that
   ; trusts an earlier pass to have run is one bad refactor from
   ; building at the wrong level in silence.
-  {
-    (let v (flagValue "--opt" 1))
-    (if (> (strLen v) 0)
-      (if (&& (== (strLen v) 1)
-            {
-              (let c (strByte v 0))
-              (&& (>= c 48) (<= c 51))
-            })
-        (- (strByte v 0) 48)
-        1)
+  (match (flagValue "--opt" 1)
+    ((None)
       {
         (let m (pkgOpt entryDir))
         (if (>= m 0)
           m
           1)
-      })
-  })
+      }
+    )
+    ((Some v)
+      (if (> (strLen v) 0)
+        (if (&& (== (strLen v) 1)
+              {
+                (let c (strByte v 0))
+                (&& (>= c 48) (<= c 51))
+              })
+          (- (strByte v 0) 48)
+          1)
+        {
+          (let m (pkgOpt entryDir))
+          (if (>= m 0)
+            m
+            1)
+        })
+    )))
 
 (pub :: targetArg (-> String String))
 ;@axiom:effect(io)
 (pub fn (targetArg fallback)
-  {
-    (let v (flagValue "--target" 1))
-    (if (== (strLen v) 0)
-      fallback
-      v)
-  })
+  (match (flagValue "--target" 1)
+    ((None) fallback)
+    ((Some v)
+      (if (== (strLen v) 0)
+        fallback
+        v)
+    )))
 
 ; ------------------------------------------------------------------
 ; Validating the invocation, once, before any subcommand acts.
