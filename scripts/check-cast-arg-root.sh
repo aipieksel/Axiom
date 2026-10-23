@@ -313,13 +313,15 @@ echo "--- 1. user-level cast count does not grow ---"
 # Emitter, editor, diagnostic and typed-tag probes add seven subjects:
 # six live header observations and one effective Box reference-map ablation.
 # Each header observation keeps its live typed owner in scope.
+# The strict optional Try-state fixture adds one live-owner reference-count
+# observation; its typed owner remains in scope during the header read.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1469 ]; then
-  ok "user-level (cast count $cast_count <= 1469)"
+elif [ "$cast_count" -le 1470 ]; then
+  ok "user-level (cast count $cast_count <= 1470)"
 else
-  bad "user-level (cast count $cast_count > 1469): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1470): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"

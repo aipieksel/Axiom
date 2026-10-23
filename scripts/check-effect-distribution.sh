@@ -360,6 +360,10 @@ have() { # have <got> <want> <what>
 # ctorShapeEmit gain IO for existing AX4002 failures at required layout
 # boundaries; requireStructFields, requireCtorWords and requireCtorShapeConst
 # own those diagnostics. No other required-effect set changes.
+# Same-compiler comparison against 59f618f4 adds or retires no helpers.
+# Five optional scan queries gain ambient allocation, and four Unit flows
+# lose obsolete Unsafe rows. IO, Block, Spawn and Entropy requirements stay
+# unchanged. Invalid escape results allocate only when present.
 echo "== compiler view: symbols --calls core/main.ax =="
 "$axc" --diagnostic-format=ai symbols --calls core/main.ax > "$work/main.axsym" 2>"$work/main.err" \
   || { fail "could not read symbols over core/main.ax"; echo "check-effect-distribution: $failed failed"; exit 1; }
@@ -408,14 +412,14 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # accounts for 204 changed metadata rows, including removal of raw-reader
 # Unsafe operations. No IO, Block, Spawn or Entropy row changes, arrives or
 # leaves; incomplete and higher-order effect counts remain unchanged.
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3663 "exactly Alloc,Mut"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3666 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 496 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 283 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 372 "exactly Alloc"
+have "$(bucket "$work/main.axsym" 'Alloc')" 377 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
-have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 83 "Alloc,Mut,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 80 "Alloc,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Unsafe')" 100 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 34 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 34 "Mut,Unsafe"
@@ -425,8 +429,8 @@ have "$(bucket "$work/main.axsym" 'IO,Mut,Unsafe')" 0 "IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'IO,Unsafe')" 12 "IO,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut,Spawn')" 55 "Alloc,Block,IO,Mut,Spawn"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut,Spawn,Unsafe')" 4 "Alloc,Block,IO,Mut,Spawn,Unsafe"
-have "$(bucket "$work/main.axsym" 'Alloc,Block,Entropy,IO,Mut,Spawn')" 5 "Alloc,Block,Entropy,IO,Mut,Spawn"
-have "$(bucket "$work/main.axsym" 'Alloc,Block,Entropy,IO,Mut,Spawn,Unsafe')" 1 "Alloc,Block,Entropy,IO,Mut,Spawn,Unsafe"
+have "$(bucket "$work/main.axsym" 'Alloc,Block,Entropy,IO,Mut,Spawn')" 6 "Alloc,Block,Entropy,IO,Mut,Spawn"
+have "$(bucket "$work/main.axsym" 'Alloc,Block,Entropy,IO,Mut,Spawn,Unsafe')" 0 "Alloc,Block,Entropy,IO,Mut,Spawn,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut,Unsafe')" 3 "Alloc,Block,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Entropy,IO,Mut')" 2 "Alloc,Entropy,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Entropy,IO,Mut,Unsafe')" 0 "Alloc,Entropy,IO,Mut,Unsafe"
@@ -443,8 +447,8 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2463 "pure (neither row nor mark)"
-have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 33 "distinct compiler effect rows"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2458 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 32 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"
 
