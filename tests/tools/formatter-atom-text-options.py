@@ -33,7 +33,7 @@ def run(compiler, root, work):
                              'Non-atom higher-order and qualified application heads retain their default paths.',
                              'Required suffix printing explicitly refuses absent atom text.',
                              'Returned text owns its payload; getters and formatting borrow their source and nodes.'],
-              'remaining': ['flat-layout failure String APIs and FRes tagged status/text'],
+              'remaining': ['FRes status/text record requires separate semantic classification'],
               'limits': ['Host O0/O2 allocation-poison probes; CI runs complete target and formatter suites.',
                          'Synthetic empty FTok ranges test the owning FNode API; scanning produces no empty identifiers.']}
 

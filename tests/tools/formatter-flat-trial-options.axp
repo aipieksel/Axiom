@@ -1,0 +1,212 @@
+; Appended to format.ax so private layout trials remain private.
+(import IO)
+(import Fmt)
+(import Sys)
+
+(:: flatSay (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (flatSay index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: flatTextIs (-> (Option String) String Bool))
+(fn (flatTextIs result expected)
+  (match result
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: flatQuery (-> String Int (Option String)))
+(fn (flatQuery src kind)
+  {
+    (let scan (fscan src))
+    (match (readForms src scan.toks)
+      ((None) None)
+      ((Some forms)
+        {
+          (let n (vecGet forms 0))
+          (let printer (mkFPr src (lineStarts src) (mkFCq scan.coms) mkFOut))
+          (if (== kind 0)
+            (fpExprFlat printer n)
+            (if (== kind 1)
+              (fpAppFlat printer n (fpExprElems n 0))
+              (if (== kind 2)
+                (fpNamedFlat printer n (fpExprElems n 0))
+                (if (== kind 3)
+                  (fpListItemFlat printer n 0)
+                  (if (== kind 4)
+                    (fpListFlat printer n (fnKids n) 2 "(" ")")
+                    (fpExternFlat printer n))))))
+        }
+      ))
+  })
+
+(:: flatEmptyExtern (-> FNode FNode))
+(fn (flatEmptyExtern empty)
+  {
+    (let name (mkFNode FN_ATOM (mkFTok FT_IDENT 0 0) vecNew 0 0))
+    (let colon (mkFNode FN_ATOM (mkFTok FT_DCOLON 0 0) vecNew 0 0))
+    (mkFNode FN_PAREN (mkFTok FT_LPAREN 0 0) (vecPush (vecPush (vecPush vecNew name) colon) empty)
+      0 0)
+  })
+
+(:: flatProbeState Bool)
+(fn (flatProbeState)
+  {
+    (let src "{}")
+    (match (readForms src (fsToksVec (fscan src)))
+      ((None) false)
+      ((Some forms)
+        {
+          (let out mkFOut)
+          (let p (mkFPr src (lineStarts src) (mkFCq vecNew) out))
+          (&& (isNone (fpExprFlat p (vecGet forms 0))) (== out.bad 0))
+        }
+      ))
+  })
+
+(:: flatQueueState Bool)
+(fn (flatQueueState)
+  {
+    (let src "(f ; comment\n 42)")
+    (let scan (fscan src))
+    (match (readForms src scan.toks)
+      ((None) false)
+      ((Some forms)
+        {
+          (let q (mkFCq scan.coms))
+          (let p (mkFPr src (lineStarts src) q mkFOut))
+          (let n (vecGet forms 0))
+          (fpAppFlat p n (fpExprElems n 0))
+          (== q.next 0)
+        }
+      ))
+  })
+
+(:: flatReturned (Option String))
+(fn (flatReturned)
+  (flatQuery (strDup "(f 42)") 0))
+
+(:: flatBorrow (-> FPr FNode Bool))
+(fn (flatBorrow p n)
+  (flatTextIs (fpExprFlat p n) "a"))
+
+(:: flatStringCount (-> String Int))
+;@axiom:effect(unsafe)
+(fn (flatStringCount value)
+  (__load64 (as value Int) -2))
+
+(:: flatNodeCount (-> FNode Int))
+;@axiom:effect(unsafe)
+(fn (flatNodeCount value)
+  (__load64 (as value Int) -2))
+
+(:: flatListBad (-> FNode (Vec FNode) Int))
+(fn (flatListBad group items)
+  {
+    (let out mkFOut)
+    (let p (mkFPr "42" (lineStarts "42") (mkFCq vecNew) out))
+    (fpList p group items 2 "" "")
+    out.bad
+  })
+
+(:: flatAfterText (-> String FNode String))
+(fn (flatAfterText src n)
+  {
+    (let out mkFOut)
+    (fpTypeAfter (mkFPr src (lineStarts src) (mkFCq vecNew) out) n 0)
+    (foFinish out)
+  })
+
+(:: flatBadType Bool)
+(fn (flatBadType)
+  {
+    (let out mkFOut)
+    (let n (mkFNode FN_ATOM (mkFTok FT_INT 0 2) vecNew 0 2))
+    (fpTypeAfter (mkFPr "42" (lineStarts "42") (mkFCq vecNew) out) n 0)
+    (== out.bad 1)
+  })
+
+(:: flatFormatBorrow (-> String Bool))
+(fn (flatFormatBorrow src)
+  (== (fzOk (fmtFormat src)) 1))
+
+(:: flatChecks Int)
+;@axiom:effect(io)
+(fn (flatChecks)
+  {
+    (flatSay 1 (flatTextIs (flatQuery "42" 0) "42"))
+    (flatSay 2 (flatTextIs (flatQuery "(f 1)" 1) "(f 1)"))
+    (flatSay 3 (flatTextIs (flatQuery "(Rec :field 1)" 2) "(Rec :field 1)"))
+    (flatSay 4 (flatTextIs (flatQuery "Int" 3) "Int"))
+    (flatSay 5 (flatTextIs (flatQuery "(a b)" 4) "(a b)"))
+    (flatSay 6 (flatTextIs (flatQuery "(raw :: Int)" 5) "Int"))
+    (flatSay 7 (isNone (flatQuery "{}" 0)))
+    (flatSay 8 (isNone (flatQuery "(f {})" 1)))
+    (flatSay 9 (isNone (flatQuery "(Rec :field {})" 2)))
+    (flatSay 10 (isNone (flatQuery "42" 3)))
+    (flatSay 11 (isNone (flatQuery "(a 42)" 4)))
+    (flatSay 12 (isNone (flatQuery "(raw :: 42)" 5)))
+    (flatSay 13 (isNone (flatQuery "(f ; note\n1)" 1)))
+    (flatSay 14 (isNone (flatQuery "(Rec :field ; note\n1)" 2)))
+    (flatSay 15 (isNone (flatQuery "(a ; note\nb)" 4)))
+    (flatSay 16 (isNone (flatQuery "(raw :: ; note\nInt)" 5)))
+    (flatSay 17 (isNone (flatQuery "(if x y z)" 0)))
+    (flatSay 18 (isNone (flatQuery "(f (if x y z))" 1)))
+    (flatSay 19 (isNone (flatQuery "(Rec :field (if x y z))" 2)))
+    (flatSay 20
+      (isNone
+        (flatQuery
+          "ThisIdentifierIsLongerThanTheEntireFormatterLineBudgetSoItCannotBeReturnedFromABoundedFlatTrialAsAnInlineTypeName"
+          3)))
+    (let empty (mkFNode FN_ATOM (mkFTok FT_IDENT 0 0) vecNew 0 0))
+    (let group (mkFNode FN_PAREN (mkFTok FT_LPAREN 0 0) vecNew 0 0))
+    (let printer (mkFPr "" (lineStarts "") (mkFCq vecNew) mkFOut))
+    (flatSay 21 (flatTextIs (fpListItemFlat printer empty 2) ""))
+    (flatSay 22 (flatTextIs (fpListFlat printer group vecNew 2 "" "") ""))
+    (flatSay 23 (flatTextIs (fpExternFlat printer (flatEmptyExtern empty)) ""))
+    (flatSay 24 (flatTextIs (fpListFlat printer group vecNew 0 "" "") ""))
+    (flatSay 25 flatProbeState)
+    (flatSay 26 flatQueueState)
+    (flatSay 27 (flatTextIs flatReturned "(f 42)"))
+    (let src (strDup "a"))
+    (let atom (mkFNode FN_ATOM (mkFTok FT_IDENT 0 1) vecNew 0 1))
+    (let p (mkFPr src (lineStarts src) (mkFCq vecNew) mkFOut))
+    (let sourceCount (flatStringCount src))
+    (let nodeCount (flatNodeCount atom))
+    (flatSay 28 (flatBorrow p atom))
+    (flatSay 29 (== (flatStringCount src) sourceCount))
+    (flatSay 30 (== (flatNodeCount atom) nodeCount))
+    (flatSay 31 (== (flatListBad group vecNew) 0))
+    (let number (mkFNode FN_ATOM (mkFTok FT_INT 0 2) vecNew 0 2))
+    (flatSay 32 (== (flatListBad group (vecPush vecNew number)) 1))
+    (flatSay 33 (strEq (flatAfterText "" empty) "\n  "))
+    (let intType (mkFNode FN_ATOM (mkFTok FT_IDENT 0 3) vecNew 0 3))
+    (flatSay 34 (strEq (flatAfterText "Int" intType) " Int"))
+    (flatSay 35 flatBadType)
+    (flatSay 36 (flatFormatBorrow "(fn (f) (g (h 1)))\n"))
+    (let successfulEmpty (fmtFormat ""))
+    (flatSay 37 (&& (== successfulEmpty.ok 1) (== (strLen successfulEmpty.text) 0)))
+    (let program (strDup "(fn (f) (g 42))\n"))
+    (let programCount (flatStringCount program))
+    (flatSay 38 (flatFormatBorrow program))
+    (flatSay 39 (== (flatStringCount program) programCount))
+    (set p.suffixWidth 7)
+    (fpExprFlat p atom)
+    (flatSay 40 (== p.suffixWidth 7))
+    0
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  (if (strEq (sysArg 1) "format")
+    {
+      (let result (fmtFormat (sysArg 2)))
+      (println (fmtInt result.ok))
+      (writeStr stdout result.text)
+      0
+    }
+    flatChecks))

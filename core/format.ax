@@ -2362,8 +2362,12 @@
           (&& (fpBodyVecSimple p.src elems from)
             {
               (let flat (fpExprFlat p (vecGet elems from)))
-              (&& (> (strLen flat) 0)
-                (<= (+ (+ (+ (foColumn o) 1) (strLen flat)) (+ 1 p.suffixWidth)) fmtWidth))
+              (match flat
+                ((None) false)
+                ((Some flat)
+                  (&& (> (strLen flat) 0)
+                    (<= (+ (+ (+ (foColumn o) 1) (strLen flat)) (+ 1 p.suffixWidth)) fmtWidth))
+                ))
             }))
       {
         (fpP p " ")
@@ -2435,22 +2439,36 @@
                             "(let mut "
                             "(let "))
                         (fpP p (ftText src (fnTok name)))
-                        (if (&& (> (strLen flat) 0)
-                              (&& (! (fqAnyWithin p.q (fnStart n) (fnEnd value)))
-                                (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) (+ 1 p.suffixWidth))
-                                  fmtWidth)))
-                          {
-                            (fpP p " ")
-                            (fpExprSuffix p value 1)
-                          }
-                          {
-                            (fpP p "\n")
-                            (foPushIndent out)
-                            (flushLeading src p.q out (fpAnchor src value))
-                            (foEmitIndent out)
-                            (fpExprSuffix p value 1)
-                            (foPopIndent out)
-                          })
+                        (match flat
+                          ((None)
+                            {
+                              (fpP p "\n")
+                              (foPushIndent out)
+                              (flushLeading src p.q out (fpAnchor src value))
+                              (foEmitIndent out)
+                              (fpExprSuffix p value 1)
+                              (foPopIndent out)
+                            }
+                          )
+                          ((Some flat)
+                            (if (&& (> (strLen flat) 0)
+                                  (&& (! (fqAnyWithin p.q (fnStart n) (fnEnd value)))
+                                    (<=
+                                      (+ (+ (+ (foColumn out) 1) (strLen flat)) (+ 1 p.suffixWidth))
+                                      fmtWidth)))
+                              {
+                                (fpP p " ")
+                                (fpExprSuffix p value 1)
+                              }
+                              {
+                                (fpP p "\n")
+                                (foPushIndent out)
+                                (flushLeading src p.q out (fpAnchor src value))
+                                (foEmitIndent out)
+                                (fpExprSuffix p value 1)
+                                (foPopIndent out)
+                              })
+                          ))
                         (fpP p ")")
                       }
                     }
@@ -3125,7 +3143,7 @@
             }))
       })))
 
-; The application `elems` printed on one line, or "" when it can't be:
+; The application `elems` printed on one line, or None when it cannot be:
 ; an element breaks across lines, or the printer refused a shape. A
 ; comment inside the form keeps it broken, so the comment keeps its
 ; line. The trial prints into its own buffer with an empty comment
@@ -3160,12 +3178,15 @@
     }
   })
 
-(pub :: fpAppFlat (-> FPr FNode (Vec FNode) String))
+; A completed trial is Some text, including a successful empty String.
+; None means the trial failed. Consumers keep their separate nonempty
+; width policy for positions that need printable text.
+(pub :: fpAppFlat (-> FPr FNode (Vec FNode) (Option String)))
 (pub fn (fpAppFlat p n elems)
   {
     (let q p.q)
     (if (fqAnyWithin q (fnStart n) (fnEnd n))
-      ""
+      None
       {
         (let o2 mkFOut)
         {
@@ -3185,8 +3206,8 @@
             }
             (fpP p2 ")")
             (if (|| (!= o2.bad 0) (> o2.nl 0))
-              ""
-              (foFinish o2))
+              None
+              (Some (foFinish o2)))
           }
         }
       })
@@ -3194,7 +3215,7 @@
 
 ; A bounded trial for one argument. Comments stay with the original
 ; printer, and a multiline form keeps its own structural layout.
-(:: fpExprFlat (-> FPr FNode String))
+(:: fpExprFlat (-> FPr FNode (Option String)))
 (fn (fpExprFlat p n)
   {
     (let out mkFOut)
@@ -3204,8 +3225,8 @@
         (set out.trial 1)
         (fpExpr trial n)
         (if (|| (!= out.bad 0) (> out.nl 0))
-          ""
-          (foFinish out))
+          None
+          (Some (foFinish out)))
       }
     }
   })
@@ -3235,26 +3256,40 @@
               p.suffixWidth
               0))
           {
-            (if (|| (== (strLen flat) 0) (> (+ (+ (+ out.indent (strLen flat)) 1) suffix) fmtWidth))
-              {
-                (fpP p "\n")
-                (foEmitIndent out)
-                (if (== i (- (vecLen elems) 1))
-                  (fpExprTail p arg 1)
-                  (fpExpr p arg))
-                (set previousBroken true)
-              }
-              {
-                (if (|| previousBroken
-                      (> (+ (+ (+ (foColumn out) (strLen flat)) 2) suffix) fmtWidth))
+            (match flat
+              ((None)
+                {
+                  (fpP p "\n")
+                  (foEmitIndent out)
+                  (if (== i (- (vecLen elems) 1))
+                    (fpExprTail p arg 1)
+                    (fpExpr p arg))
+                  (set previousBroken true)
+                }
+              )
+              ((Some flat)
+                (if (|| (== (strLen flat) 0)
+                      (> (+ (+ (+ out.indent (strLen flat)) 1) suffix) fmtWidth))
                   {
                     (fpP p "\n")
                     (foEmitIndent out)
+                    (if (== i (- (vecLen elems) 1))
+                      (fpExprTail p arg 1)
+                      (fpExpr p arg))
+                    (set previousBroken true)
                   }
-                  (fpP p " "))
-                (fpP p flat)
-                (set previousBroken false)
-              })
+                  {
+                    (if (|| previousBroken
+                          (> (+ (+ (+ (foColumn out) (strLen flat)) 2) suffix) fmtWidth))
+                      {
+                        (fpP p "\n")
+                        (foEmitIndent out)
+                      }
+                      (fpP p " "))
+                    (fpP p flat)
+                    (set previousBroken false)
+                  })
+              ))
             (set i (+ i 1))
           }
         })
@@ -3400,10 +3435,10 @@
     }
   })
 
-(:: fpNamedFlat (-> FPr FNode (Vec FNode) String))
+(:: fpNamedFlat (-> FPr FNode (Vec FNode) (Option String)))
 (fn (fpNamedFlat p n elems)
   (if (fqAnyWithin p.q (fnStart n) (fnEnd n))
-    ""
+    None
     {
       (let out mkFOut)
       {
@@ -3412,8 +3447,8 @@
           (set out.trial 1)
           (fpNamedInline trial elems)
           (if (|| (!= out.bad 0) (> out.nl 0))
-            ""
-            (foFinish out))
+            None
+            (Some (foFinish out)))
         }
       }
     }))
@@ -3455,24 +3490,38 @@
                                 {
                                   (fpP p ":")
                                   (fpP p (ftText src (fnTok name)))
-                                  (if (&& (> (strLen flat) 0)
-                                        (&& (! (fqAnyWithin p.q (fnStart colon) (fnStart value)))
-                                          (<=
-                                            (+ (+ (+ (foColumn out) 1) (strLen flat))
-                                              (+ 1 p.suffixWidth))
-                                            fmtWidth)))
-                                    {
-                                      (fpP p " ")
-                                      (fpExprSuffix p value 1)
-                                    }
-                                    {
-                                      (fpP p "\n")
-                                      (foPushIndent out)
-                                      (flushLeading src p.q out (fpAnchor src value))
-                                      (foEmitIndent out)
-                                      (fpExprSuffix p value 1)
-                                      (foPopIndent out)
-                                    })
+                                  (match flat
+                                    ((None)
+                                      {
+                                        (fpP p "\n")
+                                        (foPushIndent out)
+                                        (flushLeading src p.q out (fpAnchor src value))
+                                        (foEmitIndent out)
+                                        (fpExprSuffix p value 1)
+                                        (foPopIndent out)
+                                      }
+                                    )
+                                    ((Some flat)
+                                      (if (&& (> (strLen flat) 0)
+                                            (&&
+                                              (! (fqAnyWithin p.q (fnStart colon) (fnStart value)))
+                                              (<=
+                                                (+ (+ (+ (foColumn out) 1) (strLen flat))
+                                                  (+ 1 p.suffixWidth))
+                                                fmtWidth)))
+                                        {
+                                          (fpP p " ")
+                                          (fpExprSuffix p value 1)
+                                        }
+                                        {
+                                          (fpP p "\n")
+                                          (foPushIndent out)
+                                          (flushLeading src p.q out (fpAnchor src value))
+                                          (foEmitIndent out)
+                                          (fpExprSuffix p value 1)
+                                          (foPopIndent out)
+                                        })
+                                    ))
                                   (set trailing (fpAppTrailing p value
                                                   (if (< (+ i 3) (vecLen elems))
                                                     (fnStart (vecGet elems (+ i 3)))
@@ -3516,10 +3565,14 @@
           (fpNamedInline p elems)
           {
             (let flat (fpNamedFlat p n elems))
-            (if (&& (> (strLen flat) 0)
-                  (<= (+ (+ (foColumn out) (strLen flat)) p.suffixWidth) fmtWidth))
-              (fpP p flat)
-              (fpNamedBroken p n elems))
+            (match flat
+              ((None) (fpNamedBroken p n elems))
+              ((Some flat)
+                (if (&& (> (strLen flat) 0)
+                      (<= (+ (+ (foColumn out) (strLen flat)) p.suffixWidth) fmtWidth))
+                  (fpP p flat)
+                  (fpNamedBroken p n elems))
+              ))
           }))
     }
   })
@@ -3599,30 +3652,53 @@
           ; arguments into rows; structural arguments keep their layout.
           {
             (let flat
-              (if (== o.trial 1)
-                ""
-                (fpAppFlat p n elems)))
-            (if (&& (> (strLen flat) 0)
-                  (<= (+ (+ (foColumn o) (strLen flat)) p.suffixWidth) fmtWidth))
-              (fpP p flat)
-              (if (== o.trial 1)
-                {
-                  (let mut i 1)
+              (:: (if (== o.trial 1)
+                None
+                (fpAppFlat p n elems)) (Option String)))
+            (match flat
+              ((None)
+                (if (== o.trial 1)
                   {
-                    (fpP p "(")
-                    (fpExpr p (vecGet elems 0))
-                    (while (< i (vecLen elems))
-                      {
-                        (fpP p " ")
-                        (fpExpr p (vecGet elems i))
-                        (set i (+ i 1))
-                      })
-                    (fpP p ")")
+                    (let mut i 1)
+                    {
+                      (fpP p "(")
+                      (fpExpr p (vecGet elems 0))
+                      (while (< i (vecLen elems))
+                        {
+                          (fpP p " ")
+                          (fpExpr p (vecGet elems i))
+                          (set i (+ i 1))
+                        })
+                      (fpP p ")")
+                    }
                   }
-                }
-                (if (fqAnyWithin p.q (fnStart n) (fnEnd n))
-                  (fpAppComments p n elems)
-                  (fpAppPacked p elems))))
+                  (if (fqAnyWithin p.q (fnStart n) (fnEnd n))
+                    (fpAppComments p n elems)
+                    (fpAppPacked p elems)))
+              )
+              ((Some flat)
+                (if (&& (> (strLen flat) 0)
+                      (<= (+ (+ (foColumn o) (strLen flat)) p.suffixWidth) fmtWidth))
+                  (fpP p flat)
+                  (if (== o.trial 1)
+                    {
+                      (let mut i 1)
+                      {
+                        (fpP p "(")
+                        (fpExpr p (vecGet elems 0))
+                        (while (< i (vecLen elems))
+                          {
+                            (fpP p " ")
+                            (fpExpr p (vecGet elems i))
+                            (set i (+ i 1))
+                          })
+                        (fpP p ")")
+                      }
+                    }
+                    (if (fqAnyWithin p.q (fnStart n) (fnEnd n))
+                      (fpAppComments p n elems)
+                      (fpAppPacked p elems))))
+              ))
           })
       })
   })
@@ -3968,7 +4044,7 @@
     p
   })
 
-(:: fpListItemFlat (-> FPr FNode Int String))
+(:: fpListItemFlat (-> FPr FNode Int (Option String)))
 (fn (fpListItemFlat p n mode)
   {
     (let out mkFOut)
@@ -3978,8 +4054,8 @@
         (set out.trial 1)
         (fpListItem trial n mode)
         (if (|| (!= out.bad 0) (> out.nl 0))
-          ""
-          (foFinish out))
+          None
+          (Some (foFinish out)))
       }
     }
   })
@@ -4004,10 +4080,10 @@
     }
   })
 
-(:: fpListFlat (-> FPr FNode (Vec FNode) Int String String String))
+(:: fpListFlat (-> FPr FNode (Vec FNode) Int String String (Option String)))
 (fn (fpListFlat p n elems mode open close)
   (if (fqAnyWithin p.q (fnStart n) (fnEnd n))
-    ""
+    None
     {
       (let out mkFOut)
       {
@@ -4016,8 +4092,8 @@
           (set out.trial 1)
           (fpListTrial trial elems mode open close)
           (if (|| (!= out.bad 0) (> out.nl 0))
-            ""
-            (foFinish out))
+            None
+            (Some (foFinish out)))
         }
       }
     }))
@@ -4028,10 +4104,14 @@
     (fpListTrial p elems mode open close)
     {
       (let flat (fpListFlat p n elems mode open close))
-      (if (&& (> (strLen flat) 0)
-            (<= (+ (+ (foColumn p.out) (strLen flat)) p.suffixWidth) fmtWidth))
-        (fpP p flat)
-        (fpListRows p n elems mode open close))
+      (match flat
+        ((None) (fpListRows p n elems mode open close))
+        ((Some flat)
+          (if (&& (> (strLen flat) 0)
+                (<= (+ (+ (foColumn p.out) (strLen flat)) p.suffixWidth) fmtWidth))
+            (fpP p flat)
+            (fpListRows p n elems mode open close))
+        ))
     }))
 
 (:: fpListRows (-> FPr FNode (Vec FNode) Int String String ()))
@@ -4094,28 +4174,39 @@
                 }
                 {
                   (let flat (fpListItemFlat p item mode))
-                  (if (|| (== (strLen flat) 0)
-                        (> (+ (+ out.indent (strLen flat)) (+ rowSuffix comma)) fmtWidth))
-                    {
-                      (fpP p "\n")
-                      (foEmitIndent out)
-                      (fpListItemEnd p item mode suffix comma)
-                      (set previousBroken true)
-                    }
-                    {
-                      (if (|| previousBroken
-                            (> (+ (+ (+ (foColumn out) 1) (strLen flat)) (+ rowSuffix comma))
-                              fmtWidth))
+                  (match flat
+                    ((None)
+                      {
+                        (fpP p "\n")
+                        (foEmitIndent out)
+                        (fpListItemEnd p item mode suffix comma)
+                        (set previousBroken true)
+                      }
+                    )
+                    ((Some flat)
+                      (if (|| (== (strLen flat) 0)
+                            (> (+ (+ out.indent (strLen flat)) (+ rowSuffix comma)) fmtWidth))
                         {
                           (fpP p "\n")
                           (foEmitIndent out)
+                          (fpListItemEnd p item mode suffix comma)
+                          (set previousBroken true)
                         }
-                        (fpP p " "))
-                      (fpP p flat)
-                      (if (== comma 1)
-                        (fpP p ","))
-                      (set previousBroken false)
-                    })
+                        {
+                          (if (|| previousBroken
+                                (> (+ (+ (+ (foColumn out) 1) (strLen flat)) (+ rowSuffix comma))
+                                  fmtWidth))
+                            {
+                              (fpP p "\n")
+                              (foEmitIndent out)
+                            }
+                            (fpP p " "))
+                          (fpP p flat)
+                          (if (== comma 1)
+                            (fpP p ","))
+                          (set previousBroken false)
+                        })
+                    ))
                 }))
             (set i (+ i 1))
           }
@@ -4138,24 +4229,40 @@
 (fn (fpTypeAfter p n suffix)
   {
     (let flat (fpListItemFlat p n 0))
-    (if (&& (> (strLen flat) 0)
-          (&& (! (fqAnyWithin p.q 0 (fnEnd n)))
-            (<= (+ (+ (+ (foColumn p.out) 1) (strLen flat)) suffix) fmtWidth)))
-      {
-        (fpP p " ")
-        (fpP p flat)
-      }
-      {
-        (let out p.out)
+    (match flat
+      ((None)
         {
-          (fpP p "\n")
-          (foPushIndent out)
-          (flushLeading p.src p.q out (fnStart n))
-          (foEmitIndent out)
-          (fpListItemSuffix p n 0 suffix)
-          (foPopIndent out)
+          (let out p.out)
+          {
+            (fpP p "\n")
+            (foPushIndent out)
+            (flushLeading p.src p.q out (fnStart n))
+            (foEmitIndent out)
+            (fpListItemSuffix p n 0 suffix)
+            (foPopIndent out)
+          }
         }
-      })
+      )
+      ((Some flat)
+        (if (&& (> (strLen flat) 0)
+              (&& (! (fqAnyWithin p.q 0 (fnEnd n)))
+                (<= (+ (+ (+ (foColumn p.out) 1) (strLen flat)) suffix) fmtWidth)))
+          {
+            (fpP p " ")
+            (fpP p flat)
+          }
+          {
+            (let out p.out)
+            {
+              (fpP p "\n")
+              (foPushIndent out)
+              (flushLeading p.src p.q out (fnStart n))
+              (foEmitIndent out)
+              (fpListItemSuffix p n 0 suffix)
+              (foPopIndent out)
+            }
+          })
+      ))
   })
 
 ; ------------------------------------------------------------------
@@ -4514,21 +4621,34 @@
         }
         {
           (let flat (fpListItemFlat p pattern childMode))
-          (if (&& (> (strLen flat) 0)
-                (&& (! (fqAnyWithin p.q (fnEnd name) (fnEnd pattern)))
-                  (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) p.suffixWidth) fmtWidth)))
-            {
-              (fpP p " ")
-              (fpP p flat)
-            }
-            {
-              (fpP p "\n")
-              (foPushIndent out)
-              (flushLeading p.src p.q out (fnStart pattern))
-              (foEmitIndent out)
-              (fpListItemSuffix p pattern childMode p.suffixWidth)
-              (foPopIndent out)
-            })
+          (match flat
+            ((None)
+              {
+                (fpP p "\n")
+                (foPushIndent out)
+                (flushLeading p.src p.q out (fnStart pattern))
+                (foEmitIndent out)
+                (fpListItemSuffix p pattern childMode p.suffixWidth)
+                (foPopIndent out)
+              }
+            )
+            ((Some flat)
+              (if (&& (> (strLen flat) 0)
+                    (&& (! (fqAnyWithin p.q (fnEnd name) (fnEnd pattern)))
+                      (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) p.suffixWidth) fmtWidth)))
+                {
+                  (fpP p " ")
+                  (fpP p flat)
+                }
+                {
+                  (fpP p "\n")
+                  (foPushIndent out)
+                  (flushLeading p.src p.q out (fnStart pattern))
+                  (foEmitIndent out)
+                  (fpListItemSuffix p pattern childMode p.suffixWidth)
+                  (foPopIndent out)
+                })
+            ))
         })
       p
     }
@@ -4903,22 +5023,37 @@
           {
             (let flat (fpListFlat p group names 2 open close))
             {
-              (if (&& (> (strLen flat) 0)
-                    (<= (+ (+ (+ (foColumn p.out) 1) (strLen flat)) suffix) fmtWidth))
-                {
-                  (fpP p " ")
-                  (fpP p flat)
-                }
-                {
-                  (fpP p "\n")
-                  (foPushIndent p.out)
-                  (flushLeading p.src p.q p.out (fnStart group))
-                  (foEmitIndent p.out)
-                  (set p.suffixWidth suffix)
-                  (fpList p group names 2 open close)
-                  (set p.suffixWidth saved)
-                  (foPopIndent p.out)
-                })
+              (match flat
+                ((None)
+                  {
+                    (fpP p "\n")
+                    (foPushIndent p.out)
+                    (flushLeading p.src p.q p.out (fnStart group))
+                    (foEmitIndent p.out)
+                    (set p.suffixWidth suffix)
+                    (fpList p group names 2 open close)
+                    (set p.suffixWidth saved)
+                    (foPopIndent p.out)
+                  }
+                )
+                ((Some flat)
+                  (if (&& (> (strLen flat) 0)
+                        (<= (+ (+ (+ (foColumn p.out) 1) (strLen flat)) suffix) fmtWidth))
+                    {
+                      (fpP p " ")
+                      (fpP p flat)
+                    }
+                    {
+                      (fpP p "\n")
+                      (foPushIndent p.out)
+                      (flushLeading p.src p.q p.out (fnStart group))
+                      (foEmitIndent p.out)
+                      (set p.suffixWidth suffix)
+                      (fpList p group names 2 open close)
+                      (set p.suffixWidth saved)
+                      (foPopIndent p.out)
+                    })
+                ))
               p
             }
           }
@@ -5025,15 +5160,26 @@
                     {
                       {
                         (let flat (fpListFlat p (fnKid n tvEnd) (fnKids (fnKid n tvEnd)) 0 "(" ")"))
-                        (if (&& (> (strLen flat) 0)
-                              (<= (+ (+ (foColumn o) (strLen flat)) 2) fmtWidth))
-                          (fpP p " ")
-                          {
-                            (fpP p "\n")
-                            (foPushIndent o)
-                            (foEmitIndent o)
-                            (foPopIndent o)
-                          })
+                        (match flat
+                          ((None)
+                            {
+                              (fpP p "\n")
+                              (foPushIndent o)
+                              (foEmitIndent o)
+                              (foPopIndent o)
+                            }
+                          )
+                          ((Some flat)
+                            (if (&& (> (strLen flat) 0)
+                                  (<= (+ (+ (foColumn o) (strLen flat)) 2) fmtWidth))
+                              (fpP p " ")
+                              {
+                                (fpP p "\n")
+                                (foPushIndent o)
+                                (foEmitIndent o)
+                                (foPopIndent o)
+                              })
+                          ))
                       }
                       (fpDataConSuffix p (fnKid n tvEnd) 1)
                       p
@@ -5496,27 +5642,47 @@
                   {
                     (let flat (fpListFlat p names (fnKids names) 2 "(" ")"))
                     (let out p.out)
-                    (if (&& (> (strLen flat) 0)
-                          (<= (+ (+ (foColumn out) (strLen flat)) 2) fmtWidth))
-                      {
-                        (fpP p " ")
-                        (fpP p flat)
-                      }
-                      {
-                        (fpP p "\n")
-                        (foPushIndent out)
-                        (flushLeading src p.q out (fnStart names))
-                        (foEmitIndent out)
+                    (match flat
+                      ((None)
                         {
-                          (let saved p.suffixWidth)
+                          (fpP p "\n")
+                          (foPushIndent out)
+                          (flushLeading src p.q out (fnStart names))
+                          (foEmitIndent out)
                           {
-                            (set p.suffixWidth 1)
-                            (fpList p names (fnKids names) 2 "(" ")")
-                            (set p.suffixWidth saved)
+                            (let saved p.suffixWidth)
+                            {
+                              (set p.suffixWidth 1)
+                              (fpList p names (fnKids names) 2 "(" ")")
+                              (set p.suffixWidth saved)
+                            }
                           }
+                          (foPopIndent out)
                         }
-                        (foPopIndent out)
-                      })
+                      )
+                      ((Some flat)
+                        (if (&& (> (strLen flat) 0)
+                              (<= (+ (+ (foColumn out) (strLen flat)) 2) fmtWidth))
+                          {
+                            (fpP p " ")
+                            (fpP p flat)
+                          }
+                          {
+                            (fpP p "\n")
+                            (foPushIndent out)
+                            (flushLeading src p.q out (fnStart names))
+                            (foEmitIndent out)
+                            {
+                              (let saved p.suffixWidth)
+                              {
+                                (set p.suffixWidth 1)
+                                (fpList p names (fnKids names) 2 "(" ")")
+                                (set p.suffixWidth saved)
+                              }
+                            }
+                            (foPopIndent out)
+                          })
+                      ))
                   }))
             }
             p)
@@ -5646,10 +5812,10 @@
   })
 
 ; Try the complete typed tail once, stopping at the width limit.
-(:: fpExternFlat (-> FPr FNode String))
+(:: fpExternFlat (-> FPr FNode (Option String)))
 (fn (fpExternFlat p it)
   (if (fqAnyWithin p.q (fnStart it) (fnEnd it))
-    ""
+    None
     {
       (let out mkFOut)
       {
@@ -5665,8 +5831,8 @@
               (set j (+ j 1))
             })
           (if (|| (!= out.bad 0) (> out.nl 0))
-            ""
-            (foFinish out))
+            None
+            (Some (foFinish out)))
         }
       }
     }))
@@ -5680,18 +5846,31 @@
       (fpP p "(")
       (fpP p (ftText p.src (fnTok (fnKid it 0))))
       (fpP p " ::")
-      (if (&& (> (strLen flat) 0) (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) suffix) fmtWidth))
-        {
-          (fpP p " ")
-          (fpP p flat)
-        }
-        {
-          (fpTypeAfter p (fnKid it 2)
-            (if (== (fnLen it) 3)
-              suffix
-              0))
-          (fpExternClauses p it 3 suffix)
-        })
+      (match flat
+        ((None)
+          {
+            (fpTypeAfter p (fnKid it 2)
+              (if (== (fnLen it) 3)
+                suffix
+                0))
+            (fpExternClauses p it 3 suffix)
+          }
+        )
+        ((Some flat)
+          (if (&& (> (strLen flat) 0)
+                (<= (+ (+ (+ (foColumn out) 1) (strLen flat)) suffix) fmtWidth))
+            {
+              (fpP p " ")
+              (fpP p flat)
+            }
+            {
+              (fpTypeAfter p (fnKid it 2)
+                (if (== (fnLen it) 3)
+                  suffix
+                  0))
+              (fpExternClauses p it 3 suffix)
+            })
+        ))
       (fpP p ")")
     }
   })
