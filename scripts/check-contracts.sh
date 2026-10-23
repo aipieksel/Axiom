@@ -95,6 +95,13 @@ python3 tests/tools/macro-owning-records.py "$axc"
 python3 tests/tools/macro-rule-index-options.py "$axc"
 python3 tests/tools/symbol-map-index-options.py "$axc"
 python3 tests/tools/axtag-owning-carriers.py "$axc"
+python3 tests/selfhost/parser-type-parameter-owners.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/lsp-exact-parse-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/emitter-signature-flags.py --axiom "$axc"
+python3 tests/selfhost/checker-axtag-owners.py --axiom "$axc" --negative-controls
+python3 tests/tools/compiler-tag-consumers.py --axiom "$axc"
+python3 tests/tools/expansion-interner-owner.py "$axc"
+python3 tests/tools/rustbind-query-options.py "$axc"
 
 failed=0
 checks=0
