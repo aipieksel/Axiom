@@ -42,7 +42,7 @@ def check(compiler, root, work):
               'configurations': [], 'controls': [], 'refusals': [],
               'limits': ['Host O0/O2 with allocation poisoning; not target-wide qualification.',
                          'The query adapter is appended only to a private test copy.',
-                         'General flagValue/At and positional/subcommand sentinels remain a separate closure.']}
+                         'This probe covers its named query contract; general values and command indexes have separate fixtures.']}
     data = work/'inputs'; data.mkdir(exist_ok=True)
 
     def modules(label, text):

@@ -41,7 +41,7 @@ def check(compiler, root, work, baseline=None):
               'configurations': [], 'controls': [], 'refusals': [],
               'limits': ['Host O0/O2 with allocation poisoning; not target-wide qualification.',
                          'The behavior harness calls the real validator and formatter, not compiler code generation.',
-                         'flagValue/At and positional/subcommand result sentinels are a separate remaining closure.']}
+                         'This probe covers its named query contract; general values and command indexes have separate fixtures.']}
     data = work/'inputs'; data.mkdir(exist_ok=True)
 
     def modules(label, edits):
