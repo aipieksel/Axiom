@@ -41,7 +41,7 @@ def check(axiom, repo, dependencies, work):
               ],
               'known_limits': ['Host execution only; no Windows runtime evidence.',
                                'Known value and parameter indexes remain numeric payloads with existing bounds contracts.',
-                               'Packed AST nil is normalized only at the scope signature boundary.',
+                               'Scope signatures explicitly distinguish None from present AST values.',
                                'TC and unrelated checker carrier migration has separate evidence.',
                                'Focused evidence does not establish global soundness, Rust parity or certification.']}
     run_checked([str(axiom), '--diagnostic-format=ai', 'fmt', '--check', str(fixture)],
@@ -93,7 +93,7 @@ def check(axiom, repo, dependencies, work):
         print(f'ok   counterexample {label}: cases {sorted(failures)} fail', flush=True)
     refusals = [
         ('erased-scope', '(bsFind 0 "missing")', 'AX3004', ('BScope', 'Int')),
-        ('erased-alias', '(bsWith (bsNew vecNew vecNew vecNew nilNode) "value" 0)',
+        ('erased-alias', '(bsWith (bsNew vecNew vecNew vecNew None) "value" 0)',
          'AX3004', ('BindingSource', 'Int')),
         ('missing-alias-variants', '(match BoundOpaque ((BoundParam index) index))',
          'AX3005', ('BoundOpaque',)),

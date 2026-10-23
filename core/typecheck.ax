@@ -1061,53 +1061,56 @@
 ; mid-grounding name the too-early recursion. Anything else -
 ; including a pending lambda where a NON-arrow is declared, which
 ; the normal mismatch below owns - flows through untouched.
-; Single pass: a partial node grounds with its prefix in scope, as
-; a flush does.
-(pub :: groundArgByDecl (-> TC ASTNode ASTNode Int ASTNode))
-(pub fn (groundArgByDecl tc argTy param span)
+; None means no declared parameter is available. Some keeps poison
+; and inference types present. A partial node grounds with its prefix
+; in scope, as a flush does.
+(pub :: groundArgByDecl (-> TC ASTNode (Option ASTNode) Int ASTNode))
+(pub fn (groundArgByDecl tc argTy declaredParam span)
   (if (== (isPendingNode argTy) 0)
     argTy
-    (if (nodeSame param nilNode)
-      argTy
-      (if (!= (nodeTag param) TAG_T_ARR)
-        argTy
-        {
-          (let s (lamStamp argTy))
-          (if (== (stampIsArrow s) 1)
-            s
-            (if (== (stampIsBroken s) 1)
-              (nodeBuildTErrPlain 0 0 0)
-              (if (== (stampIsProg s) 1)
-                {
-                  (emitDiag tc
-                    (diagSetLabel
-                      (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
-                        "type mismatch: cannot pass this function while its parameter types are still being inferred"
-                        0 0
-                        "pass it after its definition is complete - a use through a `let` alias hides the recursion from inference"
-                        "inference grounds a lambda's parameters from its uses; this use runs before the grounding finished")
-                      "this use is too early to check"))
-                  (nodeBuildTErrPlain 0 0 0)
-                }
-                {
-                  (let mark (vecLen (tcScopeVec tc)))
+    (match declaredParam
+      ((None) argTy)
+      ((Some param)
+        (if (!= (nodeTag param) TAG_T_ARR)
+          argTy
+          {
+            (let s (lamStamp argTy))
+            (if (== (stampIsArrow s) 1)
+              s
+              (if (== (stampIsBroken s) 1)
+                (nodeBuildTErrPlain 0 0 0)
+                (if (== (stampIsProg s) 1)
                   {
-                    (if (== (stampIsPartial s) 1)
-                      (groundPushPrefix tc (partialEnts s) 0))
-                    (setLamStamp argTy (mkProgStamp))
+                    (emitDiag tc
+                      (diagSetLabel
+                        (mkDiagNote SEV_ERROR "AX3004" "type-mismatch" span
+                          "type mismatch: cannot pass this function while its parameter types are still being inferred"
+                          0 0
+                          "pass it after its definition is complete - a use through a `let` alias hides the recursion from inference"
+                          "inference grounds a lambda's parameters from its uses; this use runs before the grounding finished")
+                        "this use is too early to check"))
+                    (nodeBuildTErrPlain 0 0 0)
+                  }
+                  {
+                    (let mark (vecLen (tcScopeVec tc)))
                     {
-                      (let ans (checkLamAgainst tc argTy param))
+                      (if (== (stampIsPartial s) 1)
+                        (groundPushPrefix tc (partialEnts s) 0))
+                      (setLamStamp argTy (mkProgStamp))
                       {
-                        (scopeTrunc (tcScopeVec tc) mark)
-                        (if (== (tyHasPoison ans) 1)
-                          (setLamStamp argTy (nodeBuildTErrPlain 0 0 0))
-                          (setLamStamp argTy ans))
-                        ans
+                        (let ans (checkLamAgainst tc argTy param))
+                        {
+                          (scopeTrunc (tcScopeVec tc) mark)
+                          (if (== (tyHasPoison ans) 1)
+                            (setLamStamp argTy (nodeBuildTErrPlain 0 0 0))
+                            (setLamStamp argTy ans))
+                          ans
+                        }
                       }
                     }
-                  }
-                })))
-        }))))
+                  })))
+          })
+      ))))
 
 ; Is this type EXACTLY `String`? Deliberately not "compatible with
 ; String": while the uniform-representation fiat lived, `tyCompat`
@@ -14218,12 +14221,7 @@
                                               (== (nodeTag funcTy) TAG_T_ARR))
                                           (checkLamAgainst tc (nodeBChild e) (nodeAChild funcTy))
                                           argTy0)
-                                        (if (nodeSame funcTy nilNode)
-                                          nilNode
-                                          (if (== (nodeTag funcTy) TAG_T_ARR)
-                                            (nodeAChild funcTy)
-                                            nilNode))
-                                        (spanOf (nodeBChild e))))
+                                        (arrowParamTy funcTy 0) (spanOf (nodeBChild e))))
                                     (if (== (isPendingNode argTy1) 1)
                                       (if (nodeSame funcTy nilNode)
                                         (groundStandalone tc argTy1 (spanOf (nodeBChild e)))
@@ -16242,7 +16240,7 @@
                   (let target (castTargetTy tc (vecGet args 0)))
                   (if (&& (== (nodeTag value) TAG_E_LAM) (== (nodeTag target) TAG_T_ARR))
                     (checkLamAgainst tc value target)
-                    (groundArgByDecl tc (checkExprH tc value 0) target (spanOf value)))
+                    (groundArgByDecl tc (checkExprH tc value 0) (Some target) (spanOf value)))
                 }
                 nilNode))
             (if (== (isPendingNode srcTy0) 1)
@@ -21134,9 +21132,9 @@
     None
     (Some ty)))
 
-(pub :: bsNew (-> Strings Ints Ints ASTNode BScope))
+(pub :: bsNew (-> Strings Ints Ints (Option ASTNode) BScope))
 (pub fn (bsNew params callable eparams fnty)
-  (bsMake vecNew params callable eparams (bsTypeOpt fnty)
+  (bsMake vecNew params callable eparams fnty
     (bsCtxOf (vecWithCapacity 1) (vecWithCapacity 1) 0 (vecWithCapacity 1))))
 
 (pub :: bsNames (-> BScope (Vec BEnt)))
@@ -22513,7 +22511,7 @@
               (checkLamValidate tc h)
               (checkLamAgainst tc h arrow)
             }
-            (groundArgByDecl tc (checkExprH tc h 0) arrow (spanOf h))))
+            (groundArgByDecl tc (checkExprH tc h 0) (Some arrow) (spanOf h))))
         (if (== (tyCompat tc hty arrow) 0)
           {
             (emitMismatchTy tc arrow hty (spanOf h))
@@ -22783,7 +22781,7 @@
     ; verified standalone, only the `{unknown}` refusals dropped).
     {
       (let aty
-        (groundArgByDecl tc (checkExprH tc (vecGet args i) 0) (vecGet insts i)
+        (groundArgByDecl tc (checkExprH tc (vecGet args i) 0) (Some (vecGet insts i))
           (spanOf (vecGet args i))))
       {
         ; Still pending against a GROUND field is a function
@@ -22851,7 +22849,7 @@
             mkSilentWild
             (nodeTyChild (vecGet fields i))))
         {
-          (let aty (groundArgByDecl tc aty0 fty (spanOf (vecGet args i))))
+          (let aty (groundArgByDecl tc aty0 (Some fty) (spanOf (vecGet args i))))
           {
             ; Still pending against a GROUND field is a function
             ; where a value belongs (refused, as the standalone
@@ -23358,7 +23356,7 @@
                       (let vty1 (checkExprH tc (nodeCChild e) 0))
                       (if (== (isPendingNode vty1) 1)
                         (if (== (nodeTag fty) TAG_T_ARR)
-                          (groundArgByDecl tc vty1 fty (spanOf (nodeCChild e)))
+                          (groundArgByDecl tc vty1 (Some fty) (spanOf (nodeCChild e)))
                           (if (== (nodeTag fty) TAG_T_VAR)
                             (groundStandalone tc vty1 (spanOf (nodeCChild e)))
                             {
@@ -23463,7 +23461,7 @@
                   {
                     (let ety (groundStandalone tc (sEntTy ent) (spanOf e)))
                     (if (== (nodeTag ety) TAG_T_ARR)
-                      (groundArgByDecl tc valTy ety (spanOf (nodeBChild e)))
+                      (groundArgByDecl tc valTy (Some ety) (spanOf (nodeBChild e)))
                       {
                         (flushPending tc valTy (spanOf (nodeBChild e)))
                         valTy
@@ -23475,7 +23473,7 @@
                       valTy
                     }
                     (if (== (nodeTag (sEntTy ent)) TAG_T_ARR)
-                      (groundArgByDecl tc valTy (sEntTy ent) (spanOf (nodeBChild e)))
+                      (groundArgByDecl tc valTy (Some (sEntTy ent)) (spanOf (nodeBChild e)))
                       (if (== (tyIsGround (sEntTy ent)) 1)
                         {
                           (refusePendingOperand tc valTy (tyRender (sEntTy ent))
@@ -24118,9 +24116,10 @@
 ; binder was never affected: `bindPatternArgs` already binds each one
 ; at its field type.
 ;
-; `checkPatternTyped` keeps its 0 case, because the nested-pattern
-; caller at the bottom of this file genuinely has no expected type to
-; offer.
+; Both callers provide a type: this walk uses the scrutinee's type,
+; while nested patterns use an instantiated field type, a fresh variable
+; for an excess argument, or poison for an unknown constructor. The nil
+; guard remains for malformed shared AST input.
 ; `fitTy` is the type the arms' CONSTRUCTORS and literals are held to
 ; (`ctorPatFits`): the scrutinee's own, or, when that is only a
 ; placeholder, the type of the first constructor the arms name - so
@@ -25263,10 +25262,9 @@
 ; `_tN` wildcards - and each such fallback bumps the counter, stage0's
 ; check_pattern discipline, literals and wildcards included.
 ;
-; `expected` is 0 at the top of an arm (the scrutinee's type is not
-; threaded into patterns - stage0 binds a top-level variable pattern
-; at the scrutinee type, and so does checkMatch's caller via
-; checkPatternTypedAt).
+; A top-level arm receives the scrutinee's type. A nested pattern
+; receives its field type from `bindOnePatArg`; missing fields receive
+; fresh variables and an unknown constructor's arguments receive poison.
 ; ------------------------------------------------------------------
 (pub :: checkPatternTyped (-> TC ASTNode ASTNode ASTNode Int))
 (pub fn (checkPatternTyped tc pat scrutTy fitTy)

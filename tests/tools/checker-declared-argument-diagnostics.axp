@@ -1,0 +1,46 @@
+; Declared grounding preserves diagnostic order and conservative unknown calls.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Vec)
+(import IO)
+
+(:: checkSource (-> String String ()))
+;@axiom:effect(io)
+(fn (checkSource name source)
+  {
+    (let parsed (parseModuleWith (lex source) (scanAxtags source)))
+    (if (pResOk parsed)
+      {
+        (let declarations (pResNodes parsed))
+        (let units
+          (vecPush vecNew
+            (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+        (let tc (checkModuleTcTyped declarations declarations units))
+        (writeStr stdout (renderDiagsUnits (tcOutVec tc) units))
+      }
+      (writeStr stderr "invalid declared argument fixture\n"))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (checkSource "declared-callback.ax"
+      "(:: apply (-> (-> String String) String String))\n(fn (apply f value) (f value))\n(:: main String)\n(fn (main) { (let identity (lambda (x) x)) (apply identity \"good\") })\n")
+    (checkSource "wrong-callback-result.ax"
+      "(:: apply (-> (-> String Int) Int))\n(fn (apply f) (f \"bad\"))\n(:: main Int)\n(fn (main) { (let identity (lambda (x) x)) (apply identity) })\n")
+    (checkSource "non-callable-head.ax"
+      "(:: main Int)\n(fn (main) { (let pending (lambda (x) x)) (7 pending) })\n")
+    (checkSource "unknown-callback-head.ax"
+      "(:: main Int)\n(fn (main) { (let pending (lambda (x) x)) (missing pending) })\n")
+    (checkSource "grounded-field.ax"
+      "(struct Cell (run : (-> String String)))\n(:: main Int)\n(fn (main) { (let identity (lambda (x) x)) (let cell (Cell :run identity)) 0 })\n")
+    (checkSource "grounded-store.ax"
+      "(struct Cell (mut run : (-> String String)))\n(:: initial (-> String String)) (fn (initial x) x)\n(:: main Int)\n(fn (main) { (let cell (Cell :run initial)) (let identity (lambda (x) x)) (set cell.run identity) 0 })\n")
+    (checkSource "poisoned-callback.ax"
+      "(:: apply (-> (-> Ghost Int) Int))\n(fn (apply f) 0)\n(:: main Int)\n(fn (main) { (let identity (lambda (x) x)) (apply identity) })\n")
+    0
+  })

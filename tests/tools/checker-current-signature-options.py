@@ -32,7 +32,7 @@ def main():
             "erased-signature": ('(:: bad (-> TC ASTNode)) '
                                  '(fn (bad tc) (curFnSigTy tc))', "AX3004"),
             "raw-scope-input": ('(:: bad (-> TC BScope)) '
-                                '(fn (bad tc) (bsNew vecNew vecNew vecNew (curFnSigTy tc)))', "AX3004"),
+                                '(fn (bad tc) (bsNew vecNew vecNew vecNew nilNode))', "AX3004"),
             "missing-none": ('(:: bad (-> TC ASTNode)) '
                              '(fn (bad tc) (match (curFnSigTy tc) ((Some ty) ty)))', "AX3005"),
         }
