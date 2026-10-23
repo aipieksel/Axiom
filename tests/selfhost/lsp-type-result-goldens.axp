@@ -1,0 +1,90 @@
+(import core)
+(import lexer)
+(import parser)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: parse (-> String Nodes))
+(fn (parse source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) __indexTrap)
+    ((ParseSuccess nodes _) nodes)))
+
+(:: request (-> String String String String ()))
+;@axiom:effect(io)
+(fn (request title source peer needle)
+  {
+    (println "CASE {title}")
+    (let uri "file:///tmp/axiom-type-result-fixtures/Main.ax")
+    (let uris (vecPush vecNew uri))
+    (let texts (vecPush vecNew source))
+    (let meta (vecPush (vecPush vecNew 1) 1))
+    (if (> (strLen peer) 0)
+      {
+        (vecPush uris "file:///tmp/axiom-type-result-fixtures/Peer.ax")
+        (vecPush texts peer)
+        (vecPush meta 1)
+        (vecPush meta 1)
+      })
+    (let workspace (lspWorkspaceNew uris texts meta))
+    (let offset
+      (match (strFind source needle 0)
+        ((None) 0)
+        ((Some off) off)))
+    (let params (jsonObjPut jsonObj "position" (lspPos source offset)))
+    (println (jsonWrite (lspTypeDefinition workspace source uri params)))
+    (println
+      (jsonWrite
+        (lspInlayHints workspace source uri
+          (jsonObjPut jsonObj "range"
+            (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+              (lspPos source (strLen source)))))))
+    (println (jsonWrite (lspHover workspace source uri params "")))
+  })
+
+(:: header (-> String ASTNode ()))
+;@axiom:effect(io)
+(fn (header title ty)
+  {
+    (println "CASE {title}")
+    (let source "(fn (f p) p)")
+    (let decl (vecGet (parse source) 0))
+    (let sig (setNodeTyChild (nodeBuildDSig "f" vecNew 0 (mkSpan 0 1)) ty))
+    (let out jsonArr)
+    (lspViewHintsHeader out source (lspLineIndex source) decl (Some sig) 0 (strLen source))
+    (println (jsonWrite out))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (request "empty" "" "" "")
+    (request "local-result"
+      "(struct Box)\n(:: make (-> Int Box))\n(fn (make p) (Box))\n(fn (use) (make 1))" "" "make 1")
+    (request "parameter" "(struct Box)\n(:: f (-> Box Int))\n(fn (f box) 1)" "" "box)")
+    (request "nullary" "(struct Box)\n(:: make Box)\n(fn make (Box))\n(fn (use) make)" "" "make)")
+    (request "unsigned" "(fn (make p) p)\n(fn (use) (make 1))" "" "make 1")
+    (request "unit" "(:: make (-> Int ()))\n(fn (make p) ())\n(fn (use) (make 1))" "" "make 1")
+    (request "unknown" "(fn (use) missing)" "" "missing")
+    (request "recovered" "(:: make (-> Int Int))\n(fn (make p) p" "" "make p")
+    (request "trailing" "(:: make (-> Int Int))\n(fn (make p) p) @" "" "make p")
+    (let peer "(pub data Choice (Stop))\n(pub :: make (-> Int Choice))\n(pub fn (make p) Stop)")
+    (request "imported-result" "(import Peer)\n(fn (use) (make 1))" peer "make 1")
+    (request "imported-ctor" "(import Peer)\n(fn (use) Stop)" peer "Stop)")
+    (request "local-signature-imported-type"
+      "(import Peer)\n(:: use (-> Choice Choice))\n(fn (use p) p)" peer "p)")
+    (request "local-type-precedence"
+      "(import Peer)\n(struct Choice)\n(:: use (-> Choice Int))\n(fn (use p) 1)" peer "p)")
+    (request "missing-imported-function" "(import Peer)\n(fn (use) absent)" peer "absent")
+    (header "missing-result" (mkTArr mkIntTy nilNode))
+    (header "poison-result" (mkTArr mkIntTy mkTErr))
+    (header "empty-result" (mkTArr mkIntTy (mkTCon "" vecNew)))
+    (header "unit-result" (mkTArr mkIntTy mkUnitTy))
+    (header "missing-domain" (mkTArr nilNode mkStringTy))
+    (header "poison-domain" (mkTArr mkTErr mkStringTy))
+    0
+  })

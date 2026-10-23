@@ -1,0 +1,200 @@
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import lsp)
+(import Vec)
+(import Str)
+(import Cereal)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+(:: same (-> (Option ASTNode) ASTNode Bool))
+(fn (same found expected)
+  (match found
+    ((None) false)
+    ((Some ty) (nodeSame ty expected))))
+
+(:: parsed (-> String Nodes))
+(fn (parsed source)
+  (match (parseModule (lex source))
+    ((ParseFailed _) __indexTrap)
+    ((ParseSuccess nodes _) nodes)))
+
+(:: at (-> String String Int))
+(fn (at source needle)
+  (match (strFind source needle 0)
+    ((None) __indexTrap)
+    ((Some offset) offset)))
+
+(:: signature (-> String ASTNode ASTNode))
+(fn (signature name ty)
+  (setNodeTyChild (nodeBuildDSig name vecNew 0 (mkSpan 0 (strLen name))) ty))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: retireDirect (-> ASTNode ()))
+(fn (retireDirect value)
+  {
+    (let result (lspViewResultTy value))
+    (isSome result)
+    ()
+  })
+
+(:: escaped (Option ASTNode))
+(fn (escaped)
+  (lspArrowResult (mkTArr mkIntTy (mkTVar "alive"))))
+
+(:: hints (-> String ASTNode ASTNode Int))
+(fn (hints source decl ty)
+  {
+    (let out jsonArr)
+    (lspViewHintsHeader out source (lspLineIndex source) decl (Some (signature "f" ty)) 0
+      (strLen source))
+    out
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let integer mkIntTy)
+    (let text mkStringTy)
+    (let poison mkTErr)
+    (let unit mkUnitTy)
+    (let empty (mkTCon "" vecNew))
+    (let variable (mkTVar "_"))
+    (say 1 (isNone (lspViewResultTy nilNode)))
+    (say 2 (same (lspViewResultTy integer) integer))
+    (say 3 (same (lspViewResultTy poison) poison))
+    (say 4 (same (lspViewResultTy unit) unit))
+    (say 5 (same (lspViewResultTy empty) empty))
+    (say 6 (same (lspViewResultTy (mkTArr integer text)) text))
+    (say 7 (same (lspViewResultTy (mkTArr integer (mkTArr text unit))) unit))
+    (say 8 (isNone (lspViewResultTy (mkTArr integer nilNode))))
+    (say 9 (same (lspViewResultTy (mkTArr nilNode integer)) integer))
+    (say 10 (isNone (lspArrowResult nilNode)))
+    (say 11 (same (lspArrowResult integer) integer))
+    (say 12 (same (lspArrowResult poison) poison))
+    (say 13 (same (lspArrowResult unit) unit))
+    (say 14 (same (lspArrowResult (mkTArr integer empty)) empty))
+    (say 15 (same (lspArrowResult variable) variable))
+    (say 16 (isNone (lspArrowResult (mkTArr integer nilNode))))
+    (let source "(fn (f p) p)")
+    (let decl (vecGet (parsed source) 0))
+    (let off (at source "p)"))
+    (let declared (vecPush (vecPush vecNew (signature "f" (mkTArr integer text))) decl))
+    (say 17 (same (lspLocalTypeOf source declared off "p") integer))
+    (say 18 (same (lspLocalTypeOf source declared off "f") text))
+    (say 19 (isNone (lspLocalTypeOf source (vecPush vecNew decl) off "f")))
+    (say 20 (isNone (lspLocalTypeOf source declared off "missing")))
+    (say 21
+      (same (lspLocalTypeOf source (vecPush (vecPush vecNew (signature "f" poison)) decl) off "f")
+        poison))
+    (say 22
+      (same (lspLocalTypeOf source (vecPush (vecPush vecNew (signature "f" unit)) decl) off "f")
+        unit))
+    (say 23
+      (same (lspLocalTypeOf source (vecPush (vecPush vecNew (signature "f" empty)) decl) off "f")
+        empty))
+    (say 24
+      (isNone
+        (lspLocalTypeOf source (vecPush (vecPush vecNew (signature "f" nilNode)) decl) off "f")))
+    (let poisonedParam (vecPush (vecPush vecNew (signature "f" (mkTArr poison text))) decl))
+    (say 25 (same (lspLocalTypeOf source poisonedParam off "p") poison))
+    (say 26 (isNone (lspLocalTypeOf source declared (strLen source) "p")))
+    (let nonfn (vecGet (parsed "(struct Box)") 0))
+    (say 27 (isNone (lspLocalTypeOf source (vecPush vecNew nonfn) off "Box")))
+    (say 28 (isNone (lspLocalTypeOf "" vecNew 0 "")))
+    (let noSig jsonArr)
+    (lspViewHintsHeader noSig source (lspLineIndex source) decl None 0 (strLen source))
+    (say 29 (== (jsonArrLen noSig) 0))
+    (let ordinary (hints source decl (mkTArr integer text)))
+    (say 30 (== (jsonArrLen ordinary) 2))
+    (say 31 (strEq (jsonGetStr (jsonArrGet ordinary 1) "label") " -> String"))
+    (let absentResult (hints source decl (mkTArr integer nilNode)))
+    (say 32 (== (jsonArrLen absentResult) 2))
+    (say 33 (strEq (jsonGetStr (jsonArrGet absentResult 1) "label") " -> {unknown}"))
+    (let poisonResult (hints source decl (mkTArr integer poison)))
+    (say 34 (strEq (jsonGetStr (jsonArrGet poisonResult 1) "label") " -> {unknown}"))
+    (let emptyResult (hints source decl (mkTArr integer empty)))
+    (say 35 (strEq (jsonGetStr (jsonArrGet emptyResult 1) "label") " -> "))
+    (let unitResult (hints source decl (mkTArr integer unit)))
+    (say 36 (strEq (jsonGetStr (jsonArrGet unitResult 1) "label") " -> ()"))
+    (let held (mkTVar "held"))
+    (let before (count held))
+    (retireDirect held)
+    (say 37 (== before (count held)))
+    (let escapedResult escaped)
+    (for i in 0..32
+      (vecPush vecNew (mkEInt i)))
+    (say 38
+      (match escapedResult
+        ((None) false)
+        ((Some ty) (strEq (tyRender ty) "alive"))))
+    (let importSource "(import Peer)")
+    (let peer "(pub data Choice (Stop))\n(pub :: make (-> Int Choice))\n(pub fn (make p) Stop)")
+    (let uri "file:///tmp/axiom-type-result-fixtures/Main.ax")
+    (let uris (vecPush (vecPush vecNew uri) "file:///tmp/axiom-type-result-fixtures/Peer.ax"))
+    (let texts (vecPush (vecPush vecNew importSource) peer))
+    (let meta (vecPush (vecPush (vecPush (vecPush vecNew 1) 1) 1) 1))
+    (let workspace (lspWorkspaceNew uris texts meta))
+    (let imports (parsed importSource))
+    (let path "/tmp/axiom-type-result-fixtures/Main.ax")
+    (let imported (lspTypeLocationImported workspace path importSource uri imports "make" None))
+    (say 39 (! (strEq (jsonWrite imported) "null")))
+    (say 40 (strEq (jsonGetStr imported "uri") "file:///tmp/axiom-type-result-fixtures/Peer.ax"))
+    (say 41
+      (strEq
+        (jsonWrite (lspTypeLocationImported workspace path importSource uri imports "missing" None))
+        "null"))
+    (say 42
+      (strEq
+        (jsonWrite
+          (lspTypeLocationImported workspace path importSource uri imports "make" (Some poison)))
+        "null"))
+    (say 43
+      (strEq
+        (jsonWrite
+          (lspTypeLocationImported workspace path importSource uri imports "make" (Some unit)))
+        "null"))
+    (say 44
+      (strEq
+        (jsonWrite
+          (lspTypeLocationImported workspace path importSource uri imports "make" (Some empty)))
+        "null"))
+    (let importedCtor
+      (lspTypeLocationImported workspace path importSource uri imports "Stop" None))
+    (say 45
+      (strEq (jsonGetStr importedCtor "uri") "file:///tmp/axiom-type-result-fixtures/Peer.ax"))
+    (say 46
+      (strEq
+        (jsonWrite
+          (lspTypeLocationImported workspace path importSource uri imports "Stop" (Some poison)))
+        "null"))
+    (let localSource "(struct Local)")
+    (let locals (parsed localSource))
+    (let localType (mkTCon "Local" vecNew))
+    (let localLocation
+      (lspTypeLocation workspace path localSource uri locals "make" (Some localType)))
+    (say 47 (strEq (jsonGetStr localLocation "uri") uri))
+    (say 48
+      (strEq (jsonWrite (lspTypeLocation workspace path importSource uri imports "make" None))
+        (jsonWrite imported)))
+    (say 49
+      (strEq
+        (jsonWrite (lspTypeLocation workspace path importSource uri imports "make" (Some poison)))
+        "null"))
+    (say 50
+      (strEq
+        (jsonWrite (lspTypeLocation workspace path importSource uri imports "make" (Some empty)))
+        "null"))
+    0
+  })

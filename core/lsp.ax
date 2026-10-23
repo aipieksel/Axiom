@@ -11126,8 +11126,12 @@
           (if (if (>= close 0)
             (== (nodeTag ty) TAG_T_ARR)
             false)
-            (lspViewHint out src ix (+ close 1) (concat " -> " (tyRender (lspViewResultTy ty))) 1 0
-              rs re)
+            (lspViewHint out src ix (+ close 1)
+              (concat " -> "
+                (match (lspViewResultTy ty)
+                  ((None) "{unknown}")
+                  ((Some result) (tyRender result))))
+              1 0 rs re)
             0)
         }
       })
@@ -11151,13 +11155,13 @@
 
 ; The final result of an arrow type: `(-> Int Int Bool)` folds to
 ; `Int -> (Int -> Bool)`, so the result is the last `nodeB`.
-(pub :: lspViewResultTy (-> ASTNode ASTNode))
+(pub :: lspViewResultTy (-> ASTNode (Option ASTNode)))
 (pub fn (lspViewResultTy ty)
-  (if (if (! (nodeSame ty nilNode))
-    (== (nodeTag ty) TAG_T_ARR)
-    false)
-    (lspViewResultTy (nodeBChild ty))
-    ty))
+  (if (nodeSame ty nilNode)
+    None
+    (if (== (nodeTag ty) TAG_T_ARR)
+      (lspViewResultTy (nodeBChild ty))
+      (Some ty))))
 
 ; One InlayHint at byte `off`, appended only when `off` is inside the
 ; requested range. `kind` is the protocol's: 1 Type, 2 Parameter.
@@ -14232,14 +14236,18 @@
                   (let w (strSlice src (spanStart wsp) (- (spanEnd wsp) (spanStart wsp))))
                   {
                     (let t (lspLocalTypeOf src decls off w))
-                    (if (! (nodeSame t nilNode))
-                      (lspTypeLocation workspace (lspUriToPath uri) src uri decls "" t)
-                      {
-                        (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
-                        (if (let (Some dat) dat)
-                          (lspLocationJson uri src (nodeSpan dat))
-                          (lspTypeLocation workspace (lspUriToPath uri) src uri decls w nilNode))
-                      })
+                    (match t
+                      ((Some ty)
+                        (lspTypeLocation workspace (lspUriToPath uri) src uri decls "" (Some ty))
+                      )
+                      ((None)
+                        {
+                          (let dat (lspFindCtorData decls w (- (vecLen decls) 1)))
+                          (if (let (Some dat) dat)
+                            (lspLocationJson uri src (nodeSpan dat))
+                            (lspTypeLocation workspace (lspUriToPath uri) src uri decls w None))
+                        }
+                      ))
                   }
                 })
             }
@@ -14250,24 +14258,22 @@
 
 ; The type node this document alone can answer for the word at `off`:
 ; a parameter in the header the cursor is in, else a signed `fn`'s
-; result. 0 when neither.
-(pub :: lspLocalTypeOf (-> String (Vec ASTNode) Int String ASTNode))
+; result. None when neither.
+(pub :: lspLocalTypeOf (-> String (Vec ASTNode) Int String (Option ASTNode)))
 (pub fn (lspLocalTypeOf src decls off w)
-  (if (let (Some parameter) (lspParamTypeAt src decls off w))
-    parameter
-    {
-      (let d (lspFindDecl decls w (- (vecLen decls) 1)))
-      (if (let (Some d) d)
-        (if (== (nodeTag d) TAG_D_FN)
-          {
-            (let sig (lspFindSig decls w (- (vecLen decls) 1)))
-            (if (let (Some sig) sig)
-              (lspArrowResult (nodeTyChild sig))
-              nilNode)
-          }
-          nilNode)
-        nilNode)
-    }))
+  (match (lspParamTypeAt src decls off w)
+    ((Some parameter) (Some parameter))
+    ((None)
+      (match (lspFindDecl decls w (- (vecLen decls) 1))
+        ((None) None)
+        ((Some d)
+          (if (== (nodeTag d) TAG_D_FN)
+            (match (lspFindSig decls w (- (vecLen decls) 1))
+              ((None) None)
+              ((Some sig) (lspArrowResult (nodeTyChild sig))))
+            None)
+        ))
+    )))
 
 ; The fn whose HEADER holds `off`, and the type of the parameter `w`
 ; names in it. The header is the form opened by the `(` before the
@@ -14330,13 +14336,9 @@
 
 ; The RESULT of an arrow chain: `(-> A B C)` answers `C`, and a type
 ; that is not an arrow answers itself - `(:: main Int)`'s `Int`.
-(pub :: lspArrowResult (-> ASTNode ASTNode))
+(pub :: lspArrowResult (-> ASTNode (Option ASTNode)))
 (pub fn (lspArrowResult t)
-  (if (nodeSame t nilNode)
-    nilNode
-    (if (== (nodeTag t) TAG_T_ARR)
-      (lspArrowResult (nodeBChild t))
-      t)))
+  (lspViewResultTy t))
 
 ; The `data` declaring constructor `name` in this document, or None.
 (pub :: lspFindCtorData (-> (Vec ASTNode) String Int (Option ASTNode)))
@@ -14561,19 +14563,20 @@
 (pub fn (lspLocationJson uri src span)
   (jsonObjPut (jsonObjPut jsonObj "uri" (jsonStr uri)) "range" (lspRange src span)))
 
-; The Location of type `t`'s declaration - or, when `t` is 0, of the
+; The Location of type `t`'s declaration - or, when `t` is None, of the
 ; result type of the imported fn `w` names. This document's own
 ; declarations are asked first, which is the language's shadowing rule
 ; and `lspDefinition`'s order; the imports are resolved only when they
 ; have to be, and once, whichever of the two questions is being asked.
-(pub :: lspTypeLocation (-> LspWorkspace String String String (Vec ASTNode) String ASTNode Int))
+(pub :: lspTypeLocation
+  (-> LspWorkspace String String String (Vec ASTNode) String (Option ASTNode) Int))
 ;@axiom:effect(io)
 (pub fn (lspTypeLocation workspace path src uri decls w t)
   {
     (let local
-      (if (nodeSame t nilNode)
-        0
-        (lspTypeLocalOf src uri decls t)))
+      (match t
+        ((None) 0)
+        ((Some ty) (lspTypeLocalOf src uri decls ty))))
     (if (!= local 0)
       local
       (lspTypeLocationImported workspace path src uri decls w t))
@@ -14593,9 +14596,9 @@
 
 ; The import preamble of `lspDefinitionImported`, verbatim, and then
 ; the two lookups it can answer: the result type of an imported signed
-; `fn` when `t` is 0, and the module declaring a type name.
+; `fn` when `t` is None, and the module declaring a type name.
 (pub :: lspTypeLocationImported
-  (-> LspWorkspace String String String (Vec ASTNode) String ASTNode Int))
+  (-> LspWorkspace String String String (Vec ASTNode) String (Option ASTNode) Int))
 ;@axiom:effect(io)
 (pub fn (lspTypeLocationImported workspace path src uri decls w given)
   (if (let (Some r) (lspResolveFor workspace path src decls))
@@ -14604,52 +14607,47 @@
       (let units r.units)
       {
         (let t
-          (if (! (nodeSame given nilNode))
-            given
-            {
-              (let d (lspFindImported allDecls w (- (vecLen allDecls) 1)))
-              (if (let (Some d) d)
-                (if (== (nodeTag d) TAG_D_FN)
+          (match given
+            ((Some ty) (Some ty))
+            ((None)
+              (match (lspFindImported allDecls w (- (vecLen allDecls) 1))
+                ((None) None)
+                ((Some d)
+                  (if (== (nodeTag d) TAG_D_FN)
+                    (match (lspFindSig allDecls (nodeAName d) (- (vecLen allDecls) 1))
+                      ((None) None)
+                      ((Some sig) (lspArrowResult (nodeTyChild sig))))
+                    None)
+                ))
+            )))
+        (match t
+          ; An absent signed result may still name an imported
+          ; constructor whose declaring data supplies its type.
+          ((None) (lspTypeCtorImported allDecls units w))
+          ((Some ty)
+            (if (!= (nodeTag ty) TAG_T_CON)
+              jsonNull
+              {
+                (let local (lspTypeLocalOf src uri decls ty))
+                (if (!= local 0)
+                  local
                   {
-                    (let sig (lspFindSig allDecls (nodeAName d) (- (vecLen allDecls) 1)))
-                    (if (let (Some sig) sig)
-                      (lspArrowResult (nodeTyChild sig))
-                      nilNode)
-                  }
-                  nilNode)
-                nilNode)
-            }))
-        (if (nodeSame t nilNode)
-          ; The last thing `w` can be: a constructor an import
-          ; brought in, whose TYPE is the `data` that declares it.
-          ; `lspTypeDefinition` asks the same question of this
-          ; document before any import is resolved; this is the half
-          ; that was missing, and it is why `signatureHelp` could
-          ; render `(Circle Int)` at a position where this request
-          ; answered null.
-          (lspTypeCtorImported allDecls units w)
-          (if (!= (nodeTag t) TAG_T_CON)
-            jsonNull
-            {
-              (let local (lspTypeLocalOf src uri decls t))
-              (if (!= local 0)
-                local
-                {
-                  (let d (lspFindTypeImported allDecls (nodeAName t) (- (vecLen allDecls) 1)))
-                  (if (let (Some d) d)
-                    {
-                      (let u (lspUnitOf units (nodeModule d)))
-                      (if (< u 0)
-                        jsonNull
-                        {
-                          (let unit (vecGet units u))
-                          (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
-                            (nodeSpan d))
-                        })
-                    }
-                    jsonNull)
-                })
-            }))
+                    (let d (lspFindTypeImported allDecls (nodeAName ty) (- (vecLen allDecls) 1)))
+                    (if (let (Some d) d)
+                      {
+                        (let u (lspUnitOf units (nodeModule d)))
+                        (if (< u 0)
+                          jsonNull
+                          {
+                            (let unit (vecGet units u))
+                            (lspLocationJson (lspPathToUri (unitFile unit)) (unitSrc unit)
+                              (nodeSpan d))
+                          })
+                      }
+                      jsonNull)
+                  })
+              })
+          ))
       }
     }
     jsonNull))
