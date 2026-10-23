@@ -13261,18 +13261,17 @@
 ; ------------------------------------------------------------------
 ; The value of an `isr(...)` tag in one tag set: "" for no tag or a
 ; plain `isr`, else what is between the parentheses.
-(pub :: isrTagValueIn (-> Ints Int String))
+(pub :: isrTagValueIn (-> Axtags Int String))
 (pub fn (isrTagValueIn tags i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     ""
-    (if (>= i (vecLen tags))
-      ""
-      {
-        (let content (memGetWordStr (vecGet tags i) 1))
-        (if (&& (strStartsWith content "isr(") (== (strByte content (- (strLen content) 1)) 41))
-          (strTrim (strSlice content 4 (- (strLen content) 5)))
-          (isrTagValueIn tags (+ i 1)))
-      })))
+    {
+      (let tag (vecGet tags i))
+      (let content tag.content)
+      (if (&& (strStartsWith content "isr(") (== (strByte content (- (strLen content) 1)) 41))
+        (strTrim (strSlice content 4 (- (strLen content) 5)))
+        (isrTagValueIn tags (+ i 1)))
+    }))
 
 ; Every declaration carrying `isr(<vector>)`: name then vector, two
 ; Strings per binding. A `::` and its `fn` are one declaration and both
@@ -13286,7 +13285,10 @@
       {
         (if (|| (== (nodeTag d) TAG_D_FN) (== (nodeTag d) TAG_D_SIG))
           {
-            (let v (isrTagValueIn (nodeAxtagsWords d) 0))
+            (let v
+              (match (nodeAxtagsOpt d)
+                ((None) "")
+                ((Some tags) (isrTagValueIn tags 0))))
             (if (&& (> (strLen v) 0) (== (isrBound acc (nodeAName d) 0) 0))
               {
                 (vecPush acc (nodeAName d))

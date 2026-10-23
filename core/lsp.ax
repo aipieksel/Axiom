@@ -1476,26 +1476,30 @@
 (pub fn (lspLintSuppBuild lx decls)
   {
     (for d in decls
-      (if (!= (nodeAxtagsWord d) 0)
-        ; An import's tag is the file's, under the owner "" that
-        ; `lspLintSuppressed` asks about for every record.
-        (lspLintSuppDecl lx
-          (if (== (nodeTag d) TAG_D_IMPORT)
-            ""
-            (nodeAName d))
-          (nodeAxtagsWords d) 0)))
+      (match (nodeAxtagsOpt d)
+        ((None) 0)
+        ((Some tags)
+          ; An import's tag is the file's, under the owner "" that
+          ; `lspLintSuppressed` asks about for every record.
+          (lspLintSuppDecl lx
+            (if (== (nodeTag d) TAG_D_IMPORT)
+              ""
+              (nodeAName d))
+            tags 0)
+        )))
     0
   })
 
 ; One declaration's tags into the map. Only the `nolint` key is
 ; read; every other key belongs to the checker or to someone else's
 ; metadata and is left where it lay.
-(pub :: lspLintSuppDecl (-> LspLint String Ints Int Int))
+(pub :: lspLintSuppDecl (-> LspLint String Axtags Int Int))
 (pub fn (lspLintSuppDecl lx owner tags i)
   (if (>= i (vecLen tags))
     0
     {
-      (lspLintTagCodes lx owner (memGetWord (vecGet tags i) 0) (memGetWordStr (vecGet tags i) 1))
+      (let tag (vecGet tags i))
+      (lspLintTagCodes lx owner tag.off tag.content)
       (lspLintSuppDecl lx owner tags (+ i 1))
     }))
 
@@ -2358,7 +2362,7 @@
   (== (pResPos pr) (- 0 2)))
 
 ;; The recovered parse of a document whose own parse failed.
-(pub :: lspRecover (-> String Tokens (Vec AxtagEnt) (PResult Nodes)))
+(pub :: lspRecover (-> String Tokens Axtags (PResult Nodes)))
 (pub fn (lspRecover src toks tags)
   {
     (let fixed (lspRecoverStrings src toks 0))
@@ -3724,22 +3728,26 @@
 ; declares nothing. The checker answers whether the declaration holds.
 (pub :: lspFieldEffectsSaid (-> ASTNode String))
 (pub fn (lspFieldEffectsSaid f)
-  (if (|| (nodeSame f nilNode) (== (nodeAxtags f) 0))
+  (if (nodeSame f nilNode)
     ""
-    {
-      (let mut said "")
-      (for t in (nodeAxtagsWords f)
+    (match (nodeAxtagsOpt f)
+      ((None) "")
+      ((Some tags)
         {
-          (let text (memGetWordStr t 1))
-          (if (strStartsWith text "effect(")
-            (set said (if (strEq said "")
-              (concat (concat "`" text) "`")
-              (concat (concat (concat said " and `") text) "`"))))
-        })
-      (if (strEq said "")
-        ""
-        (concat ", declared " said))
-    }))
+          (let mut said "")
+          (for t in tags
+            {
+              (let text t.content)
+              (if (strStartsWith text "effect(")
+                (set said (if (strEq said "")
+                  (concat (concat "`" text) "`")
+                  (concat (concat (concat said " and `") text) "`"))))
+            })
+          (if (strEq said "")
+            ""
+            (concat ", declared " said))
+        }
+      ))))
 
 (pub :: lspFieldNodeAt (-> (Vec ASTNode) String Int Int ASTNode))
 (pub fn (lspFieldNodeAt fs fname off i)
@@ -4787,8 +4795,7 @@
         {
           (let tags (contractTagsFor sigs d))
           (for t in tags
-            (if (&& (>= off (memGetWord t 0))
-                  (<= off (findNewline src (memGetWord t 0) (strLen src))))
+            (if (&& (>= off t.off) (<= off (findNewline src t.off (strLen src))))
               {
                 (let ps (nodeBNames d))
                 {
@@ -12308,7 +12315,7 @@
 
 ; The lexer finds the opener even with comments in the import header.
 ; The parser has already refused late, nested and incomplete imports.
-(pub :: lspOrganizeEdit (-> String String (Vec ASTNode) Tokens (Vec AxtagEnt) Int))
+(pub :: lspOrganizeEdit (-> String String (Vec ASTNode) Tokens Axtags Int))
 (pub fn (lspOrganizeEdit src uri decls tokens tags)
   {
     (let chunks vecNew)
@@ -12422,8 +12429,7 @@
         end))
   })
 
-(pub :: lspOrganizeSorted
-  (-> String String (Vec LspImportChunk) (Vec LspImportChunk) (Vec AxtagEnt) Int))
+(pub :: lspOrganizeSorted (-> String String (Vec LspImportChunk) (Vec LspImportChunk) Axtags Int))
 (pub fn (lspOrganizeSorted src uri chunks sorted tags)
   {
     (let n (vecLen sorted))
@@ -13044,18 +13050,17 @@
 ; tag content's head - `unhandled(abort)` starts with `unhandled`.
 (pub :: lspDeclHasTagKey (-> ASTNode String Bool))
 (pub fn (lspDeclHasTagKey d key)
-  (if (== (nodeAxtagsWord d) 0)
-    false
-    {
-      (let tags (nodeAxtagsWords d))
-      (let mut out false)
+  (match (nodeAxtagsOpt d)
+    ((None) false)
+    ((Some tags)
       {
-        (for i in 0..(vecLen tags)
-          (if (strStartsWith (memGetWordStr (vecGet tags i) 1) key)
+        (let mut out false)
+        (for tag in tags
+          (if (strStartsWith tag.content key)
             (set out true)))
         out
       }
-    }))
+    )))
 
 ; One acknowledge per AX3053 the request meets, where this document
 ; declares the effect and carries no `unhandled` tag on it.
@@ -15974,29 +15979,24 @@
 
 ; A declaration at column `ind` - 0 at the top level, deeper inside a
 ; rule-form macro's template - with its `;@axiom:` lines above it,
-; each as the scanner stored it (`AxtagEnt`, word 1 the text after
-; the prefix), and `pub` from `nodeVis`.
+; each as the scanner stored its content after the prefix, and `pub`
+; from `nodeVis`.
 (pub :: lspRenderDecl (-> ASTNode Int String))
 (pub fn (lspRenderDecl d ind)
   (if (nodeSame d nilNode)
     "; unrenderable declaration (no node)"
-    (concat (lspRenderAxtags (nodeAxtagsWords d) ind) (lspRenderDeclBody d ind))))
+    (match (nodeAxtagsOpt d)
+      ((None) (lspRenderDeclBody d ind))
+      ((Some tags) (concat (lspRenderAxtags tags ind) (lspRenderDeclBody d ind))))))
 
-(pub :: lspRenderAxtags (-> Ints Int String))
+(pub :: lspRenderAxtags (-> Axtags Int String))
 (pub fn (lspRenderAxtags tags ind)
-  (if (== (as tags Int) 0)
-    ""
-    {
-      (let parts vecNew)
-      (let n (vecLen tags))
-      {
-        (for i in 0..n
-          (vecPush parts
-            (concat (concat ";@axiom:" (memGetWordStr (vecGet tags i) 1))
-              (concat "\n" (lspPad ind)))))
-        (catStrs parts)
-      }
-    }))
+  {
+    (let parts vecNew)
+    (for tag in tags
+      (vecPush parts (concat (concat ";@axiom:" tag.content) (concat "\n" (lspPad ind)))))
+    (catStrs parts)
+  })
 
 (pub :: lspPubOf (-> ASTNode String))
 (pub fn (lspPubOf d)
