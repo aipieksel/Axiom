@@ -2016,12 +2016,9 @@
                 (let sv (tcCurSigVars tc))
                 (if (== (vecLen sv) 0)
                   0
-                  {
-                    (let k (strVecIdx sv (nodeAName t)))
-                    (if (< k 0)
-                      0
-                      (+ 2 k))
-                  })
+                  (match (strVecIdx sv (nodeAName t))
+                    ((None) 0)
+                    ((Some k) (+ 2 k))))
               }
               ; THE INNERMOST LAMBDA'S OWN PARAMETER is the one
               ; placeholder whose class something will know: not here,
@@ -2264,10 +2261,9 @@
             (set src (typeBindingName (vecGet env i)))))
         (if (strEq src "")
           0
-          {
-            (let idx (strVecIdx (nodeTyNames st) src))
-            (if (< idx 0)
-              0
+          (match (strVecIdx (nodeTyNames st) src)
+            ((None) 0)
+            ((Some idx)
               {
                 (let w (nodeBWords st))
                 (let early
@@ -2288,8 +2284,8 @@
                         0
                       })
                   })
-              })
-          })
+              }
+            )))
       }
     }
   })
@@ -7694,7 +7690,7 @@
           (let m (vecGet ms i))
           (let n (nodeAName (vecGet ms i)))
           (if (|| (strEq n "word") (|| (strEq n "shared") (strEq n "sealed")))
-            (if (>= (strVecIdx seen n) 0)
+            (if (isSome (strVecIdx seen n))
               (emitStructMarkerDiag tc (nodeSpan m) (concat (concat "`" n) "` is written twice")
                 "write each marker once"
                 "a marker says one thing about the struct, and saying it twice says nothing more")
@@ -13188,7 +13184,7 @@
 ; checker cannot see, and anything else is the argument checker's.
 (pub :: capThunkVar (-> TC ASTNode Names Int))
 (pub fn (capThunkVar tc e bound)
-  (if (>= (strVecIdx bound (nodeAName e)) 0)
+  (if (isSome (strVecIdx bound (nodeAName e)))
     0
     (if (let (Some ent) (scopeFindFrame tc (nodeAName e)))
       {
@@ -13276,7 +13272,7 @@
       (let tag (nodeTag e))
       {
         (if (== tag TAG_E_VAR)
-          (if (< (strVecIdx bound (nodeAName e)) 0)
+          (if (isNone (strVecIdx bound (nodeAName e)))
             (vecPush acc e))
           (if (== tag TAG_E_APP)
             {
@@ -13576,9 +13572,9 @@
                         0
                         {
                           (let key (showTyName ty))
-                          (if (>= (strVecIdx seen key) 0)
+                          (if (isSome (strVecIdx seen key))
                             1
-                            (if (>= (strVecIdx active n) 0)
+                            (if (isSome (strVecIdx active n))
                               0
                               {
                                 (vecPush seen key)
@@ -13626,7 +13622,7 @@
       {
         {
           (let name (nodeAName v))
-          (if (! (>= (strVecIdx seen name) 0))
+          (if (! (isSome (strVecIdx seen name)))
             {
               (let found (scopeFindFrame tc name))
               (if (let (Some ent) found)
@@ -17476,7 +17472,7 @@
         0
         {
           (let n (nodeAName h))
-          (if (>= (strVecIdx bound n) 0)
+          (if (isSome (strVecIdx bound n))
             0
             {
               (let entFound (findFnEnt tc n))
@@ -31625,9 +31621,8 @@
       {
         (let tag (vecGet tags i))
         (if (sizedTyIn (axtagKeyOf tag) "scoped compute")
-          {
-            (let pos (strVecIdx (nodeBNames d) (axtagTextValue tag)))
-            (if (>= pos 0)
+          (match (strVecIdx (nodeBNames d) (axtagTextValue tag))
+            ((Some pos)
               {
                 {
                   (let marks
@@ -31640,8 +31635,9 @@
                 (if (strEq (axtagKeyOf tag) "scoped")
                   (tcSetRgnHasForm tc 1)
                   (tcSetComputeEnabled tc 1))
-              })
-          })
+              }
+            )
+            ((None) 0)))
       }
       (scopedCollectTags tc d ent tags (+ i 1))
     }))
@@ -31656,11 +31652,12 @@
 
 (pub :: checkScopedTag (-> TC ASTNode String Int))
 (pub fn (checkScopedTag tc d name)
-  {
-    (let pos (strVecIdx (nodeBNames d) name))
-    (if (< pos 0)
+  (match (strVecIdx (nodeBNames d) name)
+    ((None)
       (emitScopedCallback tc (nodeSpan d)
         (concat "scoped callback contract names no parameter: `" (concat name "`")))
+    )
+    ((Some pos)
       {
         (let entFound (findFnEntAnywhere tc (nodeAName d)))
         (if (let (Some ent) entFound)
@@ -31678,8 +31675,8 @@
             (emitScopedCallback tc (nodeSpan d)
               "a scoped parameter must have a declared function type"))
           0)
-      })
-  })
+      }
+    )))
 
 ; A parameter carrying the same contract may be forwarded. Shadowed
 ; names and ordinary local closures do not inherit the assertion.
@@ -32360,7 +32357,7 @@
           (if (!= (vecGet (rgnOrigs rc) idx) 0)
             {
               (set rc.capMask (| rc.capMask (vecGet (rgnOrigs rc) idx)))
-              (if (< (strVecIdx rc.capNames (nodeAName e)) 0)
+              (if (isNone (strVecIdx rc.capNames (nodeAName e)))
                 {
                   (let names rc.capNames)
                   (vecPush names (nodeAName e))
@@ -32634,7 +32631,7 @@
   (if (>= i (vecLen names))
     0
     {
-      (if (< (strVecIdx outNames (vecGetStr names i)) 0)
+      (if (isNone (strVecIdx outNames (vecGetStr names i)))
         {
           (vecPush outNames (vecGet names i))
           (vecPush outMasks (vecGet masks i))
@@ -34524,19 +34521,22 @@
 (:: checkComputeTag (-> TC ASTNode String Int))
 (fn (checkComputeTag tc d name)
   {
-    (let pos (strVecIdx (nodeBNames d) name))
     (let entFound (findFnEntAnywhere tc (nodeAName d)))
-    (if (< pos 0)
-      (emitCompute tc (nodeSpan d)
-        (concat "compute contract names no parameter: `" (concat name "`")))
-      (if (let (Some ent) entFound)
-        (if (if (let (Some parameter) (nthParamTy (fnEntTy ent) pos))
-          (computeWordArrow tc parameter)
-          false)
-          0
-          (emitCompute tc (nodeSpan d)
-            "a compute parameter requires the declared callback type (-> Int Int)"))
-        0))
+    (match (strVecIdx (nodeBNames d) name)
+      ((None)
+        (emitCompute tc (nodeSpan d)
+          (concat "compute contract names no parameter: `" (concat name "`")))
+      )
+      ((Some pos)
+        (if (let (Some ent) entFound)
+          (if (if (let (Some parameter) (nthParamTy (fnEntTy ent) pos))
+            (computeWordArrow tc parameter)
+            false)
+            0
+            (emitCompute tc (nodeSpan d)
+              "a compute parameter requires the declared callback type (-> Int Int)"))
+          0)
+      ))
   })
 
 ; A spelling is not a proof: compare the actual frame entry with the
@@ -34546,12 +34546,10 @@
   (if (let (Some d) (tcCurDeclNode tc))
     (if (!= (nodeTag e) TAG_E_VAR)
       false
-      {
-        (let pos (strVecIdx (nodeBNames d) (nodeAName e)))
-        (let entFound (findFnEntAnywhere tc (nodeAName d)))
-        (if (let (Some ent) entFound)
-          (if (< pos 0)
-            false
+      (match (strVecIdx (nodeBNames d) (nodeAName e))
+        ((None) false)
+        ((Some pos)
+          (if (let (Some ent) (findFnEntAnywhere tc (nodeAName d)))
             (if (let (Some frame) (scopeFindFrame tc (nodeAName e)))
               {
                 (let index (+ (tcFrameBase tc) pos))
@@ -34559,9 +34557,9 @@
                   (&& (== (as frame Int) (as (vecGet (tcScopeVec tc) index) Int))
                     (== (intInVec (fnEntCompute ent) pos 0) 1)))
               }
-              false))
-          false)
-      })
+              false)
+            false)
+        )))
     false))
 
 (:: computeCaptureNames (-> TC ASTNode Names Bool))
@@ -34575,7 +34573,7 @@
           (let v (vecGet occ i))
           (let name (nodeAName (vecGet occ i)))
           (if (let (Some entry) (scopeFindFrame tc name))
-            (if (< (strVecIdx names name) 0)
+            (if (isNone (strVecIdx names name))
               (if (computePrimitive tc entry.ty)
                 (vecPushStr names name)
                 {
@@ -34737,7 +34735,7 @@
 (fn (computeWalkVar walk e bound)
   {
     (let name (nodeAName e))
-    (if (|| (>= (strVecIdx bound name) 0) (sizedTyIn name "true false"))
+    (if (|| (isSome (strVecIdx bound name)) (sizedTyIn name "true false"))
       0
       (if (let (Some ent) (findFnEnt walk.tc name))
         (if (fnEntMayTakeArgs ent)
@@ -34770,7 +34768,7 @@
       {
         (let name (nodeAName head))
         (let entFound (findFnEnt tc (nodeAName head)))
-        (if (>= (strVecIdx bound name) 0)
+        (if (isSome (strVecIdx bound name))
           (computeFail walk (concat "compute callback calls opaque local `" (concat name "`")))
           (if (&& (isValueCastForm name)
                 (if (let (Some ent) entFound)
@@ -34827,7 +34825,7 @@
             }
           }
         (== tag TAG_E_SET)
-          (if (< (strVecIdx mutable (nodeAName e)) 0)
+          (if (isNone (strVecIdx mutable (nodeAName e)))
             (computeFail walk "compute callback assigns to captured or non-local state")
             (computeWalkExpr walk (nodeBChild e) bound mutable))
         (== tag TAG_E_IF)

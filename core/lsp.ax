@@ -12920,7 +12920,7 @@
 (pub fn (lspNolintOffer out src uri ix decls want code owner sp msg seen)
   {
     (let key (concat owner (concat "$" code)))
-    (if (>= (strVecIdx seen key) 0)
+    (if (isSome (strVecIdx seen key))
       0
       {
         (let d (lspLintOwnerDecl decls owner 0))
@@ -12961,7 +12961,7 @@
         (let o (vecGet opens (- (vecLen opens) 1)))
         {
           (let key (concat "if$" (fmtInt o)))
-          (if (>= (strVecIdx seen key) 0)
+          (if (isSome (strVecIdx seen key))
             0
             (if (|| (|| (>= (+ o 2) (strLen src)) (!= (strByte src o) 40))
                   (|| (!= (strByte src (+ o 1)) 105) (!= (strByte src (+ o 2)) 102)))
@@ -13076,7 +13076,7 @@
             {
               (let eff (lspEffectQuoted (diagMsg d)))
               (if (! (== (strLen eff) 0))
-                (if (! (>= (strVecIdx seen eff) 0))
+                (if (! (isSome (strVecIdx seen eff)))
                   {
                     (let ed (lspFindEffect decls eff (- (vecLen decls) 1)))
                     (if (! (nodeSame ed nilNode))
@@ -13212,7 +13212,7 @@
 (pub fn (lspImportOffer out d src uri ix decls mod name seen)
   {
     (let key (concat mod (concat "$" name)))
-    (if (>= (strVecIdx seen key) 0)
+    (if (isSome (strVecIdx seen key))
       0
       {
         (let edit (lspImportEdit src uri ix decls mod name))
@@ -13393,7 +13393,7 @@
 (pub :: lspFixConsider (-> String String String String Int String Strings Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspFixConsider full mod name path tcode entryDir found seen)
-  (if (|| (strEq full path) (>= (strVecIdx seen mod) 0))
+  (if (|| (strEq full path) (isSome (strVecIdx seen mod)))
     0
     {
       (let text (unwrapOr (readFile full) ""))
@@ -13619,7 +13619,7 @@
 (pub fn (lspPublicOffer out d src uri ix decls allDecls units mod name decl seen)
   {
     (let key (concat mod (concat "$" name)))
-    (if (>= (strVecIdx seen key) 0)
+    (if (isSome (strVecIdx seen key))
       0
       {
         (let u (lspUnitOf units (nodeModule decl)))
@@ -14203,16 +14203,16 @@
               {
                 (let hs (lspHeaderOpen src (spanStart (nodeSpan d))))
                 (if (&& (>= hs 0) (< off (lspFormEnd src hs)))
-                  {
-                    (let k (strVecIdx (nodeBNames d) w))
-                    (if (! (< k 0))
+                  (match (strVecIdx (nodeBNames d) w)
+                    ((Some k)
                       {
                         (let sig (lspFindSig decls (nodeAName d) (- (vecLen decls) 1)))
                         (if (let (Some sig) sig)
                           (set found (nthParamTy (nodeTyChild sig) k))
                           ())
-                      })
-                  })
+                      }
+                    )
+                    ((None) ())))
               })
             (set i (+ i 1))
           }
@@ -15521,12 +15521,13 @@
 
 (pub :: lspRenamed (-> Strings String String))
 (pub fn (lspRenamed ren name)
-  {
-    (let at (strVecIdx ren name))
-    (if (|| (< at 0) (!= (% at 2) 0))
-      name
-      (vecGet ren (+ at 1)))
-  })
+  (match (strVecIdx ren name)
+    ((None) name)
+    ((Some at)
+      (if (!= (% at 2) 0)
+        name
+        (vecGet ren (+ at 1)))
+    )))
 
 ; The checker names a type variable it could not resolve `_tN`
 ; (typecheck.ax, `tcCounter`), and `symbols` prints it that way -
@@ -15552,10 +15553,10 @@
         {
           (let nm (vecGet names i))
           {
-            (if (&& (== (strByte nm 0) 95) (< (strVecIdx ren nm) 0))
+            (if (&& (== (strByte nm 0) 95) (isNone (strVecIdx ren nm)))
               {
                 (while (if (<= b 122)
-                  (>= (strVecIdx names (strFromByte b)) 0)
+                  (isSome (strVecIdx names (strFromByte b)))
                   false)
                   (set b (+ b 1)))
                 (if (<= b 122)

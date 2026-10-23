@@ -20127,7 +20127,9 @@
                     (let vars vecNew)
                     {
                       (cgSigVarsInto (fsigTy e) vars)
-                      (strVecIdx vars (nodeAName tn))
+                      (match (strVecIdx vars (nodeAName tn))
+                        ((None) (- 0 1))
+                        ((Some k) k))
                     }
                   })
                 (- 0 1)))
@@ -29220,36 +29222,34 @@
                               (let tn (vecGet ftys j))
                               (if (== (tyIsSrcVar tn) 1)
                                 (if (! (nodeSame stamp nilNode))
-                                  {
-                                    (let vi (strVecIdx vars (nodeAName tn)))
-                                    (if (!
-                                          (if (< vi 0)
-                                            true
-                                            (>= vi (vecLen (nodeBWords stamp)))))
-                                      {
-                                        (let wv (as (vecGet (nodeBWords stamp) vi) Int))
-                                        (if (== wv 1)
-                                          (set stat (+ stat (pow2 (ctorFieldBit entry j))))
-                                          (if (>= wv 2)
-                                            {
-                                              (vecPush symPos (ctorFieldBit entry j))
-                                              (vecPush symK (- wv 2))
-                                            }
-                                            ; a lam-arg witness is dynamic
-                                            ; too, but its bit comes from
-                                            ; a DIFFERENT word - not the
-                                            ; enclosing function's, the
-                                            ; lambda's own argument
-                                            ; evidence at depth d, bit 0 -
-                                            ; so it cannot join `symPos`
-                                            ; and gets its own loop below.
-                                            (if (<= wv (- 0 2))
+                                  (match (strVecIdx vars (nodeAName tn))
+                                    ((None) 0)
+                                    ((Some vi)
+                                      (if (< vi (vecLen (nodeBWords stamp)))
+                                        {
+                                          (let wv (as (vecGet (nodeBWords stamp) vi) Int))
+                                          (if (== wv 1)
+                                            (set stat (+ stat (pow2 (ctorFieldBit entry j))))
+                                            (if (>= wv 2)
                                               {
-                                                (vecPush lamPos (ctorFieldBit entry j))
-                                                (vecPush lamD (- (- 0 2) wv))
-                                              })))
-                                      })
-                                  })
+                                                (vecPush symPos (ctorFieldBit entry j))
+                                                (vecPush symK (- wv 2))
+                                              }
+                                              ; a lam-arg witness is dynamic
+                                              ; too, but its bit comes from
+                                              ; a DIFFERENT word - not the
+                                              ; enclosing function's, the
+                                              ; lambda's own argument
+                                              ; evidence at depth d, bit 0 -
+                                              ; so it cannot join `symPos`
+                                              ; and gets its own loop below.
+                                              (if (<= wv (- 0 2))
+                                                {
+                                                  (vecPush lamPos (ctorFieldBit entry j))
+                                                  (vecPush lamD (- (- 0 2) wv))
+                                                })))
+                                        })
+                                    )))
                                 {
                                   (let c (fldClass cg tn))
                                   (if (== c 1)
@@ -29632,7 +29632,7 @@
         0
         {
           (let n (nodeAName h))
-          (if (>= (strVecIdx bound n) 0)
+          (if (isSome (strVecIdx bound n))
             0
             {
               (let full (mangledForCg cg n))
@@ -30315,34 +30315,33 @@
               (match (ctorFieldTypes entry)
                 ((None) 0)
                 ((Some fields) (cgSigVarsVec fields vars)))
-              {
-                (let vi (strVecIdx vars (nodeAName tn)))
-                (if (if (< vi 0)
-                  true
-                  (>= vi (vecLen (nodeBWords stamp))))
-                  (- 0 1)
-                  {
-                    (let wv (as (vecGet (nodeBWords stamp) vi) Int))
-                    (if (== wv 1)
-                      1
-                      (if (>= wv 2)
-                        wv
-                        ; `EV_LAMARG - d` (<= -2) is the enclosing
-                        ; lifted lambda's own argument, whose class
-                        ; only the APPLICATION knows. Pass the
-                        ; witness through UNCHANGED: -1 already
-                        ; means "no retain" and 1 / >=2 are taken,
-                        ; so the negative range is the free one, and
-                        ; `emitFieldStores` decodes the depth back
-                        ; out of it the way `emitPrimRetainRef`
-                        ; does. Answering -1 here is what left the
-                        ; store uncounted while the shape word said
-                        ; leaf.
-                        (if (<= wv (- 0 2))
+              (match (strVecIdx vars (nodeAName tn))
+                ((None) (- 0 1))
+                ((Some vi)
+                  (if (>= vi (vecLen (nodeBWords stamp)))
+                    (- 0 1)
+                    {
+                      (let wv (as (vecGet (nodeBWords stamp) vi) Int))
+                      (if (== wv 1)
+                        1
+                        (if (>= wv 2)
                           wv
-                          (- 0 1))))
-                  })
-              }
+                          ; `EV_LAMARG - d` (<= -2) is the enclosing
+                          ; lifted lambda's own argument, whose class
+                          ; only the APPLICATION knows. Pass the
+                          ; witness through UNCHANGED: -1 already
+                          ; means "no retain" and 1 / >=2 are taken,
+                          ; so the negative range is the free one, and
+                          ; `emitFieldStores` decodes the depth back
+                          ; out of it the way `emitPrimRetainRef`
+                          ; does. Answering -1 here is what left the
+                          ; store uncounted while the shape word said
+                          ; leaf.
+                          (if (<= wv (- 0 2))
+                            wv
+                            (- 0 1))))
+                    })
+                ))
             }
           })
         (if (== (fldClass cg tn) 2)
@@ -30968,7 +30967,9 @@
                 (let vars vecNew)
                 {
                   (cgSigVarsInto (fsigTy e) vars)
-                  (strVecIdx vars n)
+                  (match (strVecIdx vars n)
+                    ((None) (- 0 1))
+                    ((Some k) k))
                 }
               })
             (- 0 1))
