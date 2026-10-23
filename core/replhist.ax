@@ -141,7 +141,7 @@
 ;   histRecord      (-> Hist String Int)   one COMPLETE entry; 1 kept, 0 dropped
 ;   histClose       (-> Hist Int)          compact if needed; 1 rewrote
 ;   histLen         (-> Hist Int)
-;   histAt          (-> Hist Int String)   oldest first; "" out of range
+;   histAt          (-> Hist Int (Option String)) oldest first; None out of range
 ;   histPath        (-> Hist String)       "" when nothing is persisted
 ;   histPersist     (-> Hist Int)
 ;
@@ -149,7 +149,7 @@
 ;                                          buffer, saved as the draft on
 ;                                          the first Up. 1 moved, 0 stuck
 ;   histBrowseDown  (-> Hist Int)          Down; 1 moved, 0 on the draft
-;   histCurrent     (-> Hist String)       what the cursor points at
+;   histCurrent     (-> Hist (Option String)) cursor entry or saved draft
 ;   histBrowseReset (-> Hist ())           leave browse mode; idempotent,
 ;                                          so an editor may call it on
 ;                                          every edit without asking
@@ -575,15 +575,14 @@
 (pub fn (histLen h)
   (vecLen h.entries))
 
-; The entry at `i`, oldest first, or "" out of range.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: histAt (-> Hist Int String))
+; The entry at `i`, oldest first, or None out of range. An entry may
+; itself be an empty String. Returning Some allocates its box.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: histAt (-> Hist Int (Option String)))
 (pub fn (histAt h i)
-  (if (< i 0)
-    ""
-    (if (>= i (histLen h))
-      ""
-      (vecGet h.entries i))))
+  (if (|| (< i 0) (>= i (histLen h)))
+    None
+    (Some (vecGet h.entries i))))
 
 ; Build a session. `interactive` is 1 only when the caller has
 ; established that a person is at the other end; this module does not
@@ -755,14 +754,15 @@
 ; multi-line entry comes back as the ONE string it was recorded as,
 ; newlines and all - the editor renders it as several rows and, on
 ; submit, hands the whole thing back, where it dispatches in one go
-; because it balanced when it was recorded.
-;@axiom:restrict(no-io,no-alloc,no-foreign)
-(pub :: histCurrent (-> Hist String))
+; because it balanced when it was recorded. A negative public cursor
+; has no entry and answers None; the draft, including empty, is Some.
+;@axiom:restrict(no-io,no-foreign)
+(pub :: histCurrent (-> Hist (Option String)))
 (pub fn (histCurrent h)
   {
     (let pos h.pos)
     (if (>= pos (histLen h))
-      h.draft
+      (Some h.draft)
       (histAt h pos))
   })
 
@@ -812,8 +812,12 @@
         (let mut found (:: None (Option Int)))
         (while (&& (isNone found) (>= i 0))
           {
-            (if (let (Some _) (strFind (histAt h i) needle 0))
-              (set found (Some i)))
+            (match (histAt h i)
+              ((None) ())
+              ((Some entry)
+                (if (let (Some _) (strFind entry needle 0))
+                  (set found (Some i)))
+              ))
             (set i (- i 1))
           })
         found

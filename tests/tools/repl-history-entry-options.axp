@@ -1,0 +1,92 @@
+(import IO)
+(import Fmt)
+
+(:: entrySay (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (entrySay index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: entryTextIs (-> (Option String) String Bool))
+(fn (entryTextIs result expected)
+  (match result
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: entryHist (-> Strings Int String Hist))
+(fn (entryHist entries pos draft)
+  (Hist :entries entries :path "" :cap 1000 :pos pos :draft draft :persist 0))
+
+(:: entryRing Hist)
+(fn (entryRing)
+  (entryHist
+    (vecPush (vecPush (vecPush vecNew (strDup "alpha")) (strDup "")) (strDup "two\nlines")) 0
+    (strDup "draft\nline")))
+
+(:: entryReturned (-> String (Option String)))
+(fn (entryReturned text)
+  (histAt (entryHist (vecPush vecNew (strDup text)) 0 "") 0))
+
+(:: entryStringCount (-> String Int))
+;@axiom:effect(unsafe)
+(fn (entryStringCount s)
+  (__load64 (as s Int) -2))
+
+(:: entryHistCount (-> Hist Int))
+;@axiom:effect(unsafe)
+(fn (entryHistCount h)
+  (__load64 (as h Int) -2))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let h entryRing)
+    (entrySay 1 (entryTextIs (histAt h 0) "alpha"))
+    (entrySay 2 (entryTextIs (histAt h 1) ""))
+    (entrySay 3 (isNone (histAt h 3)))
+    (entrySay 4 (isNone (histAt h (- 0 1))))
+    (entrySay 5 (isNone (histAt h 9223372036854775807)))
+    (entrySay 6 (isNone (histAt h (- (- 0 9223372036854775807) 1))))
+    (entrySay 7 (entryTextIs (histCurrent h) "alpha"))
+    (set h.pos (- 0 1))
+    (entrySay 8 (isNone (histCurrent h)))
+    (set h.pos 3)
+    (entrySay 9 (entryTextIs (histCurrent h) "draft\nline"))
+    (set h.pos 999)
+    (entrySay 10 (entryTextIs (histCurrent h) "draft\nline"))
+    (let empty (entryHist vecNew 0 ""))
+    (entrySay 11 (isNone (histAt empty 0)))
+    (entrySay 12 (entryTextIs (histCurrent empty) ""))
+    (entrySay 13 (entryTextIs (entryReturned "returned") "returned"))
+    (entrySay 14 (entryTextIs (histAt h 2) "two\nlines"))
+    (entrySay 15 (&& (== h.pos 999) (&& (== (histLen h) 3) (strEq h.draft "draft\nline"))))
+    (let value (vecGet h.entries 0))
+    (let count (entryStringCount value))
+    (entryTextIs (histAt h 0) "alpha")
+    (entrySay 16 (== (entryStringCount value) count))
+    (histAt h 0)
+    (histAt h 0)
+    (entrySay 17 (== (entryStringCount value) count))
+    (set h.pos 0)
+    (histCurrent h)
+    (entrySay 18 (== (entryStringCount value) count))
+    (entrySay 19 (entryTextIs (entryReturned "") ""))
+    (let hCount (entryHistCount h))
+    (histAt h (- 0 1))
+    (entrySay 20 (== (entryHistCount h) hCount))
+    (entrySay 21
+      (match (histFindBack h "lines" (Some 2))
+        ((None) false)
+        ((Some index) (== index 2))))
+    (entrySay 22
+      (match (histFindBack h "" (Some 1))
+        ((None) false)
+        ((Some index) (== index 1))))
+    (entrySay 23 (isNone (histFindBack h "alpha" None)))
+    (set h.pos 3)
+    (entrySay 24 (entryTextIs (histCurrent h) "draft\nline"))
+  })

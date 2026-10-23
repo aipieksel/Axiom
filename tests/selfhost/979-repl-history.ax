@@ -8,7 +8,7 @@
 ; answers 37 and the harness prints the number it wanted. Six of them
 ; are NEGATIVE controls - a duplicate that must be REFUSED, a blank
 ; entry that must be refused, an out-of-range index that must answer
-; "", a search that must answer None, a Down at the draft that must
+; None, a search that must answer None, a Down at the draft that must
 ; answer 0 - because a module whose every answer is "yes" would satisfy
 ; a count of positive assertions and nothing else.
 ;
@@ -99,6 +99,12 @@
     ((None) false)
     ((Some index) (== index expected))))
 
+(:: historyEntryTextIs (-> (Option String) String Bool))
+(fn (historyEntryTextIs result expected)
+  (match result
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
 (:: main Int)
 ;@axiom:effect(io)
 (fn (main)
@@ -187,26 +193,26 @@
       (if (== (histLen h) 9)
         (set n (+ n 1)))
       ; 24: the ring holds whole multi-line entries too
-      (if (strEq (histAt h 1) e1)
+      (if (historyEntryTextIs (histAt h 1) e1)
         (set n (+ n 1)))
-      ; 25: NEGATIVE CONTROL - out of range answers "", not a crash and
+      ; 25: NEGATIVE CONTROL - out of range answers None, not a crash and
       ; not somebody else's entry
-      (if (== (strLen (histAt h 99)) 0)
+      (if (isNone (histAt h 99))
         (set n (+ n 1)))
       ; 26: the in-memory cap trims from the old end
-      (if (&& (== (histLen hs) 3) (strEq (histAt hs 0) e5))
+      (if (&& (== (histLen hs) 3) (historyEntryTextIs (histAt hs 0) e5))
         (set n (+ n 1)))
       ; ---- browsing ----
       ; 27: the first Up saves the editor's buffer and lands on the
       ; newest entry
-      (if (&& (== (histBrowseUp h "draft") 1) (strEq (histCurrent h) "(new)"))
+      (if (&& (== (histBrowseUp h "draft") 1) (historyEntryTextIs (histCurrent h) "(new)"))
         (set n (+ n 1)))
       ; 28: the second Up steps back one
-      (if (&& (== (histBrowseUp h "ignored") 1) (strEq (histCurrent h) e7))
+      (if (&& (== (histBrowseUp h "ignored") 1) (historyEntryTextIs (histCurrent h) e7))
         (set n (+ n 1)))
       ; 29: Down twice comes back to the saved draft, not to ""
       (if (&& (== (histBrowseDown h) 1)
-            (&& (== (histBrowseDown h) 1) (strEq (histCurrent h) "draft")))
+            (&& (== (histBrowseDown h) 1) (historyEntryTextIs (histCurrent h) "draft")))
         (set n (+ n 1)))
       ; 30: NEGATIVE CONTROL - Down on the draft does not move
       (if (== (histBrowseDown h) 0)
@@ -215,7 +221,7 @@
       ; on the oldest entry rather than off the end
       (if (== (upsUntilStuck h 0) 9)
         (set n (+ n 1)))
-      (if (strEq (histCurrent h) e0)
+      (if (historyEntryTextIs (histCurrent h) e0)
         (set n (+ n 1)))
       ; ---- reverse incremental search ----
       ; 33: a needle that appears only on the SECOND line of a

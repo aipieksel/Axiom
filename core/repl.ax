@@ -225,23 +225,30 @@
 ; What a recall puts in the buffer: the browse cursor's entry - or the
 ; saved draft coming back down past the newest - on one row.
 ;@axiom:restrict(no-io,no-foreign)
-(pub :: replHistText (-> Hist String))
+(pub :: replHistText (-> Hist (Option String)))
 (pub fn (replHistText hist)
-  (histFlatten (histCurrent hist) " "))
+  (match (histCurrent hist)
+    ((None) None)
+    ((Some entry) (Some (histFlatten entry " ")))))
 
 ; Recall one step older. Answers 1 when the buffer moved and was
 ; repainted, 0 at the oldest entry, where the editor does nothing -
-; the same "did it move" shape `histBrowseUp` itself answers.
+; the same "did it move" shape `histBrowseUp` itself answers. A public
+; invalid cursor with no entry leaves the editor untouched and answers 0.
 ;@axiom:restrict(no-io,no-foreign)
 (pub :: replHistUp (-> Hist LineEd String Strings Int))
 (pub fn (replHistUp hist ed pending out)
   (if (== (histBrowseUp hist (ledSnapshot ed)) 0)
     0
-    {
-      (ledSetStr ed (replHistText hist))
-      (ledRefreshPainted ed out (replPaintCurrent ed pending))
-      1
-    }))
+    (match (replHistText hist)
+      ((None) 0)
+      ((Some text)
+        {
+          (ledSetStr ed text)
+          (ledRefreshPainted ed out (replPaintCurrent ed pending))
+          1
+        }
+      ))))
 
 ; Recall one step newer, back toward the saved draft.
 ;@axiom:restrict(no-io,no-foreign)
@@ -249,11 +256,15 @@
 (pub fn (replHistDown hist ed pending out)
   (if (== (histBrowseDown hist) 0)
     0
-    {
-      (ledSetStr ed (replHistText hist))
-      (ledRefreshPainted ed out (replPaintCurrent ed pending))
-      1
-    }))
+    (match (replHistText hist)
+      ((None) 0)
+      ((Some text)
+        {
+          (ledSetStr ed text)
+          (ledRefreshPainted ed out (replPaintCurrent ed pending))
+          1
+        }
+      ))))
 
 ; Whether `raw` is the Ctrl-C abort sentinel: the single byte 3 (ETX).
 ; `ledInsert` refuses every byte below 32, so no TTY buffer can ever
@@ -569,12 +580,16 @@
                           (match ix
                             ((None) ())
                             ((Some index)
-                              {
-                                (ledSetStr ed (histFlatten (histAt hist index) " "))
-                                (set sAt (if (== index 0)
-                                  None
-                                  (Some (- index 1))))
-                              }
+                              (match (histAt hist index)
+                                ((None) ())
+                                ((Some entry)
+                                  {
+                                    (ledSetStr ed (histFlatten entry " "))
+                                    (set sAt (if (== index 0)
+                                      None
+                                      (Some (- index 1))))
+                                  }
+                                ))
                             ))
                         }
                         (histBrowseReset hist)
