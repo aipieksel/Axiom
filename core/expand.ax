@@ -11630,6 +11630,7 @@
       (let binds vecNew)
       (let refs vecNew)
       (let ordered vecNew)
+      (let mut missing (:: None (Option String)))
       {
         (for i in 0..(vecLen values)
           {
@@ -11642,10 +11643,24 @@
           })
         (for i in 0..(vecLen names)
           (match (strVecIdx labels (vecGetStr names i))
-            ((Some k) (vecPush ordered (vecGet refs k)))
-            ((None) 0)))
-        (foldLets binds (setCtorFieldNames (expBuildSpine callee ordered 0) names)
-          (- (vecLen binds) 1))
+            ((Some k)
+              (if (< k (vecLen refs))
+                (vecPush ordered (vecGet refs k))
+                (if (isNone missing)
+                  (set missing (Some (vecGetStr names i)))))
+            )
+            ((None)
+              (if (isNone missing)
+                (set missing (Some (vecGetStr names i))))
+            )))
+        (match missing
+          ((None)
+            (foldLets binds (setCtorFieldNames (expBuildSpine callee ordered 0) names)
+              (- (vecLen binds) 1))
+          )
+          ((Some name)
+            (expNamedBad env (nodeSpan callee) (concat "missing struct field `" (concat name "`")))
+          ))
       }
     }))
 

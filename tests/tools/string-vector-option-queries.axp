@@ -1,0 +1,215 @@
+; Typed String vectors preserve membership, positions and evidence ordering.
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import codegen)
+(import symbols)
+(import lsp)
+(import expand)
+(import diag)
+(import Intern)
+(import Str)
+(import Vec)
+(import Fmt)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: indexIs (-> (Option Int) Int Bool))
+(fn (indexIs candidate expected)
+  (match candidate
+    ((None) false)
+    ((Some index) (== index expected))))
+
+(:: countOf (-> a Int))
+;@axiom:effect(unsafe)
+(fn (countOf value)
+  (__load64 (as value Int) -2))
+
+(:: readQueries (-> Names Int))
+(fn (readQueries values)
+  {
+    (let index (strVecIdx values "a"))
+    (+ (strVecHas values "b")
+      (match index
+        ((None) 0)
+        ((Some position) position)))
+  })
+
+(:: escapedJoin (-> String String))
+(fn (escapedJoin text)
+  (saJoinComma (vecPush (vecPush vecNew text) "tail")))
+
+(:: queryCG (-> ASTNode Names CG))
+(fn (queryCG ty params)
+  {
+    (let cg newCG)
+    (set cg.curDeclNode (nodeBuildDFn "Probe" params (mkEInt 0) 0))
+    (set cg.floatSigs (vecPush vecNew
+                        (FSig
+                          :name "Probe"
+                          :nameLen 5
+                          :flags (Some vecNew)
+                          :sigTy (Some ty)
+                          :takesEv 1
+                          :owned 1
+                          :arity (vecLen params)
+                          :stash 0
+                          :ret 0
+                          :consume 0
+                          :transfer 0
+                          :callers 0
+                          :writes 0)))
+    cg
+  })
+
+(:: queryEnvironment (-> Diags MEnv))
+(fn (queryEnvironment diagnostics)
+  (MEnv
+    :macros vecNew
+    :out diagnostics
+    :fresh 0
+    :depth 0
+    :decls vecNew
+    :macmod 0
+    :walk 0
+    :nodes 0
+    :blown 0
+    :site 0
+    :frames vecNew
+    :declmod 0
+    :units vecNew
+    :forstack vecNew
+    :bares vecNew
+    :fulls vecNew
+    :mods vecNew
+    :qsite 0
+    :gens vecNew
+    :callbs 0
+    :seqbinds vecNew
+    :tplbinds vecNew
+    :declnodes 0
+    :midx mangleIdxNew
+    :scNext 0
+    :scChain vecNew
+    :scTpl vecNew
+    :scSeq 0
+    :retired28 0
+    :defer 0
+    :deferHits 0
+    :structNames internNewTyped
+    :structBuckets vecNew
+    :carrier 0
+    :optNames vecNew))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let names (vecPush (vecPush (vecPush vecNew "a") "b") "c"))
+    (say 1 (isNone (strVecIdx vecNew "a")))
+    (say 2 (indexIs (strVecIdx names "a") 0))
+    (say 3 (indexIs (strVecIdx names "b") 1))
+    (say 4 (indexIs (strVecIdx names "c") 2))
+    (say 5 (isNone (strVecIdx names "missing")))
+    (say 6 (indexIs (strVecIdx (vecPush vecNew "") "") 0))
+    (say 7 (indexIs (strVecIdx (vecPush (vecPush vecNew "a") "a") "a") 0))
+    (say 8 (indexIs (strVecIdx (vecPush (vecPush (vecPush vecNew "z") "a") "a") "a") 1))
+    (say 9 (isNone (strVecIdx names "A")))
+    (say 10 (== (strVecHas vecNew "a") 0))
+    (say 11 (== (strVecHas names "a") 1))
+    (say 12 (== (strVecHas names "missing") 0))
+    (say 13 (== (strVecHas (vecPush vecNew "") "") 1))
+    (say 14 (strEq (saJoinComma vecNew) ""))
+    (say 15 (strEq (saJoinComma (vecPush vecNew "single")) "single"))
+    (say 16 (strEq (saJoinComma (vecPush (vecPush vecNew "") "")) ","))
+    (say 17 (strEq (saJoinComma (vecPush (vecPush (vecPush vecNew "a") "") "b")) "a,,b"))
+    (say 18 (strEq (saJoinComma (vecPush (vecPush vecNew "λ") "β")) "λ,β"))
+    (say 19 (&& (== (vecLen names) 3) (strEq (vecGet names 0) "a")))
+    (let before (countOf names))
+    (readQueries names)
+    (say 20 (== (countOf names) before))
+    (let payload (strDup "joined-owner"))
+    (let beforePayload (countOf payload))
+    (say 21 (strEq (escapedJoin payload) "joined-owner,tail"))
+    (say 22 (== (countOf payload) beforePayload))
+    (let a (mkTVar "a"))
+    (let b (mkTVar "b"))
+    (let ty (mkTArr a (mkTArr a b)))
+    (let variables (:: vecNew Names))
+    (cgSigVarsInto ty variables)
+    (say 23 (== (vecLen variables) 2))
+    (say 24 (strEq (vecGet variables 0) "a"))
+    (say 25 (strEq (vecGet variables 1) "b"))
+    (let parameters (:: vecNew Names))
+    (cgParamPosVars ty parameters)
+    (say 26 (&& (== (vecLen parameters) 1) (strEq (vecGet parameters 0) "a")))
+    (say 27 (== (cgTakesEvidence (mkTArr mkIntTy a)) 0))
+    (say 28 (== (cgTakesEvidence (mkTArr a mkIntTy)) 1))
+    (let generic (queryCG (mkTArr a (mkTArr b mkIntTy)) names))
+    (say 29 (indexIs (curParamEvBit generic 0) 0))
+    (say 30 (indexIs (curParamEvBit generic 1) 1))
+    (say 31 (isNone (curParamEvBit generic 2)))
+    (say 32 (indexIs (curSigVarBit generic "a") 0))
+    (say 33 (indexIs (curSigVarBit generic "b") 1))
+    (say 34 (isNone (curSigVarBit generic "missing")))
+    (say 35 (== (pinnedClass generic a) 2))
+    (say 36 (== (pinnedClass generic (mkTVar "missing")) 0))
+    (let renames (vecPush (vecPush vecNew "_t0") "a"))
+    (say 37 (strEq (lspRenamed renames "unknown") "unknown"))
+    (say 38 (strEq (lspRenamed renames "_t0") "a"))
+    (say 39 (strEq (lspRenamed renames "a") "a"))
+    (say 40 (strEq (lspRenamed (vecPush vecNew "_t0") "_t0") "_t0"))
+    (let diagnostics (:: vecNew Diags))
+    (let env (queryEnvironment diagnostics))
+    (let labels (vecPush (vecPush vecNew "right") "left"))
+    (let fields (vecPush (vecPush vecNew "left") "right"))
+    (let values (vecPush (vecPush vecNew (mkEInt 2)) (mkEInt 1)))
+    (let lowered (expLowerNamedStruct (mkEVar "Pair") values labels fields env))
+    (say 41 (&& (== (nodeTag lowered) TAG_E_LET) (== (nodeA (nodeBChild lowered)) 2)))
+    (let second (nodeCChild lowered))
+    (say 42 (&& (== (nodeTag second) TAG_E_LET) (== (nodeA (nodeBChild second)) 1)))
+    (let arguments (spineArgVec (nodeCChild second) vecNew))
+    (say 43
+      (&& (== (vecLen diagnostics) 0)
+        (&& (strEq (nodeAName (vecGet arguments 0)) (nodeAName second))
+          (strEq (nodeAName (vecGet arguments 1)) (nodeAName lowered)))))
+    (let missing
+      (expLowerNamedStruct (mkEVar "Pair") (vecPush vecNew (mkEInt 2)) (vecPush vecNew "right")
+        fields env))
+    (say 44
+      (&& (== (nodeTag missing) TAG_E_INT)
+        (&& (== (vecLen diagnostics) 1) (strEq (diagCode (vecGet diagnostics 0)) "AX3132"))))
+    (let short (expLowerNamedStruct (mkEVar "Pair") (vecPush vecNew (mkEInt 2)) labels fields env))
+    (say 45 (&& (== (nodeTag short) TAG_E_INT) (== (vecLen diagnostics) 2)))
+    (let wide (:: vecNew Names))
+    (for i in 0..65
+      (vecPush wide (fmtInt i)))
+    (say 46 (indexIs (strVecIdx wide "64") 64))
+    (say 47 (!= (as (saJoinComma vecNew) Int) 0))
+    (let tc (tcNew vecNew vecNew vecNew))
+    (set tc.curSigVars variables)
+    (say 48 (== (evClassOf tc a) 2))
+    (say 49 (== (evClassOf tc (mkTVar "missing")) 0))
+    (let dynamic (strDup "ownedVariable"))
+    (let ownedType (mkTVar dynamic))
+    (let nameBefore (countOf dynamic))
+    (let collector (:: vecNew Names))
+    (cgSigVarsInto ownedType collector)
+    (say 50 (== (countOf dynamic) (+ nameBefore 1)))
+    (vecClear collector)
+    (say 51 (== (countOf dynamic) nameBefore))
+    (cgParamPosVars (mkTArr ownedType mkIntTy) collector)
+    (say 52 (== (countOf dynamic) (+ nameBefore 1)))
+    (vecClear collector)
+    (say 53 (== (countOf dynamic) nameBefore))
+    0
+  })

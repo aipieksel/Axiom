@@ -4878,7 +4878,7 @@
 ; `strVecIdx` are `core.ax`'s. So what the fixture compares is two
 ; orderings, not two copies of a list search.
 ; ------------------------------------------------------------------
-(pub :: cgSigVarsInto (-> ASTNode Ints Int))
+(pub :: cgSigVarsInto (-> ASTNode Names Int))
 (pub fn (cgSigVarsInto t acc)
   (if (nodeSame t nilNode)
     0
@@ -4889,7 +4889,7 @@
           (if (== (strVecHas acc (nodeAName t)) 1)
             0
             {
-              (vecPush acc (as (nodeA t) Int))
+              (vecPush acc (nodeAName t))
               0
             })
           0)
@@ -4907,7 +4907,7 @@
                 0)))))
     }))
 
-(pub :: cgSigVarsVec (-> (Vec ASTNode) Ints Int))
+(pub :: cgSigVarsVec (-> Nodes Names Int))
 (pub fn (cgSigVarsVec xs acc)
   (if (== (as xs Int) 0)
     0
@@ -4923,7 +4923,7 @@
       }
     }))
 
-(pub :: cgParamPosVars (-> ASTNode Ints Int))
+(pub :: cgParamPosVars (-> ASTNode Names Int))
 (pub fn (cgParamPosVars t acc)
   (if (&& (! (nodeSame t nilNode)) (== (nodeTag t) TAG_T_ARR))
     {
@@ -20089,42 +20089,40 @@
 
 ; Parameter i's evidence bit when its declared type is one of the
 ; signature's own type variables and the function takes an evidence
-; word; -1 otherwise. The loop's slot for such a parameter is
+; word; None otherwise. The loop's slot for such a parameter is
 ; retained and released BY EVIDENCE: a typed reference arriving sets
 ; the bit, a word does not, which is exactly the share the caller's
 ; side of MM-LIFE-2d counts.
-(pub :: curParamEvBit (-> CG Int Int))
+(pub :: curParamEvBit (-> CG Int (Option Int)))
 ; The same word-17/word-36 hazard `curParamRefClass` documents, and
-; the same answer: -1, "not evidence-driven", is this function's
+; the same answer: None, "not evidence-driven", is this function's
 ; conservative direction.
 (pub fn (curParamEvBit cg i)
   (if (== (cgLiftedLambda cg) 1)
-    (- 0 1)
+    None
     {
       (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
-        (- 0 1)
+        None
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
             (if (== (fsigTakesEv e) 0)
-              (- 0 1)
+              None
               (if (let (Some tn) (signatureParamTy (fsigTy e) i))
                 (if (!= (tyIsSrcVar tn) 1)
-                  (- 0 1)
+                  None
                   {
                     (let vars vecNew)
                     {
                       (if (let (Some ty) (fsigTy e))
                         (cgSigVarsInto ty vars)
                         0)
-                      (match (strVecIdx vars (nodeAName tn))
-                        ((None) (- 0 1))
-                        ((Some k) k))
+                      (strVecIdx vars (nodeAName tn))
                     }
                   })
-                (- 0 1)))
-            (- 0 1))
+                None))
+            None)
         })
     }))
 
@@ -20144,9 +20142,11 @@
           (emitRetainOf cg (concat "%" (llvmSym (strDup (vecGetStr params i)))))
           {
             (let k (curParamEvBit cg i))
-            (if (< k 0)
-              cg
-              (emitRetainIfEvBit cg (concat "%" (llvmSym (strDup (vecGetStr params i)))) k))
+            (match k
+              ((None) cg)
+              ((Some k)
+                (emitRetainIfEvBit cg (concat "%" (llvmSym (strDup (vecGetStr params i)))) k)
+              ))
           }))
       (retainRefParams params cg1 (+ i 1))
     }))
@@ -20448,9 +20448,11 @@
               (emitReleaseOf cg (vecGetStr vals i))
               {
                 (let k (curParamEvBit cg i))
-                (if (< k 0)
-                  cg
-                  (emitRcIfBitOf cg (as (vecGet vals i) String) k newW 0))
+                (match k
+                  ((None) cg)
+                  ((Some k)
+                    (emitRcIfBitOf cg (as (vecGet vals i) String) k newW 0)
+                  ))
               })))
         (releaseTailTemps slots args vals cg1 newW (+ i 1))
       }
@@ -20496,20 +20498,21 @@
         }
         {
           (let k (curParamEvBit cg i))
-          (if (< k 0)
-            (releaseRefParamSlotsFrom cg slots (+ i 1))
-            ; a type-variable slot: by the word current for it
-            {
-              (let cgL (loadFromSlot cg (vecGet slots i)))
+          (match k
+            ((None) (releaseRefParamSlotsFrom cg slots (+ i 1)))
+            ((Some k)
               {
-                (let v (strDup (cgResult cgL)))
+                (let cgL (loadFromSlot cg (vecGet slots i)))
                 {
-                  (let cgW (emitEvwRead cgL))
-                  (releaseRefParamSlotsFrom (emitRcIfBitOf cgW v k (strDup (cgResult cgW)) 0) slots
-                    (+ i 1))
+                  (let v (strDup (cgResult cgL)))
+                  {
+                    (let cgW (emitEvwRead cgL))
+                    (releaseRefParamSlotsFrom (emitRcIfBitOf cgW v k (strDup (cgResult cgW)) 0)
+                      slots (+ i 1))
+                  }
                 }
               }
-            })
+            ))
         }))))
 
 (pub :: retainTailVals (-> Strings Strings Ints CG String Int CG))
@@ -20524,9 +20527,11 @@
             (emitRetainOf cg (vecGetStr vals i))
             {
               (let k (curParamEvBit cg i))
-              (if (< k 0)
-                cg
-                (emitRcIfBitOf cg (as (vecGet vals i) String) k newW 1))
+              (match k
+                ((None) cg)
+                ((Some k)
+                  (emitRcIfBitOf cg (as (vecGet vals i) String) k newW 1)
+                ))
             })))
       (retainTailVals slots vals same cg1 newW (+ i 1))
     }))
@@ -20560,7 +20565,7 @@
   (if (>= i (vecLen slots))
     cg
     {
-      (if (|| (== (curParamRefClass cg i) 1) (>= (curParamEvBit cg i) 0))
+      (if (|| (== (curParamRefClass cg i) 1) (isSome (curParamEvBit cg i)))
         {
           (loadFromSlot cg (vecGet slots i))
           (vecPush olds (strDup (cgResult cg)))
@@ -20584,9 +20589,11 @@
             (emitReleaseOf cg (vecGetStr olds i))
             {
               (let k (curParamEvBit cg i))
-              (if (< k 0)
-                cg
-                (emitRcIfBitOf cg (as (vecGet olds i) String) k oldW 0))
+              (match k
+                ((None) cg)
+                ((Some k)
+                  (emitRcIfBitOf cg (as (vecGet olds i) String) k oldW 0)
+                ))
             })))
       (releaseTailOlds olds same cg1 oldW (+ i 1))
     }))
@@ -30961,39 +30968,37 @@
         0
         {
           (let k (curSigVarBit cg (nodeAName t)))
-          (if (< k 0)
-            0
-            (+ 2 k))
+          (match k
+            ((None) 0)
+            ((Some k) (+ 2 k)))
         }))))
 
 ; Bit index of the current function's type variable `n` in its evidence
-; word, or -1: inside a lambda, in a function that takes no word, or for
+; word, or None: inside a lambda, in a function that takes no word, or for
 ; a name its signature doesn't bind.
-(pub :: curSigVarBit (-> CG String Int))
+(pub :: curSigVarBit (-> CG String (Option Int)))
 (pub fn (curSigVarBit cg n)
   (if (== (cgLiftedLambda cg) 1)
-    (- 0 1)
+    None
     {
       (let d (cgCurDecl cg))
       (if (nodeSame d nilNode)
-        (- 0 1)
+        None
         {
           (let eFound (findFSigCg cg (nodeAName d)))
           (if (let (Some e) eFound)
             (if (== (fsigTakesEv e) 0)
-              (- 0 1)
+              None
               {
                 (let vars vecNew)
                 {
                   (if (let (Some ty) (fsigTy e))
                     (cgSigVarsInto ty vars)
                     0)
-                  (match (strVecIdx vars n)
-                    ((None) (- 0 1))
-                    ((Some k) k))
+                  (strVecIdx vars n)
                 }
               })
-            (- 0 1))
+            None)
         })
     }))
 
