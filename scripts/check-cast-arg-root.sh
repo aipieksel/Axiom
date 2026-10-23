@@ -295,13 +295,17 @@ echo "--- 1. user-level cast count does not grow ---"
 # Codegen owner controls add seven MM-VAL-23 test subjects: three live
 # header observations, three child-map ablations and one raw slot-truncation
 # ablation. Three retired erased module/lambda reads leave a net four.
+# Cast-source recovery tests add fourteen textual MM-VAL-23 subjects:
+# one valid arrow conversion, four diagnostic input conversions (including
+# one refused forgery), and nine exact help/fix strings. None adds a
+# production erasure or grants an exemption for reference forging.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1425 ]; then
-  ok "user-level (cast count $cast_count <= 1425)"
+elif [ "$cast_count" -le 1439 ]; then
+  ok "user-level (cast count $cast_count <= 1439)"
 else
-  bad "user-level (cast count $cast_count > 1425): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1439): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -488,7 +492,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # in a same-compiler comparison: 412 to 411.
 # Owning codegen contexts, indexes and auxiliary state remove fourteen
 # reference erasures: 411 to 397 under the same compiler.
-erasure_pin=397
+# Optional expansion results and owning generated-origin rows remove
+# fifty-one further reference erasures: 397 to 346 under one compiler.
+erasure_pin=346
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)

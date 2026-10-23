@@ -43,6 +43,7 @@ python3 tests/selfhost/typecheck-edit-position-options.py --axiom "$axc" --negat
 python3 tests/selfhost/typecheck-unsafe-site-options.py "$axc" --negative-controls
 python3 tests/selfhost/typecheck-nth-param-options.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/typecheck-signature-diagnostic-options.py --axiom "$axc" --negative-controls
+python3 tests/selfhost/typecheck-contract-expr-options.py --axiom "$axc" --negative-controls
 python3 tests/selfhost/typecheck-match-arm-options.py --axiom "$axc"
 python3 tests/selfhost/typecheck-region-index-options.py --axiom "$axc"
 python3 tests/selfhost/typecheck-evidence-options.py --axiom "$axc"
