@@ -246,7 +246,7 @@
 
 ; Rewrite an imported function's definition to its mangled name, in
 ; place - `emitFnDef` reads the same node later, so the header and the
-; map cannot disagree. Entry-file declarations (modName 0) are left
+; map cannot disagree. Entry-file declarations (None) are left
 ; bare; they were already recorded by `recordEntryFns`. A signature is
 ; renamed the same way, so the float-signature registry and the
 ; definitions it describes stay keyed identically.
@@ -260,44 +260,45 @@
 ; reference that gets past it lands here as a name this map does not
 ; hold and is emitted unchanged - an undefined symbol reported by
 ; `opt` against generated code.
-(pub :: mangleDecl (-> ASTNode String MangleIdx Strings Strings Int Int))
+(pub :: mangleDecl (-> ASTNode (Option String) MangleIdx Strings Strings Int Int))
 (pub fn (mangleDecl node modName idx bares fulls exported)
-  (if (== (as modName Int) 0)
-    0
-    (if (== (nodeTag node) TAG_D_FN)
-      {
-        (let bare (nodeAName node))
+  (match modName
+    ((None) 0)
+    ((Some modName)
+      (if (== (nodeTag node) TAG_D_FN)
         {
-          (let full (concat (concat (strDup (as modName String)) "$") (strDup bare)))
+          (let bare (nodeAName node))
           {
-            (writeNodeText node 1 full)
-            (if (== exported 1)
-              (mangleRecord idx bares fulls bare full)
-              (mangleRecordSelf idx bares fulls full))
+            (let full (concat (concat (strDup modName) "$") (strDup bare)))
+            {
+              (writeNodeText node 1 full)
+              (if (== exported 1)
+                (mangleRecord idx bares fulls bare full)
+                (mangleRecordSelf idx bares fulls full))
+            }
           }
         }
-      }
-      (if (== (nodeTag node) TAG_D_SIG)
-        {
-          (writeNodeText node 1
-            (concat (concat (strDup (as modName String)) "$") (strDup (nodeAName node))))
-          0
-        }
-        ; An `extern` block from an imported module. Its items are
-        ; RECORDED and never RENAMED: `Mod$name` would be a symbol no
-        ; archive defines, and the mapping wanted here is the Axiom name
-        ; to the LINKER symbol, which is what `mangledFor` then answers
-        ; at every call site.
-        ;
-        ; Without this arm an imported binding module emits its calls
-        ; against the Axiom name - `call i64 @ffiFreeBytes(...)` beside
-        ; a `declare` for `@axffi_free_bytes` - and dies in `opt` with
-        ; "use of undefined value". That is exactly the `foreign` bug,
-        ; reached from the one direction the entry-file fixtures could
-        ; not see, because `recordEntryFns` covers only the entry file.
-        (if (== (nodeTag node) TAG_D_EXTERN)
-          (mangleExternItems (nodeCChildren node) 0 idx bares fulls modName)
-          0)))))
+        (if (== (nodeTag node) TAG_D_SIG)
+          {
+            (writeNodeText node 1 (concat (concat (strDup modName) "$") (strDup (nodeAName node))))
+            0
+          }
+          ; An `extern` block from an imported module. Its items are
+          ; RECORDED and never RENAMED: `Mod$name` would be a symbol no
+          ; archive defines, and the mapping wanted here is the Axiom name
+          ; to the LINKER symbol, which is what `mangledFor` then answers
+          ; at every call site.
+          ;
+          ; Without this arm an imported binding module emits its calls
+          ; against the Axiom name - `call i64 @ffiFreeBytes(...)` beside
+          ; a `declare` for `@axffi_free_bytes` - and dies in `opt` with
+          ; "use of undefined value". That is exactly the `foreign` bug,
+          ; reached from the one direction the entry-file fixtures could
+          ; not see, because `recordEntryFns` covers only the entry file.
+          (if (== (nodeTag node) TAG_D_EXTERN)
+            (mangleExternItems (nodeCChildren node) 0 idx bares fulls modName)
+            0)))
+    )))
 
 ; Record qualified identities for every item and bare names for the
 ; exported items. A private binding remains callable within its module.

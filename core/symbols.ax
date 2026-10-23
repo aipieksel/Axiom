@@ -600,25 +600,27 @@
   })
 
 ; The unit index a module's declarations render against: unit 0 is
-; the entry file; an import's unit carries its module name.
-(pub :: saUnitOf (-> Units a Int))
-;@axiom:effect(unsafe)
+; the entry file; an import's unit carries its module name. None means
+; no row exists, including an empty table. Some 0 is the real entry row.
+(pub :: saUnitOf (-> Units (Option String) (Option Int)))
 (pub fn (saUnitOf units module)
-  (if (== (as module Int) 0)
-    0
-    {
-      (let mut i 1)
-      (let mut hit 0)
-      {
-        (while (< i (vecLen units))
-          {
-            (if (&& (== hit 0) (unitNameIs (vecGet units i) (as module String)))
-              (set hit i))
-            (set i (+ i 1))
-          })
-        hit
-      }
-    }))
+  (if (== (vecLen units) 0)
+    None
+    (match module
+      ((None) (Some 0))
+      ((Some name)
+        {
+          (let mut i 1)
+          (let mut hit (:: None (Option Int)))
+          (while (< i (vecLen units))
+            {
+              (if (&& (isNone hit) (unitNameIs (vecGet units i) name))
+                (set hit (Some i)))
+              (set i (+ i 1))
+            })
+          hit
+        }
+      ))))
 
 ; The whole collection state, one handle: parallel-vec maps for the
 ; three span namespaces, ctor spans, nid variants, axtags, and fn
@@ -718,7 +720,13 @@
     {
       (let tag (nodeTag d))
       (let name (nodeAName d))
-      (let u (saUnitOf units (nodeModule d)))
+      ; Unknown provenance renders against the entry source when it exists.
+      ; Keep that output policy at the consumer, rather than making the
+      ; lookup report a successful row for a missing module.
+      (let u
+        (match (saUnitOf units (nodeModuleOpt d))
+          ((None) 0)
+          ((Some index) index)))
       {
         (if (== tag TAG_D_SIG)
           {
@@ -981,8 +989,13 @@
         (if (== sp 0)
           ""
           {
-            (let unit (vecGet units (vecGet (smUnitMap sm uIx) i)))
-            (concat (unitFile unit) (concat ":" (fmtSpan (unitSrc unit) sp)))
+            (let index (vecGet (smUnitMap sm uIx) i))
+            (if (|| (< index 0) (>= index (vecLen units)))
+              ""
+              {
+                (let unit (vecGet units index))
+                (concat (unitFile unit) (concat ":" (fmtSpan (unitSrc unit) sp)))
+              })
           })
       }
     )))
