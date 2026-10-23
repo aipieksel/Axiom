@@ -4452,7 +4452,10 @@
 ; lies under `Internal`.
 (pub :: unitIsInternal (-> CUnit2 Bool))
 (pub fn (unitIsInternal unit)
-  (&& unit.library (&& (!= (as unit.name Int) 0) (strStartsWith unit.name "Internal."))))
+  (&& unit.library
+    (if (let (Some name) (unitName unit))
+      (strStartsWith name "Internal.")
+      false)))
 
 (pub :: internalUnitNames (-> Units Int Strings Strings))
 (pub fn (internalUnitNames units i out)
@@ -4461,7 +4464,8 @@
     {
       (let unit (as (vecGet units i) CUnit2))
       (if (unitIsInternal unit)
-        (vecPush out unit.name))
+        (if (let (Some name) (unitName unit))
+          (vecPush out name)))
       (internalUnitNames units (+ i 1) out)
     }))
 
@@ -4492,9 +4496,9 @@
       (let unit (as (vecGet units i) CUnit2))
       (if unit.library
         (vecPush out
-          (if (== (as unit.name Int) 0)
-            "library "
-            (concat "library " unit.name))))
+          (match (unitName unit)
+            ((None) "library ")
+            ((Some name) (concat "library " name)))))
       (libraryMarksInto units out (+ i 1))
     }))
 
@@ -4547,7 +4551,7 @@
     false
     {
       (let unit (as (vecGet units i) CUnit2))
-      (if (&& (!= (as unit.name Int) 0) (strEq unit.name name))
+      (if (unitNameIs unit name)
         (unitIsInternal unit)
         (unitNamedInternal units name (+ i 1)))
     }))
@@ -12417,7 +12421,7 @@
     0
     (if (unitIsEntry (vecGet units i))
       (unitIndexForFrom units m (+ i 1))
-      (if (strEq (unitName (vecGet units i)) m)
+      (if (unitNameIs (vecGet units i) m)
         i
         (unitIndexForFrom units m (+ i 1))))))
 

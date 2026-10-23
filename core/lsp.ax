@@ -521,7 +521,6 @@
 ; Open documents are immutable source overlays for one request. A closed
 ; document is omitted, so its imports return to the on-disk source.
 (pub :: lspWorkspaceNew (-> Strings Strings Ints LspWorkspace))
-;@axiom:effect(unsafe)
 (pub fn (lspWorkspaceNew uris texts meta)
   {
     (let out vecNew)
@@ -532,7 +531,7 @@
             (CUnit2
               :file (lspUriToPath (vecGet uris i))
               :src (vecGet texts i)
-              :name (as 0 String)
+              :name None
               :imports vecNew
               :library false))))
       (LspWorkspace :open out :files vecNew :searches vecNew)
@@ -587,7 +586,7 @@
           (let text (unwrapOr (readFile key) ""))
           {
             (vecPush workspace.files
-              (CUnit2 :file key :src text :name "" :imports vecNew :library false))
+              (CUnit2 :file key :src text :name (Some "") :imports vecNew :library false))
             text
           }
         })
@@ -706,7 +705,7 @@
                               (CUnit2
                                 :file path
                                 :src src
-                                :name name
+                                :name (Some name)
                                 :imports vecNew
                                 :library (pathInStdlib path)))
                             {
@@ -760,7 +759,6 @@
 ; ------------------------------------------------------------------
 (pub :: lspCheckDoc (-> LspWorkspace String String Int))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (lspCheckDoc workspace path src)
   ; A lexical error is reported before a parse one, as it is in the
   ; compiler: an editor should point at the bad escape rather than at
@@ -798,7 +796,7 @@
                     (CUnit2
                       :file path
                       :src src
-                      :name (as 0 String)
+                      :name None
                       :imports vecNew
                       :library (pathInStdlib path)))
                   v
@@ -3212,13 +3210,8 @@
 (pub :: lspUnitOf (-> Units Int Int))
 ;@axiom:effect(unsafe)
 (pub fn (lspUnitOf units module)
-  ; FROM 1, and that is not an optimisation. Unit 0 is the entry file
-  ; and its module NAME is `(cast String 0)` - a null handle, because
-  ; the entry file has no module name - so asking `strEq` about it
-  ; dereferences null. Measured: the server answered the same-file
-  ; lookup correctly and then died of SIGSEGV on the first imported
-  ; one. `saUnitOf` in `symbols.ax` skips it for the same reason and
-  ; is where this rule comes from.
+  ; Imported units begin at 1. The entry file carries None, and the
+  ; shared name predicate handles both unnamed and named units.
   {
     (let n (vecLen units))
     (let mut i 1)
@@ -3226,7 +3219,7 @@
     {
       (while (< i n)
         {
-          (if (strEq (unitName (vecGet units i)) (as module String))
+          (if (unitNameIs (vecGet units i) (as module String))
             {
               (set at i)
               (set i n)
@@ -3330,7 +3323,6 @@
 
 (pub :: lspResolveFor (-> LspWorkspace String String (Vec ASTNode) (Option LspResolved)))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (lspResolveFor workspace path src decls)
   {
     (let bares vecNew)
@@ -3344,12 +3336,7 @@
           (let v vecNew)
           {
             (vecPush v
-              (CUnit2
-                :file path
-                :src src
-                :name (as 0 String)
-                :imports vecNew
-                :library (pathInStdlib path)))
+              (CUnit2 :file path :src src :name None :imports vecNew :library (pathInStdlib path)))
             v
           }
         })
@@ -3688,7 +3675,7 @@
           (let d (lspFindStructField decls sn w))
           (if (nodeSame d nilNode)
             0
-            (lspHoverAtNote src decls d range ""
+            (lspHoverAtNote src decls d range None
               (concat
                 (concat (concat (concat "field `" w) "` of `struct ") (concat (nodeAName d) "`"))
                 (lspFieldEffectsSaid (lspStructFieldNode (nodeBChildren d) w 0)))))
@@ -3714,7 +3701,7 @@
         (lspHoverFieldDeclIn decls src w off range (- i 1))
         (if (nodeSame (lspFieldNodeAt (nodeBChildren d) w off 0) nilNode)
           (lspHoverFieldDeclIn decls src w off range (- i 1))
-          (lspHoverAtNote src decls d range ""
+          (lspHoverAtNote src decls d range None
             (concat
               (concat (concat (concat "field `" w) "` of `struct ") (concat (nodeAName d) "`"))
               (lspFieldEffectsSaid (lspFieldNodeAt (nodeBChildren d) w off 0))))))
@@ -3931,7 +3918,7 @@
     {
       (while (< i (vecLen units))
         {
-          (if (strEq (unitName (vecGet units i)) w)
+          (if (unitNameIs (vecGet units i) w)
             {
               (set at i)
               (set i (vecLen units))
@@ -4027,7 +4014,7 @@
                               {
                                 (let d (lspFindDecl decls w (- (vecLen decls) 1)))
                                 (if (! (nodeSame d nilNode))
-                                  (lspHoverAt src decls d range "")
+                                  (lspHoverAt src decls d range None)
                                   ; A CONSTRUCTOR is read at the `data` that
                                   ; declares it - the whole form, so its siblings
                                   ; and its field types are in the tooltip - with
@@ -4062,7 +4049,7 @@
                                           }
                                           hov)
                                       }
-                                      (lspHoverAtNote src decls dat range "" (lspCtorNote dat w)))
+                                      (lspHoverAtNote src decls dat range None (lspCtorNote dat w)))
                                   })
                               })
                           })
@@ -4089,7 +4076,7 @@
 ; no signature is read at itself, and then the fence is its first line:
 ; the header names the parameters, and the body is what `definition`
 ; is for.
-(pub :: lspHoverAt (-> String (Vec ASTNode) ASTNode Int String Int))
+(pub :: lspHoverAt (-> String (Vec ASTNode) ASTNode Int (Option String) Int))
 (pub fn (lspHoverAt dsrc ddecls d range origin)
   (lspHoverAtNote dsrc ddecls d range origin ""))
 
@@ -4098,7 +4085,7 @@
 ; whole `data`, which is the right thing to read, and without a note
 ; the tooltip would not say which of its constructors the cursor is
 ; actually on. "" is the ordinary case and costs nothing.
-(pub :: lspHoverAtNote (-> String (Vec ASTNode) ASTNode Int String String Int))
+(pub :: lspHoverAtNote (-> String (Vec ASTNode) ASTNode Int (Option String) String Int))
 (pub fn (lspHoverAtNote dsrc ddecls d range origin note)
   {
     (let sig
@@ -4125,9 +4112,13 @@
                   (concat fence (concat (concat "\n" note) "\n"))))
               {
                 (let withMod
-                  (if (== (strLen origin) 0)
-                    body
-                    (concat body (concat (concat "\nfrom `" origin) "`\n"))))
+                  (match origin
+                    ((None) body)
+                    ((Some name)
+                      (if (== (strLen name) 0)
+                        body
+                        (concat body (concat (concat "\nfrom `" name) "`\n")))
+                    )))
                 {
                   (let value
                     (if (== (strLen doc) 0)
@@ -10537,7 +10528,7 @@
     (if (if (! (nodeSame d nilNode))
       (== (nodeTag d) TAG_D_FN)
       false)
-      (lspViewSigFn src decls d "")
+      (lspViewSigFn src decls d None)
       {
         (let c (lspViewFindCtor decls head 0))
         (if (nodeSame c nilNode)
@@ -10636,7 +10627,7 @@
 ; because `resolveImports` mangles a `::` and its `fn` alike. `origin`
 ; names the module of an imported one, after the type, so the label
 ; still reads as the call.
-(pub :: lspViewSigFn (-> String (Vec ASTNode) ASTNode String Int))
+(pub :: lspViewSigFn (-> String (Vec ASTNode) ASTNode (Option String) Int))
 (pub fn (lspViewSigFn dsrc ddecls d origin)
   {
     (let sig (lspFindSig ddecls (nodeAName d) (- (vecLen ddecls) 1)))
@@ -10660,11 +10651,12 @@
           (strBuilderPush label " : ")
           (strBuilderPush label (lspSigType dsrc sig))
         })
-      (if (> (strLen origin) 0)
-        {
-          (strBuilderPush label " from ")
-          (strBuilderPush label origin)
-        })
+      (if (let (Some name) origin)
+        (if (> (strLen name) 0)
+          {
+            (strBuilderPush label " from ")
+            (strBuilderPush label name)
+          }))
       (lspViewSigInfo (strBuilderFinish label) starts ends (lspViewSigDoc dsrc ddecls d sig))
     }
   })
@@ -11760,9 +11752,9 @@
                   (&& (!= (nodeSpan d) 0) (== (expIsJoinMarker (nodeAName d)) 0)))
               {
                 (lspViewSymOffer out seen query uri src ix (nodeAName d) (lspSymKind (nodeTag d))
-                  (nodeSpan d) "")
+                  (nodeSpan d) None)
                 (if (== (nodeTag d) TAG_D_DATA)
-                  (lspViewSymCtors out seen query uri src ix (nodeBChildren d) ""))
+                  (lspViewSymCtors out seen query uri src ix (nodeBChildren d) None))
               })
             (set i (+ i 1))
           }
@@ -11869,7 +11861,8 @@
     }
     0))
 
-(pub :: lspViewSymCtors (-> Int Strings String String String Ints (Vec ASTNode) String Int))
+(pub :: lspViewSymCtors
+  (-> Int Strings String String String Ints (Vec ASTNode) (Option String) Int))
 (pub fn (lspViewSymCtors out seen query uri src ix ctors container)
   {
     (let mut i 0)
@@ -11891,7 +11884,8 @@
 
 ; One SymbolInformation, when `name` holds the query and the
 ; declaration at `uri`:`span` has not been listed already.
-(pub :: lspViewSymOffer (-> Int Strings String String String Ints String Int Int String Int))
+(pub :: lspViewSymOffer
+  (-> Int Strings String String String Ints String Int Int (Option String) Int))
 (pub fn (lspViewSymOffer out seen query uri src ix name kind span container)
   (if (>= (jsonArrLen out) LSP_COMPL_MAX)
     0
@@ -11910,9 +11904,13 @@
             {
               (vecPush seen key)
               (jsonArrPush out
-                (if (== (strLen container) 0)
-                  base
-                  (jsonObjPut base "containerName" (jsonStr container))))
+                (match container
+                  ((None) base)
+                  ((Some name)
+                    (if (== (strLen name) 0)
+                      base
+                      (jsonObjPut base "containerName" (jsonStr name)))
+                  )))
               0
             }
           })
