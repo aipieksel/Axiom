@@ -1,0 +1,66 @@
+; A named vector is released after its element is returned. The
+; element keeps one share, so the source string's count returns to
+; what it was.
+(import Str)
+(import Vec)
+(import IO)
+
+(struct Entry
+  (value : String))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: direct (-> String Entry))
+(fn (direct value)
+  (Entry :value value))
+
+(:: temporary (-> String Entry))
+(fn (temporary value)
+  (vecGet (vecPush vecNew (Entry :value value)) 0))
+
+(:: named (-> String Entry))
+(fn (named value)
+  {
+    (let rows (vecPush vecNew (Entry :value value)))
+    (vecGet rows 0)
+  })
+
+(:: retire (-> String Int Int))
+(fn (retire value mode)
+  {
+    (let row
+      (if (== mode 0)
+        (direct value)
+        (if (== mode 1)
+          (temporary value)
+          (named value))))
+    17
+  })
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let value (strDup "owned child"))
+    (let before (count value))
+    (retire value 0)
+    (println
+      (if (== (count value) before)
+        "direct retires"
+        "direct leaked"))
+    (let beforeTemp (count value))
+    (retire value 1)
+    (println
+      (if (== (count value) beforeTemp)
+        "temporary retires"
+        "temporary leaked"))
+    (let beforeNamed (count value))
+    (retire value 2)
+    (println
+      (if (== (count value) beforeNamed)
+        "named retires"
+        "named leaked"))
+  })
