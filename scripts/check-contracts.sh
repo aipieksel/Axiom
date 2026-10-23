@@ -124,6 +124,7 @@ python3 tests/selfhost/checker-axtag-owners.py --axiom "$axc" --negative-control
 python3 tests/tools/compiler-tag-consumers.py --axiom "$axc"
 python3 tests/tools/expansion-interner-owner.py "$axc"
 python3 tests/tools/rustbind-query-options.py "$axc"
+python3 tests/selfhost/doc-lookup-options.py --axiom "$axc"
 
 failed=0
 checks=0

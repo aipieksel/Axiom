@@ -335,12 +335,17 @@ echo "--- 1. user-level cast count does not grow ---"
 # check retirement. These MM-VAL-23 observations keep their typed owner
 # alive; no application conversion or production erasure is introduced.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
+# Optional context/query and propagation probes add five live-owner header
+# observations under MM-VAL-23. The exact documentation-render golden adds
+# 22 textual `(as ` examples from unchanged builtin documentation: eleven
+# each in the successful and missing-library snapshots. They add no executed
+# conversion or production erasure; the census includes golden text.
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1486 ]; then
-  ok "user-level (cast count $cast_count <= 1486)"
+elif [ "$cast_count" -le 1513 ]; then
+  ok "user-level (cast count $cast_count <= 1513)"
 else
-  bad "user-level (cast count $cast_count > 1486): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1513): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -543,7 +548,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # more reference erasures: 278 to 260 under the same compiler.
 # Builtin recognition and optional entry-source access remove eleven
 # further reference erasures: 260 to 249 under the same compiler.
-erasure_pin=249
+# Optional namespace modules and symbol-unit lookup remove two more
+# reference erasures: 249 to 247 under the same compiler.
+erasure_pin=247
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)

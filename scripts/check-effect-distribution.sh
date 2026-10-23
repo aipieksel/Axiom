@@ -434,15 +434,20 @@ rows="$(grep -c '^F ' "$work/main.axsym" || true)"
 # No existing IO requirement is removed; incomplete and parameter marks
 # remain unchanged. The library delta is confined to the two Vec helpers
 # and vecReserveExactly moving its trusted Unsafe work into vecMoveTo.
-have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3688 "exactly Alloc,Mut"
+# Optional declaration, pair, extern, namespace and documentation queries add
+# cgDeclarationMatches and qmInvariant and remove five obsolete propagation
+# helpers. Seven existing rows change metadata; five gain Alloc and saUnitOf
+# replaces raw Unsafe with Alloc. Existing IO, Block, Spawn and Entropy
+# requirements are unchanged in the same-compiler source comparison.
+have "$(bucket "$work/main.axsym" 'Alloc,Mut')" 3684 "exactly Alloc,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut')" 501 "Alloc,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Mut')" 285 "exactly Mut"
-have "$(bucket "$work/main.axsym" 'Alloc')" 423 "exactly Alloc"
+have "$(bucket "$work/main.axsym" 'Alloc')" 429 "exactly Alloc"
 have "$(bucket "$work/main.axsym" 'Alloc,IO')" 24 "Alloc,IO"
 have "$(bucket "$work/main.axsym" 'IO')" 13 "exactly IO"
 have "$(bucket "$work/main.axsym" 'IO,Mut')" 5 "IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Mut,Unsafe')" 76 "Alloc,Mut,Unsafe"
-have "$(bucket "$work/main.axsym" 'Unsafe')" 91 "exactly Unsafe"
+have "$(bucket "$work/main.axsym" 'Unsafe')" 90 "exactly Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,IO,Mut,Unsafe')" 34 "Alloc,IO,Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Mut,Unsafe')" 34 "Mut,Unsafe"
 have "$(bucket "$work/main.axsym" 'Alloc,Unsafe')" 14 "Alloc,Unsafe"
@@ -469,7 +474,7 @@ have "$(bucket "$work/main.axsym" 'Alloc,Block,IO,Mut')" 16 "Alloc,Block,IO,Mut"
 have "$(bucket "$work/main.axsym" 'Alloc,Block,IO')" 2 "Alloc,Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO')" 1 "Block,IO"
 have "$(bucket "$work/main.axsym" 'Block,IO,Mut')" 1 "Block,IO,Mut"
-have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2432 "pure (neither row nor mark)"
+have "$(grep '^F ' "$work/main.axsym" | grep -vc '#effects=\|#effects-incomplete' || true)" 2428 "pure (neither row nor mark)"
 have "$(grep '^F ' "$work/main.axsym" | grep -o '#effects=[^ #]*' | LC_ALL=C sort -u | wc -l | tr -d ' ')" 32 "distinct compiler effect rows"
 have "$(grep -c '#effects-incomplete' "$work/main.axsym" || true)" 54 "incomplete rows"
 have "$(grep -c '#effect-params' "$work/main.axsym" || true)" 42 "effect-params rows"
