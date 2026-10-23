@@ -9093,7 +9093,7 @@
   ; fresh-name counter its hygiene renaming advanced.
   {
     (let isp (nodeSpan d))
-    (let tags (nodeAxtagsWords d))
+    (let tags (nodeAxtagsOpt d))
     (let prevMod (expMacMod env))
     (let prevSite env.site)
     (let prevDecl env.declmod)
@@ -9246,7 +9246,9 @@
 ; none, so they are refused here rather than dropped.
 (pub :: expInstantiateNothing (-> (Vec ASTNode) (Vec ASTNode) MEnv ASTNode Int))
 (pub fn (expInstantiateNothing entryDecls decls env d)
-  (if (&& (!= (nodeAxtagsWord d) 0) (> (vecLen (nodeAxtagsWords d)) 0))
+  (if (match (nodeAxtagsOpt d)
+    ((None) false)
+    ((Some tags) (> (vecLen tags) 0)))
     (expDeclCallErr env d
       "this invocation generates no declarations, so the AXTAGs above it attach to nothing"
       "remove the AXTAGs, or give the invocation arguments that generate a declaration"
@@ -10528,8 +10530,8 @@
                   (expNameSpan (nodeAName f) params args)))
               {
                 (setNodeTyChild g ty)
-                (if (!= (nodeAxtags f) 0)
-                  (writeNodeWords g 7 (nodeAxtagsWords f)))
+                (if (let (Some tags) (nodeAxtagsOpt f))
+                  (writeNodeAxtags g tags))
                 (expBuildStructFieldsIn fs params args env isp (vecPush acc g) (+ i 1))
               }
             }
@@ -10737,18 +10739,18 @@
 ; forged-claim shape MAC-SAFE-3 forbids. A template that generates no
 ; fn leaves the tags on the first declaration, where they are inert
 ; and visible.
-(pub :: expGiveTags (-> ASTNode Nodes Ints Int))
+(pub :: expGiveTags (-> ASTNode Nodes (Option Axtags) Int))
 (pub fn (expGiveTags d made tags)
-  (if (vecIsNull tags)
-    0
-    (expGiveTagsIn d made tags 0)))
+  (match tags
+    ((None) 0)
+    ((Some present) (expGiveTagsIn d made present 0))))
 
-(pub :: expGiveTagsIn (-> ASTNode Nodes Ints Int Int))
+(pub :: expGiveTagsIn (-> ASTNode Nodes Axtags Int Int))
 (pub fn (expGiveTagsIn d made tags i)
   (if (>= i (vecLen made))
     ; no fn generated: first declaration keeps them
     {
-      (writeNodeWords d 7 tags)
+      (writeNodeAxtags d tags)
       0
     }
     ; A generated `fn` that ALREADY carries tags got them from its own
@@ -10757,14 +10759,14 @@
     ; and must not overwrite them - so the search skips it and looks
     ; for the next untagged function, which is the one an invocation
     ; -level tag can honestly describe.
-    (if (&& (== (nodeTag (vecGet made i)) TAG_D_FN) (== (nodeAxtagsWord (vecGet made i)) 0))
+    (if (&& (== (nodeTag (vecGet made i)) TAG_D_FN) (isNone (nodeAxtagsOpt (vecGet made i))))
       (if (== i 0)
         {
-          (writeNodeWords d 7 tags)
+          (writeNodeAxtags d tags)
           0
         }
         {
-          (writeNodeWords (vecGet made i) 7 tags)
+          (writeNodeAxtags (vecGet made i) tags)
           0
         })
       (expGiveTagsIn d made tags (+ i 1)))))
@@ -11007,7 +11009,7 @@
 ; exercises and cost soundness in one a program can write, so it is
 ; gone rather than made cleverer - any shape-based test of the body is
 ; forgeable by the body.
-(pub :: expLowerOne (-> ASTNode Ints Int))
+(pub :: expLowerOne (-> ASTNode Axtags Int))
 (pub fn (expLowerOne d tags)
   (if (== (vecLen tags) 0)
     0
@@ -11026,7 +11028,7 @@
       }
     }))
 
-(pub :: expSplitContracts (-> ASTNode Ints Int (Vec ASTNode) (Vec ASTNode) Int))
+(pub :: expSplitContracts (-> ASTNode Axtags Int Nodes Nodes Int))
 (pub fn (expSplitContracts d tags i pres posts)
   (if (>= i (vecLen tags))
     0
@@ -11088,7 +11090,7 @@
 ; `(__contract P "axiom: precondition failed in `f`: P")`. The span is
 ; the contract expression's own, which `contractExprOf` already made
 ; absolute, so a backtrace frame and any diagnostic land on the tag.
-(pub :: expContractCheck (-> ASTNode Int ASTNode ASTNode))
+(pub :: expContractCheck (-> ASTNode AxtagEnt ASTNode ASTNode))
 (pub fn (expContractCheck d t p)
   {
     (let sp (nodeSpan p))
@@ -11098,7 +11100,7 @@
 ; The failure sentence, as a string-literal LEXEME - quotes included
 ; and escapes unprocessed, which is what `TAG_E_STR` holds and what
 ; `escBody` in the emitter reads (`\n` there is two source bytes).
-(pub :: expContractMsg (-> ASTNode Int String))
+(pub :: expContractMsg (-> ASTNode AxtagEnt String))
 (pub fn (expContractMsg d t)
   (concat
     (concat

@@ -11,6 +11,8 @@ import tempfile
 BRIDGE = '''
 (pub :: symbolProbeVec (-> Strings (Vec Ints) String (Option Ints)))
 (pub fn (symbolProbeVec names values key) (saGetVec names values key))
+(pub :: symbolProbeTags (-> SymMaps String (Option Axtags)))
+(pub fn (symbolProbeTags map key) (saGetVec map.tagN map.tagV key))
 (pub :: symbolProbeParam (-> (Option Names) Int String))
 (pub fn (symbolProbeParam names index) (smParamName names index))
 '''
@@ -31,9 +33,9 @@ def check(compiler, root, work):
               "axir_sha256": hashlib.sha256((root / "core/axir.ax").read_bytes()).hexdigest(),
               "configurations": [], "counterexamples": [], "refusals": [],
               "limits": ["Host O0/O2 native execution with allocation poisoning; no Windows runtime claim.",
-                         "ASTNode handles and parser-packed AXTAG Ints stay unchanged; this probe does not prove raw tag-entry ownership.",
+                         "ASTNode handles retain their packed boundary; typed AXTAG entries are covered by the owning annotation probes.",
                          "Getters retain stored vector aliases; only tag union constructs a fresh collection.",
-                         "saIdx semantic negative-index API and unused saGet zero-return API remain separate inventory items.",
+                         "saIdx returns an optional index; numeric zero remains a present first slot.",
                          "No lifetime algorithms or held work are read, changed or validated."]}
 
     def modules_for(label, text):
@@ -92,7 +94,7 @@ def check(compiler, root, work):
     invalid = {
         "erased-names": ('(:: bad (-> SymMaps Names)) (fn (bad map) (saGetNames map.prmN map.prmV "f"))', "AX3004"),
         "erased-node": ('(:: bad (-> SymMaps ASTNode)) (fn (bad map) (saGetNode map.prmN map.fnD "f"))', "AX3004"),
-        "erased-vector": ('(:: bad (-> SymMaps Ints)) (fn (bad map) (symbolProbeVec map.tagN map.tagV "f"))', "AX3004"),
+        "erased-vector": ('(:: bad (-> SymMaps Axtags)) (fn (bad map) (symbolProbeTags map "f"))', "AX3004"),
         "missing-names-none": ('(:: bad (-> SymMaps Names)) (fn (bad map) '
                                '(match (saGetNames map.prmN map.prmV "f") ((Some names) names)))', "AX3005"),
         "raw-projection-names": ('(:: bad (-> FnEnt Int)) (fn (bad entry) (symMirMetas entry vecNew 0 vecNew))', "AX3004"),

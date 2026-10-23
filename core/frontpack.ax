@@ -242,6 +242,26 @@
 
 ; R and L retain their existing packet field order. No in-memory mixed
 ; word record is constructed or inspected to encode these owning products.
+; A records own their annotation entries and text. Offset zero and an
+; allocated empty string remain ordinary present values in the packet.
+(:: frontPutAxtags (-> FrontWriter Axtags Int Int))
+(fn (frontPutAxtags out tags depth)
+  {
+    (if (> depth 512)
+      (set out.good false)
+      {
+        (frontPutWord out (vecLen tags))
+        (for tag in tags
+          (if (> (+ depth 1) 512)
+            (set out.good false)
+            {
+              (frontPutWord out tag.off)
+              (frontPutString out (as tag.content Int))
+            }))
+      })
+    0
+  })
+
 (:: frontPutMacroRules (-> FrontWriter MacroRules Int Int))
 (fn (frontPutMacroRules out rules depth)
   {
@@ -340,7 +360,13 @@
                         (set out.good false)
                       )
                       ((Some rules) (frontPutMacroRules out rules (+ depth 1))))
-                    (frontPutValue out payload kind (+ depth 1)))
+                    (if (== kind 65)
+                      (match (nodeAxtagsOpt value)
+                        ((None)
+                          (set out.good false)
+                        )
+                        ((Some tags) (frontPutAxtags out tags (+ depth 1))))
+                      (frontPutValue out payload kind (+ depth 1))))
                 })
               (set field (+ field 1))
             })
@@ -371,13 +397,6 @@
                 (set out.good false)
                 (frontPutWord out (| (<< start 32) end)))
             })
-        )
-        (65 (frontPutVector out value 97 depth))
-        (97
-          {
-            (frontPutWord out (memGetWord value 0))
-            (frontPutString out (memGetWord value 1))
-          }
         )
         (_
           (set out.good false)
@@ -493,6 +512,38 @@
           (set input.good false)
           0
         }))
+  })
+
+; An annotation entry requires owned text and a valid source offset.
+; A real empty list or empty text is still present.
+(:: frontGetAxtags (-> FrontReader Int (Option Axtags)))
+(fn (frontGetAxtags input depth)
+  {
+    (let count (frontGetWord input))
+    (if (&& (<= depth 512)
+          (&& input.good (&& (>= count 0) (<= count (/ (- (strLen input.bytes) input.pos) 16)))))
+      {
+        (let tags (:: (vecWithCapacity count) Axtags))
+        (let mut i 0)
+        (while (&& input.good (< i count))
+          {
+            (if (> (+ depth 1) 512)
+              (set input.good false)
+              {
+                (let off (frontGetWord input))
+                (let content (frontGetString input))
+                (if (&& input.good
+                      (&& (>= off 0) (&& (<= off input.sourceBytes) (!= (as content Int) 0))))
+                  (vecPush tags (AxtagEnt :off off :content content))
+                  (set input.good false))
+              })
+            (set i (+ i 1))
+          })
+        (if input.good
+          (Some tags)
+          None)
+      }
+      None)
   })
 
 ; Every field of an R/L record is required except its expression.
@@ -676,13 +727,19 @@
                           (set input.good false)
                         )
                         ((Some rules) (writeNodeMacroRules node rules)))
-                      {
-                        (let payload (frontGetValue input kind (+ depth 1)))
-                        (if (|| (== payload 0)
-                              (&& (== kind 119) (! (frontRawValid tag field payload))))
-                          (set input.good false))
-                        (nodeWireStore node field payload (!= kind 119))
-                      })
+                      (if (== kind 65)
+                        (match (frontGetAxtags input (+ depth 1))
+                          ((None)
+                            (set input.good false)
+                          )
+                          ((Some tags) (writeNodeAxtags node tags)))
+                        {
+                          (let payload (frontGetValue input kind (+ depth 1)))
+                          (if (|| (== payload 0)
+                                (&& (== kind 119) (! (frontRawValid tag field payload))))
+                            (set input.good false))
+                          (nodeWireStore node field payload (!= kind 119))
+                        }))
                   })
                 (set field (+ field 1))
               })
@@ -743,14 +800,6 @@
                 (set input.good false))
               (mkSpan start end)
             })
-        }
-      )
-      (65 (frontGetVector input 97 depth))
-      (97
-        {
-          (let off (frontGetWord input))
-          (let content (frontGetString input))
-          (as (AxtagEnt :off off :content content) Int)
         }
       )
       (_

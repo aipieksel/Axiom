@@ -406,7 +406,7 @@
 
 ; Missing keys are None. Some retains the stored vector, including an
 ; empty one; lookup does not copy or mutate the parser's collections.
-(:: saGetVec (-> Strings (Vec Ints) String (Option Ints)))
+(:: saGetVec (-> Strings (Vec (Vec a)) String (Option (Vec a))))
 (fn (saGetVec names vals key)
   (match (saIdx names key)
     ((None) None)
@@ -636,7 +636,7 @@
   (nidN : Names)
   (nidV : Names)
   (tagN : Names)
-  (tagV : (Vec Ints))
+  (tagV : (Vec Axtags))
   (prmN : Names)
   (prmV : (Vec Names))
   (opN : Names)
@@ -851,10 +851,11 @@
 ; when it sorts a copy.
 (pub :: smTags (-> SymMaps ASTNode String Int))
 (pub fn (smTags sm d name)
-  {
-    (let tags (nodeAxtagsWords d))
-    (if (== (as tags Int) 0)
-      (saPutSoft sm.tagN sm.tagV name (:: vecNew Ints))
+  (match (nodeAxtagsOpt d)
+    ((None)
+      (saPutSoft sm.tagN sm.tagV name (:: vecNew Axtags))
+    )
+    ((Some tags)
       (if (== (vecLen tags) 0)
         (saPutSoft sm.tagN sm.tagV name tags)
         (match (saGetVec sm.tagN sm.tagV name)
@@ -863,14 +864,14 @@
             (if (== (vecLen have) 0)
               (saPut sm.tagN sm.tagV name tags)
               (saPut sm.tagN sm.tagV name (smTagsUnion have tags)))
-          ))))
-  })
+          )))
+    )))
 
 ; `have` first, in its own order, then every tag of `more` whose text
 ; is not already present - so the row reads in source order, the
 ; signature's tags before the function's, and a tag written on both
 ; renders once.
-(:: smTagsUnion (-> Ints Ints Ints))
+(:: smTagsUnion (-> Axtags Axtags Axtags))
 (fn (smTagsUnion have more)
   {
     (let out vecNew)
@@ -884,7 +885,8 @@
       (set i 0)
       (while (< i (vecLen more))
         {
-          (if (! (== (smTagsHas out (memGetWordStr (vecGet more i) 1)) 1))
+          (let tag (vecGet more i))
+          (if (! (== (smTagsHas out tag.content) 1))
             (vecPush out (vecGet more i)))
           (set i (+ i 1))
         })
@@ -892,7 +894,7 @@
     }
   })
 
-(:: smTagsHas (-> Ints String Int))
+(:: smTagsHas (-> Axtags String Int))
 (fn (smTagsHas tags txt)
   {
     (let mut i 0)
@@ -900,7 +902,8 @@
     {
       (while (< i (vecLen tags))
         {
-          (if (strEq (memGetWordStr (vecGet tags i) 1) txt)
+          (let tag (vecGet tags i))
+          (if (strEq tag.content txt)
             (set hit 1))
           (set i (+ i 1))
         })
@@ -1022,7 +1025,8 @@
         (let mut i 0)
         (while (< i (vecLen tags))
           {
-            (vecPush metas (saAxMeta (memGetWordStr (vecGet tags i) 1)))
+            (let tag (vecGet tags i))
+            (vecPush metas (saAxMeta tag.content))
             (set i (+ i 1))
           })
       })

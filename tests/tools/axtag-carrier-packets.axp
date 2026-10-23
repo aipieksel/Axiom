@@ -1,0 +1,45 @@
+; Typed annotation records retain the existing packet field order and bytes.
+(import core)
+(import parser)
+(import frontpack)
+(import Str)
+(import Vec)
+(import Fmt)
+(import IO)
+
+(:: dump (-> String Bool ()))
+;@axiom:effect(io)
+(fn (dump source empty)
+  (match (frontParse source)
+    ((None) (println "parse failed"))
+    ((Some parsed)
+      {
+        (if empty
+          (writeNodeAxtags (vecGet parsed.decls 0) (:: vecNew Axtags)))
+        (let packet (frontEncode parsed))
+        (let parts vecNew)
+        (for i in 0..(strLen packet)
+          (vecPush parts
+            (concat
+              (if (< (strByte packet i) 16)
+                "0"
+                "")
+              (fmtHex (strByte packet i)))))
+        (println (strJoin parts ""))
+      }
+    )))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (dump ";@axiom:effect(pure)\n(:: f Int)\n(fn (f) 1)" false)
+    (dump ";@axiom:\n(fn (empty) 1)" false)
+    (dump "(fn (plain) 1)" false)
+    (dump
+      "(macro tagged ((tagged name)\n;@axiom:effect(pure)\n(:: name Int)\n;@axiom:effect(pure)\n(fn (name) 1)))"
+      false)
+    (dump "(struct Callbacks\n;@axiom:effect(io)\n(run : (-> Int Int)))" false)
+    (dump "(fn (presentEmpty) 1)" true)
+    0
+  })
