@@ -302,9 +302,10 @@ type migration and an evidence-backed memory-model assessment.
 The v0.8.0 foundations release includes completed work on nightly, with
 proper typing and demonstrated memory soundness within the documented
 safe-language contract. The full compiler type migration, Links, Options
-and if-let chains belong to this scope. In-place vector growth and database
-performance, executable footprint, feature parity and related enhancements
-are v0.8.1 work. Compiler-wide migration completion and demonstrated memory
-soundness are the final v0.8.0 release gates.
+and if-let chains belong to this scope. Experimental in-place vector
+growth on uncapped, single-threaded POSIX heaps is already on nightly.
+Database performance, executable footprint, feature parity and related
+enhancements are v0.8.1 work. Compiler-wide migration completion and
+demonstrated memory soundness are the final v0.8.0 release gates.
 
 The maintainer cuts releases.
