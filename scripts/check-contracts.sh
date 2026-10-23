@@ -83,6 +83,7 @@ python3 tests/tools/expansion-option-sequences.py "$axc"
 python3 tests/tools/expansion-option-queries.py "$axc"
 python3 tests/tools/expansion-option-names.py "$axc"
 python3 tests/tools/expansion-option-builders.py "$axc"
+python3 tests/tools/expansion-option-controls.py "$axc"
 
 failed=0
 checks=0
