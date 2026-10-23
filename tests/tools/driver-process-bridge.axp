@@ -1,0 +1,99 @@
+(:: probePrintPhase (-> (Option PhaseFailure) ()))
+;@axiom:effect(io)
+(fn (probePrintPhase result)
+  (match result
+    ((None) (println "complete"))
+    ((Some failure)
+      {
+        (let part failure.part)
+        (match failure.reason
+          ((PhaseLaunchFailure reason)
+            (match reason
+              ((ToolMissing) (println "failure {part} missing"))
+              ((ToolSpawnError e)
+                {
+                  (let code (errCode e))
+                  (println "failure {part} spawn {code}")
+                }
+              ))
+          )
+          ((PhaseWaitFailure e)
+            {
+              (let code (errCode e))
+              (println "failure {part} wait {code}")
+            }
+          )
+          ((PhaseExitFailure code) (println "failure {part} exit {code}"))
+          ((PhaseSignalFailure signal) (println "failure {part} signal {signal}")))
+      }
+    )))
+
+(pub :: probeDrain (-> Int Int))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(pub fn (probeDrain count)
+  (match (sysWaitPid -1)
+    ((Err _) count)
+    ((Ok _) (probeDrain (+ count 1)))))
+
+(pub :: probePhase (-> String ()))
+;@axiom:effect(io)
+;@axiom:effect(spawn)
+;@axiom:effect(block)
+(pub fn (probePhase mode)
+  {
+    (let launches (:: vecNew (Vec (Result Int ToolLaunchError))))
+    (if (! (strEq mode "empty"))
+      {
+        (vecPush launches
+          (match mode
+            ("missing-first" (spawnTool "absent" vecNew))
+            ("spawn-first" (spawnTool "./absent" vecNew))
+            ("exit-first" (spawnTool "./worker" (vecPush vecNew "quick7")))
+            ("two-fail" (spawnTool "./worker" (vecPush vecNew "quick7")))
+            ("signal-first" (spawnTool "./worker" (vecPush vecNew "signal9")))
+            ("wait-first"
+              {
+                (let launch (spawnTool "./worker" (vecPush vecNew "zero")))
+                (match launch
+                  ((Err _) ())
+                  ((Ok pid)
+                    {
+                      (let _ (waitTool pid))
+                      ()
+                    }
+                  ))
+                launch
+              }
+            )
+            (_ (spawnTool "./worker" (vecPush vecNew "zero")))))
+        (vecPush launches
+          (if (strEq mode "later-missing")
+            (spawnTool "absent" vecNew)
+            (spawnTool "./worker"
+              (vecPush vecNew
+                (if (strEq mode "two-fail")
+                  "slow19"
+                  "slow0")))))
+      })
+    (probePrintPhase (waitPhase launches 0 (vecLen launches)))
+    (let ready
+      (if (|| (strEq mode "empty") (strEq mode "later-missing"))
+        true
+        (fileExists
+          (if (strEq mode "two-fail")
+            "slow19.done"
+            "slow0.done"))))
+    (println "ready {ready}")
+  })
+
+(:: probeInterruptedWait (-> Int (Result Int Error)))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (probeInterruptedWait pid)
+  (if (fileExists "interrupt.once")
+    (sysWaitPid pid)
+    {
+      (let _ (writeFile "interrupt.once" "interrupted\n"))
+      (Err (mkError 4 "test one-shot interrupted wait"))
+    }))

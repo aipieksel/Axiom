@@ -2611,9 +2611,27 @@
       }
     }))
 
-; Spawn `tool` with `args`, answering the pid, or -1 when it could
-; not be started. The argv buffer is `runTool`'s shape.
-(:: spawnTool (-> String Strings Int))
+(data ToolLaunchError
+  (ToolMissing)
+  (ToolSpawnError Error))
+
+(data ToolExit
+  (ToolExited Int)
+  (ToolSignalled Int))
+
+(data PhaseFailureReason
+  (PhaseLaunchFailure ToolLaunchError)
+  (PhaseWaitFailure Error)
+  (PhaseExitFailure Int)
+  (PhaseSignalFailure Int))
+
+(struct PhaseFailure
+  (part : Int)
+  (reason : PhaseFailureReason))
+
+; Spawn `tool` with `args`, preserving a missing path or spawn error.
+; The argv buffer is `runTool`'s shape.
+(:: spawnTool (-> String Strings (Result Int ToolLaunchError)))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 (fn (spawnTool tool args)
@@ -2627,64 +2645,81 @@
           (fillArgv v args 0 n)
           (memSetWord v (+ n 1) 0)
           (match (sysSpawn (strCStr (strDup path)) v sysEnvp)
-            ((Err e) -1)
-            ((Ok pid) pid))
+            ((Err e) (Err (ToolSpawnError e)))
+            ((Ok pid) (Ok pid)))
         }
       }
     }
-    -1))
+    (Err ToolMissing)))
 
-; Wait for `pid`, answering its exit code (128+signal when killed).
-(:: waitTool (-> Int Int))
+; Keep normal exit, signal termination and a failed wait distinct.
+; An interrupted wait is retried before the child can be cleaned up.
+(:: waitTool (-> Int (Result ToolExit Error)))
 ;@axiom:effect(io)
 ;@axiom:effect(block)
 (fn (waitTool pid)
   (match (sysWaitPid pid)
-    ((Err e) -1)
+    ((Err e)
+      (if (== (errCode e) 4)
+        (waitTool pid)
+        (Err e))
+    )
     ((Ok st)
-      (if (!= (sysTermSignal st) 0)
-        (+ 128 (sysTermSignal st))
-        (sysExitCode st))
+      (Ok
+        (if (!= (sysTermSignal st) 0)
+          (ToolSignalled (sysTermSignal st))
+          (ToolExited (sysExitCode st))))
     )))
 
-; Spawn llc for parts i..jobs-1, recording each pid in `pids`. The
-; module was already optimised whole (see buildSplit), so a part is
-; only assembled here - inlining decisions stay whole-module, and
-; the objects a split build links answer exactly what the serial
-; path's optimiser produced.
-(:: spawnPhase (-> String Int Int Int Ints Int))
+; Launch in part order and retain each result, including failed starts.
+; The module was optimised whole before splitting.
+(:: spawnPhase (-> String Int Int Int (Vec (Result Int ToolLaunchError)) ()))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
-(fn (spawnPhase stem lvl i jobs pids)
-  (if (>= i jobs)
-    0
+(fn (spawnPhase stem lvl i jobs launches)
+  (if (< i jobs)
     {
       (let part (splitPartPath stem i))
-      {
-        (vecPush pids
-          (spawnTool "llc"
-            (vecOf6 part "-filetype=obj" "-o" (concat part ".o") (concat "-O" (fmtIntStr lvl))
-              llcRelocArg)))
-        (spawnPhase stem lvl (+ i 1) jobs pids)
-      }
+      (vecPush launches
+        (spawnTool "llc"
+          (vecOf6 part "-filetype=obj" "-o" (concat part ".o") (concat "-O" (fmtIntStr lvl))
+            llcRelocArg)))
+      (spawnPhase stem lvl (+ i 1) jobs launches)
     }))
 
-; Wait for every pid; answers the first failing part index, or -1.
-; A pid of -1 (never started) is settled by the caller's phase rule.
-(:: waitPhase (-> Ints Int Int Int))
+; Wait every launched child before returning the earliest failing part.
+; A launch failure prevents linking but cannot skip later child waits.
+(:: waitPhase (-> (Vec (Result Int ToolLaunchError)) Int Int (Option PhaseFailure)))
 ;@axiom:effect(io)
 ;@axiom:effect(block)
-(fn (waitPhase pids i jobs)
-  (if (>= i jobs)
-    -1
-    {
-      (let pid (vecGet pids i))
-      (if (< pid 0)
-        (waitPhase pids (+ i 1) jobs)
-        (if (!= (waitTool pid) 0)
-          i
-          (waitPhase pids (+ i 1) jobs)))
-    }))
+(fn (waitPhase launches i jobs)
+  {
+    (let mut first (:: None (Option PhaseFailure)))
+    (for part in i..jobs
+      {
+        (let failure
+          (match (vecGet launches part)
+            ((Err e) (Some (PhaseFailure :part part :reason (PhaseLaunchFailure e))))
+            ((Ok pid)
+              (match (waitTool pid)
+                ((Err e) (Some (PhaseFailure :part part :reason (PhaseWaitFailure e))))
+                ((Ok result)
+                  (match result
+                    ((ToolExited code)
+                      (if (== code 0)
+                        None
+                        (Some (PhaseFailure :part part :reason (PhaseExitFailure code))))
+                    )
+                    ((ToolSignalled signal)
+                      (Some (PhaseFailure :part part :reason (PhaseSignalFailure signal)))
+                    ))
+                ))
+            )))
+        (if (isNone first)
+          (set first failure))
+      })
+    first
+  })
 
 (:: vecOf6 (-> String String String String String String Strings))
 (fn (vecOf6 a b c d e f)
@@ -2726,13 +2761,16 @@
       (splitLinkArgs stem jobs (+ i 1) acc)
     }))
 
+(pub data SplitBuildResult
+  (SplitUnavailable)
+  (SplitFinished (Result () Int)))
+
 ; Split the already-optimised module, assemble the parts in
-; parallel, then link. Answers 0 on success, 1 on a reported
-; failure, and -1 when `llvm-split` is not on PATH (the caller then
-; takes the serial path). Optimising before the split keeps every
+; parallel, then link. SplitUnavailable selects the serial fallback;
+; SplitFinished holds success or the reported CLI failure status. Optimising before the split keeps every
 ; inlining decision whole-module: the objects answer what the
 ; serial path's optimiser produced, only assembled concurrently.
-(pub :: buildSplit (-> String String String String Int Strings Int))
+(pub :: buildSplit (-> String String String String Int Strings SplitBuildResult))
 ;@axiom:effect(io)
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
@@ -2760,26 +2798,27 @@
       {
         (let splitRc (runTool "llvm-split" sargs))
         (if (< splitRc 0)
-          -1
+          SplitUnavailable
           (if (!= splitRc 0)
             {
               (splitCleanup stem jobs 0)
-              (toolFailDiag "llvm-split failed"
-                "`llvm-split` partitions the module for parallel code generation; it ships with LLVM - or set AXIOM_CODEGEN_JOBS=1 for the serial path")
+              (SplitFinished
+                (Err
+                  (toolFailDiag "llvm-split failed"
+                    "`llvm-split` partitions the module for parallel code generation; it ships with LLVM - or set AXIOM_CODEGEN_JOBS=1 for the serial path")))
             }
             {
-              (let llcPids vecNew)
+              (let launches vecNew)
               {
-                (spawnPhase stem lvl 0 jobs llcPids)
-                (let badLlc (waitPhase llcPids 0 jobs))
-                (if (!= badLlc -1)
+                (spawnPhase stem lvl 0 jobs launches)
+                (if (let (Some failure) (waitPhase launches 0 jobs))
                   {
                     (let report
                       (toolFailDiag "llc failed"
                         "one of the split parts was rejected by `llc`; set AXIOM_CODEGEN_JOBS=1 for the serial path"))
                     {
                       (splitCleanup stem jobs 0)
-                      report
+                      (SplitFinished (Err report))
                     }
                   }
                   {
@@ -2798,12 +2837,14 @@
                       {
                         (splitCleanup stem jobs 0)
                         (if (!= rc2 0)
-                          (toolFailDiag
-                            (if (< rc2 0)
-                              "could not run `cc`"
-                              "cc failed")
-                            "a C compiler drives the link step; put `cc` on PATH")
-                          0)
+                          (SplitFinished
+                            (Err
+                              (toolFailDiag
+                                (if (< rc2 0)
+                                  "could not run `cc`"
+                                  "cc failed")
+                                "a C compiler drives the link step; put `cc` on PATH")))
+                          (SplitFinished (Ok ())))
                       }
                     }
                   })
@@ -2863,7 +2904,7 @@
               )
               ((Ok toAssemble)
                 {
-                  (let splitRc
+                  (let splitResult
                     (if (&& (> (cgJobs) 1)
                           (&& (> (strLen ir) 4194304)
                             (&& (== (strLen winTarget) 0)
@@ -2871,28 +2912,34 @@
                                 (&& (! cgStaticlib)
                                   (! (hasFlagAnywhere subcommandName "--obfuscate")))))))
                       (buildSplit ir toAssemble (concat outPath ".split") exePath optLevel linkArgs)
-                      -1))
-                  (if (!= splitRc -1)
-                    {
-                      (if (!= (strCmp toAssemble llPath) 0)
-                        (unwrapOr (removeFile optPath) 0))
-                      (if (== keepLl 0)
-                        (unwrapOr (removeFile llPath) 0))
-                      splitRc
-                    }
-                    {
-                      (let rc
-                        (assembleAndLink ir toAssemble objPath exePath optLevel linkArgs winTarget
-                          isBaremetal))
+                      SplitUnavailable))
+                  (match splitResult
+                    ((SplitFinished result)
                       {
-                        (unwrapOr (removeFile objPath) 0)
                         (if (!= (strCmp toAssemble llPath) 0)
                           (unwrapOr (removeFile optPath) 0))
                         (if (== keepLl 0)
                           (unwrapOr (removeFile llPath) 0))
-                        rc
+                        (match result
+                          ((Ok _) 0)
+                          ((Err status) status))
                       }
-                    })
+                    )
+                    ((SplitUnavailable)
+                      {
+                        (let rc
+                          (assembleAndLink ir toAssemble objPath exePath optLevel linkArgs
+                            winTarget isBaremetal))
+                        {
+                          (unwrapOr (removeFile objPath) 0)
+                          (if (!= (strCmp toAssemble llPath) 0)
+                            (unwrapOr (removeFile optPath) 0))
+                          (if (== keepLl 0)
+                            (unwrapOr (removeFile llPath) 0))
+                          rc
+                        }
+                      }
+                    ))
                 }
               )))
         }

@@ -27,7 +27,15 @@ BRIDGE = '''
 ;@axiom:effect(spawn)
 ;@axiom:effect(block)
 (pub fn (probeSpawnWait tool args)
-  { (let pid (spawnTool tool args)) (if (< pid 0) pid (waitTool pid)) })
+  (match (spawnTool tool args)
+    ((Err _) -1)
+    ((Ok pid)
+      (match (waitTool pid)
+        ((Err _) -1)
+        ((Ok result)
+          (match result
+            ((ToolExited code) code)
+            ((ToolSignalled signal) (+ 128 signal))))))))
 '''
 
 
@@ -40,6 +48,17 @@ def check(compiler, root, work, baseline):
     driver = (baseline or (root / 'core/driver.ax')).read_text()
     bridge = BRIDGE
     if baseline:
+        bridge = bridge.replace('''(pub fn (probeSpawnWait tool args)
+  (match (spawnTool tool args)
+    ((Err _) -1)
+    ((Ok pid)
+      (match (waitTool pid)
+        ((Err _) -1)
+        ((Ok result)
+          (match result
+            ((ToolExited code) code)
+            ((ToolSignalled signal) (+ 128 signal))))))))''', '''(pub fn (probeSpawnWait tool args)
+  { (let pid (spawnTool tool args)) (if (< pid 0) pid (waitTool pid)) })''')
         bridge = bridge.replace('(resolveTool name))',
                                 '{ (let path (resolveTool name)) (if (== (strLen path) 0) None (Some path)) })')
         bridge = bridge.replace('(resolveToolIn name path from))',
@@ -65,7 +84,7 @@ def check(compiler, root, work, baseline):
                   'Native host O0/O2 with allocation poisoning; no cross-target execution claim.',
                   'Direct paths are returned without an existence check; PATH checks existence, not executability.',
                   'Empty/interior PATH components retain current-directory lookup; empty PATH and trailing components are skipped.',
-                  'spawnTool PID/-1 and coordinated process status consumers remain unmigrated; waitPhase is unchanged.',
+                  'The bridge renders typed launch/wait outcomes as legacy status for comparison; phase behavior is tested separately.',
                   'Child argv and error status are checked without shell invocation.',
                   'No held lifetime/escape inference is reviewed, changed or validated.',
               ]}

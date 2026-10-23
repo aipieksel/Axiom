@@ -1738,5 +1738,10 @@ if python3 "$repo_root/tests/tools/driver-opt-result-options.py" --axiom "$s1"; 
 else
   failed=$((failed + 1))
 fi
+if python3 "$repo_root/tests/tools/driver-process-results.py" --axiom "$s1"; then
+  passed=$((passed + 1))
+else
+  failed=$((failed + 1))
+fi
 echo "$passed passed, $failed failed"
 [[ "$failed" == 0 ]]

@@ -1,0 +1,118 @@
+(import Sys)
+(import Str)
+(import IO)
+(import Err)
+(import Fmt)
+
+(:: save (-> String String ()))
+;@axiom:effect(io)
+(fn (save path text)
+  (match (writeFile path text)
+    ((Ok _) ())
+    ((Err _) ())))
+
+(:: argvText String)
+;@axiom:effect(io)
+(fn (argvText)
+  {
+    (let out (strBuilderNew))
+    (for i in 0..sysArgc
+      (strBuilderPush out (concat (fmtInt i) (concat ":" (concat (sysArg i) "\n")))))
+    (strBuilderFinish out)
+  })
+
+(:: outputArg String)
+;@axiom:effect(io)
+(fn (outputArg)
+  {
+    (let mut output "")
+    (for i in 1..(- sysArgc 1)
+      (if (strEq (sysArg i) "-o")
+        (set output (sysArg (+ i 1)))))
+    output
+  })
+
+(:: slow ())
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (slow)
+  (match (sysSleepNanos 150000000)
+    ((Ok _) ())
+    ((Err _) ())))
+
+(:: killSelf Int)
+;@axiom:effect(io)
+(fn (killSelf)
+  {
+    (let _ (sysKill sysPid 9))
+    99
+  })
+
+(:: worker (-> String Int))
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (worker mode)
+  {
+    (if (strStartsWith mode "slow")
+      slow)
+    (save (concat mode ".done") "done\n")
+    (match mode
+      ("quick7" 7)
+      ("slow19" 19)
+      ("signal9" killSelf)
+      (_ 0))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+;@axiom:effect(block)
+(fn (main)
+  {
+    (let tool (sysArg 0))
+    (let first (sysArg 1))
+    (let mode (sysEnv "AXIOM_TEST_PROCESS_MODE"))
+    (if (|| (strStartsWith first "slow")
+          (|| (strEq first "quick7") (|| (strEq first "signal9") (strEq first "zero"))))
+      (worker first)
+      (if (strEq tool "llvm-split")
+        {
+          (save "splitter.argv" argvText)
+          (let prefix outputArg)
+          (for i in 0..2
+            {
+              (let part (concat prefix (fmtInt i)))
+              (save part "part\n")
+              (save (concat part ".opt") "partial opt\n")
+              (save (concat part ".llc-err") "partial error\n")
+            })
+          (if (strEq mode "split-fail")
+            7
+            0)
+        }
+        (if (strEq tool "cc")
+          {
+            (save "link.argv" argvText)
+            (if (strEq mode "link-fail")
+              7
+              {
+                (save outputArg "linked\n")
+                0
+              })
+          }
+          {
+            (save (concat first ".argv") argvText)
+            (if (isSome (strFind first "part1" 0))
+              slow)
+            (save (concat first ".settled")
+              (if (fileExists first)
+                "present\n"
+                "removed-too-soon\n"))
+            (save outputArg "object\n")
+            (if (isSome (strFind first "part0" 0))
+              (match mode
+                ("llc-exit" 7)
+                ("llc-signal" killSelf)
+                (_ 0))
+              0)
+          })))
+  })

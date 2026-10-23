@@ -16,6 +16,12 @@ its changelog too.
 
 ## Unreleased
 
+- Parallel code generation refuses a failed child launch before linking.
+  It waits every launched child before removing split files, even after
+  another child fails, and preserves the earliest failing part.
+  Launch errors, exit codes, signals and serial fallback have typed outcomes.
+  Tested by `tests/tools/driver-process-results.py`.
+
 - Add experimental large-vector growth inside separate address reservations on uncapped,
   single-threaded POSIX heaps. Growth preserves element ownership and
   falls back to copying when the reservation is full or unavailable.
