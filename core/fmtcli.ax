@@ -48,22 +48,26 @@
       (fmtHasPath paths path (+ i 1)))))
 
 ; Values after `--`, or belonging to another option, are operands.
-(:: fmtOptionValue (-> String Int String))
+(:: fmtOptionValue (-> String Int (Option String)))
 ;@axiom:effect(io)
 (fn (fmtOptionValue wanted i)
   (if (>= i sysArgc)
-    ""
+    None
     {
       (let arg (sysArg i))
       (if (strEq arg "--")
-        ""
+        None
         (if (looksLikeFlag arg)
           {
             (let name (flagNamePart arg))
             (if (strEq name wanted)
               (match (flagValuePart arg)
-                ((Some value) value)
-                ((None) (sysArg (+ i 1))))
+                ((Some value) (Some value))
+                ((None)
+                  (if (< (+ i 1) sysArgc)
+                    (Some (sysArg (+ i 1)))
+                    None)
+                ))
               (fmtOptionValue wanted
                 (+ i
                   (match (flagArity name)
@@ -319,19 +323,28 @@
     (let diff (hasFlagAnywhere "fmt" "--diff"))
     (let emit (fmtOptionValue "--emit" 1))
     (let fromStdin (fmtHasPath paths "-" 0))
-    (let toStdout (|| fromStdin (strEq emit "stdout")))
+    (let emitStdout
+      (match emit
+        ((None) false)
+        ((Some value) (strEq value "stdout"))))
+    (let emitFiles
+      (match emit
+        ((None) false)
+        ((Some value) (strEq value "files"))))
+    (let toStdout (|| fromStdin emitStdout))
     (let inputs vecNew)
     (let mut failed 0)
     {
       (if (&& check diff)
         (usageError "error: choose --check or --diff"))
-      (if (&& (> (strLen emit) 0) (! (|| (strEq emit "stdout") (strEq emit "files"))))
-        (usageError "error: --emit takes files or stdout"))
+      (if (let (Some value) emit)
+        (if (&& (> (strLen value) 0) (! (|| emitStdout emitFiles)))
+          (usageError "error: --emit takes files or stdout")))
       (if (&& toStdout (!= (vecLen paths) 1))
         (usageError "error: stdin and stdout formatting each require exactly one input"))
-      (if (&& (strEq emit "stdout") (|| check diff))
+      (if (&& emitStdout (|| check diff))
         (usageError "error: --emit stdout cannot be combined with --check or --diff"))
-      (if (&& fromStdin (strEq emit "files"))
+      (if (&& fromStdin emitFiles)
         (usageError "error: stdin formatting writes to stdout; omit --emit files"))
       (if (== (vecLen paths) 0)
         (set failed (fmtFailure "error: fmt needs an input file\n")))

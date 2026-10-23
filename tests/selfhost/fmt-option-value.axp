@@ -1,0 +1,44 @@
+; The test runner exports a private-copy adapter for fmtOptionValue.
+(import fmtcli)
+(import IO)
+(import Sys)
+(import Str)
+
+(:: showValue (-> (Option String) ()))
+;@axiom:effect(io)
+(fn (showValue value)
+  (match value
+    ((None) (println "None"))
+    ((Some text)
+      {
+        (let n (strLen text))
+        (println "Some {n}:{text}")
+      }
+    )))
+
+(:: discardValue (-> (Option String) Int))
+(fn (discardValue value)
+  (match value
+    ((None) 0)
+    ((Some text) (strLen text))))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let saved (probeFmtOptionValue "--emit" 1))
+    (discardValue (probeFmtOptionValue "--emit" 1))
+    (let before live)
+    (for i in 0..20
+      (discardValue (probeFmtOptionValue "--emit" 1)))
+    (let after live)
+    (showValue saved)
+    (showValue (probeFmtOptionValue "--emit" sysArgc))
+    (showValue (probeFmtOptionValue "--not-present" 1))
+    (let balanced (== before after))
+    (println "balanced={balanced}")
+  })
