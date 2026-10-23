@@ -1200,7 +1200,7 @@ This section records the codes below. All of them are built, and
 | `AX3089` `signature-needed` | a function needs a signature: it is called before its type is known, or its body needs parameter types other than the default `Int` | An error. `tests/diagnostics/1032-signature-needed.ax`, `tests/diagnostics/1484-unsigned-parameter-poison.ax` |
 | `AX3090` `recover-thunk-unseen` | a recovery point's thunk that isn't a lambda written at the call or a top-level function, so the region check can't walk it | An error. `tests/diagnostics/1033-recover-escape.ax` |
 | `AX3091` `inline-asm` | an `asm` form the compiler can't lower: an unknown architecture, operand kind or option, a second arm for one architecture, a template naming no operand or defining a named label, a second answered output, a `const` it can't fold, a `sym` with no symbol, or a register an arm can't name | An error, where the form is written. `tests/diagnostics/1044-inline-asm.ax`, `tests/diagnostics/1280-inline-asm-forms.ax` |
-| `AX3123` `propagate-position` | a `?` with no tail to propagate to: inside a branch, a `let` body, a loop, a region or a handler whose value an expression around it still uses | `tests/diagnostics/1300-propagate-position.ax` |
+| `AX3123` `propagate-position` | a `?` with no tail to propagate to | `tests/diagnostics/1300-propagate-position.ax` |
 | `AX3124` `type-argument-arity` | a type used with a different number of arguments from its declaration | `tests/diagnostics/1420-generic-alias-arity.ax` |
 | `AX3125` `type-parameter` | an invalid, repeated or undeclared type parameter, or an unused alias parameter | `tests/diagnostics/1421-generic-alias-parameters.axbad` |
 | `AX3126` `recursive-alias` | a direct or indirect recursive alias, including unused declarations | `tests/diagnostics/1422-recursive-alias.ax` |
@@ -1416,15 +1416,16 @@ the shape `ERR-PROP-3` calls safe:
   ((Ok t) (Ok (+ t 1))))
 ```
 
-A `?` is rewritten wherever the rest of the body can follow it. That is
-the body's tail: a `let`'s body, a block's last expression, or an `if`
-branch or `match` arm in the tail. It is also anything evaluated on the
-way there: an argument, a `let`'s value, an `if` test, a `match`
-scrutinee or a block statement. Each sibling evaluated before the `?` is bound to a
-fresh `q.N` first, so `(f (g) (h)?)` still runs `(g)` before `(h)`.
-A `?` inside a branch, a `let` body, a loop, a `region` or a `handle`
-whose value an expression around it still uses has no rest of the body
-to move, and is refused with `AX3123`. A lambda is its own body: its
+A `?` is rewritten wherever the rest of the expression can follow it.
+That is the body's tail, a branch, a `let` body, a loop, and anything
+evaluated on the way there: an argument, a `let`'s value, an `if`
+test, a `match` scrutinee or a block statement. Each sibling evaluated
+before the `?` is bound to a fresh `q.N` first, so `(f (g) (h)?)`
+still runs `(g)` before `(h)`. A branch, a `let` body or a loop is
+rewritten so the form answers a `Result`. A `?` inside a `region`
+or a `handle` is rewritten the same way. A `Result` leaves a region
+only when its payload and its error are both scalars (`AX3059`).
+A lambda is its own body: its
 `?`s answer the lambda.
 
 The operand must be a `Result`. An `Option` converts first with

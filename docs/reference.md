@@ -94,20 +94,24 @@ the `?` runs:
 10
 ```
 
-Use `?` in a function's tail or in anything evaluated on the way
-there: an argument, a `let`'s value, an `if` test, a `match`
-scrutinee or a block statement. Arguments before the `?` run first, as
-written. A `?` inside a lambda answers the lambda.
+Use `?` in a function's tail, in a branch, in a `let` body, in a loop,
+or in anything evaluated on the way there: an argument, a `let`'s
+value, an `if` test, a `match` scrutinee or a block statement.
+Arguments before the `?` run first, as written. A `?` inside a lambda
+answers the lambda. A `?` inside a `region` propagates when the
+`Result`'s payload and error are both scalars; a reference error is
+`AX3059`, because the region would reclaim it.
 
-Axiom has no early return, so the compiler moves the rest of your
-function into the `Ok` arm of a `match` on `e`. That's why a `?`
-inside a branch, a `let` body or a loop whose value something still
-uses is refused (`AX3123`): there is no rest of the function to move.
-Bind the value first, or take the `Result` apart with `match`.
+The compiler moves the rest of the expression into the `Ok` arm of a
+`match` on `e`. A branch, a `let` body or a loop is rewritten so it
+answers a `Result`: `Err` skips the rest, and the `Ok` payload is the
+value that form would have had.
 
-The operand must be a `Result`, and the error passes through as it
-is. Convert an `Option` with `okOr`, and change an error's type with
-`mapErr`, before the `?`.
+In a function that answers a `Result`, the operand is a `Result` and
+the error passes through as it is. In a function that answers an
+`Option`, the operand is an `Option`: `None` skips the rest. Change an
+error's type with `mapErr`, or turn an `Option` into a `Result` with
+`okOr`, before the `?`.
 
 Tested by `tests/stdlib/847-propagate.ax`.
 

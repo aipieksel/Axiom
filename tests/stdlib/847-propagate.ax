@@ -76,6 +76,82 @@
     (Ok (step trace "inner" ok))
   })
 
+; A branch whose value is used. `Err` skips the addition.
+(:: inBranch (-> (Vec String) Int (Result Int String)))
+(fn (inBranch trace n)
+  (Ok
+    (+ 1
+      (if (> n 0)
+        (step trace "br" true)?
+        0))))
+
+; A `let` body whose value is used.
+(:: inLetBody (-> (Vec String) Int (Result Int String)))
+(fn (inLetBody trace n)
+  (Ok
+    (+ 1
+      {
+        (let m (+ n 1))
+        (step trace "lt" (> m 0))?
+      })))
+
+; A loop. The failing step stops the loop and skips the `Ok`.
+(:: inLoop (-> (Vec String) Int (Result Int String)))
+(fn (inLoop trace n)
+  {
+    (let mut i 0)
+    {
+      (while (< i n)
+        {
+          (step trace "lp" (< i 2))?
+          (set i (+ i 1))
+        })
+      (Ok i)
+    }
+  })
+
+; A region may answer a `Result` of scalars. The error is an `Int`,
+; so it does not point into the memory the region reclaims.
+(:: inRegion (-> (Vec String) Bool (Result Int Int)))
+(fn (inRegion trace ok)
+  {
+    (vecPush trace "rg")
+    (region r
+      (if ok
+        (Ok 3)
+        (Err 7)))
+  })
+
+; A handler's body propagates the same way.
+(:: inHandle (-> (Vec String) Bool (Result Int String)))
+(fn (inHandle trace ok)
+  {
+    (vecPush trace "hd")
+    (let answer
+      (if ok
+        (Ok 4)
+        (Err "no")))
+    (Ok
+      (handle
+        (answer)?
+        (Alloc)
+        (lambda (v) v)))
+  })
+
+; A function that answers `Option` propagates with `?` the same way.
+(:: findDigit (-> Int (Option Int)))
+(fn (findDigit n)
+  (if (> n 0)
+    (Some n)
+    (None)))
+
+(:: twiceDigit (-> Int (Option Int)))
+(fn (twiceDigit n)
+  {
+    (let v (findDigit n)?)
+    (Some (* v 2))
+  })
+
 ; A lambda is its own body: its `?` answers the lambda.
 (:: viaLambda (-> (Vec String) Bool (Result Int String)))
 (fn (viaLambda trace ok)
@@ -137,5 +213,30 @@
       (show "nested" t (nested t false))
       (show "lambda" t (viaLambda t true))
       (show "lambda" t (viaLambda t false))
+      (show "inBranch" t (inBranch t 3))
+      (show "inBranch" t (inBranch t 0))
+      (show "inLetBody" t (inLetBody t 1))
+      (show "inLoop" t (inLoop t 2))
+      (show "inLoop" t (inLoop t 4))
+      (let regionOk (inRegion t true))
+      (let regionSteps (joined t))
+      (match regionOk
+        ((Ok v) (println "inRegion: Ok {v} after {regionSteps}"))
+        ((Err e) (println "inRegion: Err {e} after {regionSteps}")))
+      (vecClear t)
+      (let regionBad (inRegion t false))
+      (let regionBadSteps (joined t))
+      (match regionBad
+        ((Ok v) (println "inRegion: Ok {v} after {regionBadSteps}"))
+        ((Err e) (println "inRegion: Err {e} after {regionBadSteps}")))
+      (vecClear t)
+      (show "inHandle" t (inHandle t true))
+      (show "inHandle" t (inHandle t false))
+      (match (twiceDigit 4)
+        ((Some v) (println "option: Some {v}"))
+        ((None) (println "option: None")))
+      (match (twiceDigit 0)
+        ((Some v) (println "option: Some {v}"))
+        ((None) (println "option: None")))
     }
   })

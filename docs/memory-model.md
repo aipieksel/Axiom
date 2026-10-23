@@ -2854,7 +2854,9 @@ saved position and answers the body's scalar result.
 
 - Rebinding a live region name inside itself is refused (`AX3058`).
 - A reference-valued result is refused (`AX3059`). A region form never
-  promotes a heap result for you.
+  promotes a heap result for you. A `Result` whose payload and error
+  are both scalars may leave, because neither word points into the
+  region.
 - Recovery has its own reset and unwind contract (`MM-ALLOC-23`).
 
 ```scheme

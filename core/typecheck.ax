@@ -10611,6 +10611,24 @@
           0))
     }))
 
+; A scalar leaves a region as a word. A `Result` leaves when both
+; its payload and its error are scalars, so neither word points into
+; the memory the region reclaims. A `String` error does not.
+(:: rgResultEscapes (-> TC ASTNode Bool))
+(fn (rgResultEscapes tc ty0)
+  (if (nodeSame ty0 nilNode)
+    false
+    (if (== (rgTyScalar tc ty0) 1)
+      true
+      {
+        (let ty (tyExpandAliases tc (tyResolve ty0) 0))
+        (if (&& (== (nodeTag ty) TAG_T_CON)
+              (&& (strEq (nodeAName ty) "Err$Result") (== (vecLen (nodeBChildren ty)) 2)))
+          (&& (== (rgTyScalar tc (vecGet (nodeBChildren ty) 0)) 1)
+            (== (rgTyScalar tc (vecGet (nodeBChildren ty) 1)) 1))
+          false)
+      })))
+
 (pub :: emitRegionShadow (-> TC String Int Int))
 (pub fn (emitRegionShadow tc name span)
   {
@@ -10733,7 +10751,7 @@
           (rgPop tc)
           (if (!
                 (|| (== (tyIsErr bodyTy) 1)
-                  (|| (== (tyIsSilentWild bodyTy) 1) (== (rgTyScalar tc bodyTy) 1))))
+                  (|| (== (tyIsSilentWild bodyTy) 1) (rgResultEscapes tc bodyTy))))
             (emitRegionValueEscape tc name bodyTy
               (if (== (spanOf (nodeBChild e)) 0)
                 (nodeSpan e)

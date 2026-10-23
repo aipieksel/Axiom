@@ -195,7 +195,8 @@
   (mut defer : Int)
   (mut deferHits : Int)
   (structNames : InternState)
-  (structBuckets : NodesRows))
+  (structBuckets : NodesRows)
+  (mut carrier : Int))
 
 ; The two budgets on the OUTPUT, which the parser's
 ; own AX2005 guard cannot see: it measures the source,
@@ -6853,10 +6854,11 @@
 ;     the expression around it (`qmLift`), and each sibling evaluated
 ;     before it is bound to a fresh `q.N` first, so effects keep
 ;     their order: `(f (g) (h)?)` still runs `(g)` before `(h)`;
-;   * a `?` in a branch, a `let` body, a loop, a region or a handler
-;     whose value an expression around it still uses has no tail to
-;     propagate to, and is AX3123. The node is left in place, and the
-;     checker reads a leftover `?` as poison, so nothing cascades.
+;   * a `?` in a branch, a `let` body or a loop is rewritten so the
+;     form answers a `Result`: `Err` skips the rest, and the `Ok`
+;     payload is the value the form would have had. A `region` or a
+;     `handle` still has no tail to move, and is AX3123. The node is
+;     left in place, and the checker reads a leftover `?` as poison.
 ;
 ; A lambda is its own body: its `?`s answer the lambda, and the walk
 ; here never looks inside one (`qmHas`).
@@ -7119,7 +7121,7 @@
           ((Some scrutinee)
             (qmWrap st 0
               (nodeBuildEMatch scrutinee
-                (qmArms (expFresh env "q") st.tname (qmRw env hole) st.tsp) 0 st.tsp))
+                (qmArms env (expFresh env "q") st.tname (qmRw env hole) st.tsp) 0 st.tsp))
           )))
     }
   })
@@ -7127,18 +7129,26 @@
 ; The two arms: `((Err er) (Err er))` and `((Ok t) rest)`. The `Err`
 ; arm carries the `?`'s span, so a body whose declared result is not a
 ; `Result` is reported at the `?`.
-(pub :: qmArms (-> String String ASTNode Int (Vec ASTNode)))
-(pub fn (qmArms er t rest sp)
+(pub :: qmArms (-> MEnv String String ASTNode Int (Vec ASTNode)))
+(pub fn (qmArms env er t rest sp)
   {
     (let arms vecNew)
-    {
-      (vecPush arms
-        (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt er sp) nilWords sp)
-          (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt er sp) nilWords sp) 0 sp))
-      (vecPush arms
-        (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Ok" sp) (mkEVarAt t sp) nilWords sp) rest 0 sp))
-      arms
-    }
+    (if (== env.carrier 1)
+      {
+        (vecPush arms (nodeBuildMArm (nodeBuildPCon0 "None" 0 0 sp) (mkEVarAt "None" sp) 0 sp))
+        (vecPush arms
+          (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Some" sp) (mkEVarAt t sp) nilWords sp) rest 0
+            sp))
+        arms
+      }
+      {
+        (vecPush arms
+          (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt er sp) nilWords sp)
+            (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt er sp) nilWords sp) 0 sp))
+        (vecPush arms
+          (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Ok" sp) (mkEVarAt t sp) nilWords sp) rest 0 sp))
+        arms
+      })
   })
 
 ; The recorded bindings around `inner`, outermost first: a named one is
@@ -7265,10 +7275,334 @@
       (diagSetLabel
         (mkDiagNote SEV_ERROR "AX3123" "propagate-position" (qmFirstSpan e)
           (concat (concat "this `?` sits in " place) ", so it has no tail to propagate to") 0 0
-          "bind the value with `let` so the `?` is in the body's tail or in an argument on the way there, or take the `Result` apart with `match`"
-          "Axiom has no early return: `?` answers the enclosing body's `Err` by making the rest of the body its `Ok` arm, which is possible from the body's tail and from anything evaluated on the way there, and not from inside a branch, a `let` body, a loop, a region or a handler")
+          "take the `Result` apart with `match`"
+          "a `?` in a branch, a `let` body, a loop, a region or a handler is rewritten into a `Result`. This form still has no tail to move into the `Ok` arm")
         "no tail to propagate to"))
     e
+  })
+
+; The enclosing function's signature chooses the carrier. `Option`
+; propagates with `Some` and `None`. Anything else, including a lambda
+; whose type is not written yet, propagates with `Ok` and `Err`.
+(:: qmFnReturnsOption (-> MEnv String Bool))
+(fn (qmFnReturnsOption env name)
+  (qmSigOption env.decls name 0))
+
+(:: qmSigOption (-> (Vec ASTNode) String Int Bool))
+(fn (qmSigOption decls name i)
+  (if (>= i (vecLen decls))
+    false
+    {
+      (let d (vecGet decls i))
+      (if (&& (== (nodeTag d) TAG_D_SIG) (strEq (nodeAName d) name))
+        (qmTyOption (qmArrowResult (nodeTyChild d)))
+        (qmSigOption decls name (+ i 1)))
+    }))
+
+(:: qmArrowResult (-> ASTNode ASTNode))
+(fn (qmArrowResult t)
+  (if (&& (! (nodeSame t nilNode)) (== (nodeTag t) TAG_T_ARR))
+    (qmArrowResult (nodeBChild t))
+    t))
+
+(:: qmTyOption (-> ASTNode Bool))
+(fn (qmTyOption t)
+  (if (|| (nodeSame t nilNode) (!= (nodeTag t) TAG_T_CON))
+    false
+    (strEq (nodeAName t) "Option")))
+
+; `(Ok e)` or `(Some e)`, from the enclosing function's carrier.
+; The span is the expression's, so a later diagnostic can still point
+; at it.
+(:: qmOk (-> MEnv ASTNode Int ASTNode))
+(fn (qmOk env e sp)
+  (nodeBuildEApp
+    (mkEVarAt
+      (if (== env.carrier 1)
+        "Some"
+        "Ok")
+      sp)
+    e nilWords sp))
+
+; `produced` is a `Result`. Record it as the scrutinee and answer the
+; name its `Ok` payload will be bound to.
+(:: qmAsValue (-> MEnv QmSt ASTNode Int ASTNode))
+(fn (qmAsValue env st produced sp)
+  {
+    (let t (expFresh env "q"))
+    {
+      (set st.scrut (Some produced))
+      (set st.tname t)
+      (set st.tsp sp)
+      (mkEVarAt t sp)
+    }
+  })
+
+; Match `scrut`. The `Err` arm returns that error. The `Ok` arm binds
+; `okName` and runs `okBody`.
+(:: qmBindResult (-> MEnv ASTNode String ASTNode Int ASTNode))
+(fn (qmBindResult env scrut okName okBody sp)
+  {
+    (let err (expFresh env "q"))
+    (nodeBuildEMatch scrut (qmArms env err okName okBody sp) 0 sp)
+  })
+
+; `(Ok ...)` and `(Err ...)` are already `Result`s. Wrapping one again
+; turns a tail `(Ok n)` into `(Ok (Ok n))`.
+(:: qmIsResult (-> MEnv ASTNode Bool))
+(fn (qmIsResult env e)
+  (if (!= (nodeTag e) TAG_E_APP)
+    (if (&& (== env.carrier 1) (== (nodeTag e) TAG_E_VAR))
+      (strEq (nodeAName e) "None")
+      false)
+    {
+      (let head (nodeAChild e))
+      (if (!= (nodeTag head) TAG_E_VAR)
+        false
+        (if (== env.carrier 1)
+          (|| (strEq (nodeAName head) "Some") (strEq (nodeAName head) "None"))
+          (|| (strEq (nodeAName head) "Ok") (strEq (nodeAName head) "Err"))))
+    }))
+
+; `e` as a `Result`: no `?` becomes `(Ok e)`, and a `?` becomes an
+; `Err` that skips the rest or an `Ok` of the value `e` would have had.
+; An expression that is already `(Ok ...)` or `(Err ...)` stays as it is
+; when it contains no further `?`.
+(:: qmPropagate (-> MEnv ASTNode ASTNode))
+(fn (qmPropagate env e)
+  (if (&& (qmIsResult env e) (! (qmHas e)))
+    e
+    (if (|| (nodeSame e nilNode) (! (qmHas e)))
+      (qmOk env e (nodeSpan e))
+      (qmProp env e))))
+
+(:: qmPropagateIf (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateIf env e)
+  {
+    (let sp (nodeSpan e))
+    (let cond (nodeAChild e))
+    (if (qmHas cond)
+      {
+        (let c (expFresh env "q"))
+        (qmBindResult env (qmPropagate env cond) c
+          (nodeBuildEIf (mkEVarAt c sp) (qmPropagate env (nodeBChild e))
+            (qmPropagate env (nodeCChild e)) sp)
+          sp)
+      }
+      (nodeBuildEIf cond (qmPropagate env (nodeBChild e)) (qmPropagate env (nodeCChild e)) sp))
+  })
+
+(:: qmPropagateBinding (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateBinding env e)
+  {
+    (let sp (nodeSpan e))
+    (let init (nodeBChild e))
+    (let body (nodeCChild e))
+    (if (qmHas init)
+      {
+        (let v (expFresh env "q"))
+        (qmBindResult env (qmPropagate env init) v
+          (nodeBuildBinding (nodeTag e) (nodeAName e) (mkEVarAt v sp) (qmPropagate env body) sp) sp)
+      }
+      (nodeBuildBinding (nodeTag e) (nodeAName e) init (qmPropagate env body) sp))
+  })
+
+(:: qmPropArms (-> MEnv (Vec ASTNode) (Vec ASTNode) Int (Vec ASTNode)))
+(fn (qmPropArms env arms acc i)
+  (if (>= i (vecLen arms))
+    acc
+    {
+      (let arm (vecGet arms i))
+      (qmPropArms env arms
+        (vecPush acc
+          (nodeBuildMArm (nodeAChild arm) (qmPropagate env (nodeBChild arm)) 0 (nodeSpan arm)))
+        (+ i 1))
+    }))
+
+(:: qmPropagateMatch (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateMatch env e)
+  {
+    (let sp (nodeSpan e))
+    (let scrut (nodeAChild e))
+    (if (qmHas scrut)
+      {
+        (let v (expFresh env "q"))
+        (qmBindResult env (qmPropagate env scrut) v
+          (nodeBuildEMatch (mkEVarAt v sp) (qmPropArms env (nodeBChildren e) vecNew 0) 0 sp) sp)
+      }
+      (nodeBuildEMatch scrut (qmPropArms env (nodeBChildren e) vecNew 0) 0 sp))
+  })
+
+; Statements before the first `?` run first. That statement's `Err`
+; skips the rest. A later statement supplies the block's value.
+(:: qmPropagateBegin (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateBegin env e)
+  {
+    (let xs (nodeAChildren e))
+    (let sp (nodeSpan e))
+    (let k (qmFirstWith xs 0))
+    (let n (vecLen xs))
+    (let before vecNew)
+    {
+      (for i in 0..k
+        (vecPush before (vecGet xs i)))
+      (let focus (qmPropagate env (vecGet xs k)))
+      (let rest
+        (if (== k (- n 1))
+          focus
+          {
+            (let tail (qmTail xs (+ k 1)))
+            (qmBindResult env focus "_"
+              (if (== (vecLen tail) 1)
+                (qmPropagate env (vecGet tail 0))
+                (qmPropagateBegin env (nodeBuildEBegin tail 0 0 sp)))
+              sp)
+          }))
+      (if (== (vecLen before) 0)
+        rest
+        {
+          (vecPush before rest)
+          (nodeBuildEBegin before 0 0 sp)
+        })
+    }
+  })
+
+; The guard is false once an earlier iteration stored an `Err`, so the
+; condition and the body stop. The `Ok` payload is 0, which is what a
+; finished loop answers.
+(:: qmFlagGuard (-> MEnv String ASTNode Int ASTNode))
+(fn (qmFlagGuard env flag cond sp)
+  {
+    (let arms vecNew)
+    (let yes
+      (if (== env.carrier 1)
+        "Some"
+        "Ok"))
+    {
+      (vecPush arms
+        (nodeBuildMArm (nodeBuildEApp (mkEVarAt yes sp) (mkEVarAt "_" sp) nilWords sp) cond 0 sp))
+      (vecPush arms
+        (if (== env.carrier 1)
+          (nodeBuildMArm (nodeBuildPCon0 "None" 0 0 sp) (mkEVarAt "false" sp) 0 sp)
+          (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt "_" sp) nilWords sp)
+            (mkEVarAt "false" sp) 0 sp)))
+      (nodeBuildEMatch (mkEVarAt flag sp) arms 0 sp)
+    }
+  })
+
+(:: qmFlagStep (-> MEnv String ASTNode Int ASTNode))
+(fn (qmFlagStep env flag boxed sp)
+  {
+    (let err (expFresh env "q"))
+    (let arms vecNew)
+    (let yes
+      (if (== env.carrier 1)
+        "Some"
+        "Ok"))
+    {
+      (vecPush arms
+        (nodeBuildMArm (nodeBuildEApp (mkEVarAt yes sp) (mkEVarAt "_" sp) nilWords sp) (mkEInt 0) 0
+          sp))
+      (vecPush arms
+        (if (== env.carrier 1)
+          (nodeBuildMArm (nodeBuildPCon0 "None" 0 0 sp)
+            (nodeBuildESet flag (mkEVarAt "None" sp) 0 sp) 0 sp)
+          (nodeBuildMArm (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt err sp) nilWords sp)
+            (nodeBuildESet flag (nodeBuildEApp (mkEVarAt "Err" sp) (mkEVarAt err sp) nilWords sp) 0
+              sp)
+            0 sp)))
+      (nodeBuildEMatch boxed arms 0 sp)
+    }
+  })
+
+(:: qmPropagateWhile (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateWhile env e)
+  {
+    (let sp (nodeSpan e))
+    (let flag (expFresh env "q"))
+    (let stmts (nodeBChildren e))
+    (let body
+      (if (== (vecLen stmts) 1)
+        (vecGet stmts 0)
+        (nodeBuildEBegin stmts 0 0 sp)))
+    (let loopBody vecNew)
+    {
+      (vecPush loopBody (qmFlagStep env flag (qmPropagate env body) sp))
+      (let seq vecNew)
+      {
+        (vecPush seq (nodeBuildEWhile (qmFlagGuard env flag (nodeAChild e) sp) loopBody 0 sp))
+        (vecPush seq (mkEVarAt flag sp))
+        (nodeBuildELetm flag (qmOk env (mkEInt 0) sp) (nodeBuildEBegin seq 0 0 sp) sp)
+      }
+    }
+  })
+
+; Lift the first `?` and wrap the value that remains in `Ok`.
+; The region's value is the body's value. A `?` in the body makes
+; that value a `Result`; the region checker then allows it to leave
+; only when both sides are scalars.
+(:: qmPropagateRegion (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateRegion env e)
+  (nodeBuildERegion (nodeAText e) (qmPropagate env (nodeBChild e)) (nodeC e) (nodeSpan e)))
+
+; A handler's value is its body's value, so a `?` in the body
+; propagates through the handler the same way.
+(:: qmPropagateHandle (-> MEnv ASTNode ASTNode))
+(fn (qmPropagateHandle env e)
+  (nodeBuildEHandle (qmPropagate env (nodeAChild e)) (nodeBChildren e) (nodeCChild e) (nodeSpan e)))
+
+(:: qmPropLift (-> MEnv ASTNode ASTNode))
+(fn (qmPropLift env e)
+  {
+    (let sp (nodeSpan e))
+    (let st (QmSt :names vecNew :vals vecNew :scrut None :tname "" :tsp 0 :failed false))
+    {
+      (let hole (qmExtract env st e))
+      (if st.failed
+        e
+        (match st.scrut
+          ((None) (qmOk env e sp))
+          ((Some scrutinee)
+            {
+              (let continued (qmRw env hole))
+              (qmWrap st 0
+                (nodeBuildEMatch scrutinee
+                  (qmArms env (expFresh env "q") st.tname
+                    (if (qmIsResult env continued)
+                      continued
+                      (qmOk env continued sp))
+                    st.tsp)
+                  0 st.tsp))
+            }
+          )))
+    }
+  })
+
+(:: qmProp (-> MEnv ASTNode ASTNode))
+(fn (qmProp env e)
+  {
+    (let tag (nodeTag e))
+    (let sp (nodeSpan e))
+    (if (== tag TAG_E_TRY)
+      {
+        (let t (expFresh env "q"))
+        (qmBindResult env (qmRw env (nodeAChild e)) t (qmOk env (mkEVarAt t sp) sp) sp)
+      }
+      (if (== tag TAG_E_IF)
+        (qmPropagateIf env e)
+        (if (== tag TAG_E_MATCH)
+          (qmPropagateMatch env e)
+          (if (|| (== tag TAG_E_LET) (== tag TAG_E_LETM))
+            (qmPropagateBinding env e)
+            (if (== tag TAG_E_BEGIN)
+              (qmPropagateBegin env e)
+              (if (== tag TAG_E_WHILE)
+                (qmPropagateWhile env e)
+                (if (== tag TAG_E_REGION)
+                  (qmPropagateRegion env e)
+                  (if (== tag TAG_E_HANDLE)
+                    (qmPropagateHandle env e)
+                    (qmPropLift env e)))))))))
   })
 
 ; Find the first `?` under `e` in evaluation order, record it and what
@@ -7299,15 +7633,15 @@
       (|| (== tag TAG_E_LET) (== tag TAG_E_LETM))
         (if (qmHas (nodeBChild e))
           (nodeBuildBinding tag (nodeAName e) (qmExtract env st (nodeBChild e)) (nodeCChild e) sp)
-          (qmRefuse env st e "a `let` body whose value the expression around it still uses"))
+          (qmAsValue env st (qmPropagateBinding env e) sp))
       (== tag TAG_E_IF)
         (if (qmHas (nodeAChild e))
           (nodeBuildEIf (qmExtract env st (nodeAChild e)) (nodeBChild e) (nodeCChild e) sp)
-          (qmRefuse env st e "an `if` branch whose value the expression around it still uses"))
+          (qmAsValue env st (qmPropagateIf env e) sp))
       (== tag TAG_E_MATCH)
         (if (qmHas (nodeAChild e))
           (nodeBuildEMatch (qmExtract env st (nodeAChild e)) (nodeBChildren e) 0 sp)
-          (qmRefuse env st e "a `match` arm whose value the expression around it still uses"))
+          (qmAsValue env st (qmPropagateMatch env e) sp))
       (== tag TAG_E_BEGIN)
         (qmExtractBlock env st e)
       (== tag TAG_E_SET)
@@ -7322,11 +7656,13 @@
             (nodeBuildESetf base (nodeBName e) (qmExtract env st (nodeCChild e)) sp)
           })
       (== tag TAG_E_WHILE)
-        (qmRefuse env st e "a loop")
+        (if (qmHas (nodeAChild e))
+          (nodeBuildEWhile (qmExtract env st (nodeAChild e)) (nodeBChildren e) 0 sp)
+          (qmAsValue env st (qmPropagateWhile env e) sp))
       (== tag TAG_E_REGION)
-        (qmRefuse env st e "a `region`")
+        (qmAsValue env st (qmPropagateRegion env e) sp)
       (== tag TAG_E_HANDLE)
-        (qmRefuse env st e "a `handle`")
+        (qmAsValue env st (qmPropagateHandle env e) sp)
       (qmRefuse env st e "a form"))
   })
 
@@ -7424,8 +7760,15 @@
         (let bs vecNew)
         {
           (expPushNames (nodeBNames d) bs env 0)
-          (writeNodeChild d 3 (qmBody env (expandExpr (nodeCChild d) env bs)))
-          0
+          (let saved env.carrier)
+          {
+            (set env.carrier (if (qmFnReturnsOption env (nodeAName d))
+              1
+              0))
+            (writeNodeChild d 3 (qmBody env (expandExpr (nodeCChild d) env bs)))
+            (set env.carrier saved)
+            0
+          }
         }
       }
       ; An `impl` method's expression and a `trait` method's DEFAULT
@@ -8843,7 +9186,8 @@
         :defer 0
         :deferHits 0
         :structNames internNewTyped
-        :structBuckets vecNew))
+        :structBuckets vecNew
+        :carrier 0))
     {
       (expCheckMacros env 0)
       (expCheckDeclNames decls env 0)
