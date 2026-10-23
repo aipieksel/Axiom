@@ -259,9 +259,9 @@
 ; only ever prepends a candidate.
 (pub :: lookupEffFor (-> CG (Vec EffEnt) String (Option EffEnt)))
 (pub fn (lookupEffFor cg tbl name)
-  (if (let (Some local) (if (== (cgModuleWord cg) 0)
-    (None)
-    (lookupEffIn tbl (concat (cgModule cg) (concat "$" name)) 0 0)))
+  (if (let (Some local) (if (let (Some module) (cgModule cg))
+    (lookupEffIn tbl (concat module (concat "$" name)) 0 0)
+    (None)))
     (Some local)
     (lookupEff tbl name)))
 
@@ -359,17 +359,11 @@
 ;            an evidence stamp names its author, and `evStampOk`
 ;            refuses a stamp another declaration wrote - a
 ;            macro-spliced argument node is a shared object)
-; Fields 37-40 = the name indexes, all four built together by
-;            `buildNameIndexes` and read by the `…Cg` twins beside it:
-;            37/38 index the signature table, 39/40 the mangle map and
-;            the declaration list. Field 40 carries FIVE structures in
-;            one Vec rather than five fields, because `CG` declares 46
-;            of the 47 payload words MM-LIFE-2d's reference map covers
-;            and `AX3029` refuses a 48th - the layout is written out
-;            above `buildNameIndexes`. 37 and 39 are 0 until it runs,
-;            and 40 is the empty Vec; every reader falls back to the
-;            linear scan while they are, which is the REPL's and LSP's
-;            partial paths.
+; Fields 37-40 = the name indexes built together by `buildNameIndexes`.
+;            Signature and mangle interners are optional owning handles;
+;            field 40 owns one DeclIndex containing its five typed parts.
+;            Before construction, explicit None branches use the linear
+;            scans required by the REPL's and LSP's partial paths.
 (pub struct CG
   (mut lines : Strings)
   (mut tmp : Int)
@@ -388,36 +382,36 @@
   (mut resultIsFloat : Int)
   (mut floatSigs : (Vec FSig))
   (symfloats : (Vec Int))
-  (mut curParams : Int)
-  (mut curFlags : Int)
+  (mut curParams : (Option Names))
+  (mut curFlags : (Option Ints))
   (macros : Nodes)
   (symkinds : (Vec Int))
-  (pendingLams : (Vec Int))
+  (pendingLams : (Vec LamDesc))
   (mut lamN : Int)
   (thunkFulls : Names)
   (thunkArities : (Vec Int))
   (mut thunksEmitted : Int)
   (mut target : Int)
-  (mut tcoName : Int)
+  (mut tcoName : (Option String))
   (mut tcoSlots : Strings)
   (mut tcoLabel : String)
   (mut tailOK : Int)
   (mut terminated : Int)
   (effDecls : (Vec EffEnt))
   (effOps : (Vec EffEnt))
-  (mut curModule : Int)
+  (mut curModule : (Option String))
   (dataTyNames : (Vec String))
   (mut curDeclNode : ASTNode)
   (mut sigIntern : (Option InternState))
   (mut sigById : (Vec FSig))
-  (mut bareIntern : Int)
-  (mut bareFirst : (Vec Int))
+  (mut bareIntern : (Option InternState))
+  (mut bareFirst : (Option DeclIndex))
   (mut tailRetain : Nodes)
   (mut pendingOwned : Strings)
   (mut allocaMark : Int)
   (mut hoisted : (Vec String))
   (mut argEv : (Vec Int))
-  (pairState : (Vec Int)))
+  (pairState : PairState))
 
 ; The evidence class of each spine argument, pushed in lockstep with
 ; `argVec` by `walkAppChain` and read back beside it. It exists
@@ -436,8 +430,8 @@
 ; instead of a block. Every other emitter runs unchanged, because
 ; the tail plumbing already knows how to handle an arm that
 ; terminated its own block (`terminated`, field 31).
-; The register-pair state, as ONE word holding a four-slot Vec
-; (`pairSlot`): mode, arm, the eligible names, the tag register.
+; PairState owns this auxiliary state through one CG field. Named typed
+; fields keep reference maps accurate without adding CG payload words.
 ;
 ; FOUR FIELDS WOULD NOT FIT. A block's shape word packs one bit per
 ; payload word and bits 16..62 give 47 mappable words; `CG` is at 47
@@ -456,7 +450,7 @@
 ; real: its byte loops were self tail calls, and a `memCopy` of a few
 ; hundred kilobytes segfaulted a stage1-built compiler.
 ;
-;   tcoName   the symbol this function is being emitted as, or 0 when
+;   tcoName   Some symbol this function is being emitted as, or None when
 ;             the body contains no self tail call and none of this
 ;             applies - which is most functions, and they emit exactly
 ;             the LLVM they did before.
@@ -494,100 +488,34 @@
 (pub fn (newCG)
   {
     (let ts vecNew)
-    (let ps vecNew)
+    (let ps
+      (PairState
+        :returnTy (None)
+        :arm 0
+        :names vecNew
+        :tagReg ""
+        :threads 0
+        :parallelUsed 0
+        :llvmParams 0
+        :liftedLambda 0
+        :regionDepth 0
+        :threadLowering 0
+        :mutMemo vecNew
+        :mutMemoDepth 0
+        :handleRuntime 0
+        :lambdaArrow (None)
+        :identities (None)
+        :obfuscate 0
+        :owningSlots vecNew
+        :countedStores nodesNew
+        :registry 0
+        :asmCookie 0
+        :sourceFiles vecNew
+        :arenaCap 0
+        :stackRun 0
+        :nativeExe 0
+        :functionFloats (None)))
     {
-      (vecPush ps 0)
-      (vecPush ps 0)
-      (vecPushVec ps vecNew)
-      (vecPush ps (as "" Int))
-      ; Slots 4 and 5 are not the pair state's: they are `cgThreads`
-      ; and `parUsed`, kept HERE because the CG record itself is at
-      ; the reference map's width - 47 words is what a shape word
-      ; can describe (AX3029, MM-LIFE-2d), and the record has 47.
-      ; `parScan` writes both before `emitAllocator` runs.
-      (vecPush ps 0)
-      (vecPush ps 0)
-      ; slot 6: the emitted fn's LLVM parameter count, see `pairSlot`
-      (vecPush ps 0)
-      ; slot 7: 1 while a LIFTED LAMBDA's body is being emitted.
-      ;
-      ; It exists because word 17 (the current parameter NAMES) and
-      ; word 36 (the declaration whose signature TYPES them) come
-      ; apart there and nowhere else: `emitLamDef` sets 17 to the
-      ; lambda's own parameters and leaves 36 pointing at the
-      ; enclosing declaration, so an index into the first was being
-      ; read against the second's arrow. `curParamRefClass` and
-      ; `curParamEvBit` read this before trusting that pairing.
-      (vecPush ps 0)
-      ; slot 8: unused, and kept so the slots after it keep their
-      ; numbers.
-      (vecPush ps 0)
-      ; slot 9: region-body depth, for S4's first slice
-      ; (docs/memory-model.md §3.6). 0 outside any `region`
-      ; body; `emitRegion` counts it up around the body and back
-      ; down after, and `emitLamDef` clears it across a lambda body
-      ; whose execution may outlive the reset. Read only by
-      ; `isRegionCoveredCon`, written only in those two places.
-      (vecPush ps 0)
-      ; slot 10: 1 when `__par_*` lowers to threads - `--threads` on a
-      ; target that has them. Slot 4 answers whether the thread
-      ; RUNTIME is present at all, which naming `__thread_spawn` also
-      ; asks for; until 2026-09-27 that one name silently moved every
-      ; `parallel` in the program onto threads too (`parScan`).
-      (vecPush ps 0)
-      ; slot 11: `mutFlag`'s memo, and slot 12: how deep inside an
-      ; outermost `mutFlag` call the walk is - the memo is only valid
-      ; within one (see `mutFlag`).
-      (vecPushVec ps vecNew)
-      (vecPush ps 0)
-      ; slot 13: 1 when the module names a handle primitive or a spawn
-      ; one, so the handle table's runtime is emitted (`parScan`,
-      ; `emitHandleRuntime`, MM-PAR-8); 0 leaves the module byte for
-      ; byte what it was.
-      (vecPush ps 0)
-      ; slot 14: checked arrow of the lifted lambda being emitted.
-      (vecPush ps 0)
-      ; slot 15: proven identity callbacks during a call-site flow scan.
-      (vecPush ps 0)
-      ; slot 16: opt-in binary obfuscation, set by emitResolvedMode.
-      (vecPush ps 0)
-      ; slot 17: the OWNING `mut` slots in scope, the `mut` twin of
-      ; word 42's pending `let` releases. Each entry is a record built
-      ; by `emitLetMAt`: the slot's alloca, its name, the names that may
-      ; alias it, and 1 when those couldn't be listed (`slotAliases`).
-      ; A tail call jumps past their scope ends, so a self tail call
-      ; (`emitTailJump`) and a mutual one (`emitPlainCall`) load and
-      ; release each before the jump.
-      (vecPushVec ps vecNew)
-      ; slot 18: the `set` nodes an escape walk counted as taking a
-      ; share before their slot was emitted (`slotStoreCounts`). A
-      ; store listed here takes one even when its slot only stores
-      ; (`emitSet`). Emptied per function body, since a walk never
-      ; reaches into another body.
-      (vecPushVec ps vecNew)
-      ; slot 19: the owner registry is on (`resRegistryOn`, `parScan`).
-      (vecPush ps 0)
-      ; slot 20: the last `!srcloc` cookie an inline-assembly line took
-      ; (`asmSrcloc`), so every line in the module has its own.
-      (vecPush ps 0)
-      ; slot 21: the source files those lines are in, numbered in the
-      ; order first seen (`asmFileIndex`), and written once at the end
-      ; of the module (`emitAsmFiles`) rather than into each function,
-      ; so a function's body never depends on its file's name.
-      (vecPushVec ps vecNew)
-      ; slot 22: the module names `__axiom_arena_cap`, so the allocator
-      ; checks the cap before it maps a chunk (`arenaCapOn`, `parScan`).
-      (vecPush ps 0)
-      ; slot 23: the module names `__axiom_stack_run`, so the runtime
-      ; that maps a guarded stack and reports its overflow is emitted
-      ; (`stackRunOn`, `parScan`).
-      (vecPush ps 0)
-      ; slot 24: native executable mode, selected once at the pipeline
-      ; boundary. Emitters read this value without consulting host IO.
-      (vecPush ps 0)
-      ; slot 25: numeric representation flags from checked function types.
-      ; Kept separately from the ownership and evidence signature table.
-      (vecPush ps 0)
       (addTypeNamed ts "Some" TF_DATA 1 0 2
         {
           (let f vecNew)
@@ -623,8 +551,8 @@
         :resultIsFloat 0
         :floatSigs vecNew
         :symfloats vecNew
-        :curParams 0
-        :curFlags 0
+        :curParams (None)
+        :curFlags (None)
         :macros vecNew
         :symkinds vecNew
         :pendingLams vecNew
@@ -633,20 +561,20 @@
         :thunkArities vecNew
         :thunksEmitted 0
         :target 0
-        :tcoName 0
+        :tcoName (None)
         :tcoSlots vecNew
         :tcoLabel ""
         :tailOK 0
         :terminated 0
         :effDecls vecNew
         :effOps vecNew
-        :curModule 0
+        :curModule (None)
         :dataTyNames vecNew
         :curDeclNode nilNode
         :sigIntern (None)
         :sigById vecNew
-        :bareIntern 0
-        :bareFirst vecNew
+        :bareIntern (None)
+        :bareFirst (None)
         :tailRetain vecNew
         :pendingOwned vecNew
         :allocaMark (- 0 1)
@@ -964,68 +892,38 @@
   })
 
 ; Word 17: the parameter names of the function or lambda being emitted,
-; or the word 0 before the first one.
-(:: cgHasParams (-> CG Bool))
-(fn (cgHasParams cg)
-  {
-    (let c cg)
-    (!= c.curParams 0)
-  })
-
-(:: cgParams (-> CG Names))
-;@axiom:effect(unsafe)
+; or `None` before the first one.
+(:: cgParams (-> CG (Option Names)))
 (fn (cgParams cg)
-  {
-    (let c cg)
-    (as c.curParams Names)
-  })
+  cg.curParams)
 
 (:: cgSetParams (-> CG Names CG))
 (fn (cgSetParams cg params)
   {
-    (__retainref params)
-    (let c cg)
-    (set c.curParams (as params Int))
+    (set cg.curParams (Some params))
     cg
   })
 
 ; Word 18: the float flags of the signature being emitted, one per
 ; arrow position, or no vector at all for a lifted lambda.
-(:: cgHasParamFlags (-> CG Bool))
-(fn (cgHasParamFlags cg)
-  {
-    (let c cg)
-    (!= c.curFlags 0)
-  })
-
-(:: cgParamFlags (-> CG Ints))
-;@axiom:effect(unsafe)
+(:: cgParamFlags (-> CG (Option Ints)))
 (fn (cgParamFlags cg)
-  {
-    (let c cg)
-    (as c.curFlags Ints)
-  })
+  cg.curFlags)
 
-(:: cgSetParamFlags (-> CG Ints CG))
+(:: cgSetParamFlags (-> CG (Option Ints) CG))
 (fn (cgSetParamFlags cg flags)
   {
-    (__retainref flags)
-    (let c cg)
-    (set c.curFlags (as flags Int))
+    (set cg.curFlags flags)
     cg
   })
 
 (:: cgClearParamFlags (-> CG CG))
 (fn (cgClearParamFlags cg)
-  {
-    (let c cg)
-    (set c.curFlags 0)
-    cg
-  })
+  (cgSetParamFlags cg (None)))
 
 ; Word 21: the lambdas waiting to be lifted, one `mkLamDesc` record
 ; each.
-(:: cgPendingLams (-> CG Ints))
+(:: cgPendingLams (-> CG (Vec LamDesc)))
 (fn (cgPendingLams cg)
   {
     (let c cg)
@@ -1096,45 +994,29 @@
   })
 
 ; Word 27: the symbol of the function whose self tail calls are being
-; turned into jumps, or the word 0 outside one (`openTailLoop`).
-(:: cgInTailLoop (-> CG Bool))
-(fn (cgInTailLoop cg)
-  {
-    (let c cg)
-    (!= c.tcoName 0)
-  })
-
-(:: cgTcoName (-> CG String))
-;@axiom:effect(unsafe)
+; turned into jumps, or `None` outside one (`openTailLoop`).
+(:: cgTcoName (-> CG (Option String)))
 (fn (cgTcoName cg)
-  {
-    (let c cg)
-    (as c.tcoName String)
-  })
+  cg.tcoName)
 
-(:: cgTcoNameWord (-> CG Int))
-(fn (cgTcoNameWord cg)
-  {
-    (let c cg)
-    c.tcoName
-  })
-
-(:: cgSetTcoName (-> CG String CG))
+(:: cgSetTcoName (-> CG (Option String) CG))
 (fn (cgSetTcoName cg name)
   {
-    (__retainref name)
-    (let c cg)
-    (set c.tcoName (as name Int))
+    (set cg.tcoName name)
     cg
   })
 
-(:: cgSetTcoNameWord (-> CG Int CG))
-(fn (cgSetTcoNameWord cg w)
-  {
-    (let c cg)
-    (set c.tcoName w)
-    cg
-  })
+(:: cgInTailLoop (-> CG Bool))
+(fn (cgInTailLoop cg)
+  (if (let (Some _) (cgTcoName cg))
+    true
+    false))
+
+(:: cgSelfNameIs (-> CG String Bool))
+(fn (cgSelfNameIs cg name)
+  (if (let (Some self) (cgTcoName cg))
+    (strEq self name)
+    false))
 
 ; Words 28 and 29: that loop's parameter slots and its header label.
 (:: cgTcoSlots (-> CG Strings))
@@ -1216,29 +1098,24 @@
   })
 
 ; Word 34: the module of the declaration being emitted, as `nodeModule`
-; answers it: its name, or the word 0 for the entry file.
-(:: cgModuleWord (-> CG Int))
-(fn (cgModuleWord cg)
-  {
-    (let c cg)
-    c.curModule
-  })
-
-(:: cgModule (-> CG String))
-;@axiom:effect(unsafe)
+; names it: `Some name`, or `None` for the entry file.
+(:: cgModule (-> CG (Option String)))
 (fn (cgModule cg)
-  {
-    (let c cg)
-    (as c.curModule String)
-  })
+  cg.curModule)
 
-(:: cgSetModule (-> CG Int CG))
+(:: cgSetModule (-> CG (Option String) CG))
 (fn (cgSetModule cg m)
   {
-    (let c cg)
-    (set c.curModule m)
+    (set cg.curModule m)
     cg
   })
+
+(:: cgSetDeclModule (-> CG ASTNode CG))
+(fn (cgSetDeclModule cg decl)
+  (cgSetModule cg
+    (if (== (nodeModule decl) 0)
+      (None)
+      (Some (nodeModuleName decl)))))
 
 ; Word 35: the names of the program's `data` types.
 (:: cgDataTyNames (-> CG Strings))
@@ -1281,67 +1158,31 @@
     c.sigById
   })
 
-; Words 39 and 40: the mangle and declaration indexes. Word 39 is the
-; `Intern` of bare names, 0 until it is built; word 40 is the record
-; `[first, decls, nullary, defined, arity]`, empty until it is built.
-(:: cgBareIntern (-> CG Int))
+; Words 39 and 40 own the optional mangle interner and declaration
+; index. Partial compiler clients retain the linear-scan fallback.
+(pub struct DeclIndex
+  (first : Ints)
+  (names : InternState)
+  (nullary : Ints)
+  (defined : Ints)
+  (arity : Ints))
+
+(:: cgBareIntern (-> CG (Option InternState)))
 (fn (cgBareIntern cg)
-  {
-    (let c cg)
-    c.bareIntern
-  })
+  cg.bareIntern)
 
-(:: cgSetNameIndexes (-> CG InternState (Vec FSig) Int Ints CG))
-(fn (cgSetNameIndexes cg si byId bi rest)
+(:: cgDeclIndex (-> CG (Option DeclIndex)))
+(fn (cgDeclIndex cg)
+  cg.bareFirst)
+
+(:: cgSetNameIndexes (-> CG InternState (Vec FSig) InternState DeclIndex CG))
+(fn (cgSetNameIndexes cg si byId bi index)
   {
-    (let c cg)
-    (set c.sigIntern (Some si))
-    (set c.sigById byId)
-    (set c.bareIntern bi)
-    (set c.bareFirst rest)
+    (set cg.sigIntern (Some si))
+    (set cg.sigById byId)
+    (set cg.bareIntern (Some bi))
+    (set cg.bareFirst (Some index))
     cg
-  })
-
-(:: cgDeclIndexBuilt (-> CG Bool))
-(fn (cgDeclIndexBuilt cg)
-  {
-    (let c cg)
-    (>= (vecLen c.bareFirst) 5)
-  })
-
-(:: cgBareFirst (-> CG Ints))
-(fn (cgBareFirst cg)
-  {
-    (let c cg)
-    (vecGetVec c.bareFirst 0)
-  })
-
-(:: cgDeclIntern (-> CG Int))
-(fn (cgDeclIntern cg)
-  {
-    (let c cg)
-    (vecGet c.bareFirst 1)
-  })
-
-(:: cgDeclNullary (-> CG Ints))
-(fn (cgDeclNullary cg)
-  {
-    (let c cg)
-    (vecGetVec c.bareFirst 2)
-  })
-
-(:: cgDeclDefined (-> CG Ints))
-(fn (cgDeclDefined cg)
-  {
-    (let c cg)
-    (vecGetVec c.bareFirst 3)
-  })
-
-(:: cgDeclArity (-> CG Ints))
-(fn (cgDeclArity cg)
-  {
-    (let c cg)
-    (vecGetVec c.bareFirst 4)
   })
 
 ; Word 41: the borrowed tail leaves of the function being emitted
@@ -1409,66 +1250,290 @@
     cg
   })
 
-; Slot `i` of the register-pair state: 0 mode, 1 arm, 2 names, 3 tag -
-; and, beside them, 4 `cgThreads` and 5 `parUsed` (see `newCG`).
-;
-; Slot 6 is not pair state either and lives here because `CG` is at 47 fields
-; and a 50-field record is AX3029 (the comment on `pairState` above):
-; the LLVM parameter count of the plain `fn` being emitted - declared
-; parameters plus one for `%__evw.h` when the function is polymorphic -
-; and 0 while a lambda or a thunk is being emitted, whose prototypes
-; carry `%.env` and `%__evwa.h` and can never match a plain function's.
-; `mustTailOK` compares it against the callee's, because LLVM's
-; `musttail` demands identical prototypes under the C convention.
-(pub :: pairSlot (-> CG Int Int))
-(pub fn (pairSlot cg i)
-  {
-    (let c cg)
-    (vecGet c.pairState i)
-  })
+; The LLVM parameter count is zero for lifted lambdas and thunks, whose
+; environment prototypes cannot match a plain function's musttail ABI.
+; Typed pair and auxiliary state. Reference fields own their payloads;
+; absent checked types, callback identities and float indexes use Option.
+(pub struct PairState
+  (mut returnTy : (Option ASTNode))
+  (mut arm : Int)
+  (mut names : Names)
+  (mut tagReg : String)
+  (mut threads : Int)
+  (mut parallelUsed : Int)
+  (mut llvmParams : Int)
+  (mut liftedLambda : Int)
+  (mut regionDepth : Int)
+  (mut threadLowering : Int)
+  (mutMemo : (Vec MutMemoEntry))
+  (mut mutMemoDepth : Int)
+  (mut handleRuntime : Int)
+  (mut lambdaArrow : (Option ASTNode))
+  (mut identities : (Option Names))
+  (mut obfuscate : Int)
+  (owningSlots : (Vec PendingSlot))
+  (countedStores : Nodes)
+  (mut registry : Int)
+  (mut asmCookie : Int)
+  (sourceFiles : Strings)
+  (mut arenaCap : Int)
+  (mut stackRun : Int)
+  (mut nativeExe : Int)
+  (mut functionFloats : (Option FunctionFloatIndex)))
 
-; The cast is the result of this function, so a caller that stores an
-; element still sees that element's evidence. A cast written in the
-; argument of `vecSet` would drop the retain (MM-VAL-22) and the
-; record would die with the call.
-(:: pairStateAs (-> CG (Vec a)))
-;@axiom:effect(unsafe)
-(fn (pairStateAs cg)
-  {
-    (let c cg)
-    (as c.pairState (Vec a))
-  })
+(:: cgPairArm (-> CG Int))
+(fn (cgPairArm cg)
+  cg.pairState.arm)
 
-(pub :: pairSetSlot (-> CG Int a CG))
-(pub fn (pairSetSlot cg i v)
+(:: pairNames (-> CG Names))
+(fn (pairNames cg)
+  cg.pairState.names)
+
+(:: pairTagReg (-> CG String))
+(fn (pairTagReg cg)
+  cg.pairState.tagReg)
+
+(:: cgThreadsFlag (-> CG Int))
+(fn (cgThreadsFlag cg)
+  cg.pairState.threads)
+
+(:: cgParallelUsed (-> CG Int))
+(fn (cgParallelUsed cg)
+  cg.pairState.parallelUsed)
+
+(:: cgLlvmParams (-> CG Int))
+(fn (cgLlvmParams cg)
+  cg.pairState.llvmParams)
+
+(:: cgLiftedLambda (-> CG Int))
+(fn (cgLiftedLambda cg)
+  cg.pairState.liftedLambda)
+
+(:: cgRegionDepth (-> CG Int))
+(fn (cgRegionDepth cg)
+  cg.pairState.regionDepth)
+
+(:: cgThreadLowering (-> CG Int))
+(fn (cgThreadLowering cg)
+  cg.pairState.threadLowering)
+
+(:: cgMutMemoDepth (-> CG Int))
+(fn (cgMutMemoDepth cg)
+  cg.pairState.mutMemoDepth)
+
+(:: cgHandleRuntime (-> CG Int))
+(fn (cgHandleRuntime cg)
+  cg.pairState.handleRuntime)
+
+(:: cgFlowIdentities (-> CG (Option Names)))
+(fn (cgFlowIdentities cg)
+  cg.pairState.identities)
+
+(:: cgObfuscate (-> CG Int))
+(fn (cgObfuscate cg)
+  cg.pairState.obfuscate)
+
+(:: pairOwningSlots (-> CG (Vec PendingSlot)))
+(fn (pairOwningSlots cg)
+  cg.pairState.owningSlots)
+
+(:: cgCountedStores (-> CG Nodes))
+(fn (cgCountedStores cg)
+  cg.pairState.countedStores)
+
+(:: cgRegistry (-> CG Int))
+(fn (cgRegistry cg)
+  cg.pairState.registry)
+
+(:: cgAsmCookie (-> CG Int))
+(fn (cgAsmCookie cg)
+  cg.pairState.asmCookie)
+
+(:: cgAsmFiles (-> CG Strings))
+(fn (cgAsmFiles cg)
+  cg.pairState.sourceFiles)
+
+(:: cgArenaCap (-> CG Int))
+(fn (cgArenaCap cg)
+  cg.pairState.arenaCap)
+
+(:: cgStackRun (-> CG Int))
+(fn (cgStackRun cg)
+  cg.pairState.stackRun)
+
+(:: cgNativeExe (-> CG Int))
+(fn (cgNativeExe cg)
+  cg.pairState.nativeExe)
+
+(:: cgFunctionFloats (-> CG (Option FunctionFloatIndex)))
+(fn (cgFunctionFloats cg)
+  cg.pairState.functionFloats)
+
+(:: cgPairMode (-> CG Int))
+(fn (cgPairMode cg)
+  (if (let (Some _) cg.pairState.returnTy)
+    1
+    0))
+
+(:: cgPairResultType (-> CG ASTNode))
+(fn (cgPairResultType cg)
+  (if (let (Some ty) cg.pairState.returnTy)
+    ty
+    nilNode))
+
+(:: cgLambdaType (-> CG ASTNode))
+(fn (cgLambdaType cg)
+  (if (let (Some ty) cg.pairState.lambdaArrow)
+    ty
+    nilNode))
+
+(:: cgSetPairResultType (-> CG (Option ASTNode) CG))
+(fn (cgSetPairResultType cg value)
   {
-    (vecSet (pairStateAs cg) i v)
+    (set cg.pairState.returnTy value)
     cg
   })
 
-; Pair slot 2: the names of the functions eligible for the register-pair
-; return (`buildNameIndexes`).
-(:: pairNames (-> CG Names))
-(fn (pairNames cg)
+(:: cgSetPairArm (-> CG Int CG))
+(fn (cgSetPairArm cg value)
   {
-    (let c cg)
-    (vecGetVec c.pairState 2)
+    (set cg.pairState.arm value)
+    cg
   })
 
-; Pair slot 3: the register holding the tag of the pair being returned.
-(:: pairTagReg (-> CG String))
-(fn (pairTagReg cg)
+(:: cgSetPairNames (-> CG Names CG))
+(fn (cgSetPairNames cg value)
   {
-    (let c cg)
-    (vecGetStr c.pairState 3)
+    (set cg.pairState.names value)
+    cg
   })
 
-; Pair slot 17: the owning `mut` slots in scope (`emitLetMAt`).
-(:: pairOwningSlots (-> CG Ints))
-(fn (pairOwningSlots cg)
+(:: cgSetPairTagReg (-> CG String CG))
+(fn (cgSetPairTagReg cg value)
   {
-    (let c cg)
-    (vecGetVec c.pairState 17)
+    (set cg.pairState.tagReg value)
+    cg
+  })
+
+(:: cgSetThreadsFlag (-> CG Int CG))
+(fn (cgSetThreadsFlag cg value)
+  {
+    (set cg.pairState.threads value)
+    cg
+  })
+
+(:: cgSetParallelUsed (-> CG Int CG))
+(fn (cgSetParallelUsed cg value)
+  {
+    (set cg.pairState.parallelUsed value)
+    cg
+  })
+
+(:: cgSetLlvmParams (-> CG Int CG))
+(fn (cgSetLlvmParams cg value)
+  {
+    (set cg.pairState.llvmParams value)
+    cg
+  })
+
+(:: cgSetLiftedLambda (-> CG Int CG))
+(fn (cgSetLiftedLambda cg value)
+  {
+    (set cg.pairState.liftedLambda value)
+    cg
+  })
+
+(:: cgSetRegionDepth (-> CG Int CG))
+(fn (cgSetRegionDepth cg value)
+  {
+    (set cg.pairState.regionDepth value)
+    cg
+  })
+
+(:: cgSetThreadLowering (-> CG Int CG))
+(fn (cgSetThreadLowering cg value)
+  {
+    (set cg.pairState.threadLowering value)
+    cg
+  })
+
+(:: cgSetMutMemoDepth (-> CG Int CG))
+(fn (cgSetMutMemoDepth cg value)
+  {
+    (set cg.pairState.mutMemoDepth value)
+    cg
+  })
+
+(:: cgSetHandleRuntime (-> CG Int CG))
+(fn (cgSetHandleRuntime cg value)
+  {
+    (set cg.pairState.handleRuntime value)
+    cg
+  })
+
+(:: cgSetLambdaType (-> CG ASTNode CG))
+(fn (cgSetLambdaType cg ty)
+  {
+    (set cg.pairState.lambdaArrow (if (nodeSame ty nilNode)
+      (None)
+      (Some ty)))
+    cg
+  })
+
+(:: cgSetFlowIdentities (-> CG (Option Names) CG))
+(fn (cgSetFlowIdentities cg value)
+  {
+    (set cg.pairState.identities value)
+    cg
+  })
+
+(:: cgSetObfuscate (-> CG Int CG))
+(fn (cgSetObfuscate cg value)
+  {
+    (set cg.pairState.obfuscate value)
+    cg
+  })
+
+(pub :: cgSetRegistry (-> CG Int CG))
+(pub fn (cgSetRegistry cg value)
+  {
+    (set cg.pairState.registry value)
+    cg
+  })
+
+(:: cgSetAsmCookie (-> CG Int CG))
+(fn (cgSetAsmCookie cg value)
+  {
+    (set cg.pairState.asmCookie value)
+    cg
+  })
+
+(:: cgSetArenaCap (-> CG Int CG))
+(fn (cgSetArenaCap cg value)
+  {
+    (set cg.pairState.arenaCap value)
+    cg
+  })
+
+(:: cgSetStackRun (-> CG Int CG))
+(fn (cgSetStackRun cg value)
+  {
+    (set cg.pairState.stackRun value)
+    cg
+  })
+
+(:: cgSetNativeExe (-> CG Int CG))
+(fn (cgSetNativeExe cg value)
+  {
+    (set cg.pairState.nativeExe value)
+    cg
+  })
+
+(:: cgSetFunctionFloats (-> CG (Option FunctionFloatIndex) CG))
+(fn (cgSetFunctionFloats cg value)
+  {
+    (set cg.pairState.functionFloats value)
+    cg
   })
 
 (:: cgNullVec (Vec a))
@@ -1476,21 +1541,25 @@
 (fn (cgNullVec)
   (as 0 (Vec a)))
 
-(:: pairNode (-> CG Int ASTNode))
-;@axiom:effect(unsafe)
-(fn (pairNode cg slot)
-  (as (pairSlot cg slot) ASTNode))
-
-(:: pairNodes (-> CG Int Nodes))
-;@axiom:effect(unsafe)
-(fn (pairNodes cg slot)
-  (as (pairSlot cg slot) Nodes))
+(:: truncatePendingSlots (-> (Vec PendingSlot) Int Int))
+(fn (truncatePendingSlots slots size)
+  {
+    (while (> (vecLen slots) size)
+      {
+        (let retired (vecPop slots))
+        0
+      })
+    0
+  })
 
 (:: truncateNodeRegistry (-> Nodes Int Int))
 (fn (truncateNodeRegistry nodes size)
   {
     (while (> (vecLen nodes) size)
-      (vecPop nodes))
+      {
+        (let retired (vecPop nodes))
+        0
+      })
     0
   })
 
@@ -1795,22 +1864,10 @@
 ; The three answers share one Intern because they share one key, and
 ; they are three parallel Vecs rather than three packed bitfields
 ; because the packing would buy nothing a `vecGet` does not already
-; give. Where they LIVE is the constrained part, and field 40 is the
-; answer: MM-LIFE-2d's record-form shape word maps 47 payload words,
-; `AX3029` refuses a 48th, and `CG` already declares 46. A new field
-; per index would have taken the last slot and left the next person to
-; want one splitting the record; so field 40, which held one Vec
-; (`bareFirst`), now holds five, and `CG` stays 46 wide.
-;
-;   [0] bareFirst    intern id (field 39) -> first index in field 12
-;                    carrying that name; what `mangledForCg` reads
-;   [1] declNames    Intern over every name the declaration list
-;                    answers to - a `D_FN`'s own spelling, and BOTH
-;                    spellings of a zero-arity `extern` item
-;   [2] declNullary  0/1 per id: `isNullaryFnIn`'s answer
-;   [3] declDefined  0/1 per id: `isDefinedFnIn`'s answer
-;   [4] declArity    the FIRST `D_FN` of that name's parameter count,
-;                    -1 when no `D_FN` carries it; `fnArityIn`'s answer
+; give. A typed DeclIndex owns the five parts without consuming another
+; CG payload word: first maps bare intern ids to mangle rows, names owns
+; declaration spellings, nullary and defined hold their 0/1 answers, and
+; arity holds the first D_FN's parameter count or -1 for extern-only ids.
 ;
 ; The two booleans are order-independent - each scan returns true at
 ; its first match and false at the end, so it is asking "does one
@@ -1819,21 +1876,19 @@
 ; arity, so the index is built in declaration order and only the first
 ; writer of a name touches [4].
 (pub :: buildNameIndexes (-> CG CG))
-;@axiom:effect(unsafe)
 (pub fn (buildNameIndexes cg)
   {
     (let sigs (cgFloatSigs cg))
     (let si internNewTyped)
     (let byId vecNew)
     (let bares (cgMangleBares cg))
-    (let bi internNew)
+    (let bi internNewTyped)
     (let first vecNew)
     (let decls (cgDecls cg))
-    (let dn internNew)
+    (let dn internNewTyped)
     (let dnull vecNew)
     (let ddef vecNew)
     (let dar vecNew)
-    (let rest vecNew)
     {
       {
         (let mut i 0)
@@ -1859,10 +1914,13 @@
         (while (< j (vecLen bares))
           {
             {
-              (let id (internIntern bi (vecGetStr bares j)))
+              (let id (internIntern (internWordOf bi) (vecGetStr bares j)))
               (if (== id (vecLen first))
-                (vecPush first j)
-                (as 0 (Vec Int)))
+                {
+                  (vecPush first j)
+                  0
+                }
+                0)
             }
             (set j (+ j 1))
           })
@@ -1880,12 +1938,8 @@
               (set k (+ k 1))
             })
         })
-      (vecPushVec rest first)
-      (vecPush rest dn)
-      (vecPushVec rest dnull)
-      (vecPushVec rest ddef)
-      (vecPushVec rest dar)
-      (cgSetNameIndexes cg si byId bi rest)
+      (cgSetNameIndexes cg si byId bi
+        (DeclIndex :first first :names dn :nullary dnull :defined ddef :arity dar))
       ; AFTER the four above, because `pairFnOK` reads the signature
       ; through them. Names, not nodes: a match site has a name.
       ;
@@ -1905,9 +1959,9 @@
       ; modules declare is not.
       {
         (let pn vecNew)
-        (let savedMod (cgModuleWord cg))
+        (let savedMod (cgModule cg))
         {
-          (pairSetSlot cg 2 (as pn Int))
+          (cgSetPairNames cg pn)
           (if (! (== (as decls Int) 0))
             {
               (let mut grew 1)
@@ -1923,7 +1977,7 @@
                           (if (== (nodeTag d) TAG_D_FN)
                             (if (== (pairNamesHas pn (nodeAName d)) 0)
                               {
-                                (cgSetModule cg (nodeModule d))
+                                (cgSetDeclModule cg d)
                                 (if (== (pairFnOK cg d) 1)
                                   {
                                     (vecPush pn (nodeAName d))
@@ -1948,11 +2002,11 @@
 ; every parallel Vec gains exactly one entry; anything else already
 ; has its row. -1 in `dar` is "no `D_FN` has claimed this name", which
 ; is what makes [4] first-writer-wins without a fourth Vec to say so.
-(:: declSlotFor (-> Int Ints Ints Ints String Int))
+(:: declSlotFor (-> InternState Ints Ints Ints String Int))
 ;@axiom:effect(unsafe)
 (fn (declSlotFor dn dnull ddef dar name)
   {
-    (let id (internIntern dn name))
+    (let id (internIntern (internWordOf dn) name))
     {
       (if (== id (vecLen dnull))
         {
@@ -1969,7 +2023,7 @@
 ; `isNullaryFnIn`, `isDefinedFnIn` and `fnArityIn` read it: a `D_FN`
 ; is nullary or defined by its parameter count and never both, and an
 ; `extern` block contributes only to nullary.
-(:: declIndexAdd (-> Int Ints Ints Ints ASTNode Int))
+(:: declIndexAdd (-> InternState Ints Ints Ints ASTNode Int))
 (fn (declIndexAdd dn dnull ddef dar d)
   {
     (let tag (nodeTag d))
@@ -2000,7 +2054,7 @@
 ; `emitVar` has already been through `mangledFor` and is holding the
 ; symbol. Both are interned, and `internIntern` folds them together
 ; when an item's two spellings agree.
-(:: declIndexExtern (-> Int Ints Ints Ints (Vec ASTNode) Int Int))
+(:: declIndexExtern (-> InternState Ints Ints Ints (Vec ASTNode) Int Int))
 ;@axiom:effect(unsafe)
 (fn (declIndexExtern dn dnull ddef dar items i)
   (if (== (as items Int) 0)
@@ -2046,37 +2100,22 @@
 ; spelling first, then the first bare record, then the name itself.
 (pub :: mangledForCg (-> CG String String))
 (pub fn (mangledForCg cg name)
-  {
-    (let bi (cgBareIntern cg))
-    (if (== bi 0)
-      (mangledFor cg name)
+  (if (let (Some bi) (cgBareIntern cg))
+    (if (let (Some index) (cgDeclIndex cg))
       (if (strEq name "main")
         "__axiom_user_main"
-        ; The ANSWER comes out of the index, not out of a second
-        ; concatenation. A hit means the Intern already holds a string
-        ; whose content is `m$name`. Its mapped value in field 13 is
-        ; the same spelling for an Axiom function, or the actual linker
-        ; symbol for an extern item. Both are borrowed; rebuilding
-        ; the name allocated and
-        ; copied a second time on every module-local reference. The
-        ; probe's own `concat` stays an ARGUMENT, which is what makes
-        ; `releaseOwnedArgs` hand it back on the same line; a `let`
-        ; that both probes and answers cannot be released at all,
-        ; because one branch returns it - measured at +69 MiB of
-        ; peak, see this commit.
         {
-          (let m (cgModule cg))
-          {
-            (let hit
-              (if (== (as m Int) 0)
-                None
-                (internFind bi (concat m (concat "$" name)))))
-            (if (let (Some h) hit)
-              (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) h))
-              (mangledForModCg cg bi name m))
-          }
-        }))
-  })
+          (let module (cgModule cg))
+          (let hit
+            (if (let (Some nameOfModule) module)
+              (internFind (internWordOf bi) (concat nameOfModule (concat "$" name)))
+              (None)))
+          (if (let (Some id) hit)
+            (vecGetStr (cgMangleFulls cg) (vecGet index.first id))
+            (mangledForModCg cg bi index name module))
+        })
+      (mangledFor cg name))
+    (mangledFor cg name)))
 
 ; The same, for a reference made inside module `m` (0 in the entry
 ; file). A module can't import the entry file, so when the bare slot
@@ -2085,44 +2124,44 @@
 ; (AN-52; namespace.ax's `mangleRecordModuleView`). Only that case
 ; builds the `$name` probe, so a module's calls to names nobody
 ; shadows cost what they did.
-(:: mangledForModCg (-> CG Int String String String))
-(fn (mangledForModCg cg bi name m)
-  (if (let (Some id) (internFind bi name))
+(:: mangledForModCg (-> CG InternState DeclIndex String (Option String) String))
+(fn (mangledForModCg cg bi index name module)
+  (if (let (Some id) (internFind (internWordOf bi) name))
     {
-      (let full (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) id)))
-      (if (== (as m Int) 0)
-        full
+      (let full (vecGetStr (cgMangleFulls cg) (vecGet index.first id)))
+      (if (let (Some _) module)
         (if (|| (strEq full name)
-              (match (internFind bi (concat "$entry$" name))
+              (match (internFind (internWordOf bi) (concat "$entry$" name))
                 ((Some _) true)
                 ((None) false)))
-          (match (internFind bi (concat "$" name))
-            ((Some v) (vecGetStr (cgMangleFulls cg) (vecGet (cgBareFirst cg) v)))
+          (match (internFind (internWordOf bi) (concat "$" name))
+            ((Some imported) (vecGetStr (cgMangleFulls cg) (vecGet index.first imported)))
             ((None) full))
-          full))
+          full)
+        full)
     }
     name))
 
 ; The three declaration-list scans, through the index; the linear scan
 ; when no index has been built (the REPL's and LSP's partial paths,
-; where field 40 is still the empty Vec `newCG` gave it).
+; where field 40 is None until indexes are built).
 ;
 ; Each takes the `CG` rather than the declaration list, which is what
 ; lets the fallback name both. Every caller passed `(memGetWord cg 8)`
 ; anyway - there has never been a second declaration list to ask.
 (pub :: isNullaryFnCg (-> CG String Bool))
 (pub fn (isNullaryFnCg cg name)
-  (if (cgDeclIndexBuilt cg)
-    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf name)))
-      (== (vecGet (cgDeclNullary cg) id) 1)
+  (if (let (Some index) (cgDeclIndex cg))
+    (if (let (Some id) (internFind (internWordOf index.names) (declSpellingOf name)))
+      (== (vecGet index.nullary id) 1)
       false)
     (isNullaryFn (cgDecls cg) name)))
 
 (pub :: isDefinedFnCg (-> CG String Bool))
 (pub fn (isDefinedFnCg cg name)
-  (if (cgDeclIndexBuilt cg)
-    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf name)))
-      (== (vecGet (cgDeclDefined cg) id) 1)
+  (if (let (Some index) (cgDeclIndex cg))
+    (if (let (Some id) (internFind (internWordOf index.names) (declSpellingOf name)))
+      (== (vecGet index.defined id) 1)
       false)
     (isDefinedFn (cgDecls cg) name)))
 
@@ -2131,13 +2170,13 @@
 ; and there is no id at all for a name no declaration carries.
 (pub :: fnArityOfCg (-> CG String Int))
 (pub fn (fnArityOfCg cg name)
-  (if (cgDeclIndexBuilt cg)
-    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf name)))
+  (if (let (Some index) (cgDeclIndex cg))
+    (if (let (Some id) (internFind (internWordOf index.names) (declSpellingOf name)))
       {
-        (let ar (vecGet (cgDeclArity cg) id))
-        (if (< ar 0)
+        (let arity (vecGet index.arity id))
+        (if (< arity 0)
           0
-          ar)
+          arity)
       }
       0)
     (fnArityOf (cgDecls cg) name)))
@@ -2390,7 +2429,7 @@
   {
     (let byId (cgSigById cg))
     (let rows vecNew)
-    (let savedMod (cgModuleWord cg))
+    (let savedMod (cgModule cg))
     {
       {
         (let mut i 0)
@@ -2408,7 +2447,7 @@
               (let d (vecGet decls j))
               (if (== (nodeTag d) TAG_D_FN)
                 {
-                  (cgSetModule cg (nodeModule d))
+                  (cgSetDeclModule cg d)
                   (collectCallsCg cg (nodeCChild d) j rows)
                 }
                 0)
@@ -2452,7 +2491,7 @@
 (pub fn (inferOwnership cg decls)
   {
     (inferOwnershipRounds cg decls)
-    (cgSetModule cg 0)
+    (cgSetModule cg (None))
     (cgSetCurDecl cg nilNode)
   })
 
@@ -2524,7 +2563,7 @@
   (if (!= (nodeTag d) TAG_D_FN)
     0
     {
-      (let _m (cgSetModule cg (nodeModule d)))
+      (let _m (cgSetDeclModule cg d))
       (let _d (cgSetCurDecl cg d))
       (let eFound (findFSigCg cg (nodeAName d)))
       (if (let (Some e) eFound)
@@ -2893,7 +2932,7 @@
 (pub fn (inferFlows cg decls)
   {
     (inferFlowsRounds cg decls)
-    (cgSetModule cg 0)
+    (cgSetModule cg (None))
     (cgSetCurDecl cg nilNode)
   })
 
@@ -2962,7 +3001,7 @@
   (if (!= (nodeTag d) TAG_D_FN)
     0
     {
-      (let _m (cgSetModule cg (nodeModule d)))
+      (let _m (cgSetDeclModule cg d))
       (let _d (cgSetCurDecl cg d))
       (let eFound (findFSigCg cg (nodeAName d)))
       (if (let (Some e) eFound)
@@ -3972,7 +4011,7 @@
 (pub fn (mutFlag cg name init body params env)
   {
     (let memo (mutMemoEntries cg))
-    (let depth (pairSlot cg 12))
+    (let depth (cgMutMemoDepth cg))
     {
       (let at
         (if (== depth 0)
@@ -3987,11 +4026,11 @@
           item.flag
         }
         {
-          (pairSetSlot cg 12 (+ depth 1))
+          (cgSetMutMemoDepth cg (+ depth 1))
           {
             (let f (mutFlagIter cg name body params env (flowMask cg init params env) 0))
             {
-              (pairSetSlot cg 12 depth)
+              (cgSetMutMemoDepth cg depth)
               (mutMemoAdd memo name init body params env f)
               f
             }
@@ -4009,9 +4048,8 @@
   (flag : Int))
 
 (:: mutMemoEntries (-> CG (Vec MutMemoEntry)))
-;@axiom:effect(unsafe)
 (fn (mutMemoEntries cg)
-  (as (pairSlot cg 11) (Vec MutMemoEntry)))
+  cg.pairState.mutMemo)
 
 (pub :: mutMemoFind (-> (Vec MutMemoEntry) String ASTNode ASTNode Names Ints Int Int))
 (pub fn (mutMemoFind memo name init body params env at)
@@ -4055,13 +4093,13 @@
 (pub fn (mutMemoOpen cg)
   {
     (vecClear (mutMemoEntries cg))
-    (pairSetSlot cg 12 1)
+    (cgSetMutMemoDepth cg 1)
     0
   })
 
 (pub :: mutMemoClose (-> CG CG))
 (pub fn (mutMemoClose cg)
-  (pairSetSlot cg 12 0))
+  (cgSetMutMemoDepth cg 0))
 
 (pub :: mutFlagIter (-> CG String ASTNode Names Ints Int Int Int))
 (pub fn (mutFlagIter cg name body params env f k)
@@ -5194,17 +5232,17 @@
 ; Numeric representation is a checked type fact, including for functions
 ; without a written signature. It does not establish ownership or effects.
 (struct FunctionFloatIndex
-  (names : Int)
+  (names : InternState)
   (flags : (Vec Ints)))
 
 (:: functionFloatIndex (-> FunctionTypes FunctionFloatIndex))
 (fn (functionFloatIndex types)
   {
-    (let names internNew)
+    (let names internNewTyped)
     (let flags vecNew)
     (for entry in types
       {
-        (let id (internIntern names (declSpellingOf entry.name)))
+        (let id (internIntern (internWordOf names) (declSpellingOf entry.name)))
         (if (== id (vecLen flags))
           (vecPush flags (functionFloatFlags entry.ty entry.arity vecNew)))
       })
@@ -5234,55 +5272,46 @@
   })
 
 (:: checkedFloatFlags (-> CG String (Option Ints)))
-;@axiom:effect(unsafe)
 (fn (checkedFloatFlags cg name)
-  (if (== (pairSlot cg 25) 0)
-    None
-    {
-      (let index (as (pairSlot cg 25) FunctionFloatIndex))
-      (if (let (Some id) (internFind index.names (declSpellingOf name)))
-        (Some (vecGet index.flags id))
-        None)
-    }))
+  (if (let (Some index) (cgFunctionFloats cg))
+    (if (let (Some id) (internFind (internWordOf index.names) (declSpellingOf name)))
+      (Some (vecGet index.flags id))
+      (None))
+    (None)))
 
 ; Partial compiler clients can still consult the written signature table.
-(:: functionFlags (-> CG String Ints))
-;@axiom:effect(unsafe)
+(:: functionFlags (-> CG String (Option Ints)))
 (fn (functionFlags cg name)
   (if (let (Some flags) (checkedFloatFlags cg name))
-    flags
-    {
-      (let entryFound (findFSigCg cg name))
-      (if (let (Some entry) entryFound)
-        (fsigFlags entry)
-        (as 0 Ints))
-    }))
+    (Some flags)
+    (if (let (Some entry) (findFSigCg cg name))
+      {
+        (let flags (fsigFlags entry))
+        (if (== (as flags Int) 0)
+          (None)
+          (Some flags))
+      }
+      (None))))
 
 ; Whether function `name` (already mangled) returns a bare float.
 (pub :: fnRetIsFloat (-> CG String Int))
 (pub fn (fnRetIsFloat cg name)
-  {
-    (let flags (functionFlags cg name))
-    (if (== (as flags Int) 0)
+  (if (let (Some flags) (functionFlags cg name))
+    (if (== (vecLen flags) 0)
       0
-      (if (== (vecLen flags) 0)
-        0
-        (vecGet flags (- (vecLen flags) 1))))
-  })
+      (vecGet flags (- (vecLen flags) 1)))
+    0))
 
 ; Whether parameter `idx` of the function being emitted is a float. The
 ; last flag is the return type, so a bare-type signature has no
 ; parameter flags at all.
 (pub :: paramIsFloat (-> CG Int Int))
 (pub fn (paramIsFloat cg idx)
-  (if (cgHasParamFlags cg)
-    {
-      (let flags (cgParamFlags cg))
-      (if (>= idx (- (vecLen flags) 1))
-        0
-        (vecGet flags idx))
-    }
-    (lambdaParamIsFloat (pairNode cg 14) idx)))
+  (if (let (Some flags) (cgParamFlags cg))
+    (if (>= idx (- (vecLen flags) 1))
+      0
+      (vecGet flags idx))
+    (lambdaParamIsFloat (cgLambdaType cg) idx)))
 
 ; A lifted lambda has a checked arrow rather than a named function's
 ; flag vector. Read the parameter through its pins, which may have
@@ -5302,12 +5331,9 @@
 
 (pub :: paramFloatByName (-> CG String Int))
 (pub fn (paramFloatByName cg name)
-  {
-    (let params (cgParams cg))
-    (if (== (as params Int) 0)
-      0
-      (paramFloatIdx cg params name 0))
-  })
+  (if (let (Some params) (cgParams cg))
+    (paramFloatIdx cg params name 0)
+    0))
 
 (pub :: paramFloatIdx (-> CG Names String Int Int))
 (pub fn (paramFloatIdx cg params name i)
@@ -6629,7 +6655,7 @@
 ; MM-PAR-3's negative probe exists to demonstrate, and no flag here can.
 (pub :: cgThreads (-> CG Bool))
 (pub fn (cgThreads cg)
-  (== (pairSlot cg 4) 1))
+  (== (cgThreadsFlag cg) 1))
 
 ; The storage class of a mutable runtime global, which is the ONE thing
 ; `cgThreads` decides. Eight globals read it: the five allocator words,
@@ -7190,24 +7216,24 @@
 ;@axiom:effect(io)
 (pub fn (parScan cg decls)
   {
-    (pairSetSlot cg 5 (parAnyNamed decls))
-    (pairSetSlot cg 13
+    (cgSetParallelUsed cg (parAnyNamed decls))
+    (cgSetHandleRuntime cg
       (if (== (parAnyNamed decls) 1)
         1
         (handleAnyNamed decls)))
-    (pairSetSlot cg 10
+    (cgSetThreadLowering cg
       (if (&& (== (targetHasThreads (cgTarget cg)) 1)
             (&& (== (declsNamePrim decls "__par_spawn" 0) 1)
               (|| (argHas "--threads" 1) (parThreadsByDefault (cgTarget cg)))))
         1
         0))
-    (pairSetSlot cg 4
+    (cgSetThreadsFlag cg
       (if (&& (== (targetHasThreads (cgTarget cg)) 1) (parThreadsWanted decls (cgTarget cg)))
         1
         0))
-    (pairSetSlot cg 19 (resRegistryWanted decls))
-    (pairSetSlot cg 22 (declsNamePrim decls "__axiom_arena_cap" 0))
-    (pairSetSlot cg 23 (declsNamePrim decls "__axiom_stack_run" 0))
+    (cgSetRegistry cg (resRegistryWanted decls))
+    (cgSetArenaCap cg (declsNamePrim decls "__axiom_arena_cap" 0))
+    (cgSetStackRun cg (declsNamePrim decls "__axiom_stack_run" 0))
     cg
   })
 
@@ -7238,7 +7264,7 @@
         "_thread"
         (if (strStartsWith fnName "__proc_")
           "_proc"
-          (if (== (pairSlot cg 10) 1)
+          (if (== (cgThreadLowering cg) 1)
             "_thread"
             "_proc"))))))
 
@@ -7686,7 +7712,7 @@
 
 (pub :: emitParRuntime (-> CG CG))
 (pub fn (emitParRuntime cg)
-  (if (== (pairSlot cg 5) 0)
+  (if (== (cgParallelUsed cg) 0)
     cg
     (if (== (targetHasSpawn (cgTarget cg)) 1)
       {
@@ -7953,7 +7979,7 @@
 
 (pub :: emitHandleRuntime (-> CG CG))
 (pub fn (emitHandleRuntime cg)
-  (if (== (pairSlot cg 13) 0)
+  (if (== (cgHandleRuntime cg) 0)
     cg
     {
       (let t (cgTarget cg))
@@ -8550,7 +8576,7 @@
 ; `@main`'s wrapper ask this before they touch it.
 (pub :: parRegistryOn (-> CG Int))
 (pub fn (parRegistryOn cg)
-  (if (== (pairSlot cg 5) 0)
+  (if (== (cgParallelUsed cg) 0)
     0
     (targetHasSpawn (cgTarget cg))))
 
@@ -10071,17 +10097,14 @@
   ; which would re-store whatever its two parameters happened to be.
   (if (strEq name "main")
     "__axiom_user_main"
-    {
-      (let m (cgModule cg))
-      (if (== (as m Int) 0)
-        (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) name 0)
-        {
-          (let local (concat m (concat "$" name)))
-          (if (mangleHasIn (cgMangleBares cg) local 0)
-            (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) local 0)
-            (mangledForModIn (cgMangleBares cg) (cgMangleFulls cg) name))
-        })
-    }))
+    (if (let (Some m) (cgModule cg))
+      {
+        (let local (concat m (concat "$" name)))
+        (if (mangleHasIn (cgMangleBares cg) local 0)
+          (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) local 0)
+          (mangledForModIn (cgMangleBares cg) (cgMangleFulls cg) name))
+      }
+      (mangledForIn (cgMangleBares cg) (cgMangleFulls cg) name 0))))
 
 ; `mangledForModCg`'s answer by scanning, for the paths with no index.
 (pub :: mangledForModIn (-> Strings Strings String String))
@@ -11694,7 +11717,7 @@
       (emitLine cg "over:")
       (emitLine cg "  %mp = ptrtoint ptr @__axiom_win_stack_msg to i64")
       (emitRuntimeWrite cg "%mp" n)
-      (if (== (pairSlot cg 16) 0)
+      (if (== (cgObfuscate cg) 0)
         (if (== t 6)
           (emitWinFaultCaptured cg)
           (emitWinFaultChain cg)))
@@ -17924,7 +17947,7 @@
 (pub :: emitBacktrace (-> CG Names CG))
 ;@axiom:effect(io)
 (pub fn (emitBacktrace cg names)
-  (if (== (pairSlot cg 16) 1)
+  (if (== (cgObfuscate cg) 1)
     {
       (emitLine cg "define internal void @__axiom_backtrace() #0 { ret void }")
       cg
@@ -18160,7 +18183,7 @@
 ; chunk (a megabyte), only while a cap is set.
 (pub :: arenaCapOn (-> CG Bool))
 (pub fn (arenaCapOn cg)
-  (== (pairSlot cg 22) 1))
+  (== (cgArenaCap cg) 1))
 
 (pub :: emitArenaCapCheck (-> CG String CG))
 (pub fn (emitArenaCapCheck cg sizeExpr)
@@ -18240,13 +18263,13 @@
 ; stack, and bare metal has its own CPU-exception guard.
 (pub :: stackRunOn (-> CG Bool))
 (pub fn (stackRunOn cg)
-  (|| (== (pairSlot cg 23) 1) (programStackOn cg)))
+  (|| (== (cgStackRun cg) 1) (programStackOn cg)))
 
 ; Native executables use the guarded runtime for their entry stack.
 ; An archive runs on its host's stack; bare metal has its own guard.
 (:: programStackOn (-> CG Bool))
 (fn (programStackOn cg)
-  (== (pairSlot cg 24) 1))
+  (== (cgNativeExe cg) 1))
 
 ; `mprotect`, `sigaltstack` and `sigaction` (`rt_sigaction` on Linux):
 ; darwin BSD 74, 53 and 46 with the class bit; linux-aarch64 226, 132
@@ -18432,7 +18455,7 @@
         (emitLine cg "over:")
         (emitLine cg "  %mp = ptrtoint ptr @__axiom_stack_msg to i64")
         (emitRuntimeWrite cg "%mp" n)
-        (if (== (pairSlot cg 16) 0)
+        (if (== (cgObfuscate cg) 0)
           (emitStackFaultTrace cg t))
         (emitRuntimeExit cg "86")
         (emitLine cg "  unreachable")
@@ -18943,10 +18966,10 @@
   {
     (let cg newCG)
     (let emitT0 (emitPhaseNow))
-    (pairSetSlot cg 25 (functionFloatIndex functionTypes))
+    (cgSetFunctionFloats cg (Some (functionFloatIndex functionTypes)))
     {
       (let _mode
-        (pairSetSlot cg 16
+        (cgSetObfuscate cg
           (if obscure
             1
             0)))
@@ -18954,7 +18977,7 @@
       (let _2 (cgSetMangleFulls cg fulls))
       (let _2t (cgSetTarget cg tcode))
       (let _stackMode
-        (pairSetSlot cg 24
+        (cgSetNativeExe cg
           (if cgStaticlib
             0
             (targetHasSpawn tcode))))
@@ -19301,17 +19324,17 @@
     ; here: the call sites read the set, so the set is what the
     ; definition must agree with.
     {
-      (let _ (cgSetModule cg (nodeModule node)))
+      (let _ (cgSetDeclModule cg node))
       (let _e (cgSetCurDecl cg node))
       {
         (let cgD
           (if (== (pairNamesHas (pairNames cg) (nodeAName node)) 1)
             {
-              (pairSetSlot cg 0 (pairRetTyOf cg node))
+              (cgSetPairResultType cg (pairRetTyOf cg node))
               {
                 (let cgQ (drainPending (emitFnDef node cg)))
                 {
-                  (pairSetSlot cgQ 0 0)
+                  (cgSetPairResultType cgQ (None))
                   (emitPairWrapper node cgQ)
                 }
               }
@@ -19320,7 +19343,7 @@
         {
           (let cgP cgD)
           {
-            (cgSetModule cgP 0)
+            (cgSetModule cgP (None))
             (cgSetCurDecl cgP nilNode)
             (cgSetTailRetain cgP vecNew)
             cgP
@@ -19539,7 +19562,7 @@
       (let _5 (cgSetParams cg params))
       (let _5r (cgSetTailRetain cg (borrowedTailLeaves cg name body params)))
       (let _5p (cgPendingReset cg))
-      (let _5s (memSetWord (pairSlot cg 18) 0 0))
+      (let _5s (vecClear (cgCountedStores cg)))
       (let _6 (cgSetParamFlags cg (functionFlags cg name)))
       {
         (let takesEv (fnTakesEvw cg name))
@@ -19552,7 +19575,7 @@
                 (concat paramStr ", i64 %__evw.h"))))
           {
             (let hdr
-              (if (!= (pairSlot cg 0) 0)
+              (if (!= (cgPairMode cg) 0)
                 (concat
                   (concat "define { i64, i64 } @"
                     (concat (concat (llvmSym (strDup name)) "$pair") (concat "(" paramStr2)))
@@ -19562,11 +19585,11 @@
                   ") #0 {")))
             {
               (let cg0e
-                (pairSetSlot
+                (cgSetLlvmParams
                   (if (== takesEv 1)
                     (bindSym cg "__evw." "%__evw.h" 0 0)
                     cg)
-                  6 (+ (vecLen params) takesEv)))
+                  (+ (vecLen params) takesEv)))
               {
                 (let cg1
                   (openAllocaMark
@@ -19594,14 +19617,14 @@
                               cg1p))
                           {
                             (let cg2
-                              (if (|| (!= (pairSlot cg1c 0) 0)
+                              (if (|| (!= (cgPairMode cg1c) 0)
                                     (|| (== wantsTCO 1)
                                       (|| (> (vecLen (cgTailRetain cg1c)) 0)
                                         (== (tailCallsKnown cg1c body selfName) 1))))
                                 (emitExprTail body cg1c)
                                 (emitExpr body cg1c)))
                             {
-                              (cgSetTcoNameWord cg2 0)
+                              (cgSetTcoName cg2 (None))
                               (cgSetTailOK cg2 0)
                               ; A body that ended by jumping back to the header
                               ; has already terminated its block; a `ret` after it
@@ -19669,7 +19692,7 @@
 ; neither the value nor the ownership of a parameter.
 (pub :: emitObfuscationEntry (-> CG CG))
 (pub fn (emitObfuscationEntry cg)
-  (if (== (pairSlot cg 16) 0)
+  (if (== (cgObfuscate cg) 0)
     cg
     {
       (emitLine cg "  %obf.a = load volatile i32, ptr @.axiom.obf.a")
@@ -19891,8 +19914,8 @@
 ; those three approximate.
 (pub :: curParamRefClass (-> CG Int Int))
 (pub fn (curParamRefClass cg i)
-  (if (== (pairSlot cg 7) 1)
-    (if (let (Some parameter) (arrowParamTy (pairNode cg 14) i))
+  (if (== (cgLiftedLambda cg) 1)
+    (if (let (Some parameter) (arrowParamTy (cgLambdaType cg) i))
       (if (== (fldClass cg (tyResolve parameter)) 2)
         1
         0)
@@ -19922,7 +19945,7 @@
 ; the same answer: -1, "not evidence-driven", is this function's
 ; conservative direction.
 (pub fn (curParamEvBit cg i)
-  (if (== (pairSlot cg 7) 1)
+  (if (== (cgLiftedLambda cg) 1)
     (- 0 1)
     {
       (let d (cgCurDecl cg))
@@ -19980,7 +20003,7 @@
       {
         (allocParamSlots params slots cg 0)
         (retainRefParams params cg 0)
-        (cgSetTcoName cg (strDup name))
+        (cgSetTcoName cg (Some (strDup name)))
         (cgSetTcoSlots cg slots)
         (cgSetTcoLabel cg hdrB)
         (emitLine cg (concat "  br label %" hdrB))
@@ -20025,13 +20048,10 @@
 ; the signature flags the emitter already carries.
 (pub :: paramFloatFlag (-> CG Int Int))
 (pub fn (paramFloatFlag cg i)
-  (if (cgHasParamFlags cg)
-    {
-      (let flags (cgParamFlags cg))
-      (if (>= i (vecLen flags))
-        0
-        (vecGet flags i))
-    }
+  (if (let (Some flags) (cgParamFlags cg))
+    (if (>= i (vecLen flags))
+      0
+      (vecGet flags i))
     0))
 
 ; The tail jump: every argument is evaluated into its own register
@@ -20130,7 +20150,7 @@
       ; this path; the values the slots keep were retained above
       (releasePending cg (cgPendingStrings cg) 0)
       ; and every owning `mut` slot still in scope, by what it holds now
-      (releasePendingSlots cg (as (pairSlot cg 17) (Vec Int)) 0)
+      (releasePendingSlots cg (pairOwningSlots cg) 0)
       (emitLine cg (concat "  br label %" (cgTcoLabel cg)))
       (cgSetTerminated cg 1)
       (cgSetResult cg "0")
@@ -20180,11 +20200,20 @@
 ; The owning `mut` slots' half: each entry is a slot record (pair
 ; slot 17), and what the slot holds is loaded at the jump, since a
 ; `set` may have replaced the value it was bound to.
-(pub :: releasePendingSlots (-> CG Ints Int CG))
+(pub struct PendingSlot
+  (slot : String)
+  (name : String)
+  (aliases : Names)
+  (unknown : Bool))
+
+(pub :: releasePendingSlots (-> CG (Vec PendingSlot) Int CG))
 (pub fn (releasePendingSlots cg pend i)
   (if (>= i (vecLen pend))
     cg
-    (releasePendingSlots (releaseSlotValue cg (memGetWordStr (vecGet pend i) 0)) pend (+ i 1))))
+    {
+      (let entry (vecGet pend i))
+      (releasePendingSlots (releaseSlotValue cg entry.slot) pend (+ i 1))
+    }))
 
 ; May a mutual tail call's `args` hold the value of an owning slot
 ; pending from entry i on? A callee borrows its arguments, and the
@@ -20193,15 +20222,15 @@
 ; may alias the slot or a binding that may alias it (word 2 of the
 ; record, `slotAliases`). A slot whose aliases couldn't be listed
 ; (word 3) answers yes.
-(pub :: slotsReachArgs (-> CG Ints Nodes Int Int))
+(pub :: slotsReachArgs (-> CG (Vec PendingSlot) Nodes Int Int))
 (pub fn (slotsReachArgs cg pend args i)
   (if (>= i (vecLen pend))
     0
     {
       (let rec (vecGet pend i))
-      (if (if (== (memGetWord rec 3) 1)
+      (if (if rec.unknown
         true
-        (== (namesReachArgs cg (memGetWordVec rec 2) args 0) 1))
+        (== (namesReachArgs cg rec.aliases args 0) 1))
         1
         (slotsReachArgs cg pend args (+ i 1)))
     }))
@@ -20591,7 +20620,7 @@
   ; path below unchanged.
   {
     (let pen
-      (if (!= (pairSlot cg 0) 0)
+      (if (!= (cgPairMode cg) 0)
         (pairLeafEntry cg e)
         (None)))
     (if (let (Some entry) pen)
@@ -20600,7 +20629,7 @@
       ; back. `pairFwdOK` is re-asked here with the names the symbol
       ; table holds, so a head that a `let` has bound is a closure
       ; call and takes the ordinary path below.
-      (if (if (!= (pairSlot cg 0) 0)
+      (if (if (!= (cgPairMode cg) 0)
         (== (pairFwdOK cg e (pairBoundNames cg e)) 1)
         false)
         (emitPairFwd e cg)
@@ -20712,12 +20741,12 @@
       (if (== (pairMatchOK cg scrutExpr arms) 1)
         (if (|| (== (pairWordOnly cg (pairScrutRetTy cg scrutExpr)) 1)
               (== (tailScrutineeReleasable node scrutExpr cg) 0))
-          (pairSetSlot cg 1 1)
+          (cgSetPairArm cg 1)
           cg)
         cg))
     (let cg1 (emitExpr scrutExpr cg))
-    (let gotPair (pairSlot cg1 1))
-    (let _z (pairSetSlot cg1 1 0))
+    (let gotPair (cgPairArm cg1))
+    (let _z (cgSetPairArm cg1 0))
     (let sv (strDup (cgResult cg1)))
     (let tagR
       (if (== gotPair 2)
@@ -20983,8 +21012,8 @@
   {
     (let out vecNew)
     {
-      (if (cgHasParams cg)
-        (capFromVec (cgParams cg) lparams body out 0))
+      (if (let (Some params) (cgParams cg))
+        (capFromVec params lparams body out 0))
       (capFromVec (cgSymNames cg) lparams body out 0)
       out
     }
@@ -21053,20 +21082,23 @@
 ; A lifted lambda, waiting for the enclosing function to close:
 ; word 0 name, word 1 params, word 2 body, word 3 capture names,
 ; word 4 capture float/count flags, word 5 checked arrow.
-(pub :: mkLamDesc (-> String Strings ASTNode Names Ints ASTNode Int))
+(pub struct LamDesc
+  (name : String)
+  (params : Names)
+  (body : ASTNode)
+  (captures : Names)
+  (flags : Ints)
+  (arrow : ASTNode))
+
+(pub :: mkLamDesc (-> String Strings ASTNode Names Ints ASTNode LamDesc))
 (pub fn (mkLamDesc lname lparams body capNames capFloats resultTy)
-  {
-    (let d (memAlloc 48))
-    {
-      (memSetWord d 0 lname)
-      (memSetWord d 1 lparams)
-      (memSetWord d 2 body)
-      (memSetWord d 3 capNames)
-      (memSetWord d 4 capFloats)
-      (memSetWord d 5 resultTy)
-      d
-    }
-  })
+  (LamDesc
+    :name lname
+    :params lparams
+    :body body
+    :captures capNames
+    :flags capFloats
+    :arrow resultTy))
 
 (pub :: emitLambda (-> ASTNode CG CG))
 ;@axiom:effect(io)
@@ -21201,12 +21233,9 @@
 
 (pub :: curParamIndex (-> CG String Int))
 (pub fn (curParamIndex cg name)
-  {
-    (let ps (cgParams cg))
-    (if (== (as ps Int) 0)
-      (- 0 1)
-      (strIndexIn ps name))
-  })
+  (if (let (Some ps) (cgParams cg))
+    (strIndexIn ps name)
+    (- 0 1)))
 
 (pub :: retainParamCaps (-> CG (Vec a) Strings Int CG))
 (pub fn (retainParamCaps cg capNames capRegs i)
@@ -21242,7 +21271,7 @@
 ; The lifted function itself: `emitFnDef`'s shape with `%.env` in
 ; front, and the captures bound as symbols before the body - loaded
 ; from the record at the offsets `emitLambda` stored them to.
-(pub :: emitLamDef (-> Int CG CG))
+(pub :: emitLamDef (-> LamDesc CG CG))
 ;@axiom:effect(io)
 (pub fn (emitLamDef d cg)
   ; The lifted-lambda twin of the re-scan deleted in `emitFnDef`,
@@ -21278,17 +21307,17 @@
   ; Captures are borrowed from this closure's environment.
   ; Their names shadow globals during the ownership walk.
   {
-    (let lname (memGetWordStr d 0))
-    (let lparams (memGetWordVec d 1))
-    (let body (readAstNode d 2))
-    (let capNames (memGetWordVec d 3))
-    (let capFloats (memGetWordVec d 4))
-    (let checkedTy (readAstNode d 5))
+    (let lname d.name)
+    (let lparams d.params)
+    (let body d.body)
+    (let capNames d.captures)
+    (let capFloats d.flags)
+    (let checkedTy d.arrow)
     (let resultTy
       (if (nodeSame checkedTy nilNode)
         nilNode
         (tyResolve (nodeBChild checkedTy))))
-    (let savedSelf (cgTcoNameWord cg))
+    (let savedSelf (cgTcoName cg))
     (let savedTails (cgTailRetain cg))
     {
       (let paramStr (emitParams lparams cg 0))
@@ -21299,13 +21328,13 @@
       (let _4b (vecClear (cgSymKinds cg)))
       (let _5 (cgSetParams cg lparams))
       (let _6 (cgClearParamFlags cg))
-      (let _6b (pairSetSlot cg 6 0))
-      (let _6c (pairSetSlot cg 7 1))
-      (let _6e (pairSetSlot cg 14 checkedTy))
-      (let _6f (cgSetTcoNameWord cg 0))
-      (let _6s (memSetWord (pairSlot cg 18) 0 0))
-      (let rgnSaved (pairSlot cg 9))
-      (let _6d (pairSetSlot cg 9 0))
+      (let _6b (cgSetLlvmParams cg 0))
+      (let _6c (cgSetLiftedLambda cg 1))
+      (let _6e (cgSetLambdaType cg checkedTy))
+      (let _6f (cgSetTcoName cg (None)))
+      (let _6s (vecClear (cgCountedStores cg)))
+      (let rgnSaved (cgRegionDepth cg))
+      (let _6d (cgSetRegionDepth cg 0))
       {
         (let hdr
           (concat
@@ -21349,10 +21378,10 @@
                     (let ret (concat "  ret i64 " (concat (strDup (cgResult cg2)) "")))
                     {
                       (cgSetTailRetain cg2 savedTails)
-                      (cgSetTcoNameWord cg2 savedSelf)
-                      (pairSetSlot cg2 14 0)
-                      (pairSetSlot
-                        (pairSetSlot (emitLine (emitLine (closeAllocaMark cg2) ret) "}") 7 0) 9
+                      (cgSetTcoName cg2 savedSelf)
+                      (cgSetLambdaType cg2 nilNode)
+                      (cgSetRegionDepth
+                        (cgSetLiftedLambda (emitLine (emitLine (closeAllocaMark cg2) ret) "}") 0)
                         rgnSaved)
                     }
                   }
@@ -21905,11 +21934,11 @@
     (let _0 (memSetWord ff 0 (- 0 1)))
     (let _a
       (if (== (pairMatchOK cg scrutExpr arms) 1)
-        (pairSetSlot cg 1 1)
+        (cgSetPairArm cg 1)
         cg))
     (let cg1 (emitExpr scrutExpr cg))
-    (let gotPair (pairSlot cg1 1))
-    (let _z (pairSetSlot cg1 1 0))
+    (let gotPair (cgPairArm cg1))
+    (let _z (cgSetPairArm cg1 0))
     (let sv (strDup (cgResult cg1)))
     (let tagR
       (if (== gotPair 2)
@@ -22012,9 +22041,9 @@
 ; The tail half of `slotReleasesAtEnd`, asked of any tail form.
 (pub :: tailLeavesCovered (-> CG ASTNode Int))
 (pub fn (tailLeavesCovered cg e)
-  (if (== (pairSlot cg 7) 1)
+  (if (== (cgLiftedLambda cg) 1)
     {
-      (let lamTy (pairNode cg 14))
+      (let lamTy (cgLambdaType cg))
       (if (==
             (fldClass cg
               (if (nodeSame lamTy nilNode)
@@ -22057,7 +22086,7 @@
     (let fl (cgResultFloat cg))
     {
       (let cgR
-        (if (&& (!= (pairSlot cg 9) 0)
+        (if (&& (!= (cgRegionDepth cg) 0)
               (&&
                 (|| (== (nodeTag scrutExpr) TAG_E_APP)
                   (|| (== (nodeTag scrutExpr) TAG_E_IF) (== (nodeTag scrutExpr) TAG_E_MATCH)))
@@ -22488,10 +22517,10 @@
           {
             (let v (strDup (cgResult cg)))
             (let fl (cgResultFloat cg))
-            (let lamTy (pairNode cg 14))
+            (let lamTy (cgLambdaType cg))
             {
               (let cgR
-                (if (&& (== (pairSlot cg 7) 1)
+                (if (&& (== (cgLiftedLambda cg) 1)
                       (==
                         (fldClass cg
                           (if (nodeSame lamTy nilNode)
@@ -23635,12 +23664,9 @@
 ; is no parameter.
 (pub :: paramIndexOf (-> CG String Int))
 (pub fn (paramIndexOf cg name)
-  {
-    (let params (cgParams cg))
-    (if (== (as params Int) 0)
-      (- 0 1)
-      (paramIndexIn params name 0))
-  })
+  (if (let (Some params) (cgParams cg))
+    (paramIndexIn params name 0)
+    (- 0 1)))
 
 (pub :: paramIndexIn (-> Names String Int Int))
 (pub fn (paramIndexIn params name i)
@@ -23926,9 +23952,8 @@
                       ; the function would be an infinite loop where the
                       ; correct answer is a value.
                       (if (&& (!= isTail 0)
-                            (&& (cgInTailLoop cg)
-                              (&& (strEq fnName (cgTcoName cg))
-                                (== (vecLen args) (vecLen (cgTcoSlots cg))))))
+                            (&& (cgSelfNameIs cg fnName)
+                              (== (vecLen args) (vecLen (cgTcoSlots cg)))))
                         (emitTailJump args stamp cg)
                         (emitOverApplied fnName args stamp (armMustTail cg isTail fnName args) evs
                           snode)))
@@ -26199,10 +26224,9 @@
 ; The number of source file `file` in the module's table (pair slot
 ; 21), adding it the first time it is asked for.
 (pub :: asmFileIndex (-> CG String Int))
-;@axiom:effect(unsafe)
 (pub fn (asmFileIndex cg file)
   {
-    (let files (as (pairSlot cg 21) (Vec String)))
+    (let files (cgAsmFiles cg))
     (let mut at (- 0 1))
     (let mut i 0)
     {
@@ -26226,10 +26250,9 @@
 ; carries a file's name.
 (pub :: emitAsmFiles (-> CG CG))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitAsmFiles cg)
   {
-    (let files (as (pairSlot cg 21) (Vec String)))
+    (let files (cgAsmFiles cg))
     (let mut i 0)
     {
       (while (< i (vecLen files))
@@ -26301,11 +26324,11 @@
         out
       }
       {
-        (let first (+ (pairSlot cg 20) 1))
+        (let first (+ (cgAsmCookie cg) 1))
         (let k (asmFileIndex cg file))
         (let cookies vecNew)
         {
-          (pairSetSlot cg 20 (+ (pairSlot cg 20) (vecLen items)))
+          (cgSetAsmCookie cg (+ (cgAsmCookie cg) (vecLen items)))
           (for i in 0..(vecLen items)
             (vecPush cookies (concat "i64 " (fmtInt (+ first i)))))
           (vecPush out
@@ -27314,7 +27337,6 @@
 
 (pub :: emitPlainCall (-> String Nodes ASTNode CG ASTNode CG))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitPlainCall fnName args stamp cg snode)
   ; The callee's defining module may have renamed it - a bare
   ; reference reaches whatever symbol the map says (entry file
@@ -27339,10 +27361,10 @@
   {
     (let argRegs vecNew)
     {
-      (let armed (pairSlot cg 1))
+      (let armed (cgPairArm cg))
       (let mt0 (cgTailOK cg))
       {
-        (let _dis (pairSetSlot cg 1 0))
+        (let _dis (cgSetPairArm cg 0))
         (let _mtc (cgSetTailOK cg 0))
         {
           (let bc0 (borrowedFromOwnedClass cg snode))
@@ -27394,8 +27416,8 @@
                               (releaseOwnedArgs cgE fnName args argRegs 0)
                               (cgSetResult cgE pr)
                               (cgSetResultFloat cgE 0)
-                              (pairSetSlot cgE 3 (as tr Int))
-                              (pairSetSlot cgE 1 2)
+                              (cgSetPairTagReg cgE tr)
+                              (cgSetPairArm cgE 2)
                               cgE
                             }
                           }
@@ -27433,7 +27455,7 @@
                                 ; the jump, so they are paid here, as a self
                                 ; tail call pays them; `mustTailOK` holds that
                                 ; no argument reaches one
-                                (releasePendingSlots cgE (as (pairSlot cgE 17) (Vec Int)) 0)
+                                (releasePendingSlots cgE (pairOwningSlots cgE) 0)
                                 (emitLine cgE
                                   (concat
                                     (concat (concat "  " r)
@@ -27600,7 +27622,7 @@
       (for d in decls
         (if (== (nodeTag d) TAG_D_FN)
           {
-            (let _m (cgSetModule cg (nodeModule d)))
+            (let _m (cgSetDeclModule cg d))
             (let _d (cgSetCurDecl cg d))
             (let eFound (findFSigCg cg (nodeAName d)))
             (if (let (Some e) eFound)
@@ -27904,7 +27926,7 @@
       {
         (let a (vecGet args i))
         (if (|| (== (isRegionCoveredCon cg a) 1)
-              (&& (!= (pairSlot cg 9) 0)
+              (&& (!= (cgRegionDepth cg) 0)
                 (&&
                   (|| (== (nodeTag a) TAG_E_APP)
                     (|| (== (nodeTag a) TAG_E_IF) (== (nodeTag a) TAG_E_MATCH)))
@@ -28044,7 +28066,7 @@
 ;     what each one holds before it jumps (`releasePendingSlots`);
 ;   * the prototypes are identical - every parameter is `i64` and both
 ;     return `i64`, so identical means the same COUNT, evidence word
-;     included: `pairSlot 6` for the caller, `args + takesEv` for the
+;     included: `cgLlvmParams` for the caller, `args + takesEv` for the
 ;     callee - and the caller is a plain `fn`, not a lambda or a thunk
 ;     (slot 6 is 0 there, set by `emitLamDef`);
 ;   * no argument is an owned temporary the caller would release after
@@ -28071,17 +28093,16 @@
 ; still needs `--opt 1`.
 ; ------------------------------------------------------------------
 (pub :: mustTailOK (-> CG Int Int String Nodes Int))
-;@axiom:effect(unsafe)
 (pub fn (mustTailOK cg mt takesEv fnName args)
   (if (!= mt 2)
     0
-    (if (!= (pairSlot cg 0) 0)
+    (if (!= (cgPairMode cg) 0)
       0
       (if (cgInTailLoop cg)
         0
-        (if (== (pairSlot cg 6) 0)
+        (if (== (cgLlvmParams cg) 0)
           0
-          (if (!= (pairSlot cg 6) (+ (vecLen args) takesEv))
+          (if (!= (cgLlvmParams cg) (+ (vecLen args) takesEv))
             0
             (if (> (vecLen (cgPendingStrings cg)) 0)
               0
@@ -28093,7 +28114,7 @@
                   ; retained and the temporary released after the
                   ; call (`emitPlainCall`); a musttail has no after
                   0
-                  (if (== (slotsReachArgs cg (as (pairSlot cg 17) (Vec Int)) args 0) 1)
+                  (if (== (slotsReachArgs cg (pairOwningSlots cg) args 0) 1)
                     0
                     1))))))))))
 
@@ -28131,9 +28152,10 @@
 ; level and answered at the other.
 (pub :: fnDefArityCg (-> CG String Int))
 (pub fn (fnDefArityCg cg name)
-  (if (cgDeclIndexBuilt cg)
-    (if (let (Some id) (internFind (cgDeclIntern cg) (declSpellingOf (mangledForCg cg name))))
-      (vecGet (cgDeclArity cg) id)
+  (if (let (Some index) (cgDeclIndex cg))
+    (if (let (Some id) (internFind (internWordOf index.names)
+                         (declSpellingOf (mangledForCg cg name))))
+      (vecGet index.arity id)
       (- 0 1))
     (- 0 1)))
 
@@ -28275,7 +28297,7 @@
 ; skipped-reset leak).
 (pub :: isRegionCoveredCon (-> CG ASTNode Int))
 (pub fn (isRegionCoveredCon cg e)
-  (if (|| (== (pairSlot cg 9) 0)
+  (if (|| (== (cgRegionDepth cg) 0)
         (if (nodeSame e nilNode)
           true
           (! (dropFreeExpr cg e))))
@@ -29518,14 +29540,16 @@
 ; longer costs the function its variant.
 ; The declared result type of `node`, or 0. What `pairPayloadClass`
 ; reads to decide whether a payload is a share or a word.
-(pub :: pairRetTyOf (-> CG ASTNode ASTNode))
+(pub :: pairRetTyOf (-> CG ASTNode (Option ASTNode)))
 (pub fn (pairRetTyOf cg node)
-  {
-    (let eFound (findFSigCg cg (nodeAName node)))
-    (if (let (Some e) eFound)
-      (arrowResultTy (fsigTy e))
-      nilNode)
-  })
+  (if (let (Some signature) (findFSigCg cg (nodeAName node)))
+    {
+      (let ty (arrowResultTy (fsigTy signature)))
+      (if (nodeSame ty nilNode)
+        (None)
+        (Some ty))
+    }
+    (None)))
 
 (pub :: pairFnOK (-> CG ASTNode Int))
 (pub fn (pairFnOK cg node)
@@ -29593,7 +29617,10 @@
 (pub :: pairBoundNames (-> CG ASTNode Names))
 (pub fn (pairBoundNames cg e)
   {
-    (let v (strVecCopy (cgParams cg)))
+    (let v
+      (if (let (Some params) (cgParams cg))
+        (strVecCopy params)
+        vecNew))
     (let h (spineHead e))
     (if (!= (nodeTag h) TAG_E_VAR)
       v
@@ -29652,7 +29679,7 @@
   {
     (let name (nodeAName node))
     (let paramStr (emitParams (nodeBNames node) cg 0))
-    (let rt (pairRetTyOf cg node))
+    (let resultType (pairRetTyOf cg node))
     (let _r (cgSetTmp cg 0))
     {
       (let sym (llvmSym (strDup name)))
@@ -29669,7 +29696,10 @@
                   (concat (concat "  " r) (concat " = call { i64, i64 } @" (concat sym "$pair")))
                   (concat "(" (concat paramStr ")")))))
             {
-              (let cgB (emitPairBox cgC rt r))
+              (let cgB
+                (if (let (Some rt) resultType)
+                  (emitPairBox cgC rt r)
+                  (cgFail cgC "AX4002" "pair wrapper has no checked result type")))
               (emitLine (emitLine cgB (concat "  ret i64 " (strDup (cgResult cgB)))) "}")
             }
           }
@@ -29876,7 +29906,7 @@
       {
         (let v (strDup (cgResult cgA)))
         (let _rt
-          (if (== (pairPayloadClass cg (pairNode cg 0) (pairCtorNameOf e)) 2)
+          (if (== (pairPayloadClass cg (cgPairResultType cg) (pairCtorNameOf e)) 2)
             (if (== (valueOwnedRef cgA (nodeBChild e)) 1)
               cgA
               (emitRetainOf cgA v))
@@ -30386,7 +30416,7 @@
                         (if (&& (== releasable 1)
                               (&& (!= (cgTerminated cgB) 1)
                                 (== (isStaticSentinelNode cgB valExpr) 0)))
-                          (if (&& (!= (pairSlot cgB 9) 0)
+                          (if (&& (!= (cgRegionDepth cgB) 0)
                                 (&&
                                   (|| (== (nodeTag valExpr) TAG_E_APP)
                                     (|| (== (nodeTag valExpr) TAG_E_IF)
@@ -30720,7 +30750,7 @@
 ; a name its signature doesn't bind.
 (pub :: curSigVarBit (-> CG String Int))
 (pub fn (curSigVarBit cg n)
-  (if (== (pairSlot cg 7) 1)
+  (if (== (cgLiftedLambda cg) 1)
     (- 0 1)
     {
       (let d (cgCurDecl cg))
@@ -31956,7 +31986,6 @@
 
 (pub :: emitLetMAt (-> ASTNode CG Int CG))
 ;@axiom:effect(io)
-;@axiom:effect(unsafe)
 (pub fn (emitLetMAt node cg tail)
   {
     (let name (nodeAName node))
@@ -31971,7 +32000,7 @@
         (let an (allocReg cg1))
         (let initOwned (valueOwnedRef cg1 valExpr))
         (let cls (slotClassOf cg1 node))
-        (let regMark (vecLen (pairNodes cg1 18)))
+        (let regMark (vecLen (cgCountedStores cg1)))
         (let kept (slotKeptByCaller cg1 node))
         {
           (let ar (tmpStr "s" an))
@@ -31995,7 +32024,7 @@
                   ; release it won't make
                   (if (&& (== cls 2) (== own 0))
                     {
-                      (truncateNodeRegistry (pairNodes cg1 18) regMark)
+                      (truncateNodeRegistry (cgCountedStores cg1) regMark)
                       (vecSet (cgSymKinds cg1) (- (vecLen (cgSymKinds cg1)) 1) 1)
                     }
                     (cgSymKinds cg1))
@@ -32007,7 +32036,7 @@
                     {
                       (let _s
                         (emitLine cgI (concat "  store i64 " (concat valReg (concat ", ptr " ar)))))
-                      (let pend (as (pairSlot cgI 17) (Vec Int)))
+                      (let pend (pairOwningSlots cgI))
                       {
                         (let pmark (vecLen pend))
                         {
@@ -32016,19 +32045,14 @@
                           ; below and pays it before the jump
                           (if (== own 1)
                             {
-                              (let rec (memAlloc 32))
                               (let aliases (:: vecNew Names))
-                              {
-                                (vecPush aliases name)
-                                (memSetWord rec 0 ar)
-                                (memSetWord rec 1 name)
-                                (memSetWord rec 3
-                                  (if (slotAliasUnknown cg1 aliases body)
-                                    1
-                                    0))
-                                (memSetWord rec 2 aliases)
-                                (vecPush pend rec)
-                              }
+                              (vecPush aliases name)
+                              (vecPush pend
+                                (PendingSlot
+                                  :slot ar
+                                  :name name
+                                  :aliases aliases
+                                  :unknown (slotAliasUnknown cg1 aliases body)))
                             }
                             pend)
                           {
@@ -32037,7 +32061,7 @@
                                 (emitExprTail body cgI)
                                 (emitExpr body cgI)))
                             {
-                              (memSetWord (as pend Int) 0 pmark)
+                              (truncatePendingSlots pend pmark)
                               (symRestore cgB mark)
                               ; The release goes at the scope end, in the block
                               ; the body left current - not when the body ended
@@ -32118,7 +32142,7 @@
                   }
                   {
                     (let cgR
-                      (if (if (== (nodeInVec (pairNodes cg1 18) node 0) 1)
+                      (if (if (== (nodeInVec (cgCountedStores cg1) node 0) 1)
                         (== (valueOwnedRef cg1 valExpr) 0)
                         false)
                         (emitRetainOf cg1 v)
@@ -32212,7 +32236,7 @@
       1
       (if (== (slotClassOf cg e) 2)
         {
-          (let reg (pairNodes cg 18))
+          (let reg (cgCountedStores cg))
           {
             (if (== (nodeInVec reg e 0) 1)
               reg
@@ -32256,9 +32280,9 @@
       1
       (if (== tail 0)
         0
-        (if (== (pairSlot cg 7) 1)
+        (if (== (cgLiftedLambda cg) 1)
           {
-            (let lamTy (pairNode cg 14))
+            (let lamTy (cgLambdaType cg))
             (if (==
                   (fldClass cg
                     (if (nodeSame lamTy nilNode)
@@ -32913,10 +32937,10 @@
       (let _7 (emitLine cg (concat (concat "  store i64 " er) (concat ", ptr " (concat p1 "")))))
       (let _8 (emitLine cg (concat (concat "  store i64 " kr) (concat ", ptr " (concat p2 "")))))
       (let _8r (emitRegionSeq cg cell))
-      (let rgnSaved (pairSlot cg 9))
-      (let _rgn (pairSetSlot cg 9 (+ rgnSaved 1)))
+      (let rgnSaved (cgRegionDepth cg))
+      (let _rgn (cgSetRegionDepth cg (+ rgnSaved 1)))
       (let cgB (emitExpr (nodeBChild node) cg))
-      (let _rgnBack (pairSetSlot cgB 9 rgnSaved))
+      (let _rgnBack (cgSetRegionDepth cgB rgnSaved))
       (if (== (cgTerminated cgB) 1)
         cgB
         {
@@ -33439,7 +33463,7 @@
 ; Is the owner registry in this module (slot 19, `parScan`)?
 (pub :: resRegistryOn (-> CG Int))
 (pub fn (resRegistryOn cg)
-  (pairSlot cg 19))
+  (cgRegistry cg))
 
 ; `__resource_unwinding`: 1 while a recovery abort runs the cleanup of
 ; the owners made inside its extent, otherwise 0 - always 0 in a module
@@ -33775,14 +33799,10 @@
 ; callback with a concrete reference result. Its lifted body returns an
 ; owned share and cannot store or consume its argument.
 (pub :: flowIdentityCallback (-> CG String Bool))
-;@axiom:effect(unsafe)
-(pub fn (flowIdentityCallback cg n)
-  {
-    (let v (pairSlot cg 15))
-    (if (== v 0)
-      false
-      (== (strVecHas (as v (Vec Int)) n) 1))
-  })
+(pub fn (flowIdentityCallback cg name)
+  (if (let (Some identities) (cgFlowIdentities cg))
+    (== (strVecHas identities name) 1)
+    false))
 
 (pub :: literalRefIdentity (-> CG ASTNode Bool))
 (pub fn (literalRefIdentity cg e)
@@ -33837,19 +33857,19 @@
               (if (== (vecLen ids) 0)
                 base
                 {
-                  (let saved (pairSlot cg 15))
+                  (let saved (cgFlowIdentities cg))
                   (let savedDecl (cgCurDecl cg))
-                  (let savedMod (cgModuleWord cg))
+                  (let savedMod (cgModule cg))
                   (let cell regionNew)
                   {
-                    (pairSetSlot cg 15 (as ids Int))
+                    (cgSetFlowIdentities cg (Some ids))
                     (cgSetCurDecl cg d)
-                    (cgSetModule cg (nodeModule d))
+                    (cgSetDeclModule cg d)
                     (flowStashes cg (nodeCChild d) ps vecNew cell)
                     {
                       (let mask (regionNet cell))
                       {
-                        (pairSetSlot cg 15 saved)
+                        (cgSetFlowIdentities cg saved)
                         (cgSetCurDecl cg savedDecl)
                         (cgSetModule cg savedMod)
                         mask

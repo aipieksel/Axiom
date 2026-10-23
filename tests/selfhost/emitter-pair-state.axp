@@ -1,0 +1,205 @@
+; Auxiliary CG state owns typed reference ledgers. Optional checked facts
+; use explicit absence paths, and scope truncation retires nested shares.
+(import codegen)
+(import parser)
+(import core)
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: absent (-> (Option a) Bool))
+(fn (absent value)
+  (if (let (Some _) value)
+    false
+    true))
+
+(:: holdNames (-> Names Int))
+(fn (holdNames names)
+  {
+    (let cg newCG)
+    (set cg.pairState.names names)
+    (count names)
+  })
+
+(:: holdTag (-> String Int))
+(fn (holdTag tag)
+  {
+    (let cg newCG)
+    (set cg.pairState.tagReg tag)
+    (count tag)
+  })
+
+(:: holdSlot (-> String String Names Int))
+(fn (holdSlot slot name aliases)
+  {
+    (let cg newCG)
+    (vecPush cg.pairState.owningSlots
+      (PendingSlot :slot slot :name name :aliases aliases :unknown false))
+    (count slot)
+  })
+
+(:: pushSlot (-> CG String String Names Bool CG))
+(fn (pushSlot cg slot name aliases unknown)
+  {
+    (vecPush cg.pairState.owningSlots
+      (PendingSlot :slot slot :name name :aliases aliases :unknown unknown))
+    cg
+  })
+
+(:: emptyChecks ())
+;@axiom:effect(io)
+(fn (emptyChecks)
+  {
+    (let cg newCG)
+    (say 1 (absent cg.pairState.returnTy))
+    (say 2 (absent cg.pairState.lambdaArrow))
+    (say 3 (absent cg.pairState.identities))
+    (say 4 (absent cg.pairState.functionFloats))
+    (say 5 (== (vecLen cg.pairState.names) 0))
+    (say 6 (== (vecLen cg.pairState.mutMemo) 0))
+    (say 7 (== (vecLen cg.pairState.owningSlots) 0))
+    (say 8 (== (vecLen cg.pairState.countedStores) 0))
+    (say 9 (== (vecLen cg.pairState.sourceFiles) 0))
+    (let names (vecPush vecNew (strDup "owned")))
+    (let before (count names))
+    (let during (holdNames names))
+    (say 10 (== during (+ before 1)))
+    (say 11 (== (count names) before))
+    (let tag (strDup "%tag"))
+    (let tagBefore (count tag))
+    (let tagDuring (holdTag tag))
+    (say 12 (== tagDuring (+ tagBefore 1)))
+    (say 13 (== (count tag) tagBefore))
+    (set cg.pairState.identities (Some names))
+    (say 14 (flowIdentityCallback cg "owned"))
+    (say 15 (! (flowIdentityCallback cg "missing")))
+    (set cg.pairState.identities (None))
+    (say 16 (! (flowIdentityCallback cg "owned")))
+    (say 17 (== (count names) before))
+  })
+
+(:: typeChecks ())
+;@axiom:effect(io)
+(fn (typeChecks)
+  {
+    (let cg newCG)
+    (let arrow (mkTArr (mkTCon "Float" nodesNew) (mkTCon "Int" nodesNew)))
+    (let before (count arrow))
+    (probeLambdaType cg arrow)
+    (say 18 (! (absent cg.pairState.lambdaArrow)))
+    (say 19 (== (count arrow) (+ before 1)))
+    (say 20 (== (paramIsFloat cg 0) 1))
+    (probeLambdaType cg nilNode)
+    (say 21 (absent cg.pairState.lambdaArrow))
+    (say 22 (== (count arrow) before))
+    (say 23 (absent (pairRetTyOf cg (mkDFnAt "missing" vecNew (mkEInt 0) 0))))
+    (say 24 (absent (probeCheckedFlags cg "Checked")))
+    (probeFunctionTypes cg
+      (vecPush vecNew (FunctionType :name "Checked" :ty arrow :arity (Some 1))))
+    (say 25 (! (absent cg.pairState.functionFloats)))
+    (say 26
+      (if (let (Some flags) (probeCheckedFlags cg "Checked"))
+        (&& (== (vecLen flags) 2) (&& (== (vecGet flags 0) 1) (== (vecGet flags 1) 0)))
+        false))
+    (say 27 (absent (probeCheckedFlags cg "missing")))
+    (set cg.pairState.functionFloats (None))
+    (say 28 (absent (probeCheckedFlags cg "Checked")))
+    (let resultType (mkTCon "Int" nodesNew))
+    (vecPush cg.floatSigs
+      (FSig
+        :name "paired"
+        :nameLen 6
+        :flags vecNew
+        :sigTy (mkTArr (mkTVar "a") resultType)
+        :takesEv 0
+        :owned 0
+        :arity 1
+        :stash 0
+        :ret 0
+        :consume 0
+        :transfer 0
+        :callers 0
+        :writes 0))
+    (let result (pairRetTyOf cg (mkDFnAt "paired" vecNew (mkEInt 0) 0)))
+    (say 29
+      (if (let (Some ty) result)
+        (nodeSame ty resultType)
+        false))
+    (set cg.pairState.returnTy result)
+    (say 30 (== (probePairMode cg) 1))
+    (set cg.pairState.returnTy (None))
+    (say 31 (== (probePairMode cg) 0))
+  })
+
+(:: ledgerChecks ())
+;@axiom:effect(io)
+(fn (ledgerChecks)
+  {
+    (let slot (strDup "%slot"))
+    (let name (strDup "value"))
+    (let aliases (vecPush vecNew name))
+    (let slotBefore (count slot))
+    (let nameBefore (count name))
+    (let aliasesBefore (count aliases))
+    (let during (holdSlot slot name aliases))
+    (say 32 (== during (+ slotBefore 1)))
+    (say 33 (== (count slot) slotBefore))
+    (say 34 (== (count name) nameBefore))
+    (say 35 (== (count aliases) aliasesBefore))
+    (let cg newCG)
+    (pushSlot cg slot name aliases true)
+    (say 36 (== (slotsReachArgs cg cg.pairState.owningSlots nodesNew 0) 1))
+    (say 37 (== (count slot) (+ slotBefore 1)))
+    (probeTruncateSlots cg 0)
+    (say 38 (== (count slot) slotBefore))
+    (say 39 (== (vecLen cg.pairState.owningSlots) 0))
+    (pushSlot cg slot name aliases false)
+    (say 40 (== (slotsReachArgs cg cg.pairState.owningSlots nodesNew 0) 0))
+    (say 41
+      (== (slotsReachArgs cg cg.pairState.owningSlots (vecPush nodesNew (mkEVar "value")) 0) 1))
+    (probeTruncateSlots cg 0)
+    (let node (mkEInt 9))
+    (let nodeBefore (count node))
+    (vecPush cg.pairState.countedStores node)
+    (say 42 (== (count node) (+ nodeBefore 1)))
+    (vecClear cg.pairState.countedStores)
+    (say 43 (== (count node) nodeBefore))
+    (vecPush cg.pairState.sourceFiles name)
+    (say 44 (== (count name) (+ nameBefore 1)))
+    (vecClear cg.pairState.sourceFiles)
+    (say 45 (== (count name) nameBefore))
+    (mutMemoAdd cg.pairState.mutMemo name node node aliases vecNew 3)
+    (say 46 (== (vecLen cg.pairState.mutMemo) 1))
+    (say 47 (== (count aliases) (+ aliasesBefore 1)))
+    (mutMemoOpen cg)
+    (say 48 (== (vecLen cg.pairState.mutMemo) 0))
+    (say 49 (== (count aliases) aliasesBefore))
+    (say 50 (== cg.pairState.mutMemoDepth 1))
+    (mutMemoClose cg)
+    (say 51 (== cg.pairState.mutMemoDepth 0))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (emptyChecks)
+    (typeChecks)
+    (ledgerChecks)
+    0
+  })

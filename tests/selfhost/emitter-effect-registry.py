@@ -14,7 +14,7 @@ check_output = SUPPORT['check_output']
 BRIDGE = r'''
 (pub :: probeEffectModule (-> CG String CG))
 (pub fn (probeEffectModule cg name)
-  (cgSetModule cg (as name Int)))
+  (cgSetModule cg (Some name)))
 '''
 
 

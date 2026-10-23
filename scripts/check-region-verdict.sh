@@ -202,8 +202,8 @@ head = "(pub fn (isRegionCoveredCon cg e)"
 if cg.count(head) != 1:
     sys.exit("kill 1: predicate head found %d times, wanted 1" % cg.count(head))
 i = cg.index(head)
-j = cg.index("(pairSlot cg 9)", i)
-cg = cg[:j] + "0" + cg[j + len("(pairSlot cg 9)"):]
+j = cg.index("(cgRegionDepth cg)", i)
+cg = cg[:j] + "0" + cg[j + len("(cgRegionDepth cg)"):]
 
 # Kill 3, slice 5: turn off only the literal branch. Named function
 # descriptors keep their static sentinel, isolating the string traffic.

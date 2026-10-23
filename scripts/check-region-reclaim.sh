@@ -139,7 +139,7 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 # Anchored on the predicate's own head, and only the first guard
-# read after it, so a later use of `pairSlot` elsewhere in the
+# read after it, so a later use of `cgRegionDepth` elsewhere in the
 # growing file is not silently ablated instead of - or as well as -
 # this one. `(== 0 0)` is always true, so the rule still exists,
 # still runs, and never fires.
@@ -148,8 +148,8 @@ if s.count(head) != 1:
     sys.stderr.write("predicate head not found verbatim\n")
     sys.exit(1)
 i = s.index(head)
-j = s.index("(pairSlot cg 9)", i)
-s = s[:j] + "0" + s[j + len("(pairSlot cg 9)"):]
+j = s.index("(cgRegionDepth cg)", i)
+s = s[:j] + "0" + s[j + len("(cgRegionDepth cg)"):]
 open(p, "w").write(s)
 PY
 then
