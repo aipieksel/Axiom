@@ -2445,20 +2445,73 @@
 ; increase, and the FIRST entry that matches is the smallest index.
 ; The bucket interleaves names that hash together and that does not
 ; disturb the order.
-; One packed word per definition. The name lives in `DupIdx.names` and
+; One packed word per definition while its fields fit. The name lives
+; in `DupIdx.names` and
 ; the word holds a link to it, so the entry takes no share and the
 ; vector frees the strings with itself (MM-VAL-10b). `ns` picks which
 ; bucket table the word sits in, which is what keeps both the link and
 ; the declaration index at 32 bits: a third field would not fit.
+; Wider populations use owning fallback rows before either field truncates.
 (struct DupRef word
   (name : (Link String UInt32))
   (idx : UInt32))
+
+; Definitions past either packed-width bound keep a full-width owning row.
+; Once this starts, later definitions stay here in insertion order.
+(struct DupWide
+  (name : String)
+  (ns : Int)
+  (idx : Int))
 
 (struct DupIdx
   (names : (Vec String))
   (value : (Vec (Vec DupRef)))
   (types : (Vec (Vec DupRef)))
-  (sigs : (Vec (Vec DupRef))))
+  (sigs : (Vec (Vec DupRef)))
+  (wide : (Vec DupWide))
+  (mut compact : Bool)
+  (limit : Int))
+
+; A UInt32 Link stores index plus one; the scalar declaration index
+; can use the same maximum itself. Check both before narrowing.
+(:: dupLinkLimit Int)
+(fn (dupLinkLimit)
+  4294967295)
+
+; Capacity is injectable for bounded tests. An oversized population
+; starts with one unused packed bucket rather than allocating from it.
+(:: dupIdxNew (-> Int Int DupIdx))
+(fn (dupIdxNew hint capacity)
+  {
+    (let limit
+      (if (< capacity 0)
+        0
+        (if (> capacity dupLinkLimit)
+          dupLinkLimit
+          capacity)))
+    (let compact (&& (>= hint 0) (<= hint limit)))
+    (let n
+      (if compact
+        (fnIdxBuckets hint)
+        1))
+    (DupIdx
+      :names vecNew
+      :value (dupBucketVec n)
+      :types (dupBucketVec n)
+      :sigs (dupBucketVec n)
+      :wide vecNew
+      :compact compact
+      :limit limit)
+  })
+
+; Keep the bucket selector's existing catch-all signature namespace.
+(:: dupTableNS (-> Int Int))
+(fn (dupTableNS ns)
+  (if (== ns NS_VALUE)
+    NS_VALUE
+    (if (== ns NS_TYPE)
+      NS_TYPE
+      NS_SIG)))
 
 (:: dupBucketVec (-> Int (Vec (Vec DupRef))))
 (fn (dupBucketVec n)
@@ -2485,8 +2538,14 @@
 
 (pub :: firstDefiner (-> DupIdx Int Int String (Option Int)))
 (pub fn (firstDefiner idx i ns name)
-  (firstDefinerScan idx (vecGet (dupTable idx ns) (% (fnIdxHash name) (vecLen (dupTable idx ns))))
-    i name 0))
+  {
+    (let found
+      (firstDefinerScan idx
+        (vecGet (dupTable idx ns) (% (fnIdxHash name) (vecLen (dupTable idx ns)))) i name 0))
+    (if (let (Some at) found)
+      (Some at)
+      (firstDefinerWide idx.wide i (dupTableNS ns) name 0))
+  })
 
 (pub :: firstDefinerScan (-> DupIdx (Vec DupRef) Int String Int (Option Int)))
 (pub fn (firstDefinerScan idx bucket i name k)
@@ -2500,6 +2559,19 @@
         (firstDefinerScan idx bucket i name (+ k 1)))
     }))
 
+; Every packed insertion precedes every fallback row, so the packed
+; match above remains first. The fallback preserves insertion order too.
+(:: firstDefinerWide (-> (Vec DupWide) Int Int String Int (Option Int)))
+(fn (firstDefinerWide rows i ns name k)
+  (if (>= k (vecLen rows))
+    None
+    {
+      (let entry (vecGet rows k))
+      (if (&& (== entry.ns ns) (&& (< entry.idx i) (strEq entry.name name)))
+        (Some entry.idx)
+        (firstDefinerWide rows i ns name (+ k 1)))
+    }))
+
 ; One entry per (name, namespace) a declaration defines, carrying the
 ; declaration's index. An `effect` contributes one per operation and
 ; an `extern` block one per item, which is why this is built from `declFields`
@@ -2510,14 +2582,10 @@
 (pub :: dupIdxBuild (-> (Vec ASTNode) DupIdx))
 (pub fn (dupIdxBuild decls)
   {
-    (let n (fnIdxBuckets (vecLen decls)))
-    (let idx
-      (DupIdx :names vecNew :value (dupBucketVec n) :types (dupBucketVec n) :sigs (dupBucketVec n)))
-    {
-      (for i in 0..(vecLen decls)
-        (dupIdxAddDecl idx (vecGet decls i) i))
-      idx
-    }
+    (let idx (dupIdxNew (vecLen decls) dupLinkLimit))
+    (for i in 0..(vecLen decls)
+      (dupIdxAddDecl idx (vecGet decls i) i))
+    idx
   })
 
 (pub :: dupIdxAddDecl (-> DupIdx ASTNode Int Int))
@@ -2542,16 +2610,22 @@
 
 (pub :: dupIdxPut (-> DupIdx String Int Int Int))
 (pub fn (dupIdxPut idx name ns i)
-  {
-    (let bs (dupTable idx ns))
-    (let b (% (fnIdxHash name) (vecLen bs)))
-    (let id (vecLen idx.names))
-    {
-      (vecPush idx.names name)
-      (vecPush (vecGet bs b) (DupRef :name (linkTo idx.names id) :idx (as i UInt32)))
-      0
-    }
-  })
+  (if (< i 0)
+    __indexTrap
+    (if (&& idx.compact (&& (<= i idx.limit) (< (vecLen idx.names) idx.limit)))
+      {
+        (let bs (dupTable idx ns))
+        (let b (% (fnIdxHash name) (vecLen bs)))
+        (let id (vecLen idx.names))
+        (vecPush idx.names name)
+        (vecPush (vecGet bs b) (DupRef :name (linkTo idx.names id) :idx (as i UInt32)))
+        0
+      }
+      {
+        (set idx.compact false)
+        (vecPush idx.wide (DupWide :name name :ns (dupTableNS ns) :idx i))
+        0
+      })))
 
 ; The TAG_FIELD vector of a declaration that defines MORE THAN ONE
 ; value name, or None for the ordinary kind that defines just `nodeA`.
