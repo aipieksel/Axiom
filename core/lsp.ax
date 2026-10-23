@@ -7764,17 +7764,17 @@
     ((ParseFailed error) vecNew)
     ((ParseSuccess declarations after) declarations)))
 
-;; The same, or 0 when reading the document meant dropping some of its
+;; The same, or None when reading the document meant dropping some of its
 ;; tokens: a rename over that tree would leave the dropped references
 ;; spelt the old way.
-(pub :: lspNavParseExact (-> String (Vec ASTNode)))
+(pub :: lspNavParseExact (-> String (Option Nodes)))
 (pub fn (lspNavParseExact src)
   (match (lspParse src)
-    ((ParseFailed error) nilNodes)
+    ((ParseFailed error) None)
     ((ParseSuccess declarations position)
       (if (== position (- 0 2))
-        nilNodes
-        declarations)
+        None
+        (Some declarations))
     )))
 
 ; ------------------------------------------------------------------
@@ -8053,21 +8053,18 @@
 ; ------------------------------------------------------------------
 (pub :: lspPrepareRename (-> String Int Int))
 (pub fn (lspPrepareRename src params)
-  {
-    (let decls (lspNavParseExact src))
-    (if (== (as decls Int) 0)
-      jsonNull
-      {
-        (let ix (lspLineIndex src))
-        (let occs (lspNavOccurrences src decls))
-        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
-          (if (lspNavRenamable o)
-            (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix o.span)) "placeholder"
-              (jsonStr o.name))
-            jsonNull)
+  (if (let (Some decls) (lspNavParseExact src))
+    {
+      (let ix (lspLineIndex src))
+      (let occs (lspNavOccurrences src decls))
+      (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+        (if (lspNavRenamable o)
+          (jsonObjPut (jsonObjPut jsonObj "range" (lspRangeIx src ix o.span)) "placeholder"
+            (jsonStr o.name))
           jsonNull)
-      })
-  })
+        jsonNull)
+    }
+    jsonNull))
 
 ; ------------------------------------------------------------------
 ; `textDocument/rename`: a WorkspaceEdit over every occurrence of the
@@ -8087,27 +8084,24 @@
 (pub :: lspRename (-> LspWorkspace String String Int Strings Strings Int))
 ;@axiom:effect(io)
 (pub fn (lspRename workspace src uri params uris texts)
-  {
-    (let decls (lspNavParseExact src))
-    (if (== (as decls Int) 0)
-      jsonNull
-      {
-        (let ix (lspLineIndex src))
-        (let occs (lspNavOccurrences src decls))
-        (let newName (jsonGetStr params "newName"))
-        (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
-          (if (|| (lspNavNot (lspNavRenamable o))
-                (|| (lspNavNot (lspNavValidName newName)) (strEq newName o.name)))
-            jsonNull
-            {
-              (let key o.key)
-              (if (lspNavIsTop key)
-                (lspRenameTop workspace src uri ix occs key newName uris texts)
-                (lspRenameLocal src uri ix decls occs key newName))
-            })
-          jsonNull)
-      })
-  })
+  (if (let (Some decls) (lspNavParseExact src))
+    {
+      (let ix (lspLineIndex src))
+      (let occs (lspNavOccurrences src decls))
+      (let newName (jsonGetStr params "newName"))
+      (if (let (Some o) (lspNavAt occs (lspOffsetOf src ix (jsonGet params "position"))))
+        (if (|| (lspNavNot (lspNavRenamable o))
+              (|| (lspNavNot (lspNavValidName newName)) (strEq newName o.name)))
+          jsonNull
+          {
+            (let key o.key)
+            (if (lspNavIsTop key)
+              (lspRenameTop workspace src uri ix occs key newName uris texts)
+              (lspRenameLocal src uri ix decls occs key newName))
+          })
+        jsonNull)
+    }
+    jsonNull))
 
 (pub :: lspRenameLocal (-> String String Ints (Vec ASTNode) (Vec LspOcc) String String Int))
 (pub fn (lspRenameLocal src uri ix decls occs key newName)
