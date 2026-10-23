@@ -1748,5 +1748,10 @@ if python3 "$repo_root/tests/tools/driver-run-tool-results.py" --axiom "$s1"; th
 else
   failed=$((failed + 1))
 fi
+if python3 "$repo_root/tests/selfhost/pkg-lookup-options.py" --axiom "$s1"; then
+  passed=$((passed + 1))
+else
+  failed=$((failed + 1))
+fi
 echo "$passed passed, $failed failed"
 [[ "$failed" == 0 ]]

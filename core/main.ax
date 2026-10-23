@@ -1845,26 +1845,43 @@
 (pub fn (manifestEntry)
   {
     (let mf (pkgFindManifest ""))
-    (if (== (strLen mf) 0)
-      None
-      {
-        (let f (pkgEntryFile ""))
-        (if (fileExists f)
-          (Some f)
-          ; `die` answers `Int` and the entry answers `Option String`: an
-          ; `if` whose arms disagree is a type error, so the refusal
-          ; sequences before None, which it never reaches.
-          {
-            (die
-              (concat
-                (concat "error: the project manifest `"
-                  (concat mf (concat "` names no entry file that exists (want `" f)))
-                (concat "`)"
-                  "\n       Set `main` to move it, or write `Main.ax` beside the manifest.\n"))
-              1)
-            None
-          })
-      })
+    (match mf
+      ((None) None)
+      ((Some mf)
+        {
+          (let f (pkgEntryFile ""))
+          (match f
+            ((None)
+              {
+                (die
+                  (concat
+                    (concat "error: the project manifest `"
+                      (concat mf (concat "` names no entry file that exists (want `" "")))
+                    (concat "`)"
+                      "\n       Set `main` to move it, or write `Main.ax` beside the manifest.\n"))
+                  1)
+                None
+              }
+            )
+            ((Some f)
+              (if (fileExists f)
+                (Some f)
+                ; `die` answers `Int` and the entry answers `Option String`: an
+                ; `if` whose arms disagree is a type error, so the refusal
+                ; sequences before None, which it never reaches.
+                {
+                  (die
+                    (concat
+                      (concat "error: the project manifest `"
+                        (concat mf (concat "` names no entry file that exists (want `" f)))
+                      (concat "`)"
+                        "\n       Set `main` to move it, or write `Main.ax` beside the manifest.\n"))
+                    1)
+                  None
+                })
+            ))
+        }
+      ))
   })
 
 ; `axiom fetch`: check out the manifest's registry dependencies.
@@ -1889,15 +1906,17 @@
       ((None)
         {
           (let mf (pkgFindManifest ""))
-          (if (== (strLen mf) 0)
-            (die "error: no axiom.pkg at or above the working directory\n" 1)
-            {
-              (let text (unwrapOr (readFile mf) ""))
+          (match mf
+            ((None) (die "error: no axiom.pkg at or above the working directory\n" 1))
+            ((Some mf)
               {
-                (pkgCheckLines text mf)
-                (fetchUrls (pkgFetchUrls text) (pathDir mf) 0)
+                (let text (unwrapOr (readFile mf) ""))
+                {
+                  (pkgCheckLines text mf)
+                  (fetchUrls (pkgFetchUrls text) (pathDir mf) 0)
+                }
               }
-            })
+            ))
         }
       )
       ((Some p)
@@ -2242,9 +2261,13 @@
                             ((None)
                               {
                                 (let nm (pkgName (pathDir inp)))
-                                (if (> (strLen nm) 0)
-                                  nm
-                                  "output")
+                                (match nm
+                                  ((None) "output")
+                                  ((Some nm)
+                                    (if (> (strLen nm) 0)
+                                      nm
+                                      "output")
+                                  ))
                               }
                             )
                             ((Some value)
@@ -2252,9 +2275,13 @@
                                 value
                                 {
                                   (let nm (pkgName (pathDir inp)))
-                                  (if (> (strLen nm) 0)
-                                    nm
-                                    "output")
+                                  (match nm
+                                    ((None) "output")
+                                    ((Some nm)
+                                      (if (> (strLen nm) 0)
+                                        nm
+                                        "output")
+                                    ))
                                 })
                             )))
                         {

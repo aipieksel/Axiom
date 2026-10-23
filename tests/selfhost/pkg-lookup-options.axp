@@ -1,0 +1,104 @@
+(import pkg)
+(import IO)
+(import Sys)
+(import Str)
+(import Vec)
+
+(:: same (-> (Option String) (Option String) Bool))
+(fn (same a b)
+  (match a
+    ((None)
+      (match b
+        ((None) true)
+        ((Some _) false))
+    )
+    ((Some text)
+      (match b
+        ((None) false)
+        ((Some expected) (strEq text expected)))
+    )))
+
+(:: outcome (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (outcome n yes)
+  (println "{n} {yes}"))
+
+(:: showText (-> (Option String) ()))
+;@axiom:effect(io)
+(fn (showText value)
+  (match value
+    ((None) (println "None"))
+    ((Some text)
+      {
+        (let n (strLen text))
+        (println "Some {n}:{text}")
+      }
+    )))
+
+(:: showInt (-> (Option Int) ()))
+;@axiom:effect(io)
+(fn (showInt value)
+  (match value
+    ((None) (println "None"))
+    ((Some n) (println "Some {n}"))))
+
+(:: discard (-> (Option String) Int))
+(fn (discard value)
+  (match value
+    ((None) 0)
+    ((Some text) (strLen text))))
+
+(:: live Int)
+(fn (live)
+  (- (__axiom_mem_stat 0) (__axiom_mem_stat 1)))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (outcome 1 (same (pkgLineValue "other value" "name") None))
+    (outcome 2 (same (pkgLineValue "name" "name") (Some "")))
+    (outcome 3 (same (pkgLineValue " name \t # comment" "name") (Some "")))
+    (outcome 4 (same (pkgLineValue "name\t demo # comment" "name") (Some "demo")))
+    (outcome 5 (same (pkgLineValue "names demo" "name") None))
+    (outcome 6 (same (pkgLineValue "" "name") None))
+    (outcome 7 (same (pkgLineValue " # comment" "") (Some "")))
+    (outcome 8 (same (pkgValue "version 1\n" "name") None))
+    (outcome 9 (same (pkgValue "name\nname # empty\n" "name") (Some "")))
+    (outcome 10 (same (pkgValue "name\nname first\nname second\n" "name") (Some "first")))
+    (outcome 11 (same (pkgValue "name first\nname\nname second\n" "name") (Some "first")))
+    (outcome 12
+      (same (pkgValue "# comment\n names wrong\n name\tcorrect\n" "name") (Some "correct")))
+    (outcome 13 (same (pkgValue "" "name") None))
+    (outcome 14 (same (pkgValue "opt 0" "opt") (Some "0")))
+    (let source (concat "name " "kept\nname later\n"))
+    (let saved (pkgValue source "name"))
+    (discard (pkgValue source "name"))
+    (let before live)
+    (for i in 0..20
+      (discard (pkgValue source "name")))
+    (let after live)
+    (outcome 15 (== before after))
+    (outcome 16 (same saved (Some "kept")))
+    (let dir (sysArg 1))
+    (let name (pkgName dir))
+    (discard (pkgName dir))
+    (let beforeFiles live)
+    (for i in 0..12
+      (discard (pkgName dir)))
+    (let afterFiles live)
+    (let retained (- afterFiles beforeFiles))
+    (println "filesystem-retained={retained}")
+    (showText (pkgFindManifest dir))
+    (showText name)
+    (showInt (pkgOpt dir))
+    (showText (pkgEntryFile dir))
+    (let dirs (pkgSearchDirs dir))
+    (let count (vecLen dirs))
+    (println "dirs={count}")
+    (for i in 0..count
+      {
+        (let text (vecGet dirs i))
+        (println "dir={text}")
+      })
+  })

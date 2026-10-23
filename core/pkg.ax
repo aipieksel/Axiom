@@ -69,7 +69,7 @@
 (fn (pkgManifestName)
   "axiom.pkg")
 
-; The nearest `axiom.pkg` at or above `dir`, or "".
+; The nearest `axiom.pkg` at or above `dir`, or None.
 ;
 ; UP TO EIGHT LEVELS. A bound rather than a walk to the root, because
 ; an unbounded walk reads a file per level of every path anyone ever
@@ -77,7 +77,7 @@
 ; file being compiled is more likely to be somebody else's than yours.
 ; The number is stated here rather than derived: no project in this
 ; repository is deeper than three.
-(pub :: pkgFindManifest (-> String String))
+(pub :: pkgFindManifest (-> String (Option String)))
 ;@axiom:effect(io)
 (pub fn (pkgFindManifest dir)
   (pkgFindManifestFrom
@@ -86,46 +86,37 @@
       (pathWithSlash dir))
     0))
 
-(:: pkgFindManifestFrom (-> String Int String))
+(:: pkgFindManifestFrom (-> String Int (Option String)))
 ;@axiom:effect(io)
 (fn (pkgFindManifestFrom dir depth)
   (if (> depth 8)
-    ""
+    None
     {
       (let cand (concat dir pkgManifestName))
       (if (fileExists cand)
-        cand
+        (Some cand)
         {
           (let up (pathWithSlash (concat dir "..")))
           (pkgFindManifestFrom up (+ depth 1))
         })
     }))
 
-; The value of the first `key` line in `text`, or "".
-(pub :: pkgValue (-> String String String))
+; The first nonempty value of `key`, Some "" when only empty values
+; occur, or None when no matching key occurs.
+(pub :: pkgValue (-> String String (Option String)))
 (pub fn (pkgValue text key)
   {
     (let lines (strSplit text 10))
-    (let n (vecLen lines))
-    (let mut i 0)
-    {
-      (let mut found "")
-      {
-        (while (< i n)
-          {
-            ; Both arms answer `Int`: `set` answers the value it
-            ; assigned, which is a `String` here, and an `if` whose
-            ; arms disagree is a type error reported against the `0`.
-            {
-              (let v (pkgLineValue (vecGet lines i) key))
-              (if (&& (== (strLen found) 0) (> (strLen v) 0))
-                (set found v))
-            }
-            (set i (+ i 1))
-          })
-        found
-      }
-    }
+    (let mut found (:: None (Option String)))
+    (for i in 0..(vecLen lines)
+      (if (let (Some value) (pkgLineValue (vecGet lines i) key))
+        ; Keep the first nonempty value, as before. An observed key with
+        ; only empty values remains present, so consumers choose its policy.
+        (if (match found
+          ((None) true)
+          ((Some previous) (&& (== (strLen previous) 0) (> (strLen value) 0))))
+          (set found (Some value)))))
+    found
   })
 
 ; Every value of `key`, in file order.
@@ -139,18 +130,16 @@
     {
       (while (< i n)
         {
-          {
-            (let v (pkgLineValue (vecGet lines i) key))
+          (if (let (Some v) (pkgLineValue (vecGet lines i) key))
             (if (> (strLen v) 0)
-              (vecPush out v))
-          }
+              (vecPush out v)))
           (set i (+ i 1))
         })
       out
     }
   })
 
-; One line's value for `key`, or "".
+; One line's value for `key`, including empty, or None for another key.
 ;
 ; The key must be the line's WHOLE first token, so `dependency` is not
 ; read as `depend`, and a `#` anywhere starts a comment - which means a
@@ -164,15 +153,15 @@
 ; `pkgKeyOf` splits on any whitespace, so a tab-aligned
 ; manifest means what it looks like, and the token it returns is what
 ; `pkgCheckLines` refuses when it is not a key.
-(pub :: pkgLineValue (-> String String String))
+(pub :: pkgLineValue (-> String String (Option String)))
 (pub fn (pkgLineValue line key)
   {
     (let t (pkgTrim (pkgUncomment line)))
     {
       (let k (pkgKeyOf t))
       (if (strEq k key)
-        (pkgTrim (strSlice t (strLen k) (- (strLen t) (strLen k))))
-        "")
+        (Some (pkgTrim (strSlice t (strLen k) (- (strLen t) (strLen k)))))
+        None)
     }
   })
 
@@ -274,9 +263,9 @@
 (fn (pkgDirsFor entryDir key)
   {
     (let mf (pkgFindManifest entryDir))
-    (if (== (strLen mf) 0)
-      vecNew
-      (pkgDirsIn (unwrapOr (readFile mf) "") (pathDir mf) key))
+    (match mf
+      ((None) vecNew)
+      ((Some mf) (pkgDirsIn (unwrapOr (readFile mf) "") (pathDir mf) key)))
   })
 
 ; Every value of `key` in an ALREADY-READ manifest, resolved against
@@ -346,13 +335,15 @@
 (pub fn (pkgSearchDirs entryDir)
   {
     (let mf (pkgFindManifest entryDir))
-    (if (== (strLen mf) 0)
-      vecNew
-      {
-        (let text (unwrapOr (readFile mf) ""))
-        (let base (pathDir mf))
-        (pkgConcatDirs (pkgDirsIn text base "depend") (pkgAxiomSub (pkgDirsIn text base "crate")))
-      })
+    (match mf
+      ((None) vecNew)
+      ((Some mf)
+        {
+          (let text (unwrapOr (readFile mf) ""))
+          (let base (pathDir mf))
+          (pkgConcatDirs (pkgDirsIn text base "depend") (pkgAxiomSub (pkgDirsIn text base "crate")))
+        }
+      ))
   })
 
 ; A manifest path against the manifest's own directory. An absolute
@@ -840,7 +831,8 @@
         (pkgUrlHintVals vs base dir (+ i 1)))
     }))
 
-; The `name` the manifest at or above `entryDir` declares, or "".
+; The `name` the manifest at or above `entryDir` declares, including
+; an empty value, or None when the manifest or key is missing.
 ;
 ; This is what `axiom build` writes to when the command line says
 ; nothing. The driver reads it BEFORE `compileFile` and therefore
@@ -850,15 +842,12 @@
 ; call and any write, and that `pkgNameOk` admits no `/` and no `..`
 ; anyway, so the string could not name another directory even if the
 ; verification were removed.
-(pub :: pkgName (-> String String))
+(pub :: pkgName (-> String (Option String)))
 ;@axiom:effect(io)
 (pub fn (pkgName entryDir)
-  {
-    (let mf (pkgFindManifest entryDir))
-    (if (== (strLen mf) 0)
-      ""
-      (pkgValue (unwrapOr (readFile mf) "") "name"))
-  })
+  (match (pkgFindManifest entryDir)
+    ((None) None)
+    ((Some mf) (pkgValue (unwrapOr (readFile mf) "") "name"))))
 
 ; An `opt` value is one byte, `0` through `3`: the same four levels
 ; `--opt` honours, refused in the same words. Single byte, so no
@@ -873,45 +862,46 @@
     false))
 
 ; The project's default optimisation level: the manifest's `opt`, or
-; -1 when the manifest says nothing. The command line wins wherever
+; None when the manifest says nothing. The command line wins wherever
 ; it speaks; this is what `build`, `run` and `test` build at when it
 ; does not. Read AFTER `pkgVerify` wherever it is spent - an invalid
-; `opt` exits 3 there, so the -1/level answer here is always honoured.
-(pub :: pkgOpt (-> String Int))
+; `opt` exits 3 there, so the optional level here is always honoured.
+(pub :: pkgOpt (-> String (Option Int)))
 ;@axiom:effect(io)
 (pub fn (pkgOpt entryDir)
-  {
-    (let mf (pkgFindManifest entryDir))
-    (if (== (strLen mf) 0)
-      (- 0 1)
-      {
-        (let v (pkgValue (unwrapOr (readFile mf) "") "opt"))
-        (if (== (strLen v) 0)
-          (- 0 1)
-          (- (strByte v 0) 48))
-      })
-  })
+  (match (pkgFindManifest entryDir)
+    ((None) None)
+    ((Some mf)
+      (match (pkgValue (unwrapOr (readFile mf) "") "opt")
+        ((None) None)
+        ((Some value)
+          (if (== (strLen value) 0)
+            None
+            (Some (- (strByte value 0) 48)))
+        ))
+    )))
 
 ; The project file for a manifest-mode invocation: the manifest's
 ; `main` resolved against the manifest's own directory, else
-; `Main.ax` beside it, or "" when no manifest is found at all.
-(pub :: pkgEntryFile (-> String String))
+; `Main.ax` beside it, or None when no manifest is found at all.
+(pub :: pkgEntryFile (-> String (Option String)))
 ;@axiom:effect(io)
 (pub fn (pkgEntryFile dir)
-  {
-    (let mf (pkgFindManifest dir))
-    (if (== (strLen mf) 0)
-      ""
+  (match (pkgFindManifest dir)
+    ((None) None)
+    ((Some mf)
       {
         (let base (pathDir mf))
-        {
-          (let m (pkgValue (unwrapOr (readFile mf) "") "main"))
-          (if (> (strLen m) 0)
-            (pkgResolve base m)
-            (concat (pathWithSlash base) "Main.ax"))
-        }
-      })
-  })
+        (Some
+          (match (pkgValue (unwrapOr (readFile mf) "") "main")
+            ((None) (concat (pathWithSlash base) "Main.ax"))
+            ((Some value)
+              (if (> (strLen value) 0)
+                (pkgResolve base value)
+                (concat (pathWithSlash base) "Main.ax"))
+            )))
+      }
+    )))
 
 ; A package name is letters, digits, `.`, `-` and `_`, and is not `.`
 ; or `..`. Deliberately narrower than the filesystem: the name is spent
@@ -1130,44 +1120,46 @@
 (pub fn (pkgVerify entryDir)
   {
     (let mf (pkgFindManifest entryDir))
-    (if (== (strLen mf) 0)
-      0
-      {
-        (let text (unwrapOr (readFile mf) ""))
+    (match mf
+      ((None) 0)
+      ((Some mf)
         {
-          (let _lines (pkgCheckLines text mf))
+          (let text (unwrapOr (readFile mf) ""))
           {
-            (let dirs (pkgDependDirs entryDir))
+            (let _lines (pkgCheckLines text mf))
             {
-              (let n (vecLen dirs))
-              (let mut i 0)
+              (let dirs (pkgDependDirs entryDir))
               {
-                (while (< i n)
-                  {
-                    (if (! (isDir (vecGet dirs i)))
-                      (pkgDie
-                        (concat
-                          (concat "error: "
-                            (concat mf " names a dependency directory that is not there:\n"))
-                          (concat (concat "       " (concat (vecGet dirs i) "\n"))
-                            (concat
-                              "       `depend` names a DIRECTORY of modules, resolved against the\n"
-                              (concat "       manifest's own directory.\n"
-                                (pkgUrlHint text (pathDir mf) (vecGet dirs i))))))))
-                    (set i (+ i 1))
-                  })
-                (pkgCheckOrigins (pkgFetchUrls text) (pathDir mf) mf 0)
-                (pkgCheckCrates (pkgCrateDirs entryDir) mf 0)
-                ; The pairwise check runs over the depend directories AND
-                ; every crate's `axiom/` together, because they land in one
-                ; search path and a clash between two of them is the same
-                ; wrong answer whichever key declared them.
-                (pkgCheckOverlap (pkgConcatDirs dirs (pkgCrateAxiomDirs entryDir)) mf 0)
+                (let n (vecLen dirs))
+                (let mut i 0)
+                {
+                  (while (< i n)
+                    {
+                      (if (! (isDir (vecGet dirs i)))
+                        (pkgDie
+                          (concat
+                            (concat "error: "
+                              (concat mf " names a dependency directory that is not there:\n"))
+                            (concat (concat "       " (concat (vecGet dirs i) "\n"))
+                              (concat
+                                "       `depend` names a DIRECTORY of modules, resolved against the\n"
+                                (concat "       manifest's own directory.\n"
+                                  (pkgUrlHint text (pathDir mf) (vecGet dirs i))))))))
+                      (set i (+ i 1))
+                    })
+                  (pkgCheckOrigins (pkgFetchUrls text) (pathDir mf) mf 0)
+                  (pkgCheckCrates (pkgCrateDirs entryDir) mf 0)
+                  ; The pairwise check runs over the depend directories AND
+                  ; every crate's `axiom/` together, because they land in one
+                  ; search path and a clash between two of them is the same
+                  ; wrong answer whichever key declared them.
+                  (pkgCheckOverlap (pkgConcatDirs dirs (pkgCrateAxiomDirs entryDir)) mf 0)
+                }
               }
             }
           }
         }
-      })
+      ))
   })
 
 ; `a` then `b`, in order, in a NEW Vec - the caller is still holding
