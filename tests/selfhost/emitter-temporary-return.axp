@@ -1,0 +1,186 @@
+(import Str)
+(import Vec)
+(import IO)
+
+(struct Entry
+  (value : String))
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say n good)
+  (println "{n} {good}"))
+
+; Observe only live typed owners. No retired allocation is read.
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: direct (-> String Entry))
+(fn (direct value)
+  (Entry :value value))
+
+(:: temporary (-> String Entry))
+(fn (temporary value)
+  (vecGet (vecPush vecNew (Entry :value value)) 0))
+
+(:: genericTemporary (-> a a))
+(fn (genericTemporary value)
+  (vecGet (vecPush vecNew value) 0))
+
+(:: nestedTemporary (-> String Entry))
+(fn (nestedTemporary value)
+  (vecGet (vecGet (vecPush vecNew (vecPush vecNew (Entry :value value))) 0) 0))
+
+(:: ownedPop (-> String Entry))
+(fn (ownedPop value)
+  (vecPop (vecPush vecNew (Entry :value value))))
+
+(:: conditionalTemporary (-> String Bool Entry))
+(fn (conditionalTemporary value select)
+  (if select
+    (vecGet (vecPush vecNew (Entry :value value)) 0)
+    (Entry :value value)))
+
+(:: matchTemporary (-> String (Option Int) Entry))
+(fn (matchTemporary value select)
+  (match select
+    ((Some index) (vecGet (vecPush vecNew (Entry :value value)) index))
+    ((None) (Entry :value value))))
+
+(:: borrowed (-> (Vec Entry) Entry))
+(fn (borrowed rows)
+  (vecGet rows 0))
+
+(:: retire0 (-> String Int))
+(fn (retire0 value)
+  {
+    (let row (direct value))
+    17
+  })
+
+(:: retire1 (-> String Int))
+(fn (retire1 value)
+  {
+    (let row (temporary value))
+    17
+  })
+
+(:: retire2 (-> String Int))
+(fn (retire2 value)
+  {
+    (let row (nestedTemporary value))
+    17
+  })
+
+(:: retire3 (-> String Int))
+(fn (retire3 value)
+  {
+    (let row (conditionalTemporary value true))
+    17
+  })
+
+(:: retire4 (-> String Int))
+(fn (retire4 value)
+  {
+    (let row (conditionalTemporary value false))
+    17
+  })
+
+(:: retire5 (-> String Int))
+(fn (retire5 value)
+  {
+    (let row (matchTemporary value (Some 0)))
+    17
+  })
+
+(:: retire6 (-> String Int))
+(fn (retire6 value)
+  {
+    (let row (matchTemporary value None))
+    17
+  })
+
+(:: retireBorrowed (-> String Bool))
+(fn (retireBorrowed value)
+  {
+    (let rows (vecPush vecNew (Entry :value value)))
+    (let row (borrowed rows))
+    (vecClear rows)
+    (&& (== (count row) 1) (strEq row.value value))
+  })
+
+(:: nonTail (-> String Bool))
+(fn (nonTail value)
+  {
+    (let row (vecGet (vecPush vecNew (Entry :value value)) 0))
+    (&& (== (count row) 1) (strEq row.value value))
+  })
+
+(:: stringTemporary (-> String String))
+(fn (stringTemporary value)
+  (vecGet (vecPush vecNew (strDup value)) 0))
+
+(:: retireString (-> String Int))
+(fn (retireString value)
+  {
+    (let result (stringTemporary value))
+    17
+  })
+
+(:: scalarTemporary Int)
+(fn (scalarTemporary)
+  (vecGet (vecPush vecNew 42) 0))
+
+(:: main ())
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let value (strDup "dynamic owned child"))
+    (let before0 (count value))
+    (say 1 (== (retire0 value) 17))
+    (say 2 (== (count value) before0))
+    (let before1 (count value))
+    (say 3 (== (retire1 value) 17))
+    (say 4 (== (count value) before1))
+    (let before2 (count value))
+    (say 5 (== (retire2 value) 17))
+    (say 6 (== (count value) before2))
+    (let before3 (count value))
+    (say 7 (== (retire3 value) 17))
+    (say 8 (== (count value) before3))
+    (let before4 (count value))
+    (say 9 (== (retire4 value) 17))
+    (say 10 (== (count value) before4))
+    (let before5 (count value))
+    (say 11 (== (retire5 value) 17))
+    (say 12 (== (count value) before5))
+    (let before6 (count value))
+    (say 13 (== (retire6 value) 17))
+    (say 14 (== (count value) before6))
+    (let beforeBorrowed (count value))
+    (say 15 (retireBorrowed value))
+    (say 16 (== (count value) beforeBorrowed))
+    (let beforeNonTail (count value))
+    (say 17 (nonTail value))
+    (say 18 (== (count value) beforeNonTail))
+    (say 19 (== (genericTemporary 42) 42))
+    (say 20 (== (genericTemporary 0) 0))
+    (say 21 (== (genericTemporary -17) -17))
+    ; These check counted values and owned-pop results remain valid. General
+    ; generic-call and owned-pop retirement is a separate known limitation.
+    (say 22 (strEq (genericTemporary value) value))
+    (say 23
+      {
+        (let genericRow (genericTemporary (Entry :value value)))
+        (strEq genericRow.value value)
+      })
+    (say 24
+      {
+        (let poppedRow (ownedPop value))
+        (strEq poppedRow.value value)
+      })
+    (say 25 (strEq (stringTemporary value) value))
+    (say 26 (== (retireString value) 17))
+    (say 27 (== scalarTemporary 42))
+  })

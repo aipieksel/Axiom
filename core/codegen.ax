@@ -20642,6 +20642,10 @@
           (let tag (nodeTag e))
           (if (== tag TAG_E_APP)
             {
+              ; emitPlainCall protects a borrowed result before releasing its
+              ; temporary holder. That promoted share already fulfils the
+              ; return's ownership obligation.
+              (let protectedResult (!= (borrowedFromOwnedClass cg e) 0))
               ; 3 when nothing follows the call but the `ret` - no leaf
               ; retain is owed for this node - which is what a `musttail`
               ; needs (`mustTailOK`); 1 when `retainTailLeaf` will retain
@@ -20654,7 +20658,9 @@
                 (let cgA (emitExpr e cg))
                 {
                   (cgSetTailOK cgA 0)
-                  (retainTailLeaf e cgA)
+                  (if protectedResult
+                    cgA
+                    (retainTailLeaf e cgA))
                 }
               }
             }
