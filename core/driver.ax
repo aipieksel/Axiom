@@ -2318,32 +2318,22 @@
 ; The index in `units` of the module that declares `sym`, or `None`.
 ; The entry file's declarations have no module (0) and sit at unit 0.
 ;
-; `Option` RATHER THAN -1, and here 0 is a REAL ANSWER - the entry
-; file's own unit - so the sentinel and a valid index were one
-; comparison apart at every call site. The recursion below keeps the
-; -1 and stays private; the boundary is where the type is worth
-; having.
+; The recursive lookup preserves absence and the valid entry index 0.
 (pub :: findExternUnit (-> (Vec ASTNode) String Units (Option Int)))
 (pub fn (findExternUnit decls sym units)
-  {
-    (let u (findExternUnitFrom decls sym units 0))
-    (if (< u 0)
-      None
-      (Some u))
-  })
+  (findExternUnitFrom decls sym units 0))
 
-(:: findExternUnitFrom (-> (Vec ASTNode) String Units Int Int))
-;@axiom:effect(unsafe)
+(:: findExternUnitFrom (-> (Vec ASTNode) String Units Int (Option Int)))
 (fn (findExternUnitFrom decls sym units i)
   (if (>= i (vecLen decls))
-    (- 0 1)
+    None
     {
       (let d (vecGet decls i))
       (if (&& (== (nodeTag d) TAG_D_EXTERN)
             (! (nodeSame (findExternItemIn (nodeCChildren d) sym 0) nilNode)))
-        (if (== (as (nodeModule d) Int) 0)
-          0
-          (unitIndexOf units (as (nodeModule d) String) 0))
+        (match (nodeModuleOpt d)
+          ((None) (Some 0))
+          ((Some name) (unitIndexOf units name 0)))
         (findExternUnitFrom decls sym units (+ i 1)))
     }))
 

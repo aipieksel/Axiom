@@ -1,0 +1,43 @@
+(import core)
+(import parser)
+(import driver)
+(import diag)
+(import Vec)
+
+(:: external (-> (Option String) String ASTNode))
+(fn (external module symbol)
+  {
+    (let field (nodeBuildFieldExtern "outside" (mkTCon "Int" vecNew) symbol (mkSpan 1 4)))
+    (let declaration (nodeBuildDExtern "Library" vecNew (vecPush vecNew field) (mkSpan 0 6)))
+    (match module
+      ((None) 0)
+      ((Some name) (writeNodeText declaration 8 name)))
+    declaration
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let units
+      (vecPush
+        (vecPush vecNew
+          (CUnit2 :file "entry.ax" :src "sample" :name None :imports vecNew :library false))
+        (CUnit2
+          :file "Module.ax"
+          :src "sample"
+          :name (Some "Module")
+          :imports vecNew
+          :library false)))
+    (groundEachSpanned (vecPush vecNew "entry") vecNew vecNew
+      (vecPush vecNew (external None "entry")) units FMT_AI 0)
+    (groundEachSpanned (vecPush vecNew "imported") vecNew vecNew
+      (vecPush vecNew (external (Some "Module") "imported")) units FMT_AI 0)
+    (groundEachSpanned (vecPush vecNew "missing") vecNew vecNew vecNew units FMT_AI 0)
+    (groundEachSpanned (vecPush vecNew "unresolved") vecNew vecNew
+      (vecPush vecNew (external (Some "Absent") "unresolved")) units FMT_AI 0)
+    (groundEachSpanned (vecPush vecNew "shape") (vecPush vecNew "shape\0shape__sig_f_i\0")
+      (vecPush vecNew "library.a") (vecPush vecNew (external (Some "Module") "shape")) units FMT_AI
+      0)
+    0
+  })

@@ -9711,7 +9711,7 @@
                 (let name (nodeAName decl))
                 (if (&& (! (seenHas seen name))
                       (&& (! (seenHas names name))
-                        (&& (< (unitIndexOf units name 0) 0) (isNone (frontCached cache name)))))
+                        (&& (isNone (unitIndexOf units name 0)) (isNone (frontCached cache name)))))
                   {
                     (let path (moduleSrcPath name tcode entryDir))
                     (if (> (strLen path) 0)
@@ -9756,7 +9756,7 @@
 ;@axiom:effect(io)
 (pub fn (parseModuleOrDieUnit name tcode entryDir units parentName site cache)
   (if (let (Some module) (frontCached cache name))
-    (if (|| (>= (unitIndexOf units name 0) 0)
+    (if (|| (isSome (unitIndexOf units name 0))
           (cachedModuleWrongOrigin module units parentName tcode))
       (parseModuleOrDieUnitSerial name tcode entryDir units parentName site)
       {
@@ -9782,7 +9782,9 @@
       (vecGet units
         (if (== (as parentName Int) 0)
           0
-          (unitIndexOf units parentName 0))))
+          (match (unitIndexOf units parentName 0)
+            ((Some index) index)
+            ((None) __indexTrap)))))
     (if (== (unitInStdlib parent) 1)
       {
         (let library (stdlibModulePath module.name tcode))
@@ -9867,9 +9869,11 @@
       (vecGet units
         (if (== (as parentName Int) 0)
           0
-          (unitIndexOf units parentName 0))))
+          (match (unitIndexOf units parentName 0)
+            ((Some index) index)
+            ((None) __indexTrap)))))
     {
-      (if (< (unitIndexOf units name 0) 0)
+      (if (isNone (unitIndexOf units name 0))
         {
           (let path
             (if (== (unitInStdlib parent) 1)
@@ -9896,19 +9900,24 @@
               }
             })
         })
-      (parseModuleSourceOrDie name tcode entryDir parent (nodeSpan site)
-        (unitSrc (vecGet units (unitIndexOf units name 0))))
+      (match (unitIndexOf units name 0)
+        ((Some index)
+          (parseModuleSourceOrDie name tcode entryDir parent (nodeSpan site)
+            (unitSrc (vecGet units index)))
+        )
+        ((None) __indexTrap))
     }
   })
 
-(pub :: unitIndexOf (-> Units String Int Int))
+; The first named unit at or after i. Entry units have no module name.
+(pub :: unitIndexOf (-> Units String Int (Option Int)))
 (pub fn (unitIndexOf units name i)
   (if (>= i (vecLen units))
-    (- 0 1)
+    None
     (if (unitIsEntry (vecGet units i))
       (unitIndexOf units name (+ i 1))
       (if (unitNameIs (vecGet units i) name)
-        i
+        (Some i)
         (unitIndexOf units name (+ i 1))))))
 
 ; An unresolved import reports AX5001 at the import form in its
@@ -10442,10 +10451,14 @@
             entryDir units phase cache)
           {
             (if (!= (as modName Int) 0)
-              {
-                (let unit (as (vecGet units (unitIndexOf units modName 0)) CUnit2))
-                (vecPush unit.imports first)
-              })
+              (match (unitIndexOf units modName 0)
+                ((None) __indexTrap)
+                ((Some index)
+                  {
+                    (let unit (vecGet units index))
+                    (vecPush unit.imports first)
+                  }
+                )))
             (let name (nodeAText first))
             (if (seenHas seen name)
               ; A repeat import of an already-merged module. The
