@@ -1,0 +1,70 @@
+; Canonical module keys preserve absence, import identity and literal ambiguity.
+(import Str)
+(import Vec)
+(import IO)
+(import Fmt)
+(import core)
+(import parser)
+(import expand)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println
+    (concat (fmtInt index)
+      (if good
+        " true"
+        " false"))))
+
+(:: declared (-> String String Int ASTNode))
+(fn (declared name module visibility)
+  {
+    (let node (nodeBuildDFn name vecNew (mkEInt 0) 0))
+    (writeNodeText node 8 module)
+    (writeNodeWord node 5 visibility)
+    node
+  })
+
+(:: entry (-> String ASTNode))
+(fn (entry name)
+  (nodeBuildDFn name vecNew (mkEInt 0) 0))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (let imports (vecPush vecNew (declared "Lib$target" "Lib" 1)))
+    (say 1 (strEq (expCanonKey imports 0 "target") "D:Lib$target"))
+    (say 2 (strEq (expCanonKey imports 0 "Lib$target") "D:Lib$target"))
+    (say 3 (strEq (expCanonKey imports 0 "Other$target") "U:Other$target"))
+    (say 4 (strEq (expCanonKey vecNew 0 "missing") "U:missing"))
+    (say 5 (strEq (expCanonKey vecNew 0 "+") "D:builtin:+"))
+    (say 6 (strEq (expCanonKey vecNew 0 "$missing") "U:$missing"))
+    (say 7 (strEq (expCanonKey imports 0 "target") (expCanonKey imports 0 "Lib$target")))
+    (say 8 (strEq (expSyntaxKey (mkEVar "target") imports 0) "D:Lib$target"))
+    (let context (expMatchCtx imports 0 0))
+    (say 9 (== (expMatchLiteral "Lib$target" (mkEVar "target") context) 1))
+    (say 10 (== (expMatchLiteral "target" (mkEVar "Lib$target") context) 1))
+    (say 11 (== (expMatchLiteral "target" (mkEVar "target") context) 1))
+    (say 12 (== (expMatchLiteral "other" (mkEVar "target") context) 0))
+    (let ambiguous
+      (vecPush (vecPush vecNew (declared "Lib$target" "Lib" 1))
+        (declared "Other$target" "Other" 1)))
+    (say 13 (strEq (expCanonKey ambiguous 0 "target") "A:target"))
+    (say 14 (strEq (expCanonKey ambiguous 0 "Lib$target") "D:Lib$target"))
+    (say 15 (== (expMatchLiteral "target" (mkEVar "target") (expMatchCtx ambiguous 0 0)) 0))
+    (let local (vecPush imports (entry "target")))
+    (say 16 (strEq (expCanonKey local 0 "target") "D:target"))
+    (say 17 (== (expMatchLiteral "Lib$target" (mkEVar "target") (expMatchCtx local 0 0)) 0))
+    (let privateOnly (vecPush vecNew (declared "Private$target" "Private" 0)))
+    (say 18 (strEq (expCanonKey privateOnly 0 "target") "U:target"))
+    (say 19 (strEq (expCanonKey privateOnly 0 "Private$target") "D:Private$target"))
+    (let oneStruct (nodeBuildDStruct "Box" vecNew vecNew 0))
+    (writeNodeText oneStruct 8 "Lib")
+    (writeNodeWord oneStruct 5 1)
+    (let constructors (vecPush vecNew oneStruct))
+    (say 20 (strEq (expCanonKey constructors 0 "Box") "C:Lib$Box"))
+    (say 21 (strEq (expCanonKey constructors 0 "Lib$Box") "C:Lib$Box"))
+    (say 22 (== (expMatchLiteral "Lib$Box" (mkEVar "Box") (expMatchCtx constructors 0 0)) 1))
+    0
+  })

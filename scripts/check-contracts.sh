@@ -93,6 +93,7 @@ python3 tests/tools/expansion-option-controls.py "$axc"
 python3 tests/tools/expansion-origin-options.py "$axc"
 python3 tests/tools/macro-owning-records.py "$axc"
 python3 tests/tools/macro-rule-index-options.py "$axc"
+python3 tests/tools/expansion-canonical-module-options.py --axiom "$axc"
 python3 tests/tools/symbol-map-index-options.py "$axc"
 python3 tests/tools/axtag-owning-carriers.py "$axc"
 python3 tests/selfhost/parser-type-parameter-owners.py --axiom "$axc" --negative-controls
