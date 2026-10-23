@@ -289,13 +289,16 @@ echo "--- 1. user-level cast count does not grow ---"
 # declared-type conversion, five numeric conversions and three unit owner/map
 # or LSP wire-boundary observations. Their live owners stay held. Three old
 # forged-null unit names disappear, leaving a net census increase of eleven.
+# Match-arm ownership controls add four MM-VAL-23 test subjects: one live
+# header count, two deliberate erased-row conversions and one child-map
+# ablation. The erased conversions exist only in unsafe negative controls.
 cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!tests/fuzz' | wc -l | tr -d ' ')"
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1417 ]; then
-  ok "user-level (cast count $cast_count <= 1417)"
+elif [ "$cast_count" -le 1421 ]; then
+  ok "user-level (cast count $cast_count <= 1421)"
 else
-  bad "user-level (cast count $cast_count > 1417): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1421): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
@@ -478,7 +481,9 @@ echo "--- 4. the compiler's erasures do not grow ---"
 # the previous 463 ceiling without exempting a production site.
 # Typed unit identities and checker optional witnesses remove seven more
 # reference erasures: 419 to 412 with the same compiler on both trees.
-erasure_pin=412
+# Optional parameter-type queries remove one further reference erasure
+# in a same-compiler comparison: 412 to 411.
+erasure_pin=411
 erasure_sum() {  # <axsym> -> the #erasures= total over core/ rows
   awk '$1 == "F" && index($3, "core/") == 1 {
          for (i = 4; i <= NF; i++)
