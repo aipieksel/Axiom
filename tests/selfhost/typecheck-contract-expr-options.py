@@ -56,8 +56,8 @@ def main():
             native("positive-O" + str(level), env, level)
 
         refused = {
-            "unchecked-query": ('(:: bad (-> Int Int)) (fn (bad tag) (nodeTag (contractExprOf tag)))', "AX3004"),
-            "missing-none": ('(:: bad (-> Int ASTNode)) (fn (bad tag) (match (contractExprOf tag) '
+            "unchecked-query": ('(:: bad (-> AxtagEnt Int)) (fn (bad tag) (nodeTag (contractExprOf tag)))', "AX3004"),
+            "missing-none": ('(:: bad (-> AxtagEnt ASTNode)) (fn (bad tag) (match (contractExprOf tag) '
                              '((Some expression) expression)))', "AX3005"),
             "wrong-handle": ('(:: bad (-> String (Option ASTNode))) (fn (bad tag) (contractExprOf tag))', "AX3004"),
         }

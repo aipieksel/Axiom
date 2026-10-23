@@ -10128,39 +10128,32 @@
 ; Does this declaration carry `;@axiom:<key>` exactly?
 (pub :: declHasAxtag (-> ASTNode String Int))
 (pub fn (declHasAxtag d key)
-  (declHasAxtagFrom (nodeAxtagsWords d) key 0))
+  (declHasAxtagFrom (nodeAxtagsOf d) key 0))
 
-(pub :: declHasAxtagFrom (-> Ints String Int Int))
+(pub :: declHasAxtagFrom (-> Axtags String Int Int))
 (pub fn (declHasAxtagFrom tags key i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
-      (if (strEq (axtagContent (vecGet tags i)) key)
-        1
-        (declHasAxtagFrom tags key (+ i 1))))))
+    (if (strEq (axtagContent (vecGet tags i)) key)
+      1
+      (declHasAxtagFrom tags key (+ i 1)))))
 
-; The VALUE of an AXTAG on this declaration, or "" when it carries no
-; such key. A tag record is (word 0 = whole text, word 1 = key,
-; word 2 = value), the shape `declHasAxtagFrom` reads word 1 of.
+; The value of an AXTAG on this declaration, or "" for no such key.
+; Each tag owns its source offset and complete annotation text.
 (pub :: axtagValueOf (-> ASTNode String String))
 (pub fn (axtagValueOf d key)
-  (axtagValueFrom (nodeAxtagsWords d) key 0))
+  (axtagValueFrom (nodeAxtagsOf d) key 0))
 
 ; A tag's word 1 is the WHOLE text - `deprecated(use vecLen)`, not the
 ; bare key - which is why `declHasAxtag` works only for a key that
 ; takes no value and silently answers 0 for any key that does.
 ; Measured the hard way: the tag reached AXSYM as
 ; `#deprecated=use%20vecLen` while the lookup here saw nothing.
-(:: axtagContent (-> Int String))
-;@axiom:effect(unsafe)
+(:: axtagContent (-> AxtagEnt String))
 (fn (axtagContent t)
-  {
-    (let tag (as t AxtagEnt))
-    tag.content
-  })
+  t.content)
 
-(pub :: axtagKeyOf (-> Int String))
+(pub :: axtagKeyOf (-> AxtagEnt String))
 (pub fn (axtagKeyOf t)
   {
     (let txt (axtagContent t))
@@ -10177,7 +10170,7 @@
 ; help said "the declaration says: use (f x" and the label quoted a tag
 ; with one paren fewer than the author wrote. A value with no `)` at
 ; all still answers "", as it always did.
-(pub :: axtagTextValue (-> Int String))
+(pub :: axtagTextValue (-> AxtagEnt String))
 (pub fn (axtagTextValue t)
   {
     (let txt (axtagContent t))
@@ -10191,15 +10184,13 @@
       "")
   })
 
-(pub :: axtagValueFrom (-> Ints String Int String))
+(pub :: axtagValueFrom (-> Axtags String Int String))
 (pub fn (axtagValueFrom tags key i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     ""
-    (if (>= i (vecLen tags))
-      ""
-      (if (strEq (axtagKeyOf (vecGet tags i)) key)
-        (axtagTextValue (vecGet tags i))
-        (axtagValueFrom tags key (+ i 1))))))
+    (if (strEq (axtagKeyOf (vecGet tags i)) key)
+      (axtagTextValue (vecGet tags i))
+      (axtagValueFrom tags key (+ i 1)))))
 
 (pub :: tcCheckSigTypeOf (-> TC ASTNode Int))
 (pub fn (tcCheckSigTypeOf tc d)
@@ -16778,7 +16769,7 @@
           (if (let (Some raw) rawFound)
             {
               (let entry raw)
-              (restrictCollect (nodeAxtagsWords decl) entry.restrictions 0)
+              (restrictCollect (nodeAxtagsOf decl) entry.restrictions 0)
             }
             ())
         })
@@ -18761,7 +18752,7 @@
                   (match (sigAxtagsFor tc (nodeAName closure.owner))
                     ((None) vecNew)
                     ((Some tags) tags))
-                  (nodeAxtagsWords closure.owner))
+                  (nodeAxtagsOf closure.owner))
                 1)
             (effDropUnsafe latent.row)
             latent.row))
@@ -19205,7 +19196,7 @@
     (let was (tcCurUnit tc))
     (for s in (tcStructsVec tc)
       (for f in s.fields
-        (if (!= (nodeAxtags f) 0)
+        (if (isSome (nodeAxtagsOpt f))
           {
             (tcSetCurUnit tc (unitIndexFor (tcUnits tc) s.module))
             (if (let (Some decl) (fieldDeclRead tc s f))
@@ -19244,7 +19235,7 @@
     (let mut seen false)
     (let mut pure false)
     (let mut good true)
-    (for t in (nodeAxtagsWords f)
+    (for t in (nodeAxtagsOf f)
       {
         (let key (axtagKeyOf t))
         (if (strEq key "effect")
@@ -22138,7 +22129,7 @@
   {
     (let out vecNew)
     {
-      (syscallTagsInto out (nodeAxtagsWords d) 0)
+      (syscallTagsInto out (nodeAxtagsOf d) 0)
       (if (let (Some tags) (sigAxtagsFor tc (nodeAName d)))
         (syscallTagsInto out tags 0)
         0)
@@ -22146,20 +22137,18 @@
     }
   })
 
-(pub :: syscallTagsInto (-> Strings Ints Int Int))
+(pub :: syscallTagsInto (-> Strings Axtags Int Int))
 (pub fn (syscallTagsInto out tags i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
+    {
+      (let t (vecGet tags i))
       {
-        (let t (vecGet tags i))
-        {
-          (if (strEq (axtagKeyOf t) "syscall")
-            (syscallNamesInto out (strSplit (axtagTextValue t) 44) 0))
-          (syscallTagsInto out tags (+ i 1))
-        }
-      })))
+        (if (strEq (axtagKeyOf t) "syscall")
+          (syscallNamesInto out (strSplit (axtagTextValue t) 44) 0))
+        (syscallTagsInto out tags (+ i 1))
+      }
+    }))
 
 (pub :: syscallNamesInto (-> Strings Strings Int Int))
 (pub fn (syscallNamesInto out names i)
@@ -26277,7 +26266,7 @@
   ; (`MM-EXEC-9d`), so this, and not the row, is what an
   ; `effect(unsafe)` claim answers to (`axtagUnsupported`).
   {
-    (let own (nodeAxtagsWords d))
+    (let own (nodeAxtagsOf d))
     ; An absent signature contributes the empty set to this union.
     (let sig
       (match (sigAxtagsFor tc (nodeAName d))
@@ -26489,7 +26478,7 @@
 ; reads like a guarantee and buys silence, in the one place the
 ; compiler has said it checks. AX3016 refuses an unknown effect name
 ; in a `handle` list for the same reason.
-(pub :: checkRestricts (-> TC ASTNode Ints Ints Strings Int))
+(pub :: checkRestricts (-> TC ASTNode Axtags Axtags Strings Int))
 (pub fn (checkRestricts tc d own sig eff)
   {
     (let rs vecNew)
@@ -26544,34 +26533,32 @@
 ; as `restrictCollect` - the content up to `(` - and the same null
 ; guard, so a value riding on the key (`isr(foo)`) still claims;
 ; there is nothing to read out of one.
-(pub :: tagsHaveIsr (-> Ints Ints Int))
+(pub :: tagsHaveIsr (-> Axtags Axtags Int))
 (pub fn (tagsHaveIsr sig own)
   (if (== (tagsHaveIsrIn sig 0) 1)
     1
     (tagsHaveIsrIn own 0)))
 
-(pub :: tagsHaveIsrIn (-> Ints Int Int))
+(pub :: tagsHaveIsrIn (-> Axtags Int Int))
 (pub fn (tagsHaveIsrIn tags i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
+    {
+      (let content (axtagContent (vecGet tags i)))
       {
-        (let content (memGetWordStr (vecGet tags i) 1))
-        {
-          (let op
-            (if (let (Some k) (strFindByte content 40 0))
-              k
-              (- 0 1)))
-          (if (strEq
-                (if (< op 0)
-                  content
-                  (strSlice content 0 op))
-                "isr")
-            1
-            (tagsHaveIsrIn tags (+ i 1)))
-        }
-      })))
+        (let op
+          (if (let (Some k) (strFindByte content 40 0))
+            k
+            (- 0 1)))
+        (if (strEq
+              (if (< op 0)
+                content
+                (strSlice content 0 op))
+              "isr")
+          1
+          (tagsHaveIsrIn tags (+ i 1)))
+      }
+    }))
 
 ; An interrupt entry point takes no arguments: the hardware calls it
 ; by name. Anything else is the tag contradicting the declaration,
@@ -26651,7 +26638,7 @@
 ; Some vector text for an `isr(...)` tag, including explicit empty
 ; text, or None for a bare `isr` or no binding. A nonempty signature
 ; binding wins; otherwise the function's own binding is used.
-(pub :: isrVectorOf (-> Ints Ints (Option String)))
+(pub :: isrVectorOf (-> Axtags Axtags (Option String)))
 (pub fn (isrVectorOf sig own)
   {
     (let signature (isrVectorIn sig 0))
@@ -26662,18 +26649,16 @@
       (isrVectorIn own 0))
   })
 
-(pub :: isrVectorIn (-> Ints Int (Option String)))
+(pub :: isrVectorIn (-> Axtags Int (Option String)))
 (pub fn (isrVectorIn tags i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     None
-    (if (>= i (vecLen tags))
-      None
-      {
-        (let content (memGetWordStr (vecGet tags i) 1))
-        (if (&& (strStartsWith content "isr(") (== (strByte content (- (strLen content) 1)) 41))
-          (Some (strTrim (strSlice content 4 (- (strLen content) 5))))
-          (isrVectorIn tags (+ i 1)))
-      })))
+    {
+      (let content (axtagContent (vecGet tags i)))
+      (if (&& (strStartsWith content "isr(") (== (strByte content (- (strLen content) 1)) 41))
+        (Some (strTrim (strSlice content 4 (- (strLen content) 5))))
+        (isrVectorIn tags (+ i 1)))
+    }))
 
 ; AX4009: a handler bound to a vector reaches an operation that waits.
 ; Nothing the interrupted code does can happen while a handler runs -
@@ -26761,38 +26746,36 @@
 ; split on `,` with the blanks around each trimmed: a space is not a
 ; restriction name, and reporting ` no-alloc` as unknown would be a
 ; diagnostic about the author's typing rather than their claim.
-(pub :: restrictCollect (-> Ints Strings Int Int))
+(pub :: restrictCollect (-> Axtags Strings Int Int))
 (pub fn (restrictCollect tags rs i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
-      ; `op` STAYS AN INT HERE. It is handed on to `axtagListValue`,
-      ; whose own signature takes the open-paren index with -1 for
-      ; "no value" and documents it four lines above itself. The
-      ; match is at the point of production, so the `Option` is
-      ; consumed in registers and nothing is boxed; what survives is
-      ; a private convention between two functions in this file, not
-      ; a public sentinel contract.
+    ; `op` STAYS AN INT HERE. It is handed on to `axtagListValue`,
+    ; whose own signature takes the open-paren index with -1 for
+    ; "no value" and documents it four lines above itself. The
+    ; match is at the point of production, so the `Option` is
+    ; consumed in registers and nothing is boxed; what survives is
+    ; a private convention between two functions in this file, not
+    ; a public sentinel contract.
+    {
+      (let content (axtagContent (vecGet tags i)))
       {
-        (let content (memGetWordStr (vecGet tags i) 1))
+        (let op
+          (if (let (Some k) (strFindByte content 40 0))
+            k
+            (- 0 1)))
         {
-          (let op
-            (if (let (Some k) (strFindByte content 40 0))
-              k
-              (- 0 1)))
-          {
-            (if (strEq
-                  (if (< op 0)
-                    content
-                    (strSlice content 0 op))
-                  "restrict")
-              (restrictSplit (axtagListValue content op) rs)
-              ())
-            (restrictCollect tags rs (+ i 1))
-          }
+          (if (strEq
+                (if (< op 0)
+                  content
+                  (strSlice content 0 op))
+                "restrict")
+            (restrictSplit (axtagListValue content op) rs)
+            ())
+          (restrictCollect tags rs (+ i 1))
         }
-      })))
+      }
+    }))
 
 ; The bytes between `(` at `op` and the last `)`, or "" when there is
 ; no value or the last `)` does not follow the `(`.
@@ -28648,12 +28631,12 @@
       (if (let (Some signature) (sigAxtagsFor tc (nodeAName d)))
         (contractTagsInto tags signature)
         0)
-      (contractTagsInto tags (nodeAxtagsWords d))
+      (contractTagsInto tags (nodeAxtagsOf d))
       (checkContractsFrom tc d tags 0 resTy)
     }
   })
 
-(pub :: checkContractsFrom (-> TC ASTNode Ints Int (Option ASTNode) Int))
+(pub :: checkContractsFrom (-> TC ASTNode Axtags Int (Option ASTNode) Int))
 (pub fn (checkContractsFrom tc d tags i resTy)
   (if (>= i (vecLen tags))
     0
@@ -28662,7 +28645,7 @@
       (checkContractsFrom tc d tags (+ i 1) resTy)
     }))
 
-(pub :: checkOneContract (-> TC ASTNode Int (Option ASTNode) Int))
+(pub :: checkOneContract (-> TC ASTNode AxtagEnt (Option ASTNode) Int))
 (pub fn (checkOneContract tc d t resTy)
   (if (let (Some p) (contractExprOf t))
     {
@@ -28708,7 +28691,7 @@
 ; vector, which this must not grow. `bodyScopeOf` mints a fresh
 ; `BScope` per call, so replacing its word 1 with the copy and
 ; extending its callable list by one is local to this check.
-(pub :: checkContractPurity (-> TC ASTNode Int ASTNode (Option ASTNode) Int))
+(pub :: checkContractPurity (-> TC ASTNode AxtagEnt ASTNode (Option ASTNode) Int))
 (pub fn (checkContractPurity tc d t p resTy)
   {
     (let sc (bodyScopeOf tc d))
@@ -28773,27 +28756,27 @@
 ; adds back. Spanning `off .. off+1+len` instead underlined `;@ax`
 ; and quoted `;pre`, which is a diagnostic pointing one place and
 ; naming another - AX3039's own recorded defect, one code over.
-(pub :: contractSpanOf (-> Int Int))
+(pub :: contractSpanOf (-> AxtagEnt Int))
 (pub fn (contractSpanOf t)
   {
     (let txt (contractTextOf t))
     (if (== (strLen txt) 0)
-      (mkSpan (memGetWord t 0) (+ (memGetWord t 0) (+ 8 (strLen (memGetWordStr t 1)))))
+      (mkSpan t.off (+ t.off (+ 8 (strLen t.content))))
       (mkSpan (contractBaseOf t) (+ (contractBaseOf t) (strLen txt))))
   })
 
 ; The source text a contract diagnostic leads with, backticked: the
 ; expression, or the whole tag when there is none.
-(pub :: contractLead (-> Int String))
+(pub :: contractLead (-> AxtagEnt String))
 (pub fn (contractLead t)
   {
     (let txt (contractTextOf t))
     (if (== (strLen txt) 0)
-      (concat ";@axiom:" (memGetWordStr t 1))
+      (concat ";@axiom:" t.content)
       txt)
   })
 
-(pub :: emitContractMalformed (-> TC Int Int String Int))
+(pub :: emitContractMalformed (-> TC AxtagEnt Int String Int))
 (pub fn (emitContractMalformed tc t span why)
   (if (== span 0)
     0
@@ -28826,7 +28809,7 @@
 ; AX3042 for the three effects that refine `IO` (`isConcEntropyEffect`).
 ; A purity claim is answered by AX3010 instead, as it is for IO, so one
 ; mistake draws one diagnostic.
-(pub :: checkUndeclaredRefined (-> TC ASTNode Strings Ints Ints Int))
+(pub :: checkUndeclaredRefined (-> TC ASTNode Strings Axtags Axtags Int))
 (pub fn (checkUndeclaredRefined tc d eff own sig)
   (if (== (tagsClaimPure sig own) 1)
     0
@@ -28836,7 +28819,7 @@
       (checkUndeclaredOne tc d eff own sig "Block")
     }))
 
-(pub :: checkUndeclaredOne (-> TC ASTNode Strings Ints Ints String Int))
+(pub :: checkUndeclaredOne (-> TC ASTNode Strings Axtags Axtags String Int))
 (pub fn (checkUndeclaredOne tc d eff own sig e)
   (if (== (effDefinite eff (builtinEff e)) 0)
     0
@@ -29165,7 +29148,7 @@
 
 ; The unsafe role a declaration's tags give it (FnEnt word 9): 1 for
 ; `effect(unsafe)`, a trusted encapsulation, 0 otherwise.
-(pub :: unsafeRoleOfTags (-> TC Ints Ints Int))
+(pub :: unsafeRoleOfTags (-> TC Axtags Axtags Int))
 (pub fn (unsafeRoleOfTags tc sig own)
   (if (== (tagsClaimUnsafe tc sig own) 1)
     1
@@ -29185,7 +29168,7 @@
                 (match (sigAxtagsFor tc (nodeAName d))
                   ((None) vecNew)
                   ((Some tags) tags))
-                (nodeAxtagsWords d)))
+                (nodeAxtagsOf d)))
             (if (! (== role 0))
               {
                 (let entFound (restrictOwnEnt tc d))
@@ -29200,49 +29183,45 @@
 
 ; Does either tag set claim `effect(unsafe)`, in any spelling the claim
 ; check itself resolves to the built-in `Unsafe` (`axtagEffectOf`)?
-(pub :: tagsClaimUnsafe (-> TC Ints Ints Int))
+(pub :: tagsClaimUnsafe (-> TC Axtags Axtags Int))
 (pub fn (tagsClaimUnsafe tc sig own)
   (if (== (tagsClaimEffectIn tc sig (builtinEff "Unsafe") 0) 1)
     1
     (tagsClaimEffectIn tc own (builtinEff "Unsafe") 0)))
 
-(pub :: tagsClaimEffectIn (-> TC Ints String Int Int))
+(pub :: tagsClaimEffectIn (-> TC Axtags String Int Int))
 (pub fn (tagsClaimEffectIn tc tags want i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
-      {
-        (let t (vecGet tags i))
-        (if (&& (strEq (axtagKeyOf t) "effect")
-              (strEq (axtagEffectOf tc (strTrimBlanks (axtagTextValue t))) want))
-          1
-          (tagsClaimEffectIn tc tags want (+ i 1)))
-      })))
+    {
+      (let t (vecGet tags i))
+      (if (&& (strEq (axtagKeyOf t) "effect")
+            (strEq (axtagEffectOf tc (strTrimBlanks (axtagTextValue t))) want))
+        1
+        (tagsClaimEffectIn tc tags want (+ i 1)))
+    }))
 
 ; Does either tag set claim purity, in either spelling - `effect(pure)`
 ; or the retired bare `pure`, which AX3078 refuses beside whatever
 ; else the body draws?
-(pub :: tagsClaimPure (-> Ints Ints Int))
+(pub :: tagsClaimPure (-> Axtags Axtags Int))
 (pub fn (tagsClaimPure sig own)
   (if (== (tagsClaimPureIn sig 0) 1)
     1
     (tagsClaimPureIn own 0)))
 
-(pub :: tagsClaimPureIn (-> Ints Int Int))
+(pub :: tagsClaimPureIn (-> Axtags Int Int))
 (pub fn (tagsClaimPureIn tags i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
-      {
-        (let t (vecGet tags i))
-        (if (|| (strEq (axtagKeyOf t) "pure")
-              (&& (strEq (axtagKeyOf t) "effect")
-                (== (strEqCI (strTrimBlanks (axtagTextValue t)) "pure") 1)))
-          1
-          (tagsClaimPureIn tags (+ i 1)))
-      })))
+    {
+      (let t (vecGet tags i))
+      (if (|| (strEq (axtagKeyOf t) "pure")
+            (&& (strEq (axtagKeyOf t) "effect")
+              (== (strEqCI (strTrimBlanks (axtagTextValue t)) "pure") 1)))
+        1
+        (tagsClaimPureIn tags (+ i 1)))
+    }))
 
 ; `forgeSites` as a Vec: the forging casts `tcCheckFn` recorded in the body
 ; being checked, three words each (node, target, source), or an empty
@@ -29371,7 +29350,7 @@
 ; performed nor possible - is remembered for `unsafeLatePass` (`unsafePending`).
 ; Only such a claim can still be refuted there, and only by a forging
 ; callee the fixpoint could not see.
-(pub :: unsafeNotePending (-> TC ASTNode Ints Ints Strings Int))
+(pub :: unsafeNotePending (-> TC ASTNode Axtags Axtags Strings Int))
 (pub fn (unsafeNotePending tc d own sig eff)
   (if (== (effMay eff (builtinEff "Unsafe")) 1)
     0
@@ -29491,7 +29470,7 @@
 ; module's signature for a bare name, and one module's `pure` claim
 ; drew a false AX3010 in another (tests/diagnostics/342). A strict
 ; `strEq` instead drops the entry-signature shape above.
-(pub :: sigAxtagsFor (-> TC String (Option Ints)))
+(pub :: sigAxtagsFor (-> TC String (Option Axtags)))
 (pub fn (sigAxtagsFor tc name)
   ; Built, then READ BACK: `memSetWord` answers the RECORD it wrote
   ; into, not the value (stdlib/Mem.ax:202-208). Binding its result
@@ -29615,7 +29594,7 @@
         (sigTagsBuild decls acc (+ i 1))
       })))
 
-(pub :: sigAxtagsFrom (-> Nodes String Int (Option Ints)))
+(pub :: sigAxtagsFrom (-> Nodes String Int (Option Axtags)))
 (pub fn (sigAxtagsFrom tagged name i)
   (if (>= i (vecLen tagged))
     None
@@ -29635,35 +29614,33 @@
 ; Different claims are still each checked - only the content already
 ; answered is skipped - which is the union-then-check-once rule
 ; `restrictSplit` keeps with `strInVec`.
-(pub :: axtagContentSeen (-> Ints String Int Int))
+(pub :: axtagContentSeen (-> Axtags String Int Int))
 (pub fn (axtagContentSeen tags content i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
-      (if (strEq (memGetWordStr (vecGet tags i) 1) content)
-        1
-        (axtagContentSeen tags content (+ i 1))))))
+    (if (strEq (axtagContent (vecGet tags i)) content)
+      1
+      (axtagContentSeen tags content (+ i 1)))))
 
 ; `checkAxtagsFrom`, skipping the contents already checked from
 ; another set. The signature's walk passes 0 and checks everything;
 ; the function's own walk passes the signature's set.
-(pub :: checkAxtagsFromSkipping (-> TC ASTNode Ints Int Strings Ints Ints Int Int))
+(pub :: checkAxtagsFromSkipping (-> TC ASTNode Axtags Int Strings Ints Axtags Int Int))
 (pub fn (checkAxtagsFromSkipping tc d tags i eff eparams skip lex)
   (if (>= i (vecLen tags))
     0
     {
-      (if (! (== (axtagContentSeen skip (memGetWordStr (vecGet tags i) 1) 0) 1))
-        (checkOneAxtag tc d (memGetWordStr (vecGet tags i) 1) eff eparams lex))
+      (if (! (== (axtagContentSeen skip (axtagContent (vecGet tags i)) 0) 1))
+        (checkOneAxtag tc d (axtagContent (vecGet tags i)) eff eparams lex))
       (checkAxtagsFromSkipping tc d tags (+ i 1) eff eparams skip lex)
     }))
 
-(pub :: checkAxtagsFrom (-> TC ASTNode Ints Int Strings Ints Int Int))
+(pub :: checkAxtagsFrom (-> TC ASTNode Axtags Int Strings Ints Int Int))
 (pub fn (checkAxtagsFrom tc d tags i eff eparams lex)
   (if (>= i (vecLen tags))
     0
     {
-      (checkOneAxtag tc d (memGetWordStr (vecGet tags i) 1) eff eparams lex)
+      (checkOneAxtag tc d (axtagContent (vecGet tags i)) eff eparams lex)
       (checkAxtagsFrom tc d tags (+ i 1) eff eparams lex)
     }))
 
@@ -30280,7 +30257,7 @@
       {
         (let d (vecGet decls i))
         (if (== (nodeTag d) TAG_D_EFFECT)
-          (checkEffectDeclTags tc d (nodeAxtagsWords d) 0))
+          (checkEffectDeclTags tc d (nodeAxtagsOf d) 0))
       }
       (checkEffectDeclAxtags tc decls (+ i 1))
     }))
@@ -30301,7 +30278,7 @@
     {
       {
         (let d (vecGet decls i))
-        (if (! (== (nodeAxtags d) 0))
+        (if (isSome (nodeAxtagsOpt d))
           (strayAxtagsInUnit tc d))
       }
       (checkStrayAxtags tc decls (+ i 1))
@@ -30317,12 +30294,12 @@
   {
     (let was (tcCurUnit tc))
     (let _u (tcSetCurUnit tc (unitIndexFor (tcUnits tc) (nodeModuleOpt d))))
-    (let _r (strayAxtagsOf tc d (nodeAxtagsWords d) 0))
+    (let _r (strayAxtagsOf tc d (nodeAxtagsOf d) 0))
     (tcSetCurUnit tc was)
     0
   })
 
-(pub :: strayAxtagsOf (-> TC ASTNode Ints Int Int))
+(pub :: strayAxtagsOf (-> TC ASTNode Axtags Int Int))
 (pub fn (strayAxtagsOf tc d tags i)
   (if (>= i (vecLen tags))
     0
@@ -30345,8 +30322,8 @@
     {
       {
         (let d (vecGet decls i))
-        (if (&& (== (nodeTag d) TAG_D_IMPORT) (!= (nodeAxtags d) 0))
-          (strayAxtagsOf tc d (nodeAxtagsWords d) 0))
+        (if (&& (== (nodeTag d) TAG_D_IMPORT) (isSome (nodeAxtagsOpt d)))
+          (strayAxtagsOf tc d (nodeAxtagsOf d) 0))
       }
       (checkStrayImportAxtags tc decls (+ i 1))
     }))
@@ -30416,16 +30393,14 @@
           "the tag was recorded and nothing read it, so the claim it looks like was never made; an unrecognised key is still legal metadata")
         "tag not checked here"))))
 
-(pub :: checkEffectDeclTags (-> TC ASTNode Ints Int Int))
+(pub :: checkEffectDeclTags (-> TC ASTNode Axtags Int Int))
 (pub fn (checkEffectDeclTags tc d tags i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
-      {
-        (axtagKeyTypo tc d (axtagKeyOf (vecGet tags i)))
-        (checkEffectDeclTags tc d tags (+ i 1))
-      })))
+    {
+      (axtagKeyTypo tc d (axtagKeyOf (vecGet tags i)))
+      (checkEffectDeclTags tc d tags (+ i 1))
+    }))
 
 ; The keys the compiler KNOWS, and nothing else. `suggestThreshold`
 ; is deliberately NOT reused: it scales with name length so a reader
@@ -31613,7 +31588,7 @@
             (let entFound (findFnEntAnywhere tc (nodeAName d)))
             (if (let (Some ent) entFound)
               {
-                (scopedCollectTags tc d ent (nodeAxtagsWords d) 0)
+                (scopedCollectTags tc d ent (nodeAxtagsOf d) 0)
                 (if (let (Some tags) (sigAxtagsFor tc (nodeAName d)))
                   (scopedCollectTags tc d ent tags 0)
                   0)
@@ -31624,9 +31599,9 @@
       (scopedCollectAll tc decls (+ i 1))
     }))
 
-(pub :: scopedCollectTags (-> TC ASTNode FnEnt Ints Int Int))
+(pub :: scopedCollectTags (-> TC ASTNode FnEnt Axtags Int Int))
 (pub fn (scopedCollectTags tc d ent tags i)
-  (if (|| (== (as tags Int) 0) (>= i (vecLen tags)))
+  (if (>= i (vecLen tags))
     0
     {
       {
@@ -33687,30 +33662,28 @@
 ; Every name in every `ct(...)` tag of `tags`, pushed once each; a
 ; tag naming nothing pushes the empty name, so it is reported rather
 ; than read as a claim of nothing.
-(pub :: ctCollect (-> Ints Strings Int Int))
+(pub :: ctCollect (-> Axtags Strings Int Int))
 (pub fn (ctCollect tags cs i)
-  (if (== (as tags Int) 0)
+  (if (>= i (vecLen tags))
     0
-    (if (>= i (vecLen tags))
-      0
+    {
+      (let content (axtagContent (vecGet tags i)))
       {
-        (let content (memGetWordStr (vecGet tags i) 1))
+        (let op
+          (if (let (Some k) (strFindByte content 40 0))
+            k
+            (- 0 1)))
         {
-          (let op
-            (if (let (Some k) (strFindByte content 40 0))
-              k
-              (- 0 1)))
-          {
-            (if (strEq
-                  (if (< op 0)
-                    content
-                    (strSlice content 0 op))
-                  "ct")
-              (restrictSplit (axtagListValue content op) cs))
-            (ctCollect tags cs (+ i 1))
-          }
+          (if (strEq
+                (if (< op 0)
+                  content
+                  (strSlice content 0 op))
+                "ct")
+            (restrictSplit (axtagListValue content op) cs))
+          (ctCollect tags cs (+ i 1))
         }
-      })))
+      }
+    }))
 
 ; A function's claim, from its signature and its `fn` together. Empty
 ; when it makes none.
@@ -33722,7 +33695,7 @@
       (if (let (Some tags) (sigAxtagsFor tc (nodeAName d)))
         (ctCollect tags cs 0)
         0)
-      (ctCollect (nodeAxtagsWords d) cs 0)
+      (ctCollect (nodeAxtagsOf d) cs 0)
       cs
     }
   })

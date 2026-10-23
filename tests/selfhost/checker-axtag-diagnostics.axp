@@ -1,0 +1,50 @@
+(import core)
+(import lexer)
+(import parser)
+(import typecheck)
+(import diag)
+(import Vec)
+(import IO)
+
+(:: report (-> String String ()))
+;@axiom:effect(io)
+(fn (report name source)
+  {
+    (println "SOURCE {name}")
+    (match (parseModuleWith (lex source) (scanAxtags source))
+      ((ParseFailed error) __indexTrap)
+      ((ParseSuccess declarations after)
+        {
+          (let units
+            (vecPush vecNew
+              (CUnit2 :file name :src source :name None :imports vecNew :library false)))
+          (let tc (checkModuleTcTyped declarations declarations units))
+          (writeStr stdout (renderDiagsUnits tc.out units))
+        }
+      ))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (report "pure.ax" ";@axiom:effect(pure)\n(:: identity (-> Int Int))\n(pub fn (identity x) x)")
+    (report "dedup.ax"
+      ";@axiom:effect(pure)\n(:: liar Int)\n;@axiom:effect(pure)\n(pub fn (liar) (__argc))")
+    (report "unsafe.ax" ";@axiom:effect(unsafe)\n(pub fn (read p) (__load64 p 0))")
+    (report "missing-io.ax" "(pub fn (count) (__argc))")
+    (report "typo.ax" ";@axiom:effct(pure)\n(pub fn (test) 1)")
+    (report "misplaced.ax" ";@axiom:effect(pure)\n(data Shape (Shape))")
+    (report "field.ax" "(struct Holder\n;@axiom:effect(pure)\n(call : (-> Int Int)))")
+    (report "contract-type.ax" ";@axiom:pre(1)\n(pub fn (test) 1)")
+    (report "contract-empty.ax" ";@axiom:pre()\n(pub fn (test) 1)")
+    (report "contract-trailing.ax" ";@axiom:pre(true false)\n(pub fn (test) 1)")
+    (report "post-result.ax" "(:: test Int)\n;@axiom:post((> result 0))\n(pub fn (test) 1)")
+    (report "post-missing.ax" ";@axiom:post((> result 0))\n(pub fn (test) 1)")
+    (report "deprecated.ax"
+      ";@axiom:deprecated(use newer)\n(pub fn (old) 1)\n(pub fn (caller) (old))")
+    (report "restrict.ax" ";@axiom:restrict(no-io)\n(pub fn (test) (__argc))")
+    (report "isr.ax" ";@axiom:isr(irq)\n(pub fn (handler x) x)")
+    (report "ct.ax" ";@axiom:ct(missing)\n(pub fn (test x) x)")
+    0
+  })

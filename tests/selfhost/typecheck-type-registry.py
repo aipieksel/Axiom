@@ -283,11 +283,14 @@ def signature_tag_negative_control(compiler, repo, env, work):
         if source.is_file() and source.name != "typecheck.ax":
             (overlay / source.name).symlink_to(source)
     source = (repo / "core/typecheck.ax").read_text()
+    start = source.index("(pub fn (sigAxtagsFrom ")
+    end = source.index("\n\n", start)
+    body = source[start:end]
     old = "(nodeAxtagsOpt d)"
-    if source.count(old) != 1:
+    if body.count(old) != 1:
         raise SystemExit("signature tag control no longer matches its single lookup site")
-    changed = "(if (== (vecLen (nodeAxtagsWords d)) 0) None (nodeAxtagsOpt d))"
-    (overlay / "typecheck.ax").write_text(source.replace(old, changed))
+    changed = "(if (== (vecLen (nodeAxtagsOf d)) 0) None (nodeAxtagsOpt d))"
+    (overlay / "typecheck.ax").write_text(source[:start] + body.replace(old, changed) + source[end:])
     executable = work / "signature-tag-negative"
     built = subprocess.run(
         [str(compiler), "--diagnostic-format=ai", "build",
