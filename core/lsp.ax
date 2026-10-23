@@ -1597,13 +1597,13 @@
 ; ==================================================================
 ; The index of the statement argument of a text-taking entry point, or
 ; -1 for any other head.
-(pub :: lspAxqlArgIndex (-> String Int))
+(pub :: lspAxqlArgIndex (-> String (Option Int)))
 (pub fn (lspAxqlArgIndex head)
   (if (|| (strEq head "axqExec") (|| (strEq head "axqExecBatch") (strEq head "axqPrepare")))
-    1
+    (Some 1)
     (if (strEq head "axqSql")
-      0
-      (- 0 1))))
+      (Some 0)
+      None)))
 
 ; Whether token kind `k` opens a form, and whether it closes one.
 (pub :: lspAxqlOpens (-> Int Bool))
@@ -1629,20 +1629,20 @@
   {
     (let toks (lex src))
     (let n (vecLen toks))
-    (let mut hit (- 0 1))
+    (let mut hit (:: None (Option Int)))
     (let mut i 0)
     {
-      (while (&& (< i n) (< hit 0))
+      (while (&& (< i n) (isNone hit))
         {
           (let t (vecGet toks i))
           (if (== (kindInt (tokenKind t)) (kindInt TK_STRING))
             (if (&& (> off (spanStart (tokenSpan t))) (< off (spanEnd (tokenSpan t))))
-              (set hit i)))
+              (set hit (Some i))))
           (set i (+ i 1))
         })
-      (if (< hit 0)
-        None
-        (lspAxqlLitOf toks hit))
+      (match hit
+        ((None) None)
+        ((Some hit) (lspAxqlLitOf toks hit)))
     }
   })
 
@@ -1656,24 +1656,26 @@
   {
     (let mut depth 0)
     (let mut j (- hit 1))
-    (let mut open (- 0 1))
+    (let mut open (:: None (Option Int)))
     {
-      (while (&& (>= j 0) (< open 0))
+      (while (&& (>= j 0) (isNone open))
         {
           (let k (kindInt (tokenKind (vecGet toks j))))
           (if (lspAxqlCloses k)
             (set depth (+ depth 1))
             (if (lspAxqlOpens k)
               (if (== depth 0)
-                (set open j)
+                (set open (Some j))
                 (set depth (- depth 1)))))
           (set j (- j 1))
         })
-      (if (< open 0)
-        None
-        (if (!= (kindInt (tokenKind (vecGet toks open))) (kindInt TK_LPAREN))
-          None
-          (lspAxqlLitHead toks hit (+ open 1))))
+      (match open
+        ((None) None)
+        ((Some open)
+          (if (!= (kindInt (tokenKind (vecGet toks open))) (kindInt TK_LPAREN))
+            None
+            (lspAxqlLitHead toks hit (+ open 1)))
+        ))
     }
   })
 
@@ -1688,39 +1690,41 @@
         (let last (lspAxqlHeadLast toks h hit))
         (let head (tokenLexeme (vecGet toks last)))
         (let want (lspAxqlArgIndex head))
-        (if (< want 0)
-          None
-          {
-            (let mut args 0)
-            (let mut d 0)
+        (match want
+          ((None) None)
+          ((Some want)
             {
-              (for k in (+ last 1)..hit
-                {
-                  (let kk (kindInt (tokenKind (vecGet toks k))))
-                  (if (lspAxqlOpens kk)
-                    {
-                      (if (== d 0)
-                        (set args (+ args 1)))
-                      (set d (+ d 1))
-                    }
-                    (if (lspAxqlCloses kk)
-                      (set d (- d 1))
-                      (if (== d 0)
-                        (set args (+ args 1)))))
-                })
-              (if (!= args want)
-                None
-                {
-                  (let sp (tokenSpan (vecGet toks hit)))
-                  (Some
-                    (LspAxqlLit
-                      :start (spanStart sp)
-                      :end (spanEnd sp)
-                      :head head
-                      :script (strEq head "axqExecBatch")))
-                })
+              (let mut args 0)
+              (let mut d 0)
+              {
+                (for k in (+ last 1)..hit
+                  {
+                    (let kk (kindInt (tokenKind (vecGet toks k))))
+                    (if (lspAxqlOpens kk)
+                      {
+                        (if (== d 0)
+                          (set args (+ args 1)))
+                        (set d (+ d 1))
+                      }
+                      (if (lspAxqlCloses kk)
+                        (set d (- d 1))
+                        (if (== d 0)
+                          (set args (+ args 1)))))
+                  })
+                (if (!= args want)
+                  None
+                  {
+                    (let sp (tokenSpan (vecGet toks hit)))
+                    (Some
+                      (LspAxqlLit
+                        :start (spanStart sp)
+                        :end (spanEnd sp)
+                        :head head
+                        :script (strEq head "axqExecBatch")))
+                  })
+              }
             }
-          })
+          ))
       })))
 
 ; The last identifier of a qualified head, including a dotted
@@ -1803,72 +1807,76 @@
     }
   })
 
-; The parser's refusal of `text`, or "" when it reads. Error keeps
+; The parser's refusal of `text`, or None when it reads. Error keeps
 ; its context separate from the message, including quoted user text.
-(pub :: lspAxqlRefusal (-> String Bool String))
+(pub :: lspAxqlRefusal (-> String Bool (Option String)))
 (pub fn (lspAxqlRefusal text script)
   (if script
     (match (axqlParseScript text)
-      ((Ok _) "")
-      ((Err e) (errMessage e)))
+      ((Ok _) None)
+      ((Err e) (Some (errMessage e))))
     (match (axqlParse text)
-      ((Ok _) "")
-      ((Err e) (errMessage e)))))
+      ((Ok _) None)
+      ((Err e) (Some (errMessage e))))))
 
 ; The byte offset in `text` of "line L, column C" as the parser spells
-; a position at the head of its message, or -1 when the message does
+; a position at the head of its message, or None when the message does
 ; not open with one.
-(pub :: lspAxqlErrOffset (-> String String Int))
+(pub :: lspAxqlErrOffset (-> String String (Option Int)))
 (pub fn (lspAxqlErrOffset text msg)
   (if (! (strStartsWith msg "line "))
-    (- 0 1)
-    {
-      (let line (lspAxqlDigitsAt msg 5))
-      (if (let (Some c) (strFind msg "column " 0))
-        {
-          (let col (lspAxqlDigitsAt msg (+ c 7)))
-          (if (|| (< line 1) (< col 1))
-            (- 0 1)
-            {
-              ; to the start of line `line`, then `col - 1` bytes on
-              (let mut i 0)
-              (let mut l 1)
-              (let n (strLen text))
-              {
-                (while (&& (< l line) (< i n))
+    None
+    (match (lspAxqlDigitsAt msg 5)
+      ((None) None)
+      ((Some line)
+        (match (strFind msg "column " 0)
+          ((None) None)
+          ((Some c)
+            (match (lspAxqlDigitsAt msg (+ c 7))
+              ((None) None)
+              ((Some col)
+                (if (|| (< line 1) (< col 1))
+                  None
                   {
-                    (if (== (strByte text i) 10)
-                      (set l (+ l 1)))
-                    (set i (+ i 1))
+                    (let mut i 0)
+                    (let mut l 1)
+                    (let n (strLen text))
+                    (while (&& (< l line) (< i n))
+                      {
+                        (if (== (strByte text i) 10)
+                          (set l (+ l 1)))
+                        (set i (+ i 1))
+                      })
+                    (Some
+                      (if (> (+ i (- col 1)) n)
+                        n
+                        (+ i (- col 1))))
                   })
-                (if (> (+ i (- col 1)) n)
-                  n
-                  (+ i (- col 1)))
-              }
-            })
-        }
-        (- 0 1))
-    }))
+              ))
+          ))
+      ))))
 
 ; The decimal number at `at` in `s`, or -1 when no digit is there.
-(pub :: lspAxqlDigitsAt (-> String Int Int))
+(pub :: lspAxqlDigitsAt (-> String Int (Option Int)))
 (pub fn (lspAxqlDigitsAt s at)
-  {
-    (let mut i at)
-    (let mut v 0)
-    (let mut any false)
+  (if (< at 0)
+    None
     {
-      (while (&& (< i (strLen s)) (&& (>= (strByte s i) 48) (<= (strByte s i) 57)))
-        {
-          (set v (+ (* v 10) (- (strByte s i) 48)))
-          (set any true)
-          (set i (+ i 1))
-        })
-      (if any
-        v
-        (- 0 1))
-    }
-  })
+      (let mut i at)
+      (let mut v 0)
+      (let mut any false)
+      {
+        (while (&& (< i (strLen s)) (&& (>= (strByte s i) 48) (<= (strByte s i) 57)))
+          {
+            (set v (+ (* v 10) (- (strByte s i) 48)))
+            (set any true)
+            (set i (+ i 1))
+          })
+        (if any
+          (Some v)
+          None)
+      }
+    }))
 
 ; The end of the AXQL word starting at `at` in `s`: letters, digits
 ; and `_`, or `at` itself when no word starts there.
@@ -1911,11 +1919,15 @@
             0
             {
               (let head (bareOf (nodeAName h)))
-              (if (!= (lspAxqlArgIndex head) idx)
-                0
-                (if (== (nodeSpan b) 0)
-                  0
-                  (lspLintAxqlText lx b (strEq head "axqExecBatch"))))
+              (match (lspAxqlArgIndex head)
+                ((None) 0)
+                ((Some wanted)
+                  (if (!= wanted idx)
+                    0
+                    (if (== (nodeSpan b) 0)
+                      0
+                      (lspLintAxqlText lx b (strEq head "axqExecBatch"))))
+                ))
             })
         }
       })
@@ -1930,35 +1942,41 @@
     (let sp (nodeSpan node))
     (let text (lspAxqlLitValue src (spanStart sp) (spanEnd sp)))
     (let msg (lspAxqlRefusal text script))
-    (if (== (strLen msg) 0)
-      0
-      {
-        (let start (spanStart sp))
-        (let end (spanEnd sp))
-        (let at (lspAxqlErrOffset text msg))
-        (let inner (- (- end start) 2))
-        ; the word at the parser's position, when the bytes are the
-        ; value and a word is there; else the whole text
-        (let narrow
-          (if (|| (< at 0) (lspAxqlLitEscaped src start end))
-            false
-            (if (> at inner)
-              false
-              (< at (lspAxqlWordEnd text at)))))
-        (let ws
-          (if narrow
-            (+ (+ start 1) at)
-            (+ start 1)))
-        (let we
-          (if narrow
-            (+ (+ start 1) (lspAxqlWordEnd text at))
-            (- end 1)))
-        (let quoted (strSlice src ws (- we ws)))
-        (if (> (- we ws) 0)
-          (lspLintRecord lx (mkSpan ws we) lintAxql
-            (concat (concat "`" quoted) (concat "` is not a statement AXQL reads: " msg)))
-          0)
-      })
+    (match msg
+      ((None) 0)
+      ((Some msg)
+        {
+          (let start (spanStart sp))
+          (let end (spanEnd sp))
+          (let at (lspAxqlErrOffset text msg))
+          (let inner (- (- end start) 2))
+          ; the word at the parser's position, when the bytes are the
+          ; value and a word is there; else the whole text
+          (let narrow
+            (match at
+              ((None) None)
+              ((Some at)
+                (if (|| (lspAxqlLitEscaped src start end) (> at inner))
+                  None
+                  (if (< at (lspAxqlWordEnd text at))
+                    (Some at)
+                    None))
+              )))
+          (let ws
+            (match narrow
+              ((None) (+ start 1))
+              ((Some at) (+ (+ start 1) at))))
+          (let we
+            (match narrow
+              ((None) (- end 1))
+              ((Some at) (+ (+ start 1) (lspAxqlWordEnd text at)))))
+          (let quoted (strSlice src ws (- we ws)))
+          (if (> (- we ws) 0)
+            (lspLintRecord lx (mkSpan ws we) lintAxql
+              (concat (concat "`" quoted) (concat "` is not a statement AXQL reads: " msg)))
+            0)
+        }
+      ))
   })
 
 ; ------------------------------------------------------------------
@@ -2364,7 +2382,7 @@
       {
         ; A string closed at its line's end may have taken in code
         ; that followed the quote on that line.
-        (set drop (if (>= (lspRecOpenString src toks) 0)
+        (set drop (if (isSome (lspRecOpenString src toks))
           1
           lossy))
         (while (< (+ i 1) (vecLen bounds))
@@ -2404,32 +2422,33 @@
 ;; beyond are dropped.
 (pub :: lspRecoverStrings (-> String Tokens Int Tokens))
 (pub fn (lspRecoverStrings src toks round)
-  {
-    (let at (lspRecOpenString src toks))
-    (if (|| (< at 0) (>= round 8))
-      toks
-      {
-        (let nl (findNewline src at (strLen src)))
-        (if (>= nl (strLen src))
-          toks
-          {
-            (let src2
-              (concat (strSlice src 0 nl)
-                (concat "\"" (strSlice src (+ nl 1) (- (strLen src) (+ nl 1))))))
-            (lspRecoverStrings src2 (lex src2) (+ round 1))
-          })
-      })
-  })
+  (match (lspRecOpenString src toks)
+    ((None) toks)
+    ((Some at)
+      (if (>= round 8)
+        toks
+        {
+          (let nl (findNewline src at (strLen src)))
+          (if (>= nl (strLen src))
+            toks
+            {
+              (let src2
+                (concat (strSlice src 0 nl)
+                  (concat "\"" (strSlice src (+ nl 1) (- (strLen src) (+ nl 1))))))
+              (lspRecoverStrings src2 (lex src2) (+ round 1))
+            })
+        })
+    )))
 
 ;; The offset of the first unterminated string's opening quote, or -1.
-(pub :: lspRecOpenString (-> String Tokens Int))
+(pub :: lspRecOpenString (-> String Tokens (Option Int)))
 (pub fn (lspRecOpenString src toks)
   {
     (let mut i 0)
-    (let mut at (- 0 1))
+    (let mut at (:: None (Option Int)))
     {
       (while (if (< i (vecLen toks))
-        (< at 0)
+        (isNone at)
         false)
         {
           (let t (vecGet toks i))
@@ -2439,7 +2458,7 @@
                 (let s (spanStart (tokenSpan t)))
                 (if (< s (strLen src))
                   (if (== (strByte src s) 34)
-                    (set at s)))
+                    (set at (Some s))))
               })
             (set i (+ i 1))
           }
@@ -2762,32 +2781,38 @@
 
 ;; Replace the form opening at `a`, or the one around it when that has
 ;; been tried, with `()`; drop a `()` the parser refused.
-(pub :: lspRepairWiden (-> Tokens Int Ints Tokens))
+(pub :: lspRepairWiden (-> Tokens (Option Int) Ints Tokens))
 (pub fn (lspRepairWiden toks a tried)
-  (if (<= a 0)
-    vecNew
-    {
-      (let b (lspRecMatch toks a))
-      (let sa (spanStart (tokenSpan (vecGet toks a))))
-      (if (lspRecTry tried 3 sa)
-        (lspRecWithHole toks a (+ b 1) sa (spanStart (tokenSpan (vecGet toks b))))
-        (if (if (== b (+ a 1))
-          (lspRecTry tried 4 sa)
-          false)
-          (lspRecWithout toks a b)
-          (lspRepairWiden toks (lspRecEnclosing toks a) tried)))
-    }))
+  (match a
+    ((None) vecNew)
+    ((Some a)
+      (if (<= a 0)
+        vecNew
+        {
+          (let b (lspRecMatch toks a))
+          (let sa (spanStart (tokenSpan (vecGet toks a))))
+          (if (lspRecTry tried 3 sa)
+            (lspRecWithHole toks a (+ b 1) sa (spanStart (tokenSpan (vecGet toks b))))
+            (if (if (== b (+ a 1))
+              (lspRecTry tried 4 sa)
+              false)
+              (lspRecWithout toks a b)
+              (lspRepairWiden toks (lspRecEnclosing toks a) tried)))
+        })
+    )))
 
 ;; The opener of the form a repair at `e` works on: `e` itself when it
 ;; opens one, the opener a closer matches, or the innermost opener
 ;; around anything else.
-(pub :: lspRecGroupOf (-> Tokens Int Int))
+(pub :: lspRecGroupOf (-> Tokens Int (Option Int)))
 (pub fn (lspRecGroupOf toks e)
-  (if (> (lspRecOpener (vecGet toks e)) 0)
-    e
-    (if (> (lspRecCloser (vecGet toks e)) 0)
-      (lspRecMatchBack toks e)
-      (lspRecEnclosing toks e))))
+  (if (|| (< e 0) (>= e (vecLen toks)))
+    None
+    (if (> (lspRecOpener (vecGet toks e)) 0)
+      (Some e)
+      (if (> (lspRecCloser (vecGet toks e)) 0)
+        (Some (lspRecMatchBack toks e))
+        (lspRecEnclosing toks e)))))
 
 ;; The index of the closer matching the opener at `a`.
 (pub :: lspRecMatch (-> Tokens Int Int))
@@ -2848,31 +2873,33 @@
   })
 
 ;; The index of the innermost opener whose form holds index `e`, or -1.
-(pub :: lspRecEnclosing (-> Tokens Int Int))
+(pub :: lspRecEnclosing (-> Tokens Int (Option Int)))
 (pub fn (lspRecEnclosing toks e)
-  {
-    (let mut i (- e 1))
-    (let mut depth 0)
-    (let mut at (- 0 1))
+  (if (|| (< e 0) (> e (vecLen toks)))
+    None
     {
-      (while (if (>= i 0)
-        (< at 0)
-        false)
-        {
-          (let t (vecGet toks i))
+      (let mut i (- e 1))
+      (let mut depth 0)
+      (let mut at (:: None (Option Int)))
+      {
+        (while (if (>= i 0)
+          (isNone at)
+          false)
           {
-            (if (> (lspRecCloser t) 0)
-              (set depth (+ depth 1)))
-            (if (> (lspRecOpener t) 0)
-              (if (== depth 0)
-                (set at i)
-                (set depth (- depth 1))))
-            (set i (- i 1))
-          }
-        })
-      at
-    }
-  })
+            (let t (vecGet toks i))
+            {
+              (if (> (lspRecCloser t) 0)
+                (set depth (+ depth 1)))
+              (if (> (lspRecOpener t) 0)
+                (if (== depth 0)
+                  (set at (Some i))
+                  (set depth (- depth 1))))
+              (set i (- i 1))
+            }
+          })
+        at
+      }
+    }))
 
 ;; `toks` with indices `[a, b)` replaced by `()`, the opener spanning
 ;; from `sa` and the closer from `sb`, each empty.
@@ -16848,9 +16875,9 @@
 ; SEM_H_KW, and a name is SEM_H_OTHER - a call, or a type application.
 (pub :: lspHlHeadCode (-> LspHl String Int))
 (pub fn (lspHlHeadCode st word)
-  (if (>= (lspAxqlArgIndex word) 0)
-    (+ 25 (lspAxqlArgIndex word))
-    (lspHlLanguageHeadCode st word)))
+  (match (lspAxqlArgIndex word)
+    ((None) (lspHlLanguageHeadCode st word))
+    ((Some index) (+ 25 index))))
 
 ; Head codes 25 and 26 mark the first and second argument as a query.
 ; The ordinary form stack counts arguments, so colouring needs no
