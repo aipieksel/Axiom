@@ -1,0 +1,128 @@
+(import core)
+(import driver)
+(import Str)
+(import Vec)
+(import IO)
+
+(:: say (-> Int Bool ()))
+;@axiom:effect(io)
+(fn (say index good)
+  (println "{index} {good}"))
+
+(:: numberIs (-> (Option Int) Int Bool))
+(fn (numberIs found expected)
+  (match found
+    ((None) false)
+    ((Some number) (== number expected))))
+
+(:: textIs (-> (Option String) String Bool))
+(fn (textIs found expected)
+  (match found
+    ((None) false)
+    ((Some text) (strEq text expected))))
+
+(:: rangeIs (-> (Option AsmSite) Int Int Bool))
+(fn (rangeIs found start end)
+  (match found
+    ((None) false)
+    ((Some site) (&& (numberIs site.start start) (numberIs site.end end)))))
+
+(:: count (-> a Int))
+;@axiom:effect(unsafe)
+(fn (count value)
+  (__load64 (as value Int) -2))
+
+(:: readSite (-> AsmSite Bool))
+(fn (readSite site)
+  (&& (strEq site.file "present.ax") (&& (numberIs site.start 0) (numberIs site.end 5))))
+
+(:: detachedSite (Option AsmSite))
+(fn (detachedSite)
+  (asmSiteOf (strDup "; axiom-asm-file 0 \"present.ax\"\n; axiom-asm-site 0 0 0-5\n") 0))
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (say 1 (isNone (asmNumAt "" 0)))
+    (say 2 (isNone (asmNumAt "x" 0)))
+    (say 3 (numberIs (asmNumAt "0" 0) 0))
+    (say 4 (numberIs (asmNumAt "x0012rest" 1) 12))
+    (say 5 (isNone (asmNumAt "1" 1)))
+    (say 6 (isNone (asmNumAt "1" -1)))
+    (say 7 (numberIs (asmNumAt "9223372036854775807" 0) 9223372036854775807))
+    (say 8 (isNone (asmNumAt "9223372036854775808" 0)))
+    (say 9 (isNone (asmNumAt "18446744073709551616" 0)))
+    (say 10 (numberIs (asmNumAt "0009223372036854775807" 0) 9223372036854775807))
+    (say 11 (isNone (asmSeenAt vecNew "key" 0)))
+    (let seen (vecPush (vecPush (vecPush vecNew "key") "other") "key"))
+    (say 12 (numberIs (asmSeenAt seen "key" 0) 0))
+    (say 13 (numberIs (asmSeenAt seen "key" 1) 2))
+    (say 14 (isNone (asmSeenAt seen "missing" 0)))
+    (say 15 (isNone (asmAtLine "no cookie")))
+    (say 16 (numberIs (asmAtLine "error at line 0") 0))
+    (say 17 (isNone (asmAtLine "error at line 9223372036854775808")))
+    (say 18 (isNone (asmNoteCookie vecNew 0)))
+    (say 19 (numberIs (asmNoteCookie (vecPush vecNew "note: !srcloc = 0") 0) 0))
+    (say 20
+      (numberIs
+        (asmNoteCookie (vecPush (vecPush vecNew "note: !srcloc = bad") "note: !srcloc = 7") 0) 7))
+    (say 21
+      (isNone
+        (asmNoteCookie
+          (vecPush (vecPush (vecPush (vecPush vecNew "a") "b") "c") "note: !srcloc = 1") 0)))
+    (let files
+      "; axiom-asm-file 0 \"present.ax\"\n; axiom-asm-file 1 \"\"\n; axiom-asm-file 2 \"a\\20b.ax\"\n")
+    (say 22 (isNone (asmFileName "" "0")))
+    (say 23 (textIs (asmFileName files "0") "present.ax"))
+    (say 24 (textIs (asmFileName files "1") ""))
+    (say 25 (textIs (asmFileName files "2") "a b.ax"))
+    (say 26 (isNone (asmFileName "; axiom-asm-file 0 \"unterminated" "0")))
+    (say 27 (isNone (asmFileName files "3")))
+    (let ir (strDup (concat files "; axiom-asm-site 0 0 0-5 6-10 bad-4\n")))
+    (say 28 (rangeIs (asmSiteOf ir 0) 0 5))
+    (say 29 (rangeIs (asmSiteOf ir 1) 6 10))
+    (say 30
+      (match (asmSiteOf ir 2)
+        ((None) false)
+        ((Some site) (&& (isNone site.start) (numberIs site.end 4)))))
+    (say 31 (isNone (asmSiteOf ir 3)))
+    (say 32 (isNone (asmSiteOf "" 0)))
+    (say 33 (isNone (asmSiteLine files "0 1 0-5" 0)))
+    (say 34 (isNone (asmSiteLine files "0 3 0-5" 0)))
+    (say 35 (isNone (asmSiteLine files "0 0 bad" 0)))
+    (say 36 (isNone (asmSiteLine files "9223372036854775808 0 0-5" 0)))
+    (say 37 (rangeIs (asmSiteLine files "9223372036854775807 0 0-5" 9223372036854775807) 0 5))
+    (say 38 (isNone (asmSiteLine files "0 0 0-5" 9223372036854775807)))
+    (say 39
+      (match (asmSiteLine files "0 0 00-05" 0)
+        ((None) false)
+        ((Some site) (strEq site.key "present.ax:00:05:"))))
+    (say 40
+      (match (asmSiteLine files "0 0 18446744073709551616-5" 0)
+        ((None) false)
+        ((Some site) (isNone site.start))))
+    (let before (count ir))
+    (let mut valid true)
+    (for iteration in 0..32
+      (if (! (rangeIs (asmSiteOf ir 0) 0 5))
+        (set valid false)))
+    (say 41 valid)
+    (say 42 (== (count ir) before))
+    (say 43
+      (match detachedSite
+        ((None) false)
+        ((Some site) (readSite site))))
+    (say 44
+      (match detachedSite
+        ((None) false)
+        ((Some site)
+          {
+            (let before (count site))
+            (for iteration in 0..32
+              (readSite site))
+            (== (count site) before)
+          }
+        )))
+    0
+  })

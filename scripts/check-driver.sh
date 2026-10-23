@@ -1723,5 +1723,10 @@ if python3 "$repo_root/tests/tools/driver-extern-query-options.py" --axiom "$s1"
 else
   failed=$((failed + 1))
 fi
+if python3 "$repo_root/tests/tools/driver-asm-query-options.py" --axiom "$s1"; then
+  passed=$((passed + 1))
+else
+  failed=$((failed + 1))
+fi
 echo "$passed passed, $failed failed"
 [[ "$failed" == 0 ]]

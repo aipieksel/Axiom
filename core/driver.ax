@@ -531,23 +531,29 @@
     }
   })
 
-; The decimal at `at` in `s`, or -1 when there is no digit there.
-(pub :: asmNumAt (-> String Int Int))
+; A non-negative signed-64 decimal at `at`, or None for missing digits
+; or overflow. Check before multiplying so wrapped offsets stay absent.
+(pub :: asmNumAt (-> String Int (Option Int)))
 (pub fn (asmNumAt s at)
   {
     (let mut v 0)
     (let mut any false)
+    (let mut overflow false)
     (let mut i at)
     {
-      (while (&& (< i (strLen s)) (&& (>= (strByte s i) 48) (<= (strByte s i) 57)))
+      (while (&& (! overflow)
+               (&& (>= i 0) (&& (< i (strLen s)) (&& (>= (strByte s i) 48) (<= (strByte s i) 57)))))
         {
-          (set v (+ (* v 10) (- (strByte s i) 48)))
+          (let digit (- (strByte s i) 48))
+          (if (|| (> v 922337203685477580) (&& (== v 922337203685477580) (> digit 7)))
+            (set overflow true)
+            (set v (+ (* v 10) digit)))
           (set any true)
           (set i (+ i 1))
         })
-      (if any
-        v
-        (- 0 1))
+      (if (&& any (! overflow))
+        (Some v)
+        None)
     }
   })
 
@@ -605,84 +611,86 @@
       (- c 55)
       (- c 87))))
 
-; Where cookie `n` points: `[file, start, end]` from the site comment
-; whose cookies cover it, or an empty Vec when none does.
-(pub :: asmSiteOf (-> String Int Strings))
+; A site's source offsets are optional because malformed metadata still
+; receives a spanless diagnostic. Keep its spelling for duplicate keys.
+(pub struct AsmSite
+  (file : String)
+  (start : (Option Int))
+  (end : (Option Int))
+  (key : String))
+
+; The first site comment whose cookies cover `n`, or None.
+(pub :: asmSiteOf (-> String Int (Option AsmSite)))
 (pub fn (asmSiteOf ir n)
   {
-    (let out vecNew)
+    (let mut out (:: None (Option AsmSite)))
     (let mut from 0)
     {
-      (while (&& (== (vecLen out) 0) (>= from 0))
+      (while (&& (isNone out) (>= from 0))
         {
           (let k (strFindSub ir "; axiom-asm-site " from))
           (if (< k 0)
-            (set from (- 0 1))
+            (set from -1)
             {
               (let eol
                 (if (let (Some e) (strFindByte ir 10 k))
                   e
                   (strLen ir)))
-              {
-                (asmSiteLine ir (strSlice ir (+ k 17) (- eol (+ k 17))) n out)
-                (set from eol)
-              }
+              (set out (asmSiteLine ir (strSlice ir (+ k 17) (- eol (+ k 17))) n))
+              (set from eol)
             })
         })
       out
     }
   })
 
-; One site comment's body, `FIRST K s-e s-e ...`: when cookie `n` is
-; one of its lines, push file K's name and that line's two offsets.
-(pub :: asmSiteLine (-> String String Int Strings Int))
-(pub fn (asmSiteLine ir body n out)
+; One site comment's body, `FIRST K s-e s-e ...`.
+(pub :: asmSiteLine (-> String String Int (Option AsmSite)))
+(pub fn (asmSiteLine ir body n)
   {
     (let parts (asmSplitBlank body))
-    (let first (asmNumAt body 0))
-    (if (|| (< first 0) (< (vecLen parts) 3))
-      0
-      {
-        (let k (- n first))
-        (let file (asmFileName ir (vecGet parts 1)))
-        (if (|| (< k 0) (|| (>= (+ k 2) (vecLen parts)) (== (strLen file) 0)))
-          0
-          {
-            (let r (vecGet parts (+ k 2)))
-            (let dash
-              (if (let (Some d) (strFindByte (vecGet parts (+ k 2)) 45 0))
-                d
-                (- 0 1)))
-            (if (< dash 0)
-              0
-              {
-                (vecPush out file)
-                (vecPush out (strSlice r 0 dash))
-                (vecPush out (strSlice r (+ dash 1) (- (strLen r) (+ dash 1))))
-                0
-              })
-          })
-      })
+    (if (let (Some first) (asmNumAt body 0))
+      (if (|| (< n first) (< (vecLen parts) 3))
+        None
+        {
+          (let k (- n first))
+          (if (>= k (- (vecLen parts) 2))
+            None
+            (if (let (Some file) (asmFileName ir (vecGet parts 1)))
+              (if (== (strLen file) 0)
+                None
+                {
+                  (let r (vecGet parts (+ k 2)))
+                  (if (let (Some dash) (strFindByte r 45 0))
+                    {
+                      (let start (strSlice r 0 dash))
+                      (let end (strSlice r (+ dash 1) (- (strLen r) (+ dash 1))))
+                      (Some
+                        (AsmSite
+                          :file file
+                          :start (asmNumAt start 0)
+                          :end (asmNumAt end 0)
+                          :key
+                            (concat file (concat ":" (concat start (concat ":" (concat end ":")))))))
+                    }
+                    None)
+                })
+              None))
+        })
+      None)
   })
 
-; The name `; axiom-asm-file K "path"` gives file K, or "".
-(pub :: asmFileName (-> String String String))
+; The quoted name file K records, including a present empty name.
+(pub :: asmFileName (-> String String (Option String)))
 (pub fn (asmFileName ir k)
-  {
-    (let at (strFindSub ir (concat (concat "; axiom-asm-file " k) " \"") 0))
-    (if (< at 0)
-      ""
-      {
-        (let s (+ (+ at 19) (strLen k)))
-        (let e
-          (if (let (Some q) (strFindByte ir 34 (+ (+ at 19) (strLen k))))
-            q
-            (- 0 1)))
-        (if (< e 0)
-          ""
-          (asmUnquoteName (strSlice ir s (- e s))))
-      })
-  })
+  (if (let (Some at) (strFind ir (concat (concat "; axiom-asm-file " k) " \"") 0))
+    {
+      (let start (+ (+ at 19) (strLen k)))
+      (if (let (Some end) (strFindByte ir 34 start))
+        (Some (asmUnquoteName (strSlice ir start (- end start))))
+        None)
+    }
+    None))
 
 (pub :: asmSplitBlank (-> String Strings))
 (pub fn (asmSplitBlank s)
@@ -715,16 +723,16 @@
   {
     (let file (asmFileResolve recorded))
     (let mut i 0)
-    (let mut at (- 0 1))
+    (let mut at (:: None (Option Int)))
     {
-      (while (&& (< at 0) (< i (vecLen units)))
+      (while (&& (isNone at) (< i (vecLen units)))
         {
           (if (strEq (unitFile (vecGet units i)) file)
-            (set at i))
+            (set at (Some i)))
           (set i (+ i 1))
         })
-      (if (>= at 0)
-        at
+      (if (let (Some index) at)
+        index
         {
           (vecPush units
             (CUnit2
@@ -746,49 +754,50 @@
 (pub :: asmRejectDiag (-> String Int String String (Vec diag::Diag) Units Strings Int))
 ;@axiom:effect(io)
 (pub fn (asmRejectDiag ir n msg read ds units seen)
-  {
-    (let site (asmSiteOf ir n))
-    (if (== (vecLen site) 0)
-      0
+  (if (let (Some site) (asmSiteOf ir n))
+    {
+      (let u (asmUnitFor units site.file))
+      (let key (concat site.key msg))
       {
-        (let u (asmUnitFor units (vecGet site 0)))
-        (let s (asmNumAt (vecGet site 1) 0))
-        (let e (asmNumAt (vecGet site 2) 0))
-        (let key
-          (concat (concat (concat (vecGet site 0) ":") (concat (vecGet site 1) ":"))
-            (concat (concat (vecGet site 2) ":") msg)))
-        {
-          (let src (unitSrc (vecGet units u)))
-          (if (>= (asmSeenAt seen key 0) 0)
+        (let src (unitSrc (vecGet units u)))
+        (if (isSome (asmSeenAt seen key 0))
+          1
+          {
+            (vecPush seen key)
+            (vecPush ds
+              (diagSetUnitD
+                (mkDiagNote SEV_ERROR "AX3117" "inline-asm-rejected"
+                  (match site.start
+                    ((None) 0)
+                    ((Some start)
+                      (match site.end
+                        ((None) 0)
+                        ((Some end)
+                          (if (&& (> end start) (<= end (strLen src)))
+                            (mkSpan start end)
+                            0)
+                        ))
+                    ))
+                  (concat "llc rejected this line of an `asm` template: " msg) None
+                  (Some
+                    "`check` runs no assembler, so an `asm` template is first assembled when the program is built; fix the instruction, or keep the IR with `--emit-llvm` and run `llc` on it to see the whole report")
+                  (if (> (strLen read) 0)
+                    (concat (concat "the assembler read `" read)
+                      "`, with the operands in their registers")
+                    "the register allocator found no registers for the operands this line asks for; name fewer operands, or fewer clobbers"))
+                u))
             1
-            {
-              (vecPush seen key)
-              (vecPush ds
-                (diagSetUnitD
-                  (mkDiagNote SEV_ERROR "AX3117" "inline-asm-rejected"
-                    (if (&& (>= s 0) (&& (> e s) (<= e (strLen src))))
-                      (mkSpan s e)
-                      0)
-                    (concat "llc rejected this line of an `asm` template: " msg) None
-                    (Some
-                      "`check` runs no assembler, so an `asm` template is first assembled when the program is built; fix the instruction, or keep the IR with `--emit-llvm` and run `llc` on it to see the whole report")
-                    (if (> (strLen read) 0)
-                      (concat (concat "the assembler read `" read)
-                        "`, with the operands in their registers")
-                      "the register allocator found no registers for the operands this line asks for; name fewer operands, or fewer clobbers"))
-                  u))
-              1
-            })
-        }
-      })
-  })
+          })
+      }
+    }
+    0))
 
-(pub :: asmSeenAt (-> Strings String Int Int))
+(pub :: asmSeenAt (-> Strings String Int (Option Int)))
 (pub fn (asmSeenAt v k i)
   (if (>= i (vecLen v))
-    (- 0 1)
+    None
     (if (strEq (vecGet v i) k)
-      i
+      (Some i)
       (asmSeenAt v k (+ i 1)))))
 
 ; `diagSetUnit`, answering the diagnostic so it can wrap a constructor.
@@ -832,10 +841,14 @@
                     (if (&& inline (< (+ i 1) (vecLen ls)))
                       (asmTrim (vecGet ls (+ i 1)))
                       ""))
-                  (if (!
-                        (&& (>= cookie 0)
-                          (== (asmRejectDiag ir cookie shown read ds units seen) 1)))
-                    (set unmapped (+ unmapped 1)))
+                  (match cookie
+                    ((None)
+                      (set unmapped (+ unmapped 1))
+                    )
+                    ((Some cookie)
+                      (if (!= (asmRejectDiag ir cookie shown read ds units seen) 1)
+                        (set unmapped (+ unmapped 1)))
+                    ))
                 }
               })
             (set i (+ i 1))
@@ -846,14 +859,14 @@
   })
 
 ; The cookie of a `note: !srcloc = N` within the three lines after an
-; assembler error, or -1.
-(pub :: asmNoteCookie (-> Strings Int Int))
+; assembler error, or None.
+(pub :: asmNoteCookie (-> Strings Int (Option Int)))
 (pub fn (asmNoteCookie ls from)
   {
     (let mut i from)
-    (let mut c (- 0 1))
+    (let mut c (:: None (Option Int)))
     {
-      (while (&& (< c 0) (&& (< i (vecLen ls)) (< i (+ from 3))))
+      (while (&& (isNone c) (&& (< i (vecLen ls)) (< (- i from) 3)))
         {
           {
             (let at (strFindSub (vecGet ls i) "note: !srcloc = " 0))
@@ -866,13 +879,13 @@
     }
   })
 
-; `... at line N`: N, or -1.
-(pub :: asmAtLine (-> String Int))
+; `... at line N`: N, or None.
+(pub :: asmAtLine (-> String (Option Int)))
 (pub fn (asmAtLine msg)
   {
     (let at (strFindSub msg " at line " 0))
     (if (< at 0)
-      (- 0 1)
+      None
       (asmNumAt msg (+ at 9)))
   })
 
