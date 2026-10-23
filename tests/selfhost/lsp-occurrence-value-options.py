@@ -74,8 +74,8 @@ def main():
                 ("nonbinder-value-forged", "lspNavEmit", "idx None)", "idx (Some mkTErr))"),
                 ("poison-presence-lost", "lspNavWalkLet", "(if (nodeSame value nilNode) None (Some value))",
                  "(if (|| (nodeSame value nilNode) (== (nodeTag value) TAG_T_ERR)) None (Some value))"),
-                ("binder-inference-lost", "lspShapeOfBinder", "(lspShapeOf decls occs v 16)", "nilNode"),
-                ("variable-inference-lost", "lspShapeVar", "(lspShapeOf decls occs v (- fuel 1))", "nilNode"),
+                ("binder-inference-lost", "lspShapeOfBinder", "(lspShapeOf decls occs v 16)", "None"),
+                ("variable-inference-lost", "lspShapeVar", "(lspShapeOf decls occs v (- fuel 1))", "None"),
                 ("value-identity-copied", "lspNavEmitValue", ":value value",
                  ":value (match value ((None) None) ((Some child) (Some (nodeClone child))))"),
             )

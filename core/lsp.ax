@@ -8286,9 +8286,16 @@
 ; `(-> Int Int Int)` unconditionally, so this does too - a `+` of
 ; two strings is the checker's AX3004 beside a hover of `Int`.
 ; ------------------------------------------------------------------
-; 0 and the poison type are both "unknown" to every reader here: a
-; broken signature answers nothing rather than a rendering of the
-; poison, the way the checker propagates it in silence.
+; Missing or poisoned source types provide no display shape.
+; The shape queries answer None instead of rendering poison.
+; Packed AST readers can return the absent node word. Shape APIs
+; normalise it at the read boundary and own every present result.
+(:: lspShapeNodeOpt (-> ASTNode (Option ASTNode)))
+(fn (lspShapeNodeOpt node)
+  (if (nodeSame node nilNode)
+    None
+    (Some node)))
+
 (pub :: lspShapeIsBad (-> ASTNode Bool))
 (pub fn (lspShapeIsBad t)
   (if (nodeSame t nilNode)
@@ -8297,85 +8304,84 @@
 
 ; The checker's row for a builtin operator: 1 for an `Int` result
 ; over `Int` arguments, 2 for `Bool` over `Int`, 3 for `Bool` over
-; `Bool`, 0 for "not a builtin this table knows". The rows mirror
+; `Bool`, None for a builtin this table does not know. The rows mirror
 ; `tcNew` in core/typecheck.ax exactly - same names, same
 ; shapes - and the gate holds the mirror: ten arithmetic and bitwise
 ; operators, six comparisons, three logical operators.
-(pub :: lspShapeBuiltinRes (-> String Int))
+(pub :: lspShapeBuiltinRes (-> String (Option Int)))
 (pub fn (lspShapeBuiltinRes h)
   (if (strEq h "+")
-    1
+    (Some 1)
     (if (strEq h "-")
-      1
+      (Some 1)
       (if (strEq h "*")
-        1
+        (Some 1)
         (if (strEq h "/")
-          1
+          (Some 1)
           (if (strEq h "%")
-            1
+            (Some 1)
             (if (strEq h "&")
-              1
+              (Some 1)
               (if (strEq h "|")
-                1
+                (Some 1)
                 (if (strEq h "^")
-                  1
+                  (Some 1)
                   (if (strEq h "<<")
-                    1
+                    (Some 1)
                     (if (strEq h ">>")
-                      1
+                      (Some 1)
                       (if (strEq h "==")
-                        2
+                        (Some 2)
                         (if (strEq h "!=")
-                          2
+                          (Some 2)
                           (if (strEq h "<")
-                            2
+                            (Some 2)
                             (if (strEq h ">")
-                              2
+                              (Some 2)
                               (if (strEq h "<=")
-                                2
+                                (Some 2)
                                 (if (strEq h ">=")
-                                  2
+                                  (Some 2)
                                   (if (strEq h "&&")
-                                    3
+                                    (Some 3)
                                     (if (|| (strEq h "||") (strEq h "!"))
-                                      3
-                                      0)))))))))))))))))))
+                                      (Some 3)
+                                      None)))))))))))))))))))
 
 ; Drop one arrow domain per argument: the curried reading of a call.
 ; A non-arrow with arguments left, a missing type, and poison are
 ; all unknown.
-(pub :: lspShapeApplyArrow (-> ASTNode Int ASTNode))
+(pub :: lspShapeApplyArrow (-> ASTNode Int (Option ASTNode)))
 (pub fn (lspShapeApplyArrow ty n)
   (if (lspShapeIsBad ty)
-    nilNode
+    None
     (if (== n 0)
-      ty
+      (Some ty)
       (if (!= (nodeTag ty) TAG_T_ARR)
-        nilNode
+        None
         (lspShapeApplyArrow (nodeBChild ty) (- n 1))))))
 
 ; A builtin's type under application: its row's full arrow with one
 ; domain dropped per argument, so a partial application answers the
 ; remaining arrow.
-(pub :: lspShapeBuiltinTy (-> String Int ASTNode))
+(pub :: lspShapeBuiltinTy (-> String Int (Option ASTNode)))
 (pub fn (lspShapeBuiltinTy h nargs)
-  {
-    (let r (lspShapeBuiltinRes h))
-    (if (== r 0)
-      nilNode
+  (match (lspShapeBuiltinRes h)
+    ((None) None)
+    ((Some r)
       (lspShapeApplyArrow
         (if (== r 1)
           (mkTArr mkIntTy (mkTArr mkIntTy mkIntTy))
           (if (== r 2)
             (mkTArr mkIntTy (mkTArr mkIntTy mkBoolTy))
             (mkTArr mkBoolTy (mkTArr mkBoolTy mkBoolTy))))
-        nargs))
-  })
+        nargs)
+    )))
 
 ; The spine of a call: the head, with the arguments pushed in order.
 ; The loop is `lspViewHintsApp`'s, factored so a shape and a hint
 ; read one spine the same way.
-(pub :: lspShapeSpine (-> ASTNode (Vec ASTNode) ASTNode))
+(pub :: lspShapeSpine (-> ASTNode (Vec ASTNode) (Option ASTNode)))
 (pub fn (lspShapeSpine e args)
   {
     (let mut h e)
@@ -8386,37 +8392,39 @@
           (set h (nodeAChild h))
         })
       (lspViewReverse args)
-      h
+      (lspShapeNodeOpt h)
     }
   })
 
 ; Typed bindings own each substituted node. A constructor has few
-; parameters, so lookup scans the bindings. A null node is unbound:
+; parameters, so lookup scans the bindings. An absent binding is unbound:
 ; an unknown argument binds nothing, and the coverage check below
 ; turns the hole into an unknown shape.
-(pub :: lspShapeBindGet (-> TypeEnv String ASTNode))
+(pub :: lspShapeBindGet (-> TypeEnv String (Option ASTNode)))
 (pub fn (lspShapeBindGet pairs name)
   (lspShapeBindGetIn pairs name 0))
 
-(pub :: lspShapeBindGetIn (-> TypeEnv String Int ASTNode))
+(pub :: lspShapeBindGetIn (-> TypeEnv String Int (Option ASTNode)))
 (pub fn (lspShapeBindGetIn pairs name i)
-  (if (>= i (vecLen pairs))
-    nilNode
+  (if (|| (< i 0) (>= i (vecLen pairs)))
+    None
     {
       (let binding (vecGet pairs i))
       (if (strEq binding.name name)
-        binding.ty
+        (if (nodeSame binding.ty nilNode)
+          None
+          (Some binding.ty))
         (lspShapeBindGetIn pairs name (+ i 1)))
     }))
 
-; A parameter's index, or -1. A variable that names no parameter is
+; A parameter's index when present. A variable that names no parameter is
 ; not the call's to bind.
-(pub :: lspShapeParamAt (-> Strings String Int Int))
+(pub :: lspShapeParamAt (-> Strings String Int (Option Int)))
 (pub fn (lspShapeParamAt params name i)
-  (if (>= i (vecLen params))
-    (- 0 1)
+  (if (|| (< i 0) (>= i (vecLen params)))
+    None
     (if (strEq (vecGet params i) name)
-      i
+      (Some i)
       (lspShapeParamAt params name (+ i 1)))))
 
 ; Pair one field type with its argument's shape, recording what the
@@ -8428,41 +8436,54 @@
 ; argument, a parameter against an unknown one - binds nothing and
 ; passes, because mismatch is the checker's complaint and silence
 ; here would veto shapes the call does determine.
-(pub :: lspShapeBind (-> ASTNode ASTNode Strings TypeEnv Int))
+(pub :: lspShapeBind (-> ASTNode (Option ASTNode) Strings TypeEnv Int))
 (pub fn (lspShapeBind ft arg params pairs)
   (if (lspShapeIsBad ft)
     0
     (if (== (nodeTag ft) TAG_T_VAR)
       {
         (let vn (nodeAName ft))
-        (if (!= (lspShapeParamAt params vn 0) (- 0 1))
-          (if (lspShapeIsBad arg)
-            1
-            {
-              (let old (lspShapeBindGet pairs vn))
-              (if (nodeSame old nilNode)
-                {
-                  (vecPush pairs (TypeBinding :name vn :ty arg))
-                  1
-                }
-                (if (strEq (tyRender old) (tyRender arg))
-                  1
-                  0))
-            })
+        (if (isSome (lspShapeParamAt params vn 0))
+          (match arg
+            ((None) 1)
+            ((Some arg)
+              (if (lspShapeIsBad arg)
+                1
+                (match (lspShapeBindGet pairs vn)
+                  ((None)
+                    {
+                      (vecPush pairs (TypeBinding :name vn :ty arg))
+                      1
+                    }
+                  )
+                  ((Some old)
+                    (if (strEq (tyRender old) (tyRender arg))
+                      1
+                      0)
+                  )))
+            ))
           1)
       }
-      (if (== (nodeTag ft) TAG_T_CON)
-        (if (&& (! (nodeSame arg nilNode))
-              (&& (== (nodeTag arg) TAG_T_CON) (strEq (nodeAName ft) (nodeAName arg))))
-          (lspShapeBindVec (nodeBChildren ft) (nodeBChildren arg) params pairs 0)
-          1)
-        (if (== (nodeTag ft) TAG_T_ARR)
-          (if (&& (! (nodeSame arg nilNode)) (== (nodeTag arg) TAG_T_ARR))
-            (if (== (lspShapeBind (nodeAChild ft) (nodeAChild arg) params pairs) 0)
-              0
-              (lspShapeBind (nodeBChild ft) (nodeBChild arg) params pairs))
-            1)
-          1)))))
+      (match arg
+        ((None) 1)
+        ((Some arg)
+          (if (nodeSame arg nilNode)
+            1
+            (if (== (nodeTag ft) TAG_T_CON)
+              (if (&& (== (nodeTag arg) TAG_T_CON) (strEq (nodeAName ft) (nodeAName arg)))
+                (lspShapeBindVec (nodeBChildren ft) (nodeBChildren arg) params pairs 0)
+                1)
+              (if (== (nodeTag ft) TAG_T_ARR)
+                (if (== (nodeTag arg) TAG_T_ARR)
+                  (if (==
+                        (lspShapeBind (nodeAChild ft) (lspShapeNodeOpt (nodeAChild arg)) params
+                          pairs)
+                        0)
+                    0
+                    (lspShapeBind (nodeBChild ft) (lspShapeNodeOpt (nodeBChild arg)) params pairs))
+                  1)
+                1)))
+        )))))
 
 (pub :: lspShapeBindVec (-> Nodes Nodes Strings TypeEnv Int Int))
 (pub fn (lspShapeBindVec fts args params pairs i)
@@ -8470,7 +8491,7 @@
     1
     (if (>= i (vecLen args))
       1
-      (if (== (lspShapeBind (vecGet fts i) (vecGet args i) params pairs) 0)
+      (if (== (lspShapeBind (vecGet fts i) (lspShapeNodeOpt (vecGet args i)) params pairs) 0)
         0
         (lspShapeBindVec fts args params pairs (+ i 1))))))
 
@@ -8479,14 +8500,14 @@
 ; field count that is not the argument count is unknown, and so is
 ; a parameter the call leaves unbound.
 (pub :: lspShapeCon
-  (-> (Vec ASTNode) (Vec LspOcc) String Strings (Vec ASTNode) (Vec ASTNode) Int ASTNode))
+  (-> (Vec ASTNode) (Vec LspOcc) String Strings (Vec ASTNode) (Vec ASTNode) Int (Option ASTNode)))
 (pub fn (lspShapeCon decls occs tname params fts args fuel)
   (if (!= (vecLen fts) (vecLen args))
-    nilNode
+    None
     {
       (let pairs vecNew)
       (if (== (lspShapeBindAll decls occs fts args params pairs fuel 0) 0)
-        nilNode
+        None
         (lspShapeConBuild tname params pairs 0 vecNew))
     }))
 
@@ -8499,49 +8520,71 @@
       0
       (lspShapeBindAll decls occs fts args params pairs fuel (+ i 1)))))
 
-(pub :: lspShapeConBuild (-> String Strings TypeEnv Int Nodes ASTNode))
+(pub :: lspShapeConBuild (-> String Strings TypeEnv Int Nodes (Option ASTNode)))
 (pub fn (lspShapeConBuild tname params pairs i acc)
   (if (>= i (vecLen params))
-    (mkTCon tname acc)
-    {
-      (let t (lspShapeBindGet pairs (vecGet params i)))
-      (if (nodeSame t nilNode)
-        nilNode
+    (Some (mkTCon tname acc))
+    (match (lspShapeBindGet pairs (vecGet params i))
+      ((None) None)
+      ((Some t)
         {
           (vecPush acc t)
           (lspShapeConBuild tname params pairs (+ i 1) acc)
-        })
-    }))
+        }
+      ))))
 
 ; `t` with each parameter replaced by its argument: fresh nodes,
 ; the arguments shared. Arity is the caller's check, and a
 ; variable that names no parameter is shared as it stands.
-(pub :: lspShapeSubst (-> ASTNode Strings (Vec ASTNode) ASTNode))
+(pub :: lspShapeSubst (-> ASTNode Strings (Vec ASTNode) (Option ASTNode)))
 (pub fn (lspShapeSubst t params args)
   (if (nodeSame t nilNode)
-    nilNode
+    None
     (if (== (nodeTag t) TAG_T_VAR)
-      {
-        (let at (lspShapeParamAt params (nodeAName t) 0))
-        (if (< at 0)
-          t
-          (vecGet args at))
-      }
+      (match (lspShapeParamAt params (nodeAName t) 0)
+        ((None) (Some t))
+        ((Some at)
+          (if (>= at (vecLen args))
+            None
+            {
+              (let arg (vecGet args at))
+              (if (nodeSame arg nilNode)
+                None
+                (Some arg))
+            })
+        ))
       (if (== (nodeTag t) TAG_T_CON)
-        (mkTCon (nodeAName t) (lspShapeSubstVec (nodeBChildren t) params args 0 vecNew))
+        (match (lspShapeSubstVec (nodeBChildren t) params args 0 vecNew)
+          ((None) None)
+          ((Some ts) (Some (mkTCon (nodeAName t) ts))))
         (if (== (nodeTag t) TAG_T_ARR)
-          (mkTArr (lspShapeSubst (nodeAChild t) params args)
-            (lspShapeSubst (nodeBChild t) params args))
-          t)))))
+          {
+            (let domain (lspShapeSubst (nodeAChild t) params args))
+            (match domain
+              ((None) None)
+              ((Some domain)
+                {
+                  (let result (lspShapeSubst (nodeBChild t) params args))
+                  (match result
+                    ((None) None)
+                    ((Some result) (Some (mkTArr domain result))))
+                }
+              ))
+          }
+          (Some t))))))
 
-(pub :: lspShapeSubstVec (-> Nodes Strings Nodes Int Nodes Nodes))
+(pub :: lspShapeSubstVec (-> Nodes Strings Nodes Int Nodes (Option Nodes)))
 (pub fn (lspShapeSubstVec ts params args i acc)
   (if (|| (== (as ts Int) 0) (>= i (vecLen ts)))
-    acc
-    {
-      (vecPush acc (lspShapeSubst (vecGet ts i) params args))
-      (lspShapeSubstVec ts params args (+ i 1) acc)
-    }))
+    (Some acc)
+    (match (lspShapeSubst (vecGet ts i) params args)
+      ((None) None)
+      ((Some t)
+        {
+          (vecPush acc t)
+          (lspShapeSubstVec ts params args (+ i 1) acc)
+        }
+      ))))
 
 ; A `data`'s or `struct`'s type parameters. A `data` always writes
 ; its vector; a struct with none leaves the slot 0 (see
@@ -8553,16 +8596,18 @@
     (nodeTyNames d)))
 
 ; The field types of a struct's fields, in order.
-(pub :: lspShapeFieldTys (-> (Vec ASTNode) Int (Vec ASTNode) (Vec ASTNode)))
+(pub :: lspShapeFieldTys (-> (Vec ASTNode) Int (Vec ASTNode) (Option (Vec ASTNode))))
 (pub fn (lspShapeFieldTys fs i acc)
-  (if (== (as fs Int) 0)
-    acc
-    (if (>= i (vecLen fs))
-      acc
-      {
-        (vecPush acc (nodeTyChild (vecGet fs i)))
-        (lspShapeFieldTys fs (+ i 1) acc)
-      })))
+  (if (|| (== (as fs Int) 0) (>= i (vecLen fs)))
+    (Some acc)
+    (match (lspShapeNodeOpt (nodeTyChild (vecGet fs i)))
+      ((None) None)
+      ((Some ty)
+        {
+          (vecPush acc ty)
+          (lspShapeFieldTys fs (+ i 1) acc)
+        }
+      ))))
 
 ; The `k`th parameter type of the `::` signature naming `owner`:
 ; the one lookup behind a parameter's hover, and behind a
@@ -8591,7 +8636,7 @@
 ; `lspShapeCon` applies to a call. A constructor that TAKES
 ; arguments is unknown as a bare value, because the checker
 ; refuses it (AX3009) rather than typing it.
-(pub :: lspShapeCtorVar (-> (Vec ASTNode) String ASTNode))
+(pub :: lspShapeCtorVar (-> (Vec ASTNode) String (Option ASTNode)))
 (pub fn (lspShapeCtorVar decls name)
   {
     (let dat (lspFindCtorData decls name (- (vecLen decls) 1)))
@@ -8600,13 +8645,13 @@
         (let c (lspCtorNodeOf (Some dat) name))
         (if (let (Some c) c)
           (if (!= (vecLen (nodeTyChildren c)) 0)
-            nilNode
+            None
             (if (!= (vecLen (lspShapeTyParams dat)) 0)
-              nilNode
-              (mkTCon (nodeAName dat) vecNew)))
-          nilNode)
+              None
+              (Some (mkTCon (nodeAName dat) vecNew))))
+          None)
       }
-      nilNode)
+      None)
   })
 
 ; A variable's shape through its binder: a parameter through the
@@ -8621,38 +8666,38 @@
 ; constructor answers its `data`. Signatures and constructors
 ; from this document only; anything imported is the next
 ; slice's read.
-(pub :: lspShapeVar (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int ASTNode))
+(pub :: lspShapeVar (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int (Option ASTNode)))
 (pub fn (lspShapeVar decls occs e fuel)
   {
     (let name (nodeAName e))
     (if (strEq name "true")
-      mkBoolTy
+      (Some mkBoolTy)
       (if (strEq name "false")
-        mkBoolTy
+        (Some mkBoolTy)
         (if (== (nodeSpan e) 0)
-          nilNode
+          None
           (if (let (Some o) (lspNavAt occs (spanStart (nodeSpan e))))
             {
               (let key o.key)
               (if (lspNavIsLocal key)
                 (match (lspNavBinderOf occs key)
-                  ((None) nilNode)
+                  ((None) None)
                   ((Some b)
                     {
                       (let bkind b.bkind)
                       (if (== bkind NAV_B_PARAM)
                         (if (let (Some t) (lspShapeParamTy decls b.owner b.param))
                           (if (lspShapeIsBad t)
-                            nilNode
-                            t)
-                          nilNode)
+                            None
+                            (Some t))
+                          None)
                         (if (== bkind NAV_B_LET)
                           (if (<= fuel 0)
-                            nilNode
+                            None
                             (if (let (Some v) b.value)
                               (lspShapeOf decls occs v (- fuel 1))
-                              nilNode))
-                          nilNode))
+                              None))
+                          None))
                     }
                   ))
                 {
@@ -8661,66 +8706,72 @@
                     {
                       (let t (nodeTyChild sig))
                       (if (lspShapeIsBad t)
-                        nilNode
+                        None
                         (if (>= (lspShapeArrowArity t) 2)
-                          nilNode
-                          t))
+                          None
+                          (Some t)))
                     }
                     (lspShapeCtorVar decls name))
                 })
             }
-            nilNode))))
+            None))))
   })
 
 ; Two branches' join: the shape when both agree, unknown when they
 ; do not. Rendered strings are the comparison, because the two
 ; nodes are built apart and share nothing.
-(pub :: lspShapeJoin (-> ASTNode ASTNode ASTNode))
+(pub :: lspShapeJoin (-> (Option ASTNode) (Option ASTNode) (Option ASTNode)))
 (pub fn (lspShapeJoin a b)
-  (if (lspShapeIsBad a)
-    nilNode
-    (if (lspShapeIsBad b)
-      nilNode
-      (if (strEq (tyRender a) (tyRender b))
-        a
-        nilNode))))
+  (match a
+    ((None) None)
+    ((Some a)
+      (if (lspShapeIsBad a)
+        None
+        (match b
+          ((None) None)
+          ((Some b)
+            (if (lspShapeIsBad b)
+              None
+              (if (strEq (tyRender a) (tyRender b))
+                (Some a)
+                None))
+          )))
+    )))
 
 ; A block's shape is its last expression's.
-(pub :: lspShapeBegin (-> (Vec ASTNode) (Vec LspOcc) (Vec ASTNode) Int ASTNode))
+(pub :: lspShapeBegin (-> (Vec ASTNode) (Vec LspOcc) (Vec ASTNode) Int (Option ASTNode)))
 (pub fn (lspShapeBegin decls occs xs fuel)
   (if (== (as xs Int) 0)
-    nilNode
+    None
     (if (== (vecLen xs) 0)
-      nilNode
+      None
       (lspShapeOf decls occs (vecGet xs (- (vecLen xs) 1)) fuel))))
 
 ; A `match`'s shape: every arm body's, when they agree.
-(pub :: lspShapeMatch (-> (Vec ASTNode) (Vec LspOcc) (Vec ASTNode) Int ASTNode))
+(pub :: lspShapeMatch (-> (Vec ASTNode) (Vec LspOcc) (Vec ASTNode) Int (Option ASTNode)))
 (pub fn (lspShapeMatch decls occs arms fuel)
   (if (== (as arms Int) 0)
-    nilNode
+    None
     (if (== (vecLen arms) 0)
-      nilNode
+      None
       (lspShapeMatchIn decls occs arms fuel 1 (lspShapeArmBody decls occs (vecGet arms 0) fuel)))))
 
-(pub :: lspShapeArmBody (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int ASTNode))
+(pub :: lspShapeArmBody (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int (Option ASTNode)))
 (pub fn (lspShapeArmBody decls occs arm fuel)
   (if (nodeSame arm nilNode)
-    nilNode
+    None
     (if (!= (nodeTag arm) TAG_M_ARM)
-      nilNode
+      None
       (lspShapeOf decls occs (nodeBChild arm) fuel))))
 
-(pub :: lspShapeMatchIn (-> (Vec ASTNode) (Vec LspOcc) (Vec ASTNode) Int Int ASTNode ASTNode))
+(pub :: lspShapeMatchIn
+  (-> (Vec ASTNode) (Vec LspOcc) (Vec ASTNode) Int Int (Option ASTNode) (Option ASTNode)))
 (pub fn (lspShapeMatchIn decls occs arms fuel i acc)
   (if (>= i (vecLen arms))
     acc
-    {
-      (let j (lspShapeJoin acc (lspShapeArmBody decls occs (vecGet arms i) fuel)))
-      (if (nodeSame j nilNode)
-        nilNode
-        (lspShapeMatchIn decls occs arms fuel (+ i 1) j))
-    }))
+    (match (lspShapeJoin acc (lspShapeArmBody decls occs (vecGet arms i) fuel))
+      ((None) None)
+      ((Some joined) (lspShapeMatchIn decls occs arms fuel (+ i 1) (Some joined))))))
 
 ; `true` for a head from another module, whatever the pipeline
 ; stage spelled it with: `::` in the raw tree, `$` after mangling.
@@ -8732,43 +8783,45 @@
 ; document's signature first, so a declaration shadows a builtin
 ; of the same spelling; then the builtin table; then, for an
 ; upcased head, the struct or constructor the name declares.
-(pub :: lspShapeApp (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int ASTNode))
+(pub :: lspShapeApp (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int (Option ASTNode)))
 (pub fn (lspShapeApp decls occs e fuel)
   {
     (let args vecNew)
-    {
-      (let h (lspShapeSpine e args))
-      (if (!= (nodeTag h) TAG_E_VAR)
-        nilNode
-        {
-          (let name (nodeAName h))
-          (if (lspShapeQualified name)
-            nilNode
-            {
-              (let sig (lspFindSig decls name (- (vecLen decls) 1)))
-              (if (let (Some sig) sig)
-                (lspShapeApplyArrow (nodeTyChild sig) (vecLen args))
-                (if (!= (lspShapeBuiltinRes name) 0)
-                  (lspShapeBuiltinTy name (vecLen args))
-                  (if (== (lspIsUpperStart name) 1)
-                    (lspShapeUpCon decls occs name args fuel)
-                    nilNode)))
-            })
-        })
-    }
+    (match (lspShapeSpine e args)
+      ((None) None)
+      ((Some h)
+        (if (!= (nodeTag h) TAG_E_VAR)
+          None
+          {
+            (let name (nodeAName h))
+            (if (lspShapeQualified name)
+              None
+              {
+                (let sig (lspFindSig decls name (- (vecLen decls) 1)))
+                (if (let (Some sig) sig)
+                  (lspShapeApplyArrow (nodeTyChild sig) (vecLen args))
+                  (if (isSome (lspShapeBuiltinRes name))
+                    (lspShapeBuiltinTy name (vecLen args))
+                    (if (== (lspIsUpperStart name) 1)
+                      (lspShapeUpCon decls occs name args fuel)
+                      None)))
+              })
+          })
+      ))
   })
 
 ; An upcased head: a struct built positionally, or a constructor
 ; of the `data` that declares it - verified, not spelled: a name
 ; that is neither answers unknown.
-(pub :: lspShapeUpCon (-> (Vec ASTNode) (Vec LspOcc) String (Vec ASTNode) Int ASTNode))
+(pub :: lspShapeUpCon (-> (Vec ASTNode) (Vec LspOcc) String (Vec ASTNode) Int (Option ASTNode)))
 (pub fn (lspShapeUpCon decls occs name args fuel)
   {
     (let d (lspFindTypeDecl decls name (- (vecLen decls) 1)))
     (if (let (Some d) d)
       (if (== (nodeTag d) TAG_D_STRUCT)
-        (lspShapeCon decls occs name (lspShapeTyParams d)
-          (lspShapeFieldTys (nodeBChildren d) 0 vecNew) args fuel)
+        (match (lspShapeFieldTys (nodeBChildren d) 0 vecNew)
+          ((None) None)
+          ((Some fields) (lspShapeCon decls occs name (lspShapeTyParams d) fields args fuel)))
         {
           (let dat (lspFindCtorData decls name (- (vecLen decls) 1)))
           (if (let (Some dat) dat)
@@ -8777,9 +8830,9 @@
               (if (let (Some c) c)
                 (lspShapeCon decls occs (nodeAName dat) (lspShapeTyParams dat) (nodeTyChildren c)
                   args fuel)
-                nilNode)
+                None)
             }
-            nilNode)
+            None)
         })
       {
         (let dat (lspFindCtorData decls name (- (vecLen decls) 1)))
@@ -8789,9 +8842,9 @@
             (if (let (Some c) c)
               (lspShapeCon decls occs (nodeAName dat) (lspShapeTyParams dat) (nodeTyChildren c)
                 args fuel)
-              nilNode)
+              None)
           }
-          nilNode)
+          None)
       })
   })
 
@@ -8801,47 +8854,42 @@
 ; call result - so a call result reaches its field here where
 ; `lspFieldBaseStruct` answers None; that function's own
 ; migration onto this walk is the next slice.
-(pub :: lspShapeField (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int ASTNode))
+(pub :: lspShapeField (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int (Option ASTNode)))
 (pub fn (lspShapeField decls occs e fuel)
-  {
-    (let b (lspShapeOf decls occs (nodeAChild e) fuel))
-    (if (lspShapeIsBad b)
-      nilNode
-      (if (!= (nodeTag b) TAG_T_CON)
-        nilNode
-        {
-          (let d (lspFindTypeDecl decls (nodeAName b) (- (vecLen decls) 1)))
-          (if (let (Some d) d)
-            (if (!= (nodeTag d) TAG_D_STRUCT)
-              nilNode
-              {
-                (let f (lspStructFieldNode (nodeBChildren d) (nodeBName e) 0))
-                (if (let (Some f) f)
-                  {
-                    (let ft (nodeTyChild f))
-                    (if (lspShapeIsBad ft)
-                      nilNode
-                      {
-                        (let ps (lspShapeTyParams d))
+  (match (lspShapeOf decls occs (nodeAChild e) fuel)
+    ((None) None)
+    ((Some b)
+      (if (lspShapeIsBad b)
+        None
+        (if (!= (nodeTag b) TAG_T_CON)
+          None
+          (match (lspFindTypeDecl decls (nodeAName b) (- (vecLen decls) 1))
+            ((None) None)
+            ((Some d)
+              (if (!= (nodeTag d) TAG_D_STRUCT)
+                None
+                (match (lspStructFieldNode (nodeBChildren d) (nodeBName e) 0)
+                  ((None) None)
+                  ((Some f)
+                    {
+                      (let ft (nodeTyChild f))
+                      (if (lspShapeIsBad ft)
+                        None
                         {
+                          (let ps (lspShapeTyParams d))
                           (let raw (nodeBChildren b))
-                          {
-                            (let as
-                              (if (== (as raw Int) 0)
-                                vecNew
-                                raw))
-                            (if (!= (vecLen ps) (vecLen as))
-                              nilNode
-                              (lspShapeSubst ft ps as))
-                          }
-                        }
-                      })
-                  }
-                  nilNode)
-              })
-            nilNode)
-        }))
-  })
+                          (let args
+                            (if (== (as raw Int) 0)
+                              vecNew
+                              raw))
+                          (if (!= (vecLen ps) (vecLen args))
+                            None
+                            (lspShapeSubst ft ps args))
+                        })
+                    }
+                  )))
+            ))))
+    )))
 
 ; The shape of an expression: a literal's kind, a variable
 ; through its binder, a call through its signature, table row or
@@ -8849,22 +8897,22 @@
 ; evaluates to 0, the checker's rule as much as the emitter's.
 ; Anything else - a `lambda`, a loop, a form this slice does not
 ; read - is unknown.
-(pub :: lspShapeOf (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int ASTNode))
+(pub :: lspShapeOf (-> (Vec ASTNode) (Vec LspOcc) ASTNode Int (Option ASTNode)))
 (pub fn (lspShapeOf decls occs e fuel)
   (if (nodeSame e nilNode)
-    nilNode
+    None
     {
       (let tag (nodeTag e))
       (if (== tag TAG_E_INT)
         (if (isUnitLit e)
-          mkUnitTy
-          mkIntTy)
+          (Some mkUnitTy)
+          (Some mkIntTy))
         (if (== tag TAG_E_STR)
-          mkStringTy
+          (Some mkStringTy)
           (if (== tag TAG_E_CHAR)
-            mkCharTy
+            (Some mkCharTy)
             (if (== tag TAG_E_FLT)
-              mkFloatTy
+              (Some mkFloatTy)
               (if (== tag TAG_E_VAR)
                 (lspShapeVar decls occs e fuel)
                 (if (== tag TAG_E_APP)
@@ -8881,29 +8929,29 @@
                           (if (== tag TAG_E_FIELD)
                             (lspShapeField decls occs e fuel)
                             (if (|| (== tag TAG_E_SET) (== tag TAG_E_SETF))
-                              mkIntTy
-                              nilNode))))))))))))
+                              (Some mkIntTy)
+                              None))))))))))))
     }))
 
 ; A binder's shape: a parameter's from its signature, a `let`'s
 ; from its value. A lambda parameter or pattern variable carries
 ; no value to read - unknown, until the call sites that could
 ; type them are a slice of their own.
-(pub :: lspShapeOfBinder (-> (Vec ASTNode) (Vec LspOcc) LspOcc ASTNode))
+(pub :: lspShapeOfBinder (-> (Vec ASTNode) (Vec LspOcc) LspOcc (Option ASTNode)))
 (pub fn (lspShapeOfBinder decls occs b)
   {
     (let bkind b.bkind)
     (if (== bkind NAV_B_PARAM)
       (if (let (Some t) (lspShapeParamTy decls b.owner b.param))
         (if (lspShapeIsBad t)
-          nilNode
-          t)
-        nilNode)
+          None
+          (Some t))
+        None)
       (if (== bkind NAV_B_LET)
         (if (let (Some v) b.value)
           (lspShapeOf decls occs v 16)
-          nilNode)
-        nilNode))
+          None)
+        None))
   })
 
 ; A `let`'s hover code: the binding pair, with the value's shape
@@ -8915,12 +8963,13 @@
 (pub fn (lspShapeLetCode src decls occs b at name)
   {
     (let pair (lspClampLines (lspFormText src (lspNearestOpen src at)) 40))
-    {
-      (let t (lspShapeOfBinder decls occs b))
-      (if (lspShapeIsBad t)
-        pair
-        (concat pair (concat "\n" (concat name (concat " : " (tyRender t))))))
-    }
+    (match (lspShapeOfBinder decls occs b)
+      ((None) pair)
+      ((Some t)
+        (if (lspShapeIsBad t)
+          pair
+          (concat pair (concat "\n" (concat name (concat " : " (tyRender t))))))
+      ))
   })
 
 ; A hover for a local: the binding AS WRITTEN, and a line saying what
@@ -11177,13 +11226,11 @@
             ; binders (`for$`, gensyms) and `_` stay quiet, like the
             ; occurrence walk that skips them: a hint on a name no one
             ; wrote is noise about the compiler's innards.
-            {
-              (let t (lspShapeOf decls occs (nodeBChild e) 16))
+            (if (let (Some t) (lspShapeOf decls occs (nodeBChild e) 16))
               (if (! (lspShapeIsBad t))
                 (if (! (== (lspSkipHintName (nodeAName e)) 1))
                   (lspViewHint out src ix (spanEnd (nodeSpan e)) (concat ": " (tyRender t)) 1 0 rs
-                    re)))
-            }
+                    re))))
             (lspViewHintsExpr out src ix fns locals decls occs (nodeBChild e) rs re)
             (lspViewHintsExpr out src ix fns locals decls occs (nodeCChild e) rs re)
           }
@@ -13308,7 +13355,7 @@
 (pub fn (lspFixImportLine mod name)
   (concat (concat "(import " mod) (concat (concat " (" name) "))")))
 
-; This document's import of `mod`, last wins, or 0.
+; This document's import of `mod`, last wins, or None.
 (pub :: lspFixFindImport (-> (Vec ASTNode) String Int (Option ASTNode)))
 (pub fn (lspFixFindImport decls mod i)
   (if (< i 0)
@@ -13642,7 +13689,7 @@
       (lspFixLastColons s (- i 1)))))
 
 ; The declaration of bare `name` that module `mod` carries in the
-; merged list, or 0. Over the outline's kinds, as `lspFindImported`
+; merged list, or None. Over the outline's kinds, as `lspFindImported`
 ; is, and by the module's own stamp rather than the mangled prefix.
 (pub :: lspFixDeclIn (-> (Vec ASTNode) String String Int (Option ASTNode)))
 (pub fn (lspFixDeclIn allDecls mod name i)
@@ -13786,7 +13833,7 @@
   })
 
 ; The `(` of the top-level form holding [ws, we), when that form is a
-; `fn` declaration of this document; -1 otherwise.
+; `fn` declaration of this document; None otherwise.
 (pub :: lspFixFnFormAt (-> String (Vec ASTNode) Int Int (Option Int)))
 (pub fn (lspFixFnFormAt src decls ws we)
   {
@@ -17982,7 +18029,7 @@
               (lspHlEmit st s e SEM_KEYWORD 0)
               (if (lspHlIsOpWord st.src s e)
                 (lspHlEmit st s e SEM_OPERATOR
-                  (if (!= (lspShapeBuiltinRes word) 0)
+                  (if (isSome (lspShapeBuiltinRes word))
                     SEM_M_LIB
                     0))
                 (if (|| (&& (== state 1) (== hc SEM_H_CAST)) (&& (== state 2) (== hc SEM_H_AS)))

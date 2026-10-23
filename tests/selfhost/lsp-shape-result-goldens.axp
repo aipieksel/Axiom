@@ -1,0 +1,61 @@
+(import core)
+(import lsp)
+(import Cereal)
+(import Vec)
+(import Str)
+(import IO)
+
+(:: report (-> String ()))
+;@axiom:effect(io)
+(fn (report source)
+  {
+    (println "SOURCE {source}")
+    (let workspace (lspWorkspaceNew vecNew vecNew vecNew))
+    (let uri "file:///tmp/lsp-shape-results.ax")
+    (let at
+      (match (strFind source "value" 0)
+        ((None) 0)
+        ((Some off) off)))
+    (let params (jsonObjPut jsonObj "position" (lspPos source at)))
+    (println (jsonWrite (lspHover workspace source uri params "")))
+    (println
+      (jsonWrite
+        (lspInlayHints workspace source uri
+          (jsonObjPut jsonObj "range"
+            (jsonObjPut (jsonObjPut jsonObj "start" (lspPos source 0)) "end"
+              (lspPos source (strLen source)))))))
+    (println (jsonWrite (lspSemanticTokens source)))
+  })
+
+(:: main Int)
+;@axiom:effect(io)
+(fn (main)
+  {
+    (report "(fn (f) { (let value 0) value })")
+    (report "(fn (f) { (let value ()) value })")
+    (report "(fn (f) { (let value \"\") value })")
+    (report "(fn (f) { (let value 1.5) value })")
+    (report "(fn (f) { (let value true) value })")
+    (report "(fn (f) { (let value (+ 1 2)) value })")
+    (report "(fn (f) { (let value (< 1 2)) value })")
+    (report "(fn (f) { (let value (! true)) value })")
+    (report "(fn (f) { (let value (if true 1 2)) value })")
+    (report "(fn (f) { (let value (if true 1 ())) value })")
+    (report "(fn (f) { (let value (if true () ())) value })")
+    (report "(fn (f) { (let value { 1 () }) value })")
+    (report "(fn (f) { (let value (match 1 (1 2) (_ 3))) value })")
+    (report "(fn (f) { (let value (match 1 (1 2) (_ ()))) value })")
+    (report "(:: make (-> Int String)) (fn (make p) \"\") (fn (f) { (let value (make 1)) value })")
+    (report "(:: make (-> Int String)) (fn (make p) \"\") (fn (f) { (let value make) value })")
+    (report
+      "(:: make (-> Int Int String)) (fn (make p q) \"\") (fn (f) { (let value make) value })")
+    (report "(pub struct Box (a) (item : a)) (fn (f) { (let value (Box 3)) value })")
+    (report
+      "(pub struct Box (a) (item : a)) (fn (f) { (let box (Box 3)) (let value box.item) value })")
+    (report "(pub data Choice (Stop) (More Int)) (fn (f) { (let value Stop) value })")
+    (report "(pub data Choice a (Stop) (More a)) (fn (f) { (let value Stop) value })")
+    (report "(fn (f) { (let value missing) value })")
+    (report "(fn (f) { (let value (lambda (x) x)) value })")
+    (report "(fn (f) { (let value (Peer::make 1)) value })")
+    0
+  })
