@@ -351,12 +351,15 @@ cast_count="$(git -C "$repo_root" grep -h -o '(as ' -- stdlib tests examples ':!
 # Formatter atom, LSP result and emitter arity fixtures add four live-owner
 # reference-count observations under MM-VAL-23. No production conversion
 # or reference forging is added.
+# Alloca-marker, formatter-flat and REPL history Option fixtures add seven
+# live-owner header observations under MM-VAL-23. The retired line-buffer
+# fixture removes five; production and standard-library casts add none.
 if [ "$cast_count" -eq 0 ]; then
   bad "user-level: the cast count read 0 - the measurement is broken, not the tree clean"
-elif [ "$cast_count" -le 1525 ]; then
-  ok "user-level (cast count $cast_count <= 1525)"
+elif [ "$cast_count" -le 1527 ]; then
+  ok "user-level (cast count $cast_count <= 1527)"
 else
-  bad "user-level (cast count $cast_count > 1525): new casts need a MM-VAL-23 reason and a baseline bump"
+  bad "user-level (cast count $cast_count > 1527): new casts need a MM-VAL-23 reason and a baseline bump"
 fi
 
 echo "--- 2. type-preserving casts keep ownership ---"
