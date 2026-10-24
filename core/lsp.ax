@@ -4784,6 +4784,100 @@
     }
     0))
 
+; This first expected-type slice compares only concrete primitive value
+; types. Aliases, parameterised and nominal types need checked resolution.
+(pub :: lspComplScalarName (-> ASTNode String))
+(pub fn (lspComplScalarName t)
+  (if (nodeSame t nilNode)
+    ""
+    (if (== (nodeTag t) TAG_T_CON)
+      (if (== (vecLen (nodeBChildren t)) 0)
+        {
+          (let name (nodeAName t))
+          (if (|| (strEq name "Int")
+                (|| (strEq name "Bool")
+                  (|| (strEq name "Float") (|| (strEq name "Char") (strEq name "String")))))
+            name
+            "")
+        }
+        "")
+      "")))
+
+; Exactly one definition and one signature are needed before a raw
+; parse tree can give a reliable type to this bare function name.
+(pub :: lspComplNullaryType (-> (Vec ASTNode) String String))
+(pub fn (lspComplNullaryType decls name)
+  {
+    (let mut defs 0)
+    (let mut sigs 0)
+    (let mut ty "")
+    {
+      (for d in decls
+        (if (&& (strEq (nodeAName d) name) (!= (nodeSpan d) 0))
+          (if (== (nodeTag d) TAG_D_FN)
+            {
+              (set defs (+ defs 1))
+              (if (== (vecLen (nodeBNames d)) 0)
+                ()
+                (set defs (+ defs 1)))
+            }
+            (if (== (nodeTag d) TAG_D_SIG)
+              {
+                (set sigs (+ sigs 1))
+                (set ty (lspComplScalarName (nodeTyChild d)))
+              }))))
+      (if (&& (== defs 1) (== sigs 1))
+        ty
+        "")
+    }
+  })
+
+; A signed nullary function's one bare-name body has the declared
+; result as its expected type, even when the name is half typed.
+(pub :: lspComplExpected (-> (Vec ASTNode) Int String))
+(pub fn (lspComplExpected decls off)
+  {
+    (let mut found "")
+    (let mut count 0)
+    {
+      (for d in decls
+        (if (&& (== (nodeTag d) TAG_D_FN) (== (vecLen (nodeBNames d)) 0))
+          {
+            (let body (nodeCChild d))
+            (if (&& (== (nodeTag body) TAG_E_VAR) (!= (nodeSpan body) 0))
+              {
+                (let sp (nodeSpan body))
+                (if (&& (<= (spanStart sp) off) (<= off (spanEnd sp)))
+                  {
+                    (set count (+ count 1))
+                    (set found (lspComplNullaryType decls (nodeAName d)))
+                  })
+              })
+          }))
+      (if (== count 1)
+        found
+        "")
+    }
+  })
+
+; Prefix, shadow and cap checks still decide which names enter the
+; menu. LSP sortText only gives an accepted exact match a preference.
+(pub :: lspComplOfferTyped
+  (-> Int Strings String Int String String String (Vec ASTNode) ASTNode Int))
+(pub fn (lspComplOfferTyped out seen label kind detail prefix expected decls d)
+  (if (lspComplWants seen label prefix)
+    {
+      (vecPush seen label)
+      (let item (lspComplItem label kind detail))
+      (if (if (strEq expected "")
+        false
+        (strEq expected (lspComplNullaryType decls (nodeAName d))))
+        (jsonArrPush out (jsonObjPut item "sortText" (jsonStr (concat " " label))))
+        (jsonArrPush out item))
+      0
+    }
+    0))
+
 ; The identifier bytes immediately BEFORE the cursor.
 ;
 ; `lspWordAt` will not do, and the difference is the whole request: it
@@ -4882,11 +4976,16 @@
                 ((ParseSuccess parsedValue9 parsedPos9)
                   {
                     (let decls parsedValue9)
+                    (let expected
+                      (if (>= parsedPos9 0)
+                        (lspComplExpected decls (lspOffsetOf src ix (jsonGet params "position")))
+                        ""))
                     {
                       (lspComplContract out seen src decls
                         (lspOffsetOf src ix (jsonGet params "position")) prefix)
-                      (lspComplLocal out seen src decls prefix)
-                      (lspComplImported workspace out seen (lspUriToPath uri) src decls prefix)
+                      (lspComplLocal out seen src decls prefix expected)
+                      (lspComplImported workspace out seen (lspUriToPath uri) src decls prefix
+                        expected)
                     }
                   }
                 ))
@@ -5066,8 +5165,8 @@
 ; complete - plus the constructors, which the outline leaves out
 ; because they are not declarations and completion wants because they
 ; are names.
-(pub :: lspComplLocal (-> Int Strings String (Vec ASTNode) String Int))
-(pub fn (lspComplLocal out seen src decls prefix)
+(pub :: lspComplLocal (-> Int Strings String (Vec ASTNode) String String Int))
+(pub fn (lspComplLocal out seen src decls prefix expected)
   {
     (let n (vecLen decls))
     {
@@ -5077,8 +5176,11 @@
           (if (&& (lspWantsSymbol (nodeTag d)) (!= (nodeSpan d) 0))
             {
               (if (lspComplWants seen (nodeAName d) prefix)
-                (lspComplOffer out seen (nodeAName d) (lspComplKind (nodeTag d))
-                  (lspComplDetail src decls d) prefix))
+                (if (== (nodeTag d) TAG_D_FN)
+                  (lspComplOfferTyped out seen (nodeAName d) (lspComplKind (nodeTag d))
+                    (lspComplDetail src decls d) prefix expected decls d)
+                  (lspComplOffer out seen (nodeAName d) (lspComplKind (nodeTag d))
+                    (lspComplDetail src decls d) prefix)))
               (if (== (nodeTag d) TAG_D_DATA)
                 (lspComplCtors out seen (nodeBChildren d) prefix))
             })
@@ -5123,9 +5225,10 @@
 ; not match the names the checker will accept is worse than no list.
 ; A resolver failure is an empty addition rather than a diagnostic -
 ; half-typed imports are the normal state of a file being edited.
-(pub :: lspComplImported (-> LspWorkspace Int Strings String String (Vec ASTNode) String Int))
+(pub :: lspComplImported
+  (-> LspWorkspace Int Strings String String (Vec ASTNode) String String Int))
 ;@axiom:effect(io)
-(pub fn (lspComplImported workspace out seen path src decls prefix)
+(pub fn (lspComplImported workspace out seen path src decls prefix expected)
   (if (let (Some r) (lspResolveFor workspace path src decls))
     {
       (let allDecls r.decls)
@@ -5138,8 +5241,11 @@
               (let d (vecGet allDecls i))
               (if (&& (lspWantsSymbol (nodeTag d)) (&& (!= (nodeModule d) 0) (!= (nodeSpan d) 0)))
                 {
-                  (lspComplOffer out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
-                    (lspModOf (nodeAName d)) prefix)
+                  (if (== (nodeTag d) TAG_D_FN)
+                    (lspComplOfferTyped out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
+                      (lspModOf (nodeAName d)) prefix expected allDecls d)
+                    (lspComplOffer out seen (bareOf (nodeAName d)) (lspComplKind (nodeTag d))
+                      (lspModOf (nodeAName d)) prefix))
                   (if (== (nodeTag d) TAG_D_DATA)
                     (lspComplCtors out seen (nodeBChildren d) prefix))
                 })
